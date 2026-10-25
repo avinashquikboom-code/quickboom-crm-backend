@@ -18,7 +18,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 
 @ApiTags('Offices')
 @ApiBearerAuth()
@@ -46,11 +46,9 @@ export class OfficeController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     const isActive =
       isActiveQuery !== undefined
@@ -75,7 +73,7 @@ export class OfficeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.officeService.findOne(targetCustomerId, id);
   }
 
@@ -88,7 +86,7 @@ export class OfficeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.officeService.create(targetCustomerId, dto);
   }
 
@@ -102,7 +100,7 @@ export class OfficeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.officeService.update(targetCustomerId, id, dto);
   }
 
@@ -116,7 +114,7 @@ export class OfficeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.officeService.toggleStatus(targetCustomerId, id, Boolean(isActive));
   }
 
@@ -129,7 +127,7 @@ export class OfficeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.officeService.remove(targetCustomerId, id);
   }
 }

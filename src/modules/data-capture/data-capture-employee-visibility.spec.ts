@@ -97,12 +97,6 @@ describe('Data Capture Import to Employee Mobile Lead Pipeline End-to-End', () =
         update: jest.fn(),
         count: jest.fn(),
       },
-      leadImage: {
-        create: jest.fn().mockResolvedValue({ id: 1 }),
-      },
-      leadSocialProfile: {
-        create: jest.fn().mockResolvedValue({ id: 1 }),
-      },
       leadActivityTimeline: {
         create: jest.fn().mockResolvedValue({ id: 1 }),
       },

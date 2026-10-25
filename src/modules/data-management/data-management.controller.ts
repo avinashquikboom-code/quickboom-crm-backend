@@ -13,28 +13,57 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { RoleType } from '@prisma/client';
+import { AccountGuard } from '../../common/guards/account.guard';
+import { AccountTypes } from '../../common/decorators/account-types.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
+import { CustomerService } from '../customer/customer.service';
 import {
   ModuleResetDto,
   ResetAllDto,
   EmployeeModuleResetDto,
   EmployeeResetAllDto,
   BulkDeleteBinDto,
+  ResetSelectedCustomersDto,
+  ResetAllCustomersDto,
 } from './dto/data-management.dto';
 
 @ApiTags('Admin Data Management')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, RolesGuard)
-@Roles(RoleType.SUPER_ADMIN)
+@UseGuards(JwtAuthGuard, CustomerGuard, AccountGuard)
+@AccountTypes('SUPER_ADMIN')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 @Controller('admin/data-management')
 export class DataManagementController {
-  constructor(private readonly dataManagementService: DataManagementService) {}
+  constructor(
+    private readonly dataManagementService: DataManagementService,
+    private readonly customers: CustomerService,
+  ) {}
+
+  /** GET /api/v1/admin/data-management/customers/count */
+  @Get('customers/count')
+  @ApiOperation({ summary: 'Count active customer accounts eligible for deletion' })
+  async getActiveCustomerCount(@CurrentUser() actor: any) {
+    return this.customers.countActiveCustomersForSuperAdmin(actor);
+  }
+
+  /** DELETE /api/v1/admin/data-management/customers/delete-all */
+  @Delete('customers/delete-all')
+  @ApiOperation({ summary: 'Soft-delete all active customer accounts in the authorized organization' })
+  async deleteAllCustomers(
+    @CurrentUser() actor: any,
+    @Body() dto: ResetAllCustomersDto,
+  ) {
+    return this.customers.deleteAllForSuperAdmin(actor, dto.confirmation);
+  }
+
+  /** GET /api/v1/admin/data-management/customers/summary/all */
+  @Get('customers/summary/all')
+  @ApiOperation({ summary: 'Get aggregate counts for non-deleted customer accounts and directly linked records' })
+  async getCustomersSummaryAll() {
+    return this.dataManagementService.getCustomersSummaryAll();
+  }
 
   /**
    * GET /api/v1/admin/data-management/summary
@@ -54,6 +83,17 @@ export class DataManagementController {
   @ApiOperation({ summary: 'Get data reset audit history' })
   async getHistory(@CurrentCustomer() customerId: string) {
     return this.dataManagementService.getResetHistory(customerId);
+  }
+
+  /**
+   * GET /api/v1/admin/data-management/reset/module
+   * Read-only module counts. This must not delete records.
+   * Page load uses GET /summary; this answers the same summary for clients that request this path.
+   */
+  @Get('reset/module')
+  @ApiOperation({ summary: 'Get module record counts without resetting data' })
+  async getModuleResetSummary(@CurrentCustomer() customerId: string) {
+    return this.dataManagementService.getSummary(customerId);
   }
 
   /**
@@ -115,7 +155,7 @@ export class DataManagementController {
       search,
       limit: limit ? parseInt(limit, 10) : 20,
       page: page ? parseInt(page, 10) : 1,
-      customerId,
+      
     });
   }
 
@@ -126,6 +166,19 @@ export class DataManagementController {
   @Get('employees/:employeeId/summary')
   @ApiOperation({ summary: 'Get employee transactional record counts' })
   async getEmployeeSummary(
+    @CurrentCustomer() customerId: string,
+    @Param('employeeId') employeeId: string,
+  ) {
+    return this.dataManagementService.getEmployeeSummary(customerId, employeeId);
+  }
+
+  /**
+   * GET /api/v1/admin/data-management/employees/:employeeId/reset/module
+   * Read-only module counts for an employee without resetting data
+   */
+  @Get('employees/:employeeId/reset/module')
+  @ApiOperation({ summary: 'Get employee module record counts without resetting data' })
+  async getEmployeeModuleResetSummary(
     @CurrentCustomer() customerId: string,
     @Param('employeeId') employeeId: string,
   ) {
@@ -176,61 +229,6 @@ export class DataManagementController {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // CUSTOMER-WISE RESET ENDPOINTS
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * GET /api/v1/admin/data-management/customers
-   * List real customer accounts for Data Management (strictly excludes Super Admin, Admin & system accounts)
-   */
-  @Get('customers')
-  @ApiOperation({ summary: 'List real customer accounts for Data Management (strictly excludes Super Admin, Admin & system accounts)' })
-  @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  async getCustomers(
-    @Query('search') search?: string,
-    @Query('limit') limit?: string,
-    @Query('page') page?: string,
-  ) {
-    return this.dataManagementService.getCustomers({
-      search,
-      limit: limit ? parseInt(limit, 10) : 20,
-      page: page ? parseInt(page, 10) : 1,
-    });
-  }
-
-  /**
-   * GET /api/v1/admin/data-management/customers/:customerId/summary
-   * Get transactional summary for a specific customer
-   */
-  @Get('customers/:customerId/summary')
-  @ApiOperation({ summary: 'Get live customer record summary for data reset' })
-  async getCustomerSummary(@Param('customerId') customerId: string) {
-    return this.dataManagementService.getCustomerSummary(customerId);
-  }
-
-  /**
-   * POST /api/v1/admin/data-management/customers/:customerId/reset
-   * Reset all application data for a specific customer
-   */
-  @Post('customers/:customerId/reset')
-  @ApiOperation({ summary: 'Reset all application data for a specific customer' })
-  async resetCustomer(
-    @Param('customerId') customerId: string,
-    @CurrentUser('id') userId: string,
-    @CurrentUser('role') userRole: string,
-    @Body() dto: ResetAllDto,
-  ) {
-    return this.dataManagementService.resetCustomerData(
-      customerId,
-      userId,
-      userRole,
-      dto,
-    );
-  }
-
   /**
    * POST /api/v1/admin/data-management/reset/customer
    * Alias: Reset all application data for a specific customer (body contains customerId)
@@ -240,10 +238,10 @@ export class DataManagementController {
   async resetCustomerBody(
     @CurrentUser('id') userId: string,
     @CurrentUser('role') userRole: string,
-    @Body() dto: { customerId: string | number; confirmation?: string; reason?: string },
+    @Body() dto: { customerId?: string | number; confirmation?: string; reason?: string },
   ) {
     return this.dataManagementService.resetCustomerData(
-      dto.customerId,
+      undefined,
       userId,
       userRole,
       dto,

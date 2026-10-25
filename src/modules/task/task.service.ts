@@ -2,7 +2,9 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -12,11 +14,19 @@ import {
   SubmitTaskProofDto,
   ReviewTaskDto,
 } from './dto/task.dto';
-import { TaskPriority, TaskStatus } from '@prisma/client';
+import { TaskPriority, TaskStatus, WorkStatus } from '@prisma/client';
+import { EmployeeCommunicationService } from '../notification/employee-communication.service';
+import { WorkService } from '../work/work.service';
 
 @Injectable()
 export class TaskService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(TaskService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private readonly workService: WorkService,
+    @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
+  ) {}
 
   private parseDueDateTime(dateStr?: string, timeStr?: string): { dueDate: Date | null; dueAt: Date | null } {
     if (!dateStr) return { dueDate: null, dueAt: null };
@@ -49,18 +59,27 @@ export class TaskService {
     return { dueDate: date, dueAt: date };
   }
 
-  public async getAuthenticatedEmployee(user: any, customerId?: number | string) {
+  public async getAuthenticatedEmployee(user: any, _customerId?: number | string) {
     if (!user) {
       throw new ForbiddenException('Authenticated user context required');
     }
 
-    let employee = await this.prisma.employee.findFirst({
-      where: {
-        OR: [
-          { userId: user.id },
-          { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
-        ],
-      },
+    const userId = Number(user.id ?? user.userId);
+    const tokenEmployeeId = Number(user.employee?.id ?? user.employeeId);
+    const email = typeof user.email === 'string' ? user.email.trim() : '';
+    let identity: { userId?: number; id?: number; email?: { equals: string; mode: 'insensitive' } };
+    if (Number.isInteger(userId) && userId > 0) {
+      identity = { userId };
+    } else if (Number.isInteger(tokenEmployeeId) && tokenEmployeeId > 0) {
+      identity = { id: tokenEmployeeId };
+    } else if (email) {
+      identity = { email: { equals: email, mode: 'insensitive' } };
+    } else {
+      throw new ForbiddenException('No active employee record linked to current user account');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { ...identity, status: 'ACTIVE' },
       include: {
         office: true,
         department: true,
@@ -68,26 +87,52 @@ export class TaskService {
       },
     });
 
-    if (!employee && customerId) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId)) {
-        employee = await this.prisma.employee.findFirst({
-          where: { customerId: numCustomerId, status: 'ACTIVE' },
-          include: { office: true, department: true, designation: true },
-        });
-      }
-    }
-
     if (!employee) {
       throw new ForbiddenException('No active employee record linked to current user account');
     }
 
+    this.logger.log(
+      `[TASK_API] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId ?? 'none'}`,
+    );
+
     return employee;
+  }
+
+  /**
+   * Tasks the signed-in employee may see: their own assignment, or a task
+   * assigned to someone on a team they belong to or lead.
+   * Do not require task.customerId to equal the employer id. Client work is
+   * stored against the client customer, while the employee belongs to the agency.
+   */
+  private async buildMyTaskOwnership(employee: { id: number; userId: number | null; departmentId: number | null }) {
+    const [memberships, ledTeams] = await Promise.all([
+      this.prisma.teamMember.findMany({
+        where: { employeeId: employee.id, team: { isActive: true } },
+        select: { teamId: true },
+      }),
+      this.prisma.team.findMany({
+        where: { leaderId: employee.id, isActive: true },
+        select: { id: true },
+      }),
+    ]);
+    const teamIds = [
+      ...new Set([
+        ...memberships.map((m) => m.teamId),
+        ...ledTeams.map((t) => t.id),
+      ]),
+    ];
+
+    // Task.employeeId is an Employee FK; assignedToId is a User FK.
+    // A shared department/team is not a direct assignment of this task.
+    const orOwnership: any[] = [{ employeeId: employee.id }];
+    if (employee.userId) orOwnership.push({ assignedToId: employee.userId });
+
+    return { orOwnership, teamIds };
   }
 
   async getMetrics(customerId?: number | string) {
     const numCustomerId = Number(customerId);
-    const customerFilter = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+    const customerFilter = !isNaN(numCustomerId) && numCustomerId > 0 ? {  } : {};
     const now = new Date();
 
     const [
@@ -159,7 +204,7 @@ export class TaskService {
     const { dueDate, dueAt } = this.parseDueDateTime(dto.dueDate, dto.dueTime);
 
     // Auto-generate human-readable task number
-    const count = await this.prisma.task.count({ where: { customerId: numCustomerId } });
+    const count = await this.prisma.task.count({ where: {  } });
     const taskNumber = `TSK-${(count + 1001).toString()}`;
 
     // Resolve employee if provided
@@ -176,10 +221,10 @@ export class TaskService {
     }
 
     // Execute in atomic transaction
-    return this.prisma.$transaction(async (tx) => {
+    const task = await this.prisma.$transaction(async (tx) => {
       const task = await tx.task.create({
         data: {
-          customerId: numCustomerId,
+
           createdById: numCreatedById,
           taskNumber,
           title: dto.title,
@@ -195,7 +240,9 @@ export class TaskService {
           employeeId: employeeId,
           departmentId: dto.departmentId ? Number(dto.departmentId) : employee?.departmentId || undefined,
           designationId: dto.designationId ? Number(dto.designationId) : employee?.designationId || undefined,
-          assignedToId: dto.assignedToId ? Number(dto.assignedToId) : undefined,
+          assignedToId: dto.assignedToId
+            ? Number(dto.assignedToId)
+            : employee?.userId || undefined,
           notes: dto.notes,
         },
         include: {
@@ -240,7 +287,7 @@ export class TaskService {
       if (employee && employee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+
             userId: employee.userId,
             title: `[${dto.priority}] New Task Allocated`,
             message: `You have been allocated ${dto.priority} priority task: "${task.title}". Due: ${dto.dueDate} ${dto.dueTime}.`,
@@ -252,6 +299,24 @@ export class TaskService {
 
       return task;
     });
+
+    if (task.employeeId) {
+      const assignedBy = task.createdBy
+        ? `${task.createdBy.firstName || ''} ${task.createdBy.lastName || ''}`.trim()
+        : 'QB Suite';
+      this.employeeCommunication?.notifyTaskAssigned({
+        employeeId: task.employeeId,
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        assignedBy: assignedBy || 'QB Suite',
+        status: task.status,
+      }).catch((err: any) => this.logger.warn(`[TASK_ASSIGNED] ${err?.message}`));
+    }
+
+    return task;
   }
 
   async findAll(
@@ -275,7 +340,7 @@ export class TaskService {
 
     const where: any = { deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     if (query.status && query.status !== 'ALL') {
@@ -397,7 +462,7 @@ export class TaskService {
     const numId = Number(id);
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const task = await this.prisma.task.findFirst({
@@ -482,11 +547,12 @@ export class TaskService {
     const prevEmployeeName = task.employee ? `${task.employee.firstName} ${task.employee.lastName}` : 'Unassigned';
     const newEmployeeName = `${newEmployee.firstName} ${newEmployee.lastName}`;
 
-    return this.prisma.$transaction(async (tx) => {
+    const updatedTask = await this.prisma.$transaction(async (tx) => {
       const updatedTask = await tx.task.update({
         where: { id: numId },
         data: {
           employeeId: newEmployeeId,
+          assignedToId: newEmployee.userId || null,
           departmentId: newEmployee.departmentId || task.departmentId,
           designationId: newEmployee.designationId || task.designationId,
         },
@@ -516,7 +582,7 @@ export class TaskService {
       if (newEmployee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+
             userId: newEmployee.userId,
             title: `[${task.priority}] Task Reallocated to You`,
             message: `Task "${task.title}" has been reallocated to you. Due: ${task.dueTime || ''} ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : ''}.`,
@@ -528,6 +594,19 @@ export class TaskService {
 
       return updatedTask;
     });
+
+    this.employeeCommunication?.notifyTaskAssigned({
+      employeeId: newEmployee.id,
+      taskId: updatedTask.id,
+      title: task.title,
+      description: task.description,
+      priority: String(task.priority),
+      dueDate: task.dueDate,
+      assignedBy: 'QB Suite',
+      status: updatedTask.status,
+    }).catch((err: any) => this.logger.warn(`[TASK_ASSIGNED] ${err?.message}`));
+
+    return updatedTask;
   }
 
   async startTask(customerId: number | string, id: number | string, performedById: number | string) {
@@ -611,10 +690,10 @@ export class TaskService {
 
   async getMyTasks(user: any, customerId: number | string | undefined, query: { status?: string; priority?: string; search?: string }) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
+    const { orOwnership, teamIds } = await this.buildMyTaskOwnership(employee);
 
     const where: any = {
-      customerId: employee.customerId,
-      employeeId: employee.id,
+      OR: orOwnership,
       deletedAt: null,
     };
 
@@ -631,17 +710,38 @@ export class TaskService {
     }
 
     if (query.search) {
-      where.OR = [
+      const searchCond = [
         { title: { contains: query.search, mode: 'insensitive' } },
         { taskNumber: { contains: query.search, mode: 'insensitive' } },
         { description: { contains: query.search, mode: 'insensitive' } },
+
+
       ];
+      where.AND = [{ OR: searchCond }];
     }
 
     const tasks = await this.prisma.task.findMany({
       where,
       orderBy: { dueAt: 'asc' },
       include: {
+
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            designation: { select: { id: true, name: true } },
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
         department: { select: { id: true, name: true } },
         designation: { select: { id: true, name: true } },
         proofs: { orderBy: { uploadedAt: 'desc' } },
@@ -649,25 +749,326 @@ export class TaskService {
     });
 
     const now = new Date();
-    return tasks.map((t) => ({
+    const hrTasks = tasks.map((t) => ({
       ...t,
+      source: 'TASK',
       isOverdue: t.dueAt && t.dueAt < now && t.status !== TaskStatus.COMPLETED && t.status !== TaskStatus.CANCELLED,
       hasProof: t.proofs && t.proofs.length > 0,
     }));
+
+    const calendarWorks = await this.findEmployeeCalendarWorks(employee.id, undefined, teamIds, query);
+    const works = [...new Map(calendarWorks.map((work) => [work.id, work])).values()];
+    const assignmentWorks = works.length;
+    const combined = [...hrTasks, ...works];
+    const baseTaskCount = await this.prisma.work.count({
+      where: { status: { not: WorkStatus.CANCELLED } },
+    });
+    this.logger.log(
+      `[MOBILE_TASKS_DEBUG] currentEmployeeId=${employee.id} currentTeamId=${teamIds.join(',') || 'none'} tenantCustomerId=${'none'} baseTaskCount=${baseTaskCount} calendarTaskCount=${calendarWorks.length} mobileTaskQueryCount=${assignmentWorks} finalTaskCount=${combined.length} status=${query.status || 'ALL'}`,
+    );
+    return combined;
+  }
+
+  private productionWorkMatchesStatus(status: string, filter?: string) {
+    if (!filter || filter === 'ALL') return status !== WorkStatus.CANCELLED;
+    if (filter === 'PENDING') {
+      return (
+        status === 'PENDING' ||
+        status === WorkStatus.SCHEDULED ||
+        status === WorkStatus.ASSIGNED ||
+        status === WorkStatus.BLOCKED
+      );
+    }
+    if (filter === 'IN_PROGRESS') {
+      return status === WorkStatus.IN_PROGRESS || status === WorkStatus.PROCESSING;
+    }
+    if (filter === 'UNDER_REVIEW') {
+      return (
+        status === WorkStatus.SUBMITTED ||
+        status === WorkStatus.UNDER_REVIEW ||
+        status === WorkStatus.CUSTOMER_REVIEW ||
+        status === WorkStatus.REVISION_REQUESTED
+      );
+    }
+    if (filter === 'COMPLETED') {
+      return status === WorkStatus.COMPLETED || status === WorkStatus.APPROVED;
+    }
+    return status === filter;
+  }
+
+  private isBpoTeamLabel(name?: string | null, description?: string | null) {
+    const label = `${name || ''} ${description || ''}`.toUpperCase();
+    return label.includes('BPO') && !label.includes('PRODUCTION');
+  }
+
+  private async employeeOnBpoTeam(teamIds: number[]) {
+    if (teamIds.length === 0) return false;
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: teamIds }, isActive: true },
+      select: { name: true, description: true },
+    });
+    return teams.some((team) => this.isBpoTeamLabel(team.name, team.description));
+  }
+
+  /** Production members see the calendar work set. Work that belongs only to a BPO team stays with BPO. Direct assignment is always visible. */
+  private productionViewerMaySeeWork(
+    work: any,
+    employeeId: number,
+    assigneeIds: number[],
+    productionTeamIds: number[],
+    viewerOnBpo: boolean,
+  ) {
+    if (assigneeIds.includes(Number(work.assignedToId)) || Number(work.editorId) === employeeId) {
+      return true;
+    }
+    const workTeamBpo = this.isBpoTeamLabel(work.team?.name, work.team?.description);
+    const customerTeamBpo = this.isBpoTeamLabel(
+      undefined,
+      undefined,
+    );
+    const assigneeTeams = (work.assignedTo?.teamMembers || []).map((member: any) => member.team).filter(Boolean);
+    const assigneeIsBpoOnly =
+      assigneeTeams.length > 0 && assigneeTeams.every((team: any) => this.isBpoTeamLabel(team.name, team.description));
+    if ((workTeamBpo || customerTeamBpo || assigneeIsBpoOnly) && !viewerOnBpo) return false;
+    if (productionTeamIds.length === 0) return true;
+    if (workTeamBpo || customerTeamBpo || assigneeIsBpoOnly) return viewerOnBpo;
+    return true;
+  }
+
+  /**
+   * Same Work rows as GET /works/employee/calendar, with no date window.
+   * A BPO-only employee does not receive that full calendar set.
+   */
+  private async findEmployeeCalendarWorks(
+    employeeId: number,
+    _agencyCustomerId: number | null | undefined,
+    teamIds: number[],
+    query: { status?: string; priority?: string; search?: string },
+  ) {
+    // Calendar owns assignment/role authorization. Do not hide its failures or
+    // apply a second team-name heuristic to already-authorized records.
+    const items = await this.workService.getEmployeeCalendar(
+      employeeId, {}, { assignedOnly: true },
+    );
+
+    const search = query.search?.trim().toLowerCase();
+    return items
+      .filter((item) => item.workType !== 'TASK')
+      .filter((item) => this.productionWorkMatchesStatus(String(item?.status || ''), query.status))
+      .filter((item) => !query.priority || query.priority === 'ALL' || item.priority === query.priority)
+      .filter((item) => {
+        if (!search) return true;
+        const title = String(item?.title || '').toLowerCase();
+        const description = String(item?.notes || item?.description || '').toLowerCase();
+        const customerName = String(item?.customerName || '').toLowerCase();
+        const companyName = String(item?.companyName || '').toLowerCase();
+        return (
+          title.includes(search) ||
+          description.includes(search) ||
+          customerName.includes(search) ||
+          companyName.includes(search)
+        );
+      })
+      .map((item) => {
+        const id = Number(item.id);
+        const customerId = item.customerId == null ? null : Number(item.customerId);
+        const assignedName = String(item.assignedEmployee || item.assignedToName || '').trim();
+        const nameParts = assignedName ? assignedName.split(/\s+/) : [];
+        return {
+          id,
+          activityId: item.activityId || String(id),
+          purchaseId: item.purchaseId ?? null,
+          productName: item.productName ?? null,
+          serviceName: item.serviceName ?? null,
+          planName: item.planName ?? null,
+          scheduledAt: item.scheduledAt ?? null,
+          customerName: item.customerName ?? null,
+          source: 'WORK',
+          customerId: Number.isSafeInteger(customerId) ? customerId : null,
+          assignedToId: item.assignedToId ?? null,
+          editorId: item.editorId ?? null,
+          title: item.title,
+          description: item.notes || item.description || null,
+          status: item.status,
+          priority: item.priority ?? null,
+          dueAt: item.scheduledAt || item.scheduledDate || null,
+          dueDate: item.scheduledAt || item.scheduledDate || null,
+          scheduledDate: item.scheduledDate || null,
+          scheduledTime: item.scheduledTime || null,
+          originalScheduledDate: item.originalScheduledDate || null,
+          isCarriedForward: item.isCarriedForward ?? false,
+          carryForwardNote: item.carryForwardNote || null,
+          workType: item.workType || item.type || item.activityType || null,
+          taskNumber: `WRK-${id}`,
+          employee: assignedName
+            ? { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') }
+            : null,
+          assignedTo: item.assignedToId ? { id: item.assignedToId, firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') } : null,
+          team: item.team || item.assignedTeam ? { name: item.team || item.assignedTeam } : null,
+          proofs: [],
+          hasProof: false,
+          isOverdue: false,
+        };
+      })
+      .filter((work) => Number.isInteger(work.id) && work.id > 0);
+  }
+
+  private async productionTeamIdsForEmployee(_agencyCustomerId: number, teamIds: number[]) {
+    if (teamIds.length === 0) return [];
+    const teams = await this.prisma.team.findMany({
+      where: {
+        id: { in: teamIds },
+        isActive: true,
+      },
+      select: { id: true, name: true, description: true },
+    });
+    return teams
+      .filter((team) => !this.isBpoTeamLabel(team.name, team.description))
+      .map((team) => team.id);
+  }
+
+  private async findMyProductionWorks(
+    employeeId: number,
+    userId: number | null | undefined,
+    agencyCustomerId: number,
+    teamIds: number[],
+    query: { status?: string; priority?: string; search?: string },
+  ) {
+    const productionTeamIds = await this.productionTeamIdsForEmployee(agencyCustomerId, teamIds);
+    const assigneeIds = Array.from(
+      new Set(
+        [employeeId, userId]
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    );
+    const workOr: any[] = [
+      { assignedToId: { in: assigneeIds } },
+      { editorId: employeeId },
+      { tasks: { some: { assignedToId: { in: assigneeIds } } } },
+      // Customer calendar shows every work for a customer. An employee authorized
+      // for that customer (direct assignment or their team) sees those same works.
+
+    ];
+    if (teamIds.length > 0) {
+      workOr.push({ teamId: { in: teamIds } });
+      workOr.push();
+    }
+    if (productionTeamIds.length > 0) {
+      workOr.push();
+    }
+
+    const works = await this.prisma.work.findMany({
+      where: {
+        status: { not: WorkStatus.CANCELLED },
+
+        OR: workOr,
+      },
+      orderBy: { scheduledDate: 'asc' },
+      include: {
+
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            designation: { select: { id: true, name: true } },
+            teamMembers: { select: { team: { select: { id: true, name: true, description: true } } } },
+          },
+        },
+        team: { select: { id: true, name: true, description: true } },
+      },
+    });
+
+    const viewerOnBpo = await this.employeeOnBpoTeam(teamIds);
+    const search = query.search?.trim().toLowerCase();
+    return works
+      .filter((work) =>
+        this.productionViewerMaySeeWork(work, employeeId, assigneeIds, productionTeamIds, viewerOnBpo),
+      )
+      .filter((work) => this.productionWorkMatchesStatus(work.status, query.status))
+      .filter((work) => {
+        if (query.priority && query.priority !== 'ALL' && String(work.priority) !== query.priority) {
+          return false;
+        }
+        if (!search) return true;
+        const title = (work.title || '').toLowerCase();
+        const description = (work.description || '').toLowerCase();
+        const customerName = ('').toLowerCase();
+        const companyName = ('').toLowerCase();
+        return (
+          title.includes(search) ||
+          description.includes(search) ||
+          customerName.includes(search) ||
+          companyName.includes(search)
+        );
+      })
+      .map((work) => ({
+        id: work.id,
+        source: 'WORK',
+
+
+        title: work.title,
+        description: work.description,
+        status: work.status,
+        priority: work.priority,
+        dueAt: work.scheduledDate,
+        dueDate: work.scheduledDate,
+        scheduledDate: work.scheduledDate,
+        scheduledTime: work.scheduledTime,
+        workType: work.workType,
+        taskNumber: `WRK-${work.id}`,
+        employee: work.assignedTo
+          ? {
+              id: work.assignedTo.id,
+              firstName: work.assignedTo.firstName,
+              lastName: work.assignedTo.lastName,
+              employeeCode: work.assignedTo.employeeCode,
+              designation: work.assignedTo.designation,
+            }
+          : null,
+        assignedTo: null,
+        team: work.team
+          ? { id: work.team.id, name: work.team.name }
+          : null,
+        proofs: [],
+        hasProof: false,
+        isOverdue: false,
+      }));
   }
 
   async getMyTask(user: any, customerId: number | string | undefined, id: number | string) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const numId = Number(id);
 
+    const { orOwnership } = await this.buildMyTaskOwnership(employee);
+
     const task = await this.prisma.task.findFirst({
       where: {
         id: numId,
-        customerId: employee.customerId,
-        employeeId: employee.id,
+        OR: orOwnership,
         deletedAt: null,
       },
       include: {
+
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            designation: { select: { id: true, name: true } },
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
         department: true,
         designation: true,
         proofs: { orderBy: { uploadedAt: 'desc' } },
@@ -856,7 +1257,7 @@ export class TaskService {
       if (task.employee && task.employee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+
             userId: task.employee.userId,
             title: `Task Approved! 🎉`,
             message: `Your task "${task.title}" has been approved and marked COMPLETED by HR.`,
@@ -921,7 +1322,7 @@ export class TaskService {
       if (task.employee && task.employee.userId) {
         await tx.notification.create({
           data: {
-            customerId: numCustomerId,
+
             userId: task.employee.userId,
             title: 'Task Proof Rejected',
             message: `Your task "${task.title}" proof was rejected by HR: "${reason}". Please upload clear proof and resubmit.`,

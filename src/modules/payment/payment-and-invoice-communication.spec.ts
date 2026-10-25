@@ -138,6 +138,44 @@ describe('Payment & Invoice Communications', () => {
     expect(Buffer.isBuffer(waDocCall.pdfBuffer)).toBe(true);
   });
 
+  it('should attach BOTH Invoice PDF and Service Agreement PDF in the invoice email when payment subscription exists', async () => {
+    prisma.paymentHistory = {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 101,
+        transactionId: 'txn_987654321',
+        amount: 11799,
+        createdAt: new Date('2026-01-01'),
+        subscription: {
+          startDate: new Date('2026-01-01'),
+          endDate: new Date('2026-12-31'),
+          plan: {
+            name: 'Gold Marketing Plan',
+            features: ['Social Media', 'Reels'],
+          },
+        },
+      }),
+    };
+
+    await paymentService.sendPaymentAndInvoiceCommunications({
+      customerId: 42,
+      paymentId: 'pay_ABC123456',
+      amount: 11799,
+      planName: 'Gold Marketing Plan',
+      transactionId: 'txn_987654321',
+      orderId: 'order_123456',
+      paymentMethod: 'UPI / Razorpay',
+      invoiceNo: 'INV-2026-000088',
+    });
+
+    const invoiceEmailCall = emailService.sendEmail.mock.calls.find(
+      (call: any) => call[0].eventType === 'INVOICE_GENERATED',
+    )[0];
+    expect(invoiceEmailCall.attachments).toBeDefined();
+    expect(invoiceEmailCall.attachments.length).toBe(2);
+    expect(invoiceEmailCall.attachments[0].filename).toBe('Invoice-INV-2026-000088.pdf');
+    expect(invoiceEmailCall.attachments[1].filename).toContain('Agreement-');
+  });
+
   describe('SubscriptionService Offline Communications', () => {
     it('should send Offline Payment Success Email, WhatsApp, Invoice Email and WhatsApp document', async () => {
       const subscriptionService = new SubscriptionService(

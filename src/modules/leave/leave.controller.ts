@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
   ForbiddenException,
@@ -27,15 +28,15 @@ import {
 } from './dto/policy.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 
 @ApiTags('Leaves & Workforce Availability')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
 @Controller('leaves')
 export class LeaveController {
   constructor(private readonly leaveService: LeaveService) {}
@@ -52,7 +53,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getLeaveTypes(targetCustomerId);
   }
 
@@ -75,7 +76,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.createLeaveType(targetCustomerId, dto);
   }
 
@@ -89,7 +90,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.updateLeaveType(Number(id), targetCustomerId, dto);
   }
 
@@ -102,7 +103,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.deleteLeaveType(Number(id), targetCustomerId);
   }
 
@@ -128,11 +129,9 @@ export class LeaveController {
     @Query('date') date?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.leaveService.getAvailability(targetCustomerId, {
       search,
@@ -147,7 +146,7 @@ export class LeaveController {
   // 2. LEAVE REQUESTS
   // =========================================================
   @Get('requests')
-  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get filtered leave applications' })
   @ApiQuery({ name: 'customerId', required: false })
   @ApiQuery({ name: 'status', required: false })
@@ -164,11 +163,9 @@ export class LeaveController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.leaveService.getLeaveRequests(user, targetCustomerId, {
       status,
@@ -179,7 +176,7 @@ export class LeaveController {
   }
 
   @Get()
-  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Alias for getLeaveRequests' })
   async getLeavesAlias(
     @CurrentUser() user: any,
@@ -194,7 +191,7 @@ export class LeaveController {
   }
 
   @Get('requests/:id')
-  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single leave request details' })
   async getLeaveRequestById(
     @CurrentUser() user: any,
@@ -203,12 +200,12 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getLeaveRequestById(targetCustomerId, id);
   }
 
   @Post('requests')
-  @RequirePermissions({ module: 'LEAVE', action: 'CREATE' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'CREATE' })
   @ApiOperation({ summary: 'Submit new leave application' })
   async createLeave(
     @CurrentUser() user: any,
@@ -217,12 +214,12 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.createLeave(user, targetCustomerId, dto);
   }
 
   @Post()
-  @RequirePermissions({ module: 'LEAVE', action: 'CREATE' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'CREATE' })
   @ApiOperation({ summary: 'Alias for createLeave' })
   async createLeaveAlias(
     @CurrentUser() user: any,
@@ -234,7 +231,7 @@ export class LeaveController {
   }
 
   @Patch('requests/:id/approve')
-  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Approve a pending leave application' })
   async approveLeave(
     @CurrentUser() user: any,
@@ -243,12 +240,12 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.approveLeave(user, targetCustomerId, id);
   }
 
   @Patch(':id/approve')
-  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Alias for approveLeave' })
   async approveLeaveAlias(
     @CurrentUser() user: any,
@@ -260,7 +257,7 @@ export class LeaveController {
   }
 
   @Patch('requests/:id/reject')
-  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Reject a leave application with reason' })
   async rejectLeave(
     @CurrentUser() user: any,
@@ -270,12 +267,12 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.rejectLeave(user, targetCustomerId, id, dto);
   }
 
   @Patch(':id/reject')
-  @RequirePermissions({ module: 'LEAVE', action: 'EDIT' })
+  @WorkspaceAction({ module: 'LEAVE', action: 'EDIT' })
   @ApiOperation({ summary: 'Alias for rejectLeave' })
   async rejectLeaveAlias(
     @CurrentUser() user: any,
@@ -296,7 +293,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.cancelLeave(user, targetCustomerId, id);
   }
 
@@ -331,11 +328,9 @@ export class LeaveController {
     @Query('year') year?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     return this.leaveService.getLeaveBalances(user, targetCustomerId, {
       search,
@@ -354,7 +349,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getEmployeeBalanceDetails(targetCustomerId, employeeId);
   }
 
@@ -368,7 +363,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.adjustLeaveBalance(user, targetCustomerId, employeeId, dto);
   }
 
@@ -392,7 +387,7 @@ export class LeaveController {
     @Query('isActive') isActiveQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
     const isActive =
       isActiveQuery !== undefined
@@ -416,7 +411,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getPublicHolidayById(targetCustomerId, id);
   }
 
@@ -429,7 +424,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.createPublicHoliday(user, targetCustomerId, dto);
   }
 
@@ -443,7 +438,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.updatePublicHoliday(targetCustomerId, id, dto);
   }
 
@@ -456,7 +451,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.deletePublicHoliday(targetCustomerId, id);
   }
 
@@ -472,11 +467,27 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.getPoliciesOverview(targetCustomerId);
   }
 
+  @Get('policies/attendance')
+  @ApiOperation({ summary: 'Get current active Attendance Policy' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'officeId', required: false })
+  async getAttendancePolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('officeId') officeIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    return this.leaveService.getAttendancePolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
+  }
+
   @Post('policies/attendance')
+  @Put('policies/attendance')
   @ApiOperation({ summary: 'Create or update Attendance Policy' })
   async upsertAttendancePolicy(
     @CurrentUser() user: any,
@@ -485,11 +496,27 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertAttendancePolicy(user, targetCustomerId, dto);
   }
 
+  @Get('policies/leave')
+  @ApiOperation({ summary: 'Get current active Leave Policy' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'officeId', required: false })
+  async getLeavePolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('officeId') officeIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    return this.leaveService.getLeavePolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
+  }
+
   @Post('policies/leave')
+  @Put('policies/leave')
   @ApiOperation({ summary: 'Create or update Leave Policy' })
   async upsertLeavePolicy(
     @CurrentUser() user: any,
@@ -498,11 +525,27 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertLeavePolicy(user, targetCustomerId, dto);
   }
 
+  @Get('policies/salary')
+  @ApiOperation({ summary: 'Get current active Salary Policy' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'officeId', required: false })
+  async getSalaryPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('officeId') officeIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    return this.leaveService.getSalaryPolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
+  }
+
   @Post('policies/salary')
+  @Put('policies/salary')
   @ApiOperation({ summary: 'Create or update Salary Policy' })
   async upsertSalaryPolicy(
     @CurrentUser() user: any,
@@ -511,11 +554,27 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertSalaryPolicy(user, targetCustomerId, dto);
   }
 
+  @Get('policies/claim')
+  @ApiOperation({ summary: 'Get current active Claim / Expense Policy' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'officeId', required: false })
+  async getClaimPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('officeId') officeIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    return this.leaveService.getClaimPolicy(targetCustomerId, officeIdQuery ? Number(officeIdQuery) : undefined);
+  }
+
   @Post('policies/claim')
+  @Put('policies/claim')
   @ApiOperation({ summary: 'Create or update Claim / Expense Policy' })
   async upsertClaimPolicy(
     @CurrentUser() user: any,
@@ -524,7 +583,7 @@ export class LeaveController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.leaveService.upsertClaimPolicy(user, targetCustomerId, dto);
   }
 }

@@ -12,15 +12,7 @@ export class DepartmentService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async resolveCustomerId(customerId: number | string): Promise<number> {
-    if (typeof customerId === 'number' && customerId > 0) return customerId;
-    if (typeof customerId === 'string' && !isNaN(Number(customerId)) && Number(customerId) > 0) {
-      return Number(customerId);
-    }
-    const firstCustomer = await this.prisma.customer.findFirst({
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    return firstCustomer?.id || 1;
+return undefined;
   }
 
   private generateCode(name: string): string {
@@ -41,7 +33,7 @@ export class DepartmentService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const { search, isActive, status, page = 1, limit = 100 } = options;
 
-    const where: any = { customerId: numCustomerId };
+    const where: any = {  };
 
     if (isActive !== undefined) {
       where.isActive = isActive;
@@ -100,7 +92,7 @@ export class DepartmentService {
       for (const d of defaultDepts) {
         await this.prisma.department.create({
           data: {
-            customerId: numCustomerId,
+            
             name: d.name,
             code: d.code,
             description: d.description,
@@ -181,7 +173,7 @@ export class DepartmentService {
   async findOne(customerId: number | string, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const department = await this.prisma.department.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         _count: {
           select: {
@@ -240,7 +232,7 @@ export class DepartmentService {
     // Check duplicate code or duplicate name for this customer
     const existing = await this.prisma.department.findFirst({
       where: {
-        customerId: numCustomerId,
+        
         OR: [{ name: { equals: name, mode: 'insensitive' } }, { code: { equals: code } }],
       },
     });
@@ -255,7 +247,7 @@ export class DepartmentService {
 
     const created = await this.prisma.department.create({
       data: {
-        customerId: numCustomerId,
+        
         name,
         code,
         description: dto.description?.trim() || null,
@@ -281,7 +273,7 @@ export class DepartmentService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const existing = await this.prisma.department.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
     });
 
     if (!existing) {
@@ -291,7 +283,7 @@ export class DepartmentService {
     if (dto.name) {
       const duplicateName = await this.prisma.department.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           name: { equals: dto.name.trim(), mode: 'insensitive' },
           NOT: { id },
         },
@@ -304,7 +296,7 @@ export class DepartmentService {
     if (dto.code) {
       const duplicateCode = await this.prisma.department.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           code: { equals: dto.code.trim().toUpperCase() },
           NOT: { id },
         },
@@ -342,7 +334,7 @@ export class DepartmentService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const department = await this.prisma.department.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         _count: {
           select: {

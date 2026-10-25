@@ -4,7 +4,7 @@ import * as request from 'supertest';
 import { InfluencerController } from './influencer.controller';
 import { InfluencerService } from './influencer.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { AccountGuard as RolesGuard } from '../../common/guards/account.guard';
 
 describe('Admin Influencer Applications Filter & Route Resolution', () => {
   let app: INestApplication;

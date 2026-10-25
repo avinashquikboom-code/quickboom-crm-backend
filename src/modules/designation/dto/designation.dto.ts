@@ -78,4 +78,10 @@ export class UpdateDesignationDto {
   @IsBoolean()
   @IsOptional()
   crmMobileAccess?: boolean;
+
+  @ApiPropertyOptional({ enum: ['EMPLOYEE', 'CUSTOMER'] })
+  @IsOptional()
+  @IsIn(['EMPLOYEE', 'CUSTOMER'])
+  audience?: 'EMPLOYEE' | 'CUSTOMER';
 }
+

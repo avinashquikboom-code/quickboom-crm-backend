@@ -105,7 +105,27 @@ export class VerifyCustomPlanPaymentDto {
   @IsNotEmpty()
   paymentId: string;
 
-  @ApiPropertyOptional({ example: 'order_XYZ987654321' })
+  @ApiPropertyOptional({
+    example: 123,
+    description: 'Internal CustomPlanOrder.id from create-order',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  customPlanOrderId?: number;
+
+  @ApiPropertyOptional({
+    example: '123',
+    description: 'Internal CustomPlanOrder.id as returned in quoteId',
+  })
+  @IsString()
+  @IsOptional()
+  quoteId?: string;
+
+  @ApiPropertyOptional({
+    example: '123',
+    description: 'Internal CustomPlanOrder.id (not the Razorpay order id)',
+  })
   @IsString()
   @IsOptional()
   orderId?: string;

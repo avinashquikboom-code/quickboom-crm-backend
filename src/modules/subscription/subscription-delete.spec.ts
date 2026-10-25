@@ -256,6 +256,7 @@ describe('Tenant Subscription Deletion (Single & Bulk) — Unit Tests', () => {
         mockSubscriptionService,
         {} as any,
         {} as any,
+        {} as any,
       );
     });
 

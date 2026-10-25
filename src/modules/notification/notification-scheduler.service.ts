@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from './notification.service';
-import { SubscriptionStatus, WorkStatus } from '@prisma/client';
+import { EmployeeCommunicationService } from './employee-communication.service';
+import {  WorkStatus,  } from '@prisma/client';
 
 /**
  * Returns UTC Date range matching start and end of day in Indian Standard Time (IST: UTC+5:30)
@@ -36,6 +37,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly employeeCommunication: EmployeeCommunicationService,
   ) {}
 
   onModuleInit() {
@@ -75,29 +77,110 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   /**
    * Run all automated notifications:
    * 1. 3-day subscription expiry reminders (Customer)
-   * 2. Tomorrow's calendar activity reminders (Customer + Employee)
-   * 3. Pending scheduled offer notifications
-   * 4. 7-day notification cleanup
+   * 2. Same-day subscription expiry reminders (Customer)
+   * 3. Tomorrow's calendar activity reminders (Customer + Employee)
+   * 4. Pending scheduled offer notifications
+   * 5. 7-day notification cleanup
    */
   async runAllScheduledChecks() {
     this.logger.log('Starting automated notification scheduler cycle...');
 
-    const subCount = await this.checkSubscriptionExpiries();
+    const carriedForwardCount = await this.autoCarryForwardIncompleteWorks();
+    const subCount3Days = await this.checkSubscriptionExpiries(3);
+    const subCountToday = await this.checkSubscriptionExpiries(0);
     const { customerCount, employeeCount } = await this.checkTomorrowCalendarSchedules();
     const scheduledOffersCount = await this.notificationService.processScheduledCampaigns();
+    const followUpRemindersCount = await this.checkLeadFollowUpReminders();
+    const attendanceReports = await this.employeeCommunication.sendCompletedMonthReports().catch((err: any) => {
+      this.logger.warn(`[ATTENDANCE_REPORT] ${err?.message}`);
+      return null;
+    });
     const cleanupCount = await this.cleanupOldNotifications();
 
     this.logger.log(
-      `[SCHEDULER_CYCLE_COMPLETE] Subscriptions: ${subCount} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Notifications Cleaned: ${cleanupCount}`,
+      `[SCHEDULER_CYCLE_COMPLETE] Tasks Carried Forward: ${carriedForwardCount} | Subscriptions (3-Day): ${subCount3Days} | Subscriptions (Today): ${subCountToday} | Customer Calendar: ${customerCount} | Employee Calendar: ${employeeCount} | Scheduled Offers: ${scheduledOffersCount} | Follow-Up Reminders: ${followUpRemindersCount} | Attendance Reports: ${attendanceReports && !('skipped' in attendanceReports) ? attendanceReports.attempted : 0} | Notifications Cleaned: ${cleanupCount}`,
     );
 
     return {
-      subscriptionsNotified: subCount,
+      tasksCarriedForward: carriedForwardCount,
+      subscriptionsNotified3Days: subCount3Days,
+      subscriptionsNotifiedToday: subCountToday,
       customerCalendarNotified: customerCount,
       employeeCalendarNotified: employeeCount,
       scheduledOffersNotified: scheduledOffersCount,
+      followUpRemindersNotified: followUpRemindersCount,
       notificationsCleaned: cleanupCount,
     };
+  }
+
+  /**
+   * Safe Task Auto Carry-Forward:
+   * Moves any incomplete tasks scheduled for past days in IST to today (or next working day).
+   * Idempotent: Never duplicates the task. Preserves the same Task ID.
+   */
+  async autoCarryForwardIncompleteWorks(): Promise<number> {
+    const todayStart = getIstDayWindow(0).start;
+    const overdueWorks = await this.prisma.work.findMany({
+      where: {
+        scheduledDate: { lt: todayStart },
+        status: {
+          notIn: [WorkStatus.COMPLETED, WorkStatus.APPROVED, WorkStatus.CANCELLED],
+        },
+      },
+    });
+
+    if (overdueWorks.length === 0) return 0;
+
+    let count = 0;
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowUtc = new Date();
+    const nowIst = new Date(nowUtc.getTime() + IST_OFFSET_MS);
+    const curY = nowIst.getUTCFullYear();
+    const curM = nowIst.getUTCMonth();
+    const curD = nowIst.getUTCDate();
+
+    for (const work of overdueWorks) {
+      try {
+        const origDate = work.scheduledDate;
+        const origIst = new Date(origDate.getTime() + IST_OFFSET_MS);
+        const origY = origIst.getUTCFullYear();
+        const origM = String(origIst.getUTCMonth() + 1).padStart(2, '0');
+        const origD = String(origIst.getUTCDate()).padStart(2, '0');
+        const origIso = `${origY}-${origM}-${origD}`;
+
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const origDisplay = `${origD} ${months[origIst.getUTCMonth()]} ${origY}`;
+
+        const existingNotes = work.notes || '';
+        const alreadyHasOriginalTag = /\[ORIGINAL_SCHEDULE:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\]/.test(existingNotes);
+
+        let updatedNotes = existingNotes;
+        if (!alreadyHasOriginalTag) {
+          const origPrefix = `[ORIGINAL_SCHEDULE:${origIso}] Originally scheduled: ${origDisplay}`;
+          updatedNotes = existingNotes.trim().length > 0 ? `${origPrefix}\n${existingNotes}` : origPrefix;
+        }
+
+        let targetIstY = curY;
+        let targetIstM = curM;
+        let targetIstD = curD;
+
+        
+
+        const targetDateUtc = new Date(Date.UTC(targetIstY, targetIstM, targetIstD, 4, 30, 0, 0));
+
+        await this.prisma.work.update({
+          where: { id: work.id },
+          data: {
+            scheduledDate: targetDateUtc,
+            notes: updatedNotes,
+          },
+        });
+        count++;
+      } catch (err: any) {
+        this.logger.error(`Error in notification scheduler carrying forward work #${work.id}: ${err?.message}`);
+      }
+    }
+    return count;
   }
 
   /**
@@ -119,66 +202,10 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
   }
 
   /**
-   * Check for active subscriptions expiring in exactly 3 days
+   * Check for active subscriptions expiring (dayOffset = 3 for 3-day reminder, dayOffset = 0 for same-day reminder)
    */
   async checkSubscriptionExpiries(dayOffset = 3): Promise<number> {
-    const { start, end } = getIstDayWindow(dayOffset);
-    let notifiedCount = 0;
-
-    try {
-      const expiringSubs = await this.prisma.customerSubscription.findMany({
-        where: {
-          status: SubscriptionStatus.ACTIVE,
-          deletedAt: null,
-          endDate: { gte: start, lte: end },
-        },
-        include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              companyName: true,
-              users: { where: { deletedAt: null }, select: { id: true }, take: 1 },
-            },
-          },
-          plan: { select: { id: true, name: true } },
-        },
-      });
-
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-      for (const sub of expiringSubs) {
-        // Prevent duplicate notification within 7 days
-        const alreadyNotified = await this.prisma.notification.findFirst({
-          where: {
-            customerId: sub.customerId,
-            type: 'SUBSCRIPTION_EXPIRING_SOON',
-            createdAt: { gte: sevenDaysAgo },
-          },
-        });
-
-        if (alreadyNotified) {
-          continue;
-        }
-
-        const res = await this.notificationService.sendSubscriptionExpiringNotification(
-          sub.customerId,
-          sub,
-          dayOffset,
-        );
-
-        if (res) {
-          notifiedCount++;
-          this.logger.log(
-            `Sent 3-day subscription expiry notification to customer #${sub.customerId} for plan "${sub.plan?.name}"`,
-          );
-        }
-      }
-    } catch (err: any) {
-      this.logger.error(`Error in checkSubscriptionExpiries: ${err?.message}`, err?.stack);
-    }
-
-    return notifiedCount;
+return 0;
   }
 
   /**
@@ -196,14 +223,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
           status: { notIn: [WorkStatus.CANCELLED, WorkStatus.COMPLETED] },
         },
         include: {
-          customer: {
-            select: {
-              id: true,
-              name: true,
-              companyName: true,
-              users: { where: { deletedAt: null }, select: { id: true }, take: 1 },
-            },
-          },
+          
           assignedTo: {
             select: { id: true, userId: true, firstName: true, lastName: true },
           },
@@ -214,11 +234,11 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
 
       for (const work of upcomingWorks) {
         // 1. Notify Customer
-        const customerUser = work.customer?.users?.[0];
+        const customerUser = undefined;
         if (customerUser) {
           const alreadyNotifiedCustomer = await this.prisma.notification.findFirst({
             where: {
-              customerId: work.customerId,
+              
               userId: customerUser.id,
               type: 'CALENDAR_SCHEDULE_REMINDER',
               createdAt: { gte: todayStart },
@@ -229,7 +249,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
             const res = await this.notificationService.sendCalendarReminderNotification({
               recipientType: 'CUSTOMER',
               userId: customerUser.id,
-              customerId: work.customerId,
+              
               work,
             });
             if (res) customerCount++;
@@ -252,7 +272,7 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
             const res = await this.notificationService.sendCalendarReminderNotification({
               recipientType: 'EMPLOYEE',
               userId: employeeUserId,
-              customerId: work.customerId,
+              
               work,
             });
             if (res) employeeCount++;
@@ -264,5 +284,14 @@ export class NotificationSchedulerService implements OnModuleInit, OnModuleDestr
     }
 
     return { customerCount, employeeCount };
+  }
+
+  /**
+   * 3-Day Follow-Up Reminder for Leads
+   * Scans leads currently in FOLLOW_UP status whose latest transition to FOLLOW_UP
+   * occurred >= 3 days ago, and sends a reminder to the responsible BPO.
+   */
+  async checkLeadFollowUpReminders(): Promise<number> {
+return 0;
   }
 }

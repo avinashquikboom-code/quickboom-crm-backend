@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -85,7 +86,7 @@ export class BannerService {
       throw new BadRequestException('endAt cannot be earlier than startAt');
     }
 
-    const customerId = user.customerId ?? null;
+    const customerId = null;
     const cleanKey = imagePublicId || this.s3Service.extractKey(imageUrl);
 
     const couponMetadata: Record<string, any> = {
@@ -103,7 +104,7 @@ export class BannerService {
     try {
       banner = await this.prisma.marketingBanner.create({
         data: {
-          customerId,
+
           title: dto.title?.trim() || 'Home Banner',
           subtitle: dto.subtitle?.trim() || null,
           description: dto.description?.trim() || null,
@@ -166,9 +167,7 @@ export class BannerService {
     };
 
     // Workspace scoping: If user belongs to a customer/tenant, limit to that customer or global
-    if (user.customerId) {
-      where.OR = [{ customerId: user.customerId }, { customerId: null }];
-    }
+
 
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;
@@ -243,13 +242,7 @@ export class BannerService {
       throw new NotFoundException(`Marketing banner with ID ${id} not found`);
     }
 
-    if (
-      user.customerId &&
-      banner.customerId &&
-      banner.customerId !== user.customerId
-    ) {
-      throw new NotFoundException(`Marketing banner with ID ${id} not found`);
-    }
+
 
     const resolved = await this.resolveBannerMedia(banner);
 
@@ -450,7 +443,8 @@ export class BannerService {
   }
 
   /**
-   * Fetch active, published, scheduled banners for Customer Home Screen
+   * Fetch active, published, scheduled banners for Customer Home Screen.
+   * Returns empty list when customer has DENY override on CUSTOMER_MARKETING.
    */
   async findAllCustomer(user: {
     id?: number;
@@ -458,39 +452,14 @@ export class BannerService {
     role?: string;
   }) {
     const now = new Date();
-    const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
+    const resolvedCustomerId = null;
 
     console.log('[BANNER_API_REQUEST]', {
-      customerId: resolvedCustomerId,
+
       userId: user?.id ?? null,
     });
 
-    let currentPlanName = 'NONE';
-    let currentPlanId: number | null = null;
-    if (resolvedCustomerId && (this.prisma as any).customerSubscription) {
-      try {
-        const activeSub = await (this.prisma as any).customerSubscription.findFirst({
-          where: {
-            customerId: resolvedCustomerId,
-            status: 'ACTIVE',
-            deletedAt: null,
-          },
-          include: { plan: true },
-          orderBy: { createdAt: 'desc' },
-        });
-        if (activeSub) {
-          currentPlanId = activeSub.planId;
-          currentPlanName = activeSub.plan?.name || `Plan #${activeSub.planId}`;
-        }
-      } catch (subErr) {
-        // Safe fallback if mock prisma or table lookup fails
-      }
-    }
-
-    this.logger.log(
-      `[CUSTOMER_BANNER_QUERY_DEBUG]\nauthenticatedUser: ${user?.id || 'ANONYMOUS'}\ncustomerId: ${resolvedCustomerId ?? 'NONE'}\nplacement: HOME\nactive: true\ncurrentDate: ${now.toISOString()}\ncurrentPlan: ${currentPlanName}\nquery: customerId IN [${resolvedCustomerId ?? 'NONE'}, null] AND isActive=true AND isPublished=true AND deletedAt=null`,
-    );
-
+    const currentPlanName = 'NONE';
     const allBanners = await this.prisma.marketingBanner.findMany({
       where: { deletedAt: null },
       orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
@@ -498,32 +467,7 @@ export class BannerService {
 
     const statusFiltered = allBanners.filter((b) => b.isActive && b.isPublished);
 
-    const customerFiltered = statusFiltered.filter((b) => {
-      if (b.customerId === null) return true;
-      if (resolvedCustomerId && b.customerId === resolvedCustomerId) return true;
-      const meta = b.metadata as any;
-      if (meta && Array.isArray(meta.customerIds) && resolvedCustomerId) {
-        return meta.customerIds.map(Number).includes(resolvedCustomerId);
-      }
-      const bAny = b as any;
-      const isCoupon = Boolean(
-        bAny.couponCode ||
-        meta?.couponCode ||
-        meta?.code ||
-        meta?.isCoupon ||
-        meta?.discount ||
-        bAny.category === 'COUPON' ||
-        meta?.category === 'COUPON' ||
-        bAny.category === 'OFFER' ||
-        meta?.category === 'OFFER' ||
-        bAny.actionType === 'OPEN_COUPON' ||
-        meta?.actionType === 'OPEN_COUPON'
-      );
-      if (isCoupon && (!meta?.customerIds || !Array.isArray(meta.customerIds) || meta.customerIds.length === 0)) {
-        return true;
-      }
-      return false;
-    });
+    const customerFiltered = statusFiltered;
 
     const isDateValid = (banner: any) => {
       if (banner.startAt) {
@@ -540,20 +484,7 @@ export class BannerService {
       return true;
     };
 
-    const isPlanValid = (banner: any) => {
-      const meta = banner.metadata as any;
-      if (!meta) return true;
-      const targetPlanIds: number[] = [];
-      if (meta.planId) targetPlanIds.push(Number(meta.planId));
-      if (Array.isArray(meta.planIds)) {
-        meta.planIds.forEach((p: any) => targetPlanIds.push(Number(p)));
-      }
-      if (targetPlanIds.length === 0) return true;
-      if (!currentPlanId) return false;
-      return targetPlanIds.includes(currentPlanId);
-    };
-
-    const dateFiltered = customerFiltered.filter((b) => isDateValid(b) && isPlanValid(b));
+    const dateFiltered = customerFiltered.filter((b) => isDateValid(b));
 
     this.logger.log(
       `[CUSTOMER_BANNER_QUERY_DEBUG]\ncustomerId: ${resolvedCustomerId ?? 'NONE'}\nplacement: HOME\nactive: true\ncurrentDate: ${now.toISOString()}\nquery: customerId IN [${resolvedCustomerId ?? 'NONE'}, null] AND isActive=true AND isPublished=true AND deletedAt=null\nmatchedCount: ${dateFiltered.length}`,
@@ -603,7 +534,7 @@ export class BannerService {
         `[BANNER_API_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimage: ${item.imageUrl}\nimageUrl: ${item.imageUrl}\nbannerUrl: ${item.imageUrl}\nmediaUrl: ${item.imageUrl}`,
       );
       this.logger.log(
-        `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${item.customerId ?? 'GLOBAL'}`,
+        `[CUSTOMER_BANNER_RESPONSE_DEBUG]\nid: ${item.id}\ntitle: ${item.title}\nimageUrl: ${item.imageUrl}\nstatus: ${item.isActive ? 'ACTIVE' : 'INACTIVE'}\nplacement: HOME\ncustomerId: ${'GLOBAL'}`,
       );
     }
 

@@ -23,17 +23,93 @@
  *   Purchase: 30 Dec 2026 -> Start: 1 Jan 2027
  *   Purchase: 31 Dec 2026 -> Start: 2 Jan 2027
  */
+import { BUSINESS_TIMEZONE } from './timezone.util';
+
 export function utcCalendarDateKey(date: Date | string): string {
   const d = new Date(date);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
-export function calculateSubscriptionStartDate(purchaseDate: Date | string = new Date()): Date {
+/**
+ * Calculates activation date exactly 2 calendar days after purchase date
+ * based on the configured business timezone (default Asia/Kolkata, UTC+05:30).
+ *
+ * Purchase date timestamp is the backend source of truth.
+ * Consistent activation time is the purchase time on the activation date.
+ * Timestamps are stored in UTC.
+ *
+ * Examples:
+ *   Purchase: 1 July 14:30 IST -> Activation: 3 July 14:30 IST
+ *   Purchase: 30 Jan -> Activation: 1 Feb
+ *   Purchase: 31 Jan -> Activation: 2 Feb
+ *   Purchase: 28 Feb (non-leap 2025) -> Activation: 2 Mar
+ *   Purchase: 28 Feb (leap 2024) -> Activation: 1 Mar
+ *   Purchase: 29 Feb (leap 2024) -> Activation: 2 Mar
+ *   Purchase: 30 Dec 2026 -> Activation: 1 Jan 2027
+ *   Purchase: 31 Dec 2026 -> Activation: 2 Jan 2027
+ */
+export function calculateActivationDate(
+  purchaseDate: Date | string = new Date(),
+  timeZone: string = BUSINESS_TIMEZONE,
+): Date {
   const purchase = new Date(purchaseDate);
-  const y = purchase.getUTCFullYear();
-  const m = purchase.getUTCMonth();
-  const d = purchase.getUTCDate();
-  return new Date(Date.UTC(y, m, d + 2, 0, 0, 0, 0));
+  if (isNaN(purchase.getTime())) {
+    throw new Error('Invalid purchase date');
+  }
+
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    fractionalSecondDigits: 3,
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(purchase);
+  let y = 0, m = 0, d = 0, hr = 0, min = 0, sec = 0, ms = 0;
+  for (const part of parts) {
+    if (part.type === 'year') y = parseInt(part.value, 10);
+    if (part.type === 'month') m = parseInt(part.value, 10);
+    if (part.type === 'day') d = parseInt(part.value, 10);
+    if (part.type === 'hour') hr = parseInt(part.value, 10) % 24;
+    if (part.type === 'minute') min = parseInt(part.value, 10);
+    if (part.type === 'second') sec = parseInt(part.value, 10);
+    if (part.type === 'fractionalSecond') ms = parseInt(part.value.padEnd(3, '0').slice(0, 3), 10);
+  }
+
+  // Exactly 2 calendar days after purchase in business timezone
+  const targetCalendarDate = new Date(Date.UTC(y, m - 1, d + 2));
+  const targetYear = targetCalendarDate.getUTCFullYear();
+  const targetMonth = targetCalendarDate.getUTCMonth();
+  const targetDay = targetCalendarDate.getUTCDate();
+
+  // Find corresponding UTC date preserving activation time (hour, minute, second, ms)
+  const approxUtc = new Date(Date.UTC(targetYear, targetMonth, targetDay, hr, min, sec, ms));
+  const tzParts = formatter.formatToParts(approxUtc);
+  let tzHr = 0, tzMin = 0, tzDay = 0;
+  for (const p of tzParts) {
+    if (p.type === 'hour') tzHr = parseInt(p.value, 10) % 24;
+    if (p.type === 'minute') tzMin = parseInt(p.value, 10);
+    if (p.type === 'day') tzDay = parseInt(p.value, 10);
+  }
+
+  const dayDiff = tzDay - targetDay;
+  const hourDiff = tzHr - hr + (dayDiff > 1 ? 1 : dayDiff < -1 ? -1 : dayDiff) * 24;
+  const minDiff = tzMin - min;
+  const offsetMs = (hourDiff * 60 + minDiff) * 60 * 1000;
+
+  return new Date(approxUtc.getTime() - offsetMs);
+}
+
+export function calculateSubscriptionStartDate(
+  purchaseDate: Date | string = new Date(),
+  timeZone: string = BUSINESS_TIMEZONE,
+): Date {
+  return calculateActivationDate(purchaseDate, timeZone);
 }
 
 /** Parse YYYY-MM-DD (or ISO) as UTC calendar date (no timezone day shift). */
@@ -181,6 +257,7 @@ export function calculateDaysRemaining(expiryDate: Date | string, now = new Date
 
 export type DerivedSubscriptionStatus =
   | 'UPCOMING'
+  | 'PENDING_ACTIVATION'
   | 'ACTIVE'
   | 'EXPIRING_SOON'
   | 'EXPIRING_IN_5_DAYS'
@@ -200,6 +277,10 @@ export function deriveSubscriptionStatus(
 
   if (status === 'EXPIRED') {
     return 'EXPIRED';
+  }
+
+  if (status === 'PENDING_ACTIVATION') {
+    return 'PENDING_ACTIVATION';
   }
 
   // Non-active statuses must never be promoted to ACTIVE by date logic.

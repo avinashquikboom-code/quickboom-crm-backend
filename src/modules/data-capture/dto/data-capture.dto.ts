@@ -1,12 +1,13 @@
 import {
   IsString,
+  IsDateString,
   IsNotEmpty,
   IsOptional,
   IsNumber,
+  IsInt,
   Min,
   Max,
   IsArray,
-  IsEmail,
   IsBoolean,
   IsIn,
 } from 'class-validator';
@@ -68,11 +69,9 @@ export class ExtractPlacesDto {
   @IsString()
   source?: string;
 
-  @IsOptional()
-  customerId?: number | string;
+  
 
-  @IsOptional()
-  tenantId?: number | string;
+  
 
   @IsOptional()
   companyId?: number | string;
@@ -80,99 +79,6 @@ export class ExtractPlacesDto {
   @IsOptional()
   @IsString()
   requestId?: string;
-
-  @IsOptional()
-  @IsString()
-  createdFrom?: string;
-}
-
-export class ImportToLeadsDto {
-  @IsOptional()
-  assignedToId?: number | string;
-
-  @IsOptional()
-  employeeId?: number | string;
-
-  @IsOptional()
-  @IsString()
-  jobId?: string;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  placeIds?: string[];
-
-  @IsOptional()
-  @IsArray()
-  places?: any[];
-
-  @IsOptional()
-  dataCaptureId?: any;
-
-  @IsOptional()
-  dataCapturePlaceId?: any;
-
-  @IsOptional()
-  placeId?: any;
-
-  @IsOptional()
-  id?: any;
-
-  @IsOptional()
-  @IsString()
-  companyName?: string;
-
-  @IsOptional()
-  @IsString()
-  businessName?: string;
-
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @IsOptional()
-  @IsString()
-  email?: string;
-
-  @IsOptional()
-  @IsString()
-  website?: string;
-
-  @IsOptional()
-  @IsString()
-  address?: string;
-
-  @IsOptional()
-  @IsString()
-  category?: string;
-
-  @IsOptional()
-  @IsString()
-  sourceType?: string;
-
-  @IsOptional()
-  @IsString()
-  sourceRecordId?: string;
-
-  @IsOptional()
-  @IsString()
-  sourceUrl?: string;
-
-  @IsOptional()
-  @IsString()
-  googlePlaceId?: string;
-
-  @IsOptional()
-  @IsString()
-  captureRequestId?: string;
-
-  @IsOptional()
-  @IsString()
-  leadStatus?: string;
-
-  @IsOptional()
-  @IsString()
-  priority?: string;
 
   @IsOptional()
   @IsString()
@@ -490,84 +396,26 @@ export class BulkActionDto {
   ids: number[];
 
   @IsString()
-  @IsIn(['validate', 'reject', 'mark_duplicate', 'delete', 'import_leads'])
-  action: 'validate' | 'reject' | 'mark_duplicate' | 'delete' | 'import_leads';
+  @IsIn(['validate', 'reject', 'mark_duplicate', 'delete'])
+  action: 'validate' | 'reject' | 'mark_duplicate' | 'delete';
 
   @IsOptional()
   @IsString()
   reason?: string;
 }
 
-export class CreateLeadFromPlaceDto {
-  @IsOptional()
-  @IsString()
-  captureRequestId?: string;
 
-  @IsOptional()
-  assignedToId?: number | string;
-
-  @IsOptional()
-  employeeId?: number | string;
-
-  @IsOptional()
-  @IsString()
-  createdFrom?: string;
-
-  @IsOptional()
-  @IsString()
-  businessName?: string;
-
-  @IsOptional()
-  @IsString()
-  companyName?: string;
-
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @IsOptional()
-  @IsString()
-  email?: string;
-
-  @IsOptional()
-  @IsString()
-  website?: string;
-
-  @IsOptional()
-  @IsString()
-  address?: string;
-
-  @IsOptional()
-  @IsString()
-  category?: string;
-
-  @IsOptional()
-  @IsString()
-  googlePlaceId?: string;
-
-  @IsOptional()
-  @IsString()
-  sourceRecordId?: string;
-
-  @IsOptional()
-  @IsString()
-  source?: string;
-
-  @IsOptional()
-  latitude?: number;
-
-  @IsOptional()
-  longitude?: number;
-
-  @IsOptional()
-  rating?: number;
-
-  @IsOptional()
-  reviewCount?: number;
-
-  @IsOptional()
-  socialMedia?: any;
+export class ImportCaptureLeadsDto {
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
 }
 
-
-
+export class CaptureHistoryQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number = 1;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number = 20;
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsDateString() from?: string;
+  @IsOptional() @IsDateString() to?: string;
+}

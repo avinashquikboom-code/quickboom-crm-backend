@@ -1,8 +1,11 @@
+import { GoneException } from '@nestjs/common';
 import { Injectable, BadRequestException, NotFoundException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { NotificationService } from '../notification/notification.service';
+import { CommissionService } from '../commission/commission.service';
+import { awardCommissionForPayment, QualifyingPayment } from '../commission/commission-trigger.util';
 import {
   PreviewCustomPlanDto,
   CreateCustomPlanDto,
@@ -13,8 +16,44 @@ import {
 } from './dto/custom-plan.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { calculatePlanExpiry, calculateSubscriptionDates } from '../../common/utils/subscription-date.util';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, InvoiceStatus } from '@prisma/client';
 import * as crypto from 'crypto';
+import {
+  buildCustomPlanLineItems,
+  withInvoiceItemsSnapshot,
+} from '../../common/utils/invoice-items.util';
+
+/** Internal CustomPlanOrder.id only — never a Razorpay order_/pay_ id or the string "null". */
+export function parseCustomPlanOrderId(raw: unknown): number | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  if (typeof raw === 'number') {
+    if (!Number.isInteger(raw) || raw <= 0 || !Number.isFinite(raw)) {
+      return null;
+    }
+    return raw;
+  }
+  const text = String(raw).trim();
+  if (
+    !text ||
+    text === 'null' ||
+    text === 'undefined' ||
+    text === 'NaN' ||
+    text.startsWith('order_') ||
+    text.startsWith('pay_')
+  ) {
+    return null;
+  }
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+  const parsed = Number(text);
+  if (!Number.isInteger(parsed) || parsed <= 0 || !Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
 
 @Injectable()
 export class CustomPlanService {
@@ -26,6 +65,7 @@ export class CustomPlanService {
     private readonly workService: WorkService,
     private readonly integrationSettingsService: IntegrationSettingsService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly commissionService?: CommissionService,
   ) {}
 
   /**
@@ -372,101 +412,8 @@ export class CustomPlanService {
   /**
    * Create custom plan order & Razorpay order
    */
-  async createCustomPlanOrder(customerId: number | string, dto: CreateCustomPlanDto) {
-    const numCustomerId = Number(customerId);
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: numCustomerId },
-    });
-
-    if (!customer) {
-      throw new NotFoundException(`Customer with ID ${customerId} not found`);
-    }
-
-    const selections = dto.featureSelections || dto.items || [];
-    const durationParam = dto.duration || dto.billingCycle || 1;
-    const priceBreakdown = await this.calculateCustomPlanPrice(selections, durationParam);
-
-    const orderNumber = `#QB-CP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-    // Razorpay Order creation using dynamic IntegrationSettingsService
-    let razorpayOrderId = `order_${orderNumber.replace(/[^a-zA-Z0-9]/g, '')}`;
-    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
-    const keyId = rzpConfig.keyId;
-    const keySecret = rzpConfig.keySecret;
-
-    if (rzpConfig.isEnabled && keyId && keySecret) {
-      try {
-        const Razorpay = require('razorpay');
-        const instance = new Razorpay({
-          key_id: keyId,
-          key_secret: keySecret,
-        });
-        const rzpOrder = await instance.orders.create({
-          amount: Math.round(priceBreakdown.totalAmount * 100), // in paise
-          currency: 'INR',
-          receipt: orderNumber,
-          notes: {
-            customerId: String(numCustomerId),
-            type: 'CUSTOM_PLAN',
-          },
-        });
-        if (rzpOrder?.id) {
-          razorpayOrderId = rzpOrder.id;
-        }
-      } catch (err: any) {
-        this.logger.warn(`Razorpay SDK creation note: ${err?.message}`);
-      }
-    }
-
-    const order = await this.prisma.customPlanOrder.create({
-      data: {
-        customerId: numCustomerId,
-        orderNumber,
-        orderId: razorpayOrderId,
-        selectedFeatures: priceBreakdown.items,
-        duration: priceBreakdown.duration,
-        durationUnit: 'MONTH',
-        subtotal: priceBreakdown.subtotal,
-        discount: priceBreakdown.discount,
-        tax: priceBreakdown.tax,
-        totalAmount: priceBreakdown.totalAmount,
-        currency: priceBreakdown.currency,
-        status: 'PENDING_PAYMENT',
-        paymentMethod: (dto.paymentMethod as PaymentMethod) || PaymentMethod.RAZORPAY,
-      },
-    });
-
-    this.logger.log(`[CUSTOM_PLAN_ORDER] Created Order #${order.id} (${order.orderNumber}), amount: ₹${order.totalAmount}, razorpayOrderId: ${razorpayOrderId}`);
-
-    return {
-      success: true,
-      quoteId: String(order.id),
-      order: {
-        id: order.id,
-        orderNumber: order.orderNumber,
-        customerId: order.customerId,
-        duration: order.duration,
-        durationUnit: order.durationUnit,
-        subtotal: order.subtotal,
-        discount: order.discount,
-        tax: order.tax,
-        totalAmount: order.totalAmount,
-        currency: order.currency,
-        status: order.status,
-        selectedFeatures: order.selectedFeatures,
-        paymentGatewayConfig: {
-          gateway: 'RAZORPAY',
-          amount: order.totalAmount,
-          amountInPaise: Math.round(order.totalAmount * 100),
-          currency: 'INR',
-          orderId: razorpayOrderId,
-          keyId,
-          customerName: customer.name,
-          customerEmail: customer.email,
-        },
-      },
-      priceBreakdown,
-    };
+  async createCustomPlanOrder(customerId: number | string, dto: CreateCustomPlanDto) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -476,258 +423,15 @@ export class CustomPlanService {
     customerId: number | string,
     orderId: number | string,
     paymentDto: VerifyCustomPlanPaymentDto,
-  ) {
-    const numCustomerId = Number(customerId);
-    const numOrderId = Number(orderId);
-
-    const order = await this.prisma.customPlanOrder.findFirst({
-      where: {
-        id: numOrderId,
-        customerId: numCustomerId,
-        deletedAt: null,
-      },
-    });
-
-    if (!order) {
-      throw new NotFoundException(`Custom Plan Order #${orderId} not found`);
-    }
-
-    if (order.status === 'ACTIVATED') {
-      return {
-        success: true,
-        message: 'Custom plan is already active',
-        order,
-      };
-    }
-
-    // Dynamically retrieve secret from IntegrationSettingsService (Database / .env)
-    const rzpConfig = await this.integrationSettingsService.getRazorpayConfig();
-    const keySecret = rzpConfig.keySecret;
-    const rzpPaymentId = paymentDto.paymentId || paymentDto.razorpay_payment_id;
-    const rzpOrderId = paymentDto.orderId || paymentDto.razorpay_order_id || order.orderId;
-    const signature = paymentDto.signature || paymentDto.razorpay_signature;
-
-    if (keySecret && rzpOrderId && rzpPaymentId && signature) {
-      const generatedSignature = crypto
-        .createHmac('sha256', keySecret)
-        .update(`${rzpOrderId}|${rzpPaymentId}`)
-        .digest('hex');
-
-      if (generatedSignature !== signature) {
-        this.logger.error(
-          `[CUSTOM_PLAN_VERIFY] Razorpay signature mismatch for orderId=${rzpOrderId} paymentId=${rzpPaymentId}`,
-        );
-        throw new BadRequestException('Payment signature verification failed. Custom plan order rejected.');
-      }
-    }
-
-    // Resolve or find standard Plan anchor (e.g. CUSTOM / STANDARD)
-    let plan = await this.prisma.plan.findFirst({
-      where: { code: 'CUSTOM', deletedAt: null },
-    });
-
-    if (!plan) {
-      plan = await this.prisma.plan.findFirst({
-        where: { deletedAt: null },
-        orderBy: { id: 'asc' },
-      });
-    }
-
-    if (!plan) {
-      throw new NotFoundException('Base system plan not configured');
-    }
-
-    const { startDate, endDate: expiryDate } = calculateSubscriptionDates(new Date(), order.duration);
-
-    // Format custom features string array for UI display
-    const items = (order.selectedFeatures as any[]) || [];
-    const formattedFeatures = items.map((it) => `${it.quantity}x ${it.name} (₹${it.unitPrice}/mo)`);
-
-    // Extract user & lead limits if selected
-    const seatOption = items.find((it) => it.code === 'OPT_CRM_SEATS');
-    const customUserLimit = seatOption ? Number(seatOption.quantity) + 5 : 10;
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Cancel previous active subscription if any
-      await tx.customerSubscription.updateMany({
-        where: { customerId: numCustomerId, status: 'ACTIVE' },
-        data: { status: 'CANCELED' },
-      });
-
-      // 2. Create new active custom subscription
-      const subscription = await tx.customerSubscription.create({
-        data: {
-          customerId: numCustomerId,
-          planId: plan.id,
-          status: 'ACTIVE',
-          billingCycle: order.duration >= 12 ? 'YEARLY' : 'MONTHLY',
-          startDate,
-          endDate: expiryDate,
-          duration: order.duration,
-          durationUnit: 'MONTH',
-          customPrice: order.totalAmount,
-          customFeatures: formattedFeatures,
-          customUserLimit,
-          customLeadLimit: 2000 * order.duration,
-          autoRenew: true,
-        },
-        include: { plan: true },
-      });
-
-      // 3. Update Custom Plan Order
-      const updatedOrder = await tx.customPlanOrder.update({
-        where: { id: order.id },
-        data: {
-          status: 'ACTIVATED',
-          subscriptionId: subscription.id,
-          paymentId: rzpPaymentId,
-          orderId: rzpOrderId || null,
-          startDate,
-          expiryDate,
-        },
-      });
-
-      // 4. Create Payment Record
-      await tx.paymentHistory.create({
-        data: {
-          customerId: numCustomerId,
-          subscriptionId: subscription.id,
-          planId: plan.id,
-          planName: `Custom Plan (${order.duration} Months)`,
-          orderNumber: order.orderNumber,
-          billingCycle: order.duration >= 12 ? 'YEARLY' : 'MONTHLY',
-          amount: order.subtotal - order.discount,
-          taxAmount: order.tax,
-          totalAmount: order.totalAmount,
-          status: 'SUCCESS',
-          paymentMethod: order.paymentMethod,
-          paymentId: rzpPaymentId,
-          transactionId: `TXN-CP-${Date.now()}`,
-        },
-      });
-
-      // 5. Provision PlanEntitlements for each content deliverable
-      for (const it of items) {
-        if (Number(it.quantity) > 0) {
-          const serviceName = it.name || it.unitName || it.code;
-          const existingEnt = await tx.planEntitlement.findFirst({
-            where: { customerId: numCustomerId, serviceName },
-          });
-          if (existingEnt) {
-            await tx.planEntitlement.update({
-              where: { id: existingEnt.id },
-              data: {
-                planId: plan.id,
-                totalQty: Number(it.quantity),
-                usedQty: 0,
-                scheduledQty: 0,
-                validUntil: expiryDate,
-              },
-            });
-          } else {
-            await tx.planEntitlement.create({
-              data: {
-                customerId: numCustomerId,
-                planId: plan.id,
-                serviceName,
-                totalQty: Number(it.quantity),
-                usedQty: 0,
-                scheduledQty: 0,
-                validUntil: expiryDate,
-              },
-            });
-          }
-        }
-      }
-
-      // 6. Update Customer Seat limit
-      await tx.customer.update({
-        where: { id: numCustomerId },
-        data: { userLimit: customUserLimit },
-      });
-
-      return {
-        success: true,
-        message: 'Custom plan activated successfully!',
-        subscription: {
-          id: subscription.id,
-          customerId: subscription.customerId,
-          status: subscription.status,
-          startDate: subscription.startDate,
-          purchaseDate: subscription.startDate,
-          expiryDate: subscription.endDate,
-          endDate: subscription.endDate,
-          duration: subscription.duration,
-          durationUnit: subscription.durationUnit,
-          price: subscription.customPrice,
-          features: subscription.customFeatures,
-        },
-        order: updatedOrder,
-      };
-    });
-
-    // 7. Auto-generate Work deliverable schedules across subscription period avoiding Sundays
-    try {
-      this.logger.log(`[CUSTOM_PLAN] Generating schedules for customer ID: ${numCustomerId}`);
-      await this.workService.generatePlanSchedules(numCustomerId, result.subscription.id);
-      await this.scheduleService.generateSchedulesForSubscription(result.subscription.id);
-      await this.scheduleService.sendPlanPurchaseCalendarScheduleEmail({
-        customerId: numCustomerId,
-        subscriptionId: result.subscription.id,
-        planId: (result.subscription as any).planId || 1,
-        paymentId: rzpPaymentId,
-      });
-    } catch (err: any) {
-      this.logger.error(`Failed to auto-generate schedules for custom plan: ${err?.message}`, err?.stack);
-    }
-
-    // Trigger Plan Purchase Success Notification
-    try {
-      if (this.notificationService) {
-        await this.notificationService.sendPlanPurchaseSuccessNotification({
-          customerId: numCustomerId,
-          subscriptionId: result.subscription.id,
-          planId: (result.subscription as any).planId || 1,
-          planName: 'Custom Plan',
-          paymentId: rzpPaymentId,
-        });
-      }
-    } catch (notifErr: any) {
-      this.logger.warn(`Non-fatal: Custom plan notification warning: ${notifErr?.message}`);
-    }
-
-    return result;
+  ) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
    * Get Customer's Custom Plan Orders History
    */
-  async getCustomerCustomPlans(customerId: number | string) {
-    const numCustomerId = Number(customerId);
-    const orders = await this.prisma.customPlanOrder.findMany({
-      where: { customerId: numCustomerId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        subscription: true,
-      },
-    });
-
-    return orders.map((o) => ({
-      id: o.id,
-      orderNumber: o.orderNumber,
-      selectedFeatures: o.selectedFeatures,
-      duration: o.duration,
-      durationUnit: o.durationUnit,
-      subtotal: o.subtotal,
-      discount: o.discount,
-      tax: o.tax,
-      totalAmount: o.totalAmount,
-      currency: o.currency,
-      status: o.status,
-      startDate: o.startDate,
-      expiryDate: o.expiryDate,
-      createdAt: o.createdAt,
-    }));
+  async getCustomerCustomPlans(customerId: number | string) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
@@ -845,60 +549,14 @@ export class CustomPlanService {
     search?: string;
     page: number;
     limit: number;
-  }) {
-    const where: any = { deletedAt: null };
-    if (query.status && query.status !== 'ALL') {
-      where.status = query.status;
-    }
-    if (query.search && query.search.trim()) {
-      where.OR = [
-        { orderNumber: { contains: query.search.trim(), mode: 'insensitive' } },
-        { customer: { name: { contains: query.search.trim(), mode: 'insensitive' } } },
-      ];
-    }
-
-    const [total, items] = await Promise.all([
-      this.prisma.customPlanOrder.count({ where }),
-      this.prisma.customPlanOrder.findMany({
-        where,
-        skip: (query.page - 1) * query.limit,
-        take: query.limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          customer: {
-            select: { id: true, name: true, email: true, phone: true },
-          },
-          subscription: true,
-        },
-      }),
-    ]);
-
-    return {
-      items,
-      total,
-      page: query.page,
-      limit: query.limit,
-      totalPages: Math.ceil(total / query.limit),
-    };
+  }) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 
   /**
    * Admin: Get single order details
    */
-  async getAdminCustomPlanById(id: string | number) {
-    const numId = Number(id);
-    const order = await this.prisma.customPlanOrder.findUnique({
-      where: { id: numId },
-      include: {
-        customer: true,
-        subscription: true,
-      },
-    });
-
-    if (!order) {
-      throw new NotFoundException(`Custom Plan Order #${id} not found`);
-    }
-
-    return order;
+  async getAdminCustomPlanById(id: string | number) : Promise<never> {
+throw new GoneException('Customer subscriptions and Lead functionality have been removed');
   }
 }

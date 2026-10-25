@@ -56,16 +56,16 @@ export class ReportService {
     ] = await Promise.all([
       // Total employees registered
       this.prisma.employee.count({
-        where: { customerId: numCustomerId },
+        where: {  },
       }),
       // Active employees
       this.prisma.employee.count({
-        where: { customerId: numCustomerId, status: 'ACTIVE' },
+        where: {  status: 'ACTIVE' },
       }),
       // Attendance totals in range
       this.prisma.attendance.aggregate({
         where: {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
         },
         _count: true,
@@ -79,7 +79,7 @@ export class ReportService {
       this.prisma.attendance.groupBy({
         by: ['status'],
         where: {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
         },
         _count: { status: true },
@@ -87,7 +87,7 @@ export class ReportService {
       // Leaves pending
       this.prisma.leaveRequest.count({
         where: {
-          customerId: numCustomerId,
+          
           status: 'PENDING',
           createdAt: { gte: startDate, lte: endDate },
         },
@@ -95,7 +95,7 @@ export class ReportService {
       // Leaves approved
       this.prisma.leaveRequest.count({
         where: {
-          customerId: numCustomerId,
+          
           status: 'APPROVED',
           createdAt: { gte: startDate, lte: endDate },
         },
@@ -103,7 +103,7 @@ export class ReportService {
       // Payroll / Salary aggregate
       this.prisma.salarySlip.aggregate({
         where: {
-          customerId: numCustomerId,
+          
           generatedAt: { gte: startDate, lte: endDate },
         },
         _sum: {
@@ -116,14 +116,14 @@ export class ReportService {
       // Client / Lead Visits
       this.prisma.visit.count({
         where: {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
         },
       }),
       // Revenue / Invoices
       this.prisma.invoice.aggregate({
         where: {
-          customerId: numCustomerId,
+          
           createdAt: { gte: startDate, lte: endDate },
         },
         _sum: { totalAmount: true },
@@ -202,7 +202,7 @@ export class ReportService {
     switch (type) {
       case 'ATTENDANCE': {
         const whereClause: any = {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
         };
 
@@ -280,7 +280,7 @@ export class ReportService {
 
       case 'PAYROLL': {
         const whereClause: any = {
-          customerId: numCustomerId,
+          
           generatedAt: { gte: startDate, lte: endDate },
         };
 
@@ -350,7 +350,7 @@ export class ReportService {
 
       case 'LEAVES': {
         const whereClause: any = {
-          customerId: numCustomerId,
+          
           createdAt: { gte: startDate, lte: endDate },
         };
 
@@ -419,7 +419,7 @@ export class ReportService {
 
       case 'EMPLOYEES': {
         const whereClause: any = {
-          customerId: numCustomerId,
+          
         };
 
         if (query.status && query.status !== 'ALL') {
@@ -483,7 +483,7 @@ export class ReportService {
 
       case 'VISITS': {
         const whereClause: any = {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
         };
 
@@ -568,7 +568,7 @@ export class ReportService {
     if (type === 'ATTENDANCE') {
       const records = await this.prisma.attendance.findMany({
         where: {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
           ...(body.status && body.status !== 'ALL' ? { status: body.status as any } : {}),
         },
@@ -598,7 +598,7 @@ export class ReportService {
     } else if (type === 'PAYROLL') {
       const slips = await this.prisma.salarySlip.findMany({
         where: {
-          customerId: numCustomerId,
+          
           generatedAt: { gte: startDate, lte: endDate },
           ...(body.status && body.status !== 'ALL' ? { status: body.status } : {}),
         },
@@ -627,7 +627,7 @@ export class ReportService {
     } else if (type === 'LEAVES') {
       const leaves = await this.prisma.leaveRequest.findMany({
         where: {
-          customerId: numCustomerId,
+          
           createdAt: { gte: startDate, lte: endDate },
           ...(body.status && body.status !== 'ALL' ? { status: body.status as any } : {}),
         },
@@ -657,7 +657,7 @@ export class ReportService {
     } else if (type === 'VISITS') {
       const visits = await this.prisma.visit.findMany({
         where: {
-          customerId: numCustomerId,
+          
           date: { gte: startDate, lte: endDate },
           ...(body.status && body.status !== 'ALL' ? { status: body.status as any } : {}),
         },
@@ -685,7 +685,7 @@ export class ReportService {
     } else {
       const employees = await this.prisma.employee.findMany({
         where: {
-          customerId: numCustomerId,
+          
           ...(body.status && body.status !== 'ALL' ? { status: body.status } : {}),
         },
         include: {

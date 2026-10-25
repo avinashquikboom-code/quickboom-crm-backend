@@ -68,7 +68,7 @@ export class MetaTemplateService {
         const vars = this.extractVariables(tpl.body);
         await this.prisma.metaTemplate.create({
           data: {
-            customerId: customerId ? Number(customerId) : null,
+
             name: `${tpl.name} WhatsApp`,
             templateName: tpl.templateName,
             key: stageKey,
@@ -95,14 +95,14 @@ export class MetaTemplateService {
    * Retrieves all Meta templates with multi-tenant filtering, search, and pagination.
    */
   async findAll(customerId: number | string | undefined, query: QueryMetaTemplateDto) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     await this.ensureDefaultTemplates(parsedCustId);
 
     const where: any = {
       deletedAt: null,
       OR: [
-        { customerId: null },
-        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+
+        ...(parsedCustId ? [] : []),
       ],
     };
 
@@ -161,8 +161,8 @@ export class MetaTemplateService {
     const baseStatsWhere: any = {
       deletedAt: null,
       OR: [
-        { customerId: null },
-        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+
+        ...(parsedCustId ? [] : []),
       ],
     };
 
@@ -205,14 +205,14 @@ export class MetaTemplateService {
    * Retrieves aggregated statistics for Meta templates for the tenant/company.
    */
   async getStats(customerId?: number | string | null) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     await this.ensureDefaultTemplates(parsedCustId);
 
     const baseStatsWhere: any = {
       deletedAt: null,
       OR: [
-        { customerId: null },
-        ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+
+        ...(parsedCustId ? [] : []),
       ],
     };
 
@@ -245,14 +245,14 @@ export class MetaTemplateService {
    * Retrieves single Meta template by ID.
    */
   async findOne(id: number, customerId?: number | string | null) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     const item = await this.prisma.metaTemplate.findFirst({
       where: {
         id,
         deletedAt: null,
         OR: [
-          { customerId: null },
-          ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+
+          ...(parsedCustId ? [] : []),
         ],
       },
     });
@@ -275,7 +275,7 @@ export class MetaTemplateService {
    * Creates a new Meta template.
    */
   async create(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     const effectiveName = dto.name.trim();
     if (!effectiveName) {
       throw new BadRequestException('Template display name is required.');
@@ -307,8 +307,8 @@ export class MetaTemplateService {
         language: dto.language || 'en_US',
         deletedAt: null,
         OR: [
-          { customerId: null },
-          ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+
+          ...(parsedCustId ? [] : []),
         ],
       },
     });
@@ -324,7 +324,7 @@ export class MetaTemplateService {
 
     return this.prisma.metaTemplate.create({
       data: {
-        customerId: parsedCustId,
+
         name: effectiveName,
         templateName: rawTemplateName,
         key: dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null,
@@ -415,21 +415,7 @@ export class MetaTemplateService {
     const item = await this.findOne(id, customerId);
 
     // Delete protection: Check if template key or templateName is currently configured/in-use by CRM lead stages
-    if (item.key) {
-      const activeStage = await this.prisma.leadStage.findFirst({
-        where: {
-          deletedAt: null,
-          isActive: true,
-          key: { equals: item.key, mode: 'insensitive' },
-        },
-      });
 
-      if (activeStage && item.isLocalActive) {
-        throw new BadRequestException(
-          `This template is currently in use for pipeline stage "${activeStage.name}" and cannot be deleted. You can deactivate it instead.`,
-        );
-      }
-    }
 
     await this.prisma.metaTemplate.update({
       where: { id: item.id },
@@ -450,37 +436,25 @@ export class MetaTemplateService {
     const wabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
 
+    const apiVersion = creds.apiVersion || 'v21.0';
+
     if (!apiKey) {
       throw new BadRequestException(
         'WhatsApp / Meta integration is not configured. Please configure Access Token in Settings → Integrations → WhatsApp.',
       );
     }
 
-    let resolvedWabaId = wabaId;
-    if (!resolvedWabaId && phoneNumberId) {
-      try {
-        const phoneLookup = await axios.get(`https://graph.facebook.com/v21.0/${phoneNumberId}?fields=whatsapp_business_account`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-          timeout: 10000,
-        });
-        resolvedWabaId = phoneLookup.data?.whatsapp_business_account?.id || '';
-      } catch (err: any) {
-        this.logger.warn(`[MetaTemplateService] Could not resolve WABA ID from phoneNumberId: ${err?.message}`);
-      }
-    }
-
-    const targetAccount = resolvedWabaId || phoneNumberId;
-    if (!targetAccount) {
+    if (!wabaId) {
       throw new BadRequestException(
-        'WhatsApp Business Account ID (WABA ID) or Phone Number ID is missing in Settings → Integrations → WhatsApp.',
+        'WhatsApp Business Account ID (WABA ID) is required to manage and sync message templates. Please configure Business Account ID in Settings → Integrations → WhatsApp.',
       );
     }
 
-    this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for account: ${targetAccount}`);
+    this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for WABA: ${wabaId}`);
 
     let metaTemplates: any[] = [];
     try {
-      const metaUrl = `https://graph.facebook.com/v21.0/${targetAccount}/message_templates?limit=100`;
+      const metaUrl = `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates?limit=100`;
       const response = await axios.get(metaUrl, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -492,12 +466,28 @@ export class MetaTemplateService {
         metaTemplates = response.data.data;
       }
     } catch (err: any) {
-      const errMsg = err?.response?.data?.error?.message || err?.message || 'Meta API communication error';
-      this.logger.error(`[MetaTemplateService] Meta Graph API sync failed: ${errMsg}`);
-      throw new BadRequestException(`Meta Graph API error: ${errMsg}`);
+      const fbError = err?.response?.data?.error;
+      const metaCode = fbError?.code || err?.code;
+      const metaMessage = fbError?.message || err?.message || 'Meta API communication error';
+      const metaType = fbError?.type;
+      const metaSubcode = fbError?.error_subcode;
+      const fbtraceId = fbError?.fbtrace_id;
+      const httpStatus = err?.response?.status;
+
+      this.logger.error(
+        `[MetaTemplateService] Meta Graph API sync failed: httpStatus=${httpStatus || 'N/A'} code=${metaCode || 'N/A'} type=${metaType || 'N/A'} subcode=${metaSubcode || 'N/A'} trace=${fbtraceId || 'N/A'} message="${metaMessage}"`
+      );
+      throw new BadRequestException({
+        statusCode: httpStatus || 400,
+        message: `Meta Graph API error: ${metaMessage}`,
+        metaErrorCode: metaCode,
+        metaErrorType: metaType,
+        metaErrorSubcode: metaSubcode,
+        fbtraceId: fbtraceId,
+      });
     }
 
-    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const parsedCustId = null;
     let syncedCount = 0;
 
     for (const mt of metaTemplates) {
@@ -535,8 +525,8 @@ export class MetaTemplateService {
           templateName,
           deletedAt: null,
           OR: [
-            { customerId: null },
-            ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
+
+            ...(parsedCustId ? [] : []),
           ],
         },
       });
@@ -560,7 +550,7 @@ export class MetaTemplateService {
       } else {
         await this.prisma.metaTemplate.create({
           data: {
-            customerId: parsedCustId,
+
             name: (mt.name || templateName).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
             templateName,
             language,
@@ -661,18 +651,19 @@ export class MetaTemplateService {
    * - Captures message ID on success
    */
   async testSend(dto: TestSendMetaTemplateDto, user: any) {
-    if (!dto.to || !dto.to.trim()) {
+    const rawTo = (dto.to || dto.phoneNumber || dto.phone || '').trim();
+    if (!rawTo) {
       throw new BadRequestException('Recipient WhatsApp number is required');
     }
 
-    const normalizedPhone = this.whatsappService.normalizePhoneNumber(dto.to);
+    const normalizedPhone = this.whatsappService.normalizePhoneNumber(rawTo);
     if (!normalizedPhone) {
       throw new BadRequestException(
         'Invalid WhatsApp phone number format. Please provide a valid 10-15 digit phone number (e.g. +91 98200 10000).',
       );
     }
 
-    const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
+    const customerId = null;
 
     // 1. Locate the exact selected template with tenant isolation
     let template: any = null;
@@ -688,13 +679,6 @@ export class MetaTemplateService {
       ];
     } else {
       throw new BadRequestException('Template ID or Template Name is required');
-    }
-
-    if (customerId) {
-      // Enforce tenant boundary: can access system global (null) or own tenant's templates
-      templateWhere.AND = [
-        { OR: [{ customerId: null }, { customerId }] },
-      ];
     }
 
     template = await this.prisma.metaTemplate.findFirst({
@@ -754,6 +738,21 @@ export class MetaTemplateService {
       4: '11:30 AM',
     };
 
+    // If variables were provided by caller, validate that all required template variables have values
+    if (orderedVars.length > 0 && dto.variables && Object.keys(dto.variables).length > 0) {
+      for (const varName of orderedVars) {
+        const val =
+          userVars[varName] !== undefined
+            ? userVars[varName]
+            : userVars[String(orderedVars.indexOf(varName) + 1)];
+        if (val === undefined || val === null || String(val).trim() === '') {
+          throw new BadRequestException(
+            `Template variable "${varName}" is required. Please provide a value for {{${varName}}}.`,
+          );
+        }
+      }
+    }
+
     const parameters: Array<{ type: 'text'; text: string }> = orderedVars.map((varName, idx) => {
       const val =
         userVars[varName] !== undefined && userVars[varName] !== null && String(userVars[varName]).trim() !== ''
@@ -768,7 +767,7 @@ export class MetaTemplateService {
       };
     });
 
-    const resolvedLang = template.language || dto.language || 'en';
+    const resolvedLang = template.language || dto.language || 'en_US';
 
     this.logger.log(
       `[WHATSAPP TEST SEND] Dispatching template "${template.templateName}" (lang: ${resolvedLang}) ` +

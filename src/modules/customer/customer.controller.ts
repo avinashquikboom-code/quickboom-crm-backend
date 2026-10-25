@@ -1,406 +1,164 @@
+import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
-  Put,
   Query,
   UseGuards,
-  ForbiddenException,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
-import { CustomerService } from './customer.service';
 import {
-  CreateCustomerDto,
-  UpdateCustomerDto,
-  UpdateCustomerProfileDto,
-  AssignCustomerTeamDto,
-} from './dto/customer.dto';
-import { ResetCustomerDataDto } from './dto/reset-customer.dto';
+  IsInt,
+  Min,
+  IsString,
+  MinLength,
+  MaxLength,
+  IsArray,
+  ArrayNotEmpty,
+  ArrayMaxSize,
+  IsBoolean,
+  IsOptional,
+  ValidateIf,
+} from 'class-validator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { WorkService } from '../work/work.service';
-import { AiCreditService } from '../ai-studio/ai-credit.service';
-import { AdminAdjustCreditsDto } from '../ai-studio/dto/ai-studio.dto';
-import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
-import { CustomerMobilePermissionService } from './customer-mobile-permission.service';
+import { CustomerService } from './customer.service';
+export class BulkDeleteCustomersDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(100)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
 
-/** Numeric PK only — prevents /customer/:id from capturing paths like /customer/influencers */
-const NUMERIC_CUSTOMER_ID = ':id(\\d+)';
-
-@ApiTags('Customers & Tenant Management')
-@ApiBearerAuth()
+  @IsOptional()
+  @IsBoolean()
+  cancelSubscriptions?: boolean;
+}
+export class LinkCustomerCompanyDto {
+  @ValidateIf((_object, value) => value !== null)
+  @IsInt()
+  @Min(1)
+  companyId: number | null;
+}
+export class AssignCustomerTeamDto {
+  @ValidateIf((_object, value) => value !== null)
+  @IsInt() @Min(1) teamId: number | null;
+}
+class CustomerAccountDto {
+  @IsString() @MinLength(10) @MaxLength(128) password: string;
+}
+class LinkCustomerUserDto {
+  @IsInt() @Min(1) userId: number;
+}
+@CustomerBillingAccess()
+@Controller()
 @UseGuards(JwtAuthGuard)
-@Controller(['customers', 'customer'])
 export class CustomerController {
-  private assertCanManageCustomerAccess(user: any) {
-    if (!isUserSuperAdmin(user) && !isUserAdminOrStaff(user)) {
-      throw new ForbiddenException('Only admins can manage customer permissions');
-    }
-  }
-
-  constructor(
-    private readonly customerService: CustomerService,
-    private readonly workService: WorkService,
-    private readonly aiCreditService: AiCreditService,
-    private readonly customerMobilePermissionService: CustomerMobilePermissionService,
-  ) {}
-
-  @Get(['calendar', '/customer/calendar'])
-  @ApiOperation({ summary: 'Get customer scheduled activities from Work table' })
-  @ApiQuery({ name: 'customerId', required: false })
-  @ApiQuery({ name: 'date', required: false })
-  @ApiQuery({ name: 'startDate', required: false })
-  @ApiQuery({ name: 'endDate', required: false })
-  @ApiQuery({ name: 'month', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  async getCalendar(
-    @CurrentUser() user: any,
-    @Query('customerId') customerId?: string,
-    @Query('date') date?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-  ) {
-    // Strict Customer Isolation: Customer JWT can ONLY access their own calendar.
-    // Never trust client customerId query param if user is a customer.
-    const isCustomer =
-      user?.role === 'CUSTOMER' ||
-      (user?.customerId && !user?.employee && !user?.roles?.some((r: any) => ['ADMIN', 'SUPER_ADMIN', 'COMPANY_ADMIN'].includes(r)));
-    const targetCustId = isCustomer ? (user?.customerId || user?.id) : (customerId || user?.customerId || user?.id);
-
-    return this.workService.getCalendar(targetCustId, {
-      date: date || startDate,
-      dateFrom: startDate,
-      dateTo: endDate,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
-    });
-  }
-
-  @Get(['me', '/customer/me'])
-  @ApiOperation({ summary: 'Get profile of current authenticated customer' })
-  async getMe(@CurrentUser() user: any) {
-    return this.customerService.getMe(user);
-  }
-
-  @Patch(['me', '/customer/me'])
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_PROFILE', action: 'EDIT' })
-  @ApiOperation({ summary: 'Update profile of current authenticated customer' })
-  async updateMe(@CurrentUser() user: any, @Body() dto: UpdateCustomerProfileDto) {
-    return this.customerService.updateMe(user, dto);
-  }
-
-  @Get(['profile', '/customer/profile'])
-  @ApiOperation({ summary: 'Get profile of current authenticated customer (alias)' })
-  async getProfile(@CurrentUser() user: any) {
-    return this.customerService.getMe(user);
-  }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
-  @ApiOperation({ summary: 'Customer role defaults plus individual overrides' })
-  async getMobilePermissions(@Param('id') id: string, @CurrentUser() user: any) {
-    this.assertCanManageCustomerAccess(user);
-    return this.customerMobilePermissionService.getPermissions(Number(id));
-  }
-
-  @Put(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
-  @ApiOperation({ summary: 'Save customer permission overrides (INHERIT, ALLOW, DENY)' })
-  async updateMobilePermissions(
-    @Param('id') id: string,
-    @Body() dto: { overrides?: Array<{ moduleKey: string; override: string }> },
-    @CurrentUser() user: any,
-  ) {
-    this.assertCanManageCustomerAccess(user);
-    return this.customerMobilePermissionService.updatePermissions(
-      Number(id),
-      dto?.overrides || [],
-    );
-  }
-
-  @Patch(`${NUMERIC_CUSTOMER_ID}/mobile-role`)
-  @ApiOperation({ summary: 'Assign a customer role to a customer' })
-  async assignMobileRole(
-    @Param('id') id: string,
-    @Body() dto: { mobileRoleId?: number | null },
-    @CurrentUser() user: any,
-  ) {
-    this.assertCanManageCustomerAccess(user);
-    return this.customerMobilePermissionService.assignRole(
-      Number(id),
-      dto?.mobileRoleId ? Number(dto.mobileRoleId) : null,
-    );
-  }
-
-  @Delete(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
-  @ApiOperation({ summary: 'Reset customer overrides to role defaults' })
-  async resetMobilePermissions(@Param('id') id: string, @CurrentUser() user: any) {
-    this.assertCanManageCustomerAccess(user);
-    return this.customerMobilePermissionService.resetPermissions(Number(id));
-  }
-
-  @Post(`${NUMERIC_CUSTOMER_ID}/mobile-permissions/restrict-all`)
-  @ApiOperation({ summary: 'Deny all customer mobile permissions for one customer' })
-  async restrictMobilePermissions(@Param('id') id: string, @CurrentUser() user: any) {
-    this.assertCanManageCustomerAccess(user);
-    return this.customerMobilePermissionService.restrictAll(Number(id));
-  }
-
-  @Get('metrics')
-  @ApiOperation({ summary: 'Get Customer KPI summary metrics' })
-  async getMetrics() {
-    return this.customerService.getMetrics();
-  }
-
-  @Get('resource-consumption')
-  @Get('usage')
-  @ApiOperation({ summary: 'Get Customer Resource Consumption analytics, breakdown, and KPI metrics' })
-  @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'dateFrom', required: false })
-  @ApiQuery({ name: 'dateTo', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  @ApiQuery({ name: 'sortBy', required: false })
-  @ApiQuery({ name: 'sortOrder', required: false })
-  async getResourceConsumption(
-    @Query('search') search?: string,
-    @Query('status') status?: string,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
-  ) {
-    return this.customerService.getResourceConsumption({
-      search,
-      status,
-      dateFrom,
-      dateTo,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-      sortBy,
-      sortOrder,
-    });
-  }
-
-  @Get()
-  @ApiOperation({ summary: 'Get all customers with advanced filtering, search, sorting and pagination' })
-  @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'stage', required: false, description: 'Filter by lead stage key or name (e.g. FOLLOW_UP, FINAL_CALL)' })
-  @ApiQuery({ name: 'source', required: false })
-  @ApiQuery({ name: 'teamId', required: false, description: 'Filter by assigned Team ID' })
-  @ApiQuery({ name: 'assignedEmployee', required: false })
-  @ApiQuery({ name: 'company', required: false })
-  @ApiQuery({ name: 'dateFrom', required: false })
-  @ApiQuery({ name: 'dateTo', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  @ApiQuery({ name: 'sortBy', required: false })
-  @ApiQuery({ name: 'sortOrder', required: false })
-  @ApiQuery({ name: 'excludeAdmins', required: false })
-  async findAll(
+  constructor(private readonly customers: CustomerService) {}
+  @Get('customers') list(
     @CurrentUser() user: any,
     @Query('search') search?: string,
     @Query('status') status?: string,
-    @Query('stage') stage?: string,
-    @Query('isActive') isActive?: string,
-    @Query('source') source?: string,
-    @Query('teamId') teamId?: string,
-    @Query('assignedTeamId') assignedTeamId?: string,
-    @Query('assignedEmployee') assignedEmployee?: string,
-    @Query('company') company?: string,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
-    @Query('excludeAdmins') excludeAdmins?: string,
   ) {
-    const activeBool = isActive !== undefined ? isActive === 'true' : undefined;
-    return this.customerService.findAll({
-      search,
-      status,
-      stage,
-      isActive: activeBool,
-      source,
-      teamId: teamId || assignedTeamId,
-      assignedEmployee,
-      company,
-      dateFrom,
-      dateTo,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-      sortBy,
-      sortOrder,
-      excludeAdmins: excludeAdmins !== 'false',
-    }, user);
+    return this.customers.list(user, search, status);
   }
-
-  @Get(NUMERIC_CUSTOMER_ID)
-  @ApiOperation({ summary: 'Get single customer details' })
-  async findOne(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.customerService.findOne(id, user);
+  @Get('customers/me') me(@CurrentUser() user: any) {
+    return this.customers
+      .authorize(user)
+      .then((c) => this.customers.detail(user, c.id));
   }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/activities`)
-  @ApiOperation({ summary: 'Get customer activities and audit history' })
-  async getCustomerActivities(@Param('id') id: string) {
-    return this.customerService.getCustomerActivities(id);
-  }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/tasks`)
-  @ApiOperation({ summary: 'Get customer tasks' })
-  async getCustomerTasks(@Param('id') id: string) {
-    return this.customerService.getCustomerTasks(id);
-  }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/visits`)
-  @ApiOperation({ summary: 'Get customer visits' })
-  async getCustomerVisits(@Param('id') id: string) {
-    return this.customerService.getCustomerVisits(id);
-  }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/deals`)
-  @ApiOperation({ summary: 'Get customer deals' })
-  async getCustomerDeals(@Param('id') id: string) {
-    return this.customerService.getCustomerDeals(id);
-  }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/plan`)
-  @ApiOperation({ summary: 'Get current plan and customization details for customer' })
-  async getCustomerPlan(@Param('id') id: string) {
-    return this.customerService.getCustomerPlan(id);
-  }
-
-  @Get(`${NUMERIC_CUSTOMER_ID}/plan/history`)
-  @ApiOperation({ summary: 'Get customer subscription assignment history' })
-  async getCustomerPlanHistory(@Param('id') id: string) {
-    return this.customerService.getCustomerPlanHistory(id);
-  }
-
-  @Post(`${NUMERIC_CUSTOMER_ID}/customize-plan`)
-  @ApiOperation({ summary: 'Customize and assign subscription plan for customer' })
-  async customizePlan(@Param('id') id: string, @Body() dto: any) {
-    return this.customerService.customizeCustomerPlan(id, dto);
-  }
-
-  @Post()
-  @ApiOperation({ summary: 'Create new customer' })
-  async create(@Body() dto: CreateCustomerDto, @CurrentUser() user: any) {
-    return this.customerService.create(dto, user);
-  }
-
-  @Patch(NUMERIC_CUSTOMER_ID)
-  @ApiOperation({ summary: 'Update customer' })
-  async update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
-    return this.customerService.update(id, dto);
-  }
-
-  @Get([`${NUMERIC_CUSTOMER_ID}/assign-team`, `${NUMERIC_CUSTOMER_ID}/team`])
-  @ApiOperation({ summary: 'Get assigned team for a customer' })
-  async getAssignedTeam(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.customerService.getAssignedTeam(id, user);
-  }
-
-  @Patch([`${NUMERIC_CUSTOMER_ID}/assign-team`, `${NUMERIC_CUSTOMER_ID}/team`])
-  @ApiOperation({ summary: 'Assign or reassign customer to an operating team' })
-  async assignTeam(
-    @Param('id') id: string,
-    @Body() dto: AssignCustomerTeamDto,
+  @Post(['customers/bulk-delete', 'customers/bulk'])
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  bulkDelete(
     @CurrentUser() user: any,
+    @Body() dto: BulkDeleteCustomersDto,
+    @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    const targetTeamId = dto.teamId !== undefined ? dto.teamId : dto.assignedTeamId;
-    return this.customerService.assignTeam(id, targetTeamId, user);
+    const cancel = dto?.cancelSubscriptions ?? (cancelQuery === undefined || cancelQuery === 'true' || cancelQuery === '1');
+    const ids = dto?.ids || [];
+    return this.customers.bulkRemove(ids, user, cancel);
   }
-
-  @Delete(NUMERIC_CUSTOMER_ID)
-  @ApiOperation({ summary: 'Permanently delete customer and all customer-owned data' })
-  async remove(
-    @Param('id') id: string,
+  // Nest method decorators overwrite each other; keep compatibility on its own handler.
+  @Delete(['customers/bulk-delete', 'customers/bulk'])
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  bulkDeleteViaDelete(
     @CurrentUser() user: any,
+    @Body() dto: BulkDeleteCustomersDto,
+    @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    return this.customerService.remove(id, user);
+    return this.bulkDelete(user, dto, cancelQuery);
   }
-
-  @Get([`${NUMERIC_CUSTOMER_ID}/reset-summary`, `admin/customers/${NUMERIC_CUSTOMER_ID}/reset-summary`])
-  @ApiOperation({ summary: 'Get summary of customer data that would be affected by reset' })
-  async getResetSummary(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-  ) {
-    return this.customerService.getResetSummary(id, user);
+  @Get('customers/:id/assign-team')
+  getAssignedTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.getAssignedTeam(id, user);
   }
-
-  @Post([`${NUMERIC_CUSTOMER_ID}/reset-data`, `admin/customers/${NUMERIC_CUSTOMER_ID}/reset-data`])
-  @ApiOperation({ summary: 'Reset all customer transactional data while preserving customer account & master records' })
-  async resetCustomerData(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @Body() dto: ResetCustomerDataDto,
-  ) {
-    return this.customerService.resetCustomerData(id, user, dto);
+  @Patch('customers/:id/assign-team')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  assignTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: AssignCustomerTeamDto) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.assignTeam(id, dto.teamId, user);
   }
-
-  @Delete([`${NUMERIC_CUSTOMER_ID}/data`, `admin/customers/${NUMERIC_CUSTOMER_ID}/data`])
-  @ApiOperation({ summary: 'Reset all customer transactional data (DELETE alias)' })
-  async deleteCustomerData(
-    @Param('id') id: string,
+  @Patch('customers/:id/company')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  linkCompany(
     @CurrentUser() user: any,
-    @Body() dto: ResetCustomerDataDto,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: LinkCustomerCompanyDto,
   ) {
-    return this.customerService.resetCustomerData(id, user, dto);
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.linkCrmCompany(id, dto.companyId, user);
   }
-
-  @Get([`${NUMERIC_CUSTOMER_ID}/ai-credits`, `admin/customers/${NUMERIC_CUSTOMER_ID}/ai-credits`])
-  @ApiOperation({ summary: 'Get customer AI credits wallet and ledger (Admin)' })
-  async getAiCredits(
-    @Param('id') id: string,
+  @Delete('customers/:id') remove(
     @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('cancelSubscriptions') cancelQuery?: string,
   ) {
-    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
-      throw new ForbiddenException('Only authorized Admin or Super Admin can view customer AI credits');
-    }
-    const data = await this.aiCreditService.getCustomerWalletAdmin(parseInt(id, 10));
-    return { statusCode: 200, success: true, data };
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    const cancel = cancelQuery === undefined || cancelQuery === 'true' || cancelQuery === '1';
+    return this.customers.remove(id, user, cancel);
   }
-
-  @Post([`${NUMERIC_CUSTOMER_ID}/ai-credits/add`, `admin/customers/${NUMERIC_CUSTOMER_ID}/ai-credits/add`])
-  @ApiOperation({ summary: 'Add AI credits to customer wallet (Admin)' })
-  async addAiCredits(
-    @Param('id') id: string,
-    @Body() dto: AdminAdjustCreditsDto,
+  @Get('customers/:id') detail(
     @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
   ) {
-    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
-      throw new ForbiddenException('Only authorized Admin or Super Admin can add AI credits');
-    }
-    const data = await this.aiCreditService.addCreditsAdmin(parseInt(id, 10), dto, user);
-    return { statusCode: 200, success: true, message: data.message, data };
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.detail(user, id);
   }
-
-  @Post([`${NUMERIC_CUSTOMER_ID}/ai-credits/reduce`, `admin/customers/${NUMERIC_CUSTOMER_ID}/ai-credits/reduce`])
-  @ApiOperation({ summary: 'Reduce AI credits from customer wallet (Admin)' })
-  async reduceAiCredits(
-    @Param('id') id: string,
-    @Body() dto: AdminAdjustCreditsDto,
+  @Patch('customers/:id/user') link(
     @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: LinkCustomerUserDto,
   ) {
-    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
-      throw new ForbiddenException('Only authorized Admin or Super Admin can reduce AI credits');
-    }
-    const data = await this.aiCreditService.reduceCreditsAdmin(parseInt(id, 10), dto, user);
-    return { statusCode: 200, success: true, message: data.message, data };
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.linkUser(id, dto.userId, user);
+  }
+  @Post('customers/:id/account') account(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CustomerAccountDto,
+  ) {
+    if (!Number.isInteger(id) || id < 1) throw new BadRequestException('Customer ID must be a positive integer');
+    return this.customers.createAccount(id, dto.password, user);
+  }
+  @Get('subscriptions/quote/:planId') quote(
+    @Param('planId', ParseIntPipe) id: number,
+    @Query('billingCycle') cycle?: string,
+  ) {
+    return this.customers.quote(id, cycle);
+  }
+  @Post('subscriptions/:id/cancel') cancel(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.customers.cancel(id, user);
   }
 }
-

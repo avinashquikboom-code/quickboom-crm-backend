@@ -1,17 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  ParseIntPipe,
-  Patch,
-  Post,
-  Put,
-  Query,
-  UseGuards,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { DesignationService } from './designation.service';
 import { CreateDesignationDto, UpdateDesignationDto } from './dto/designation.dto';
@@ -19,7 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 
 @ApiTags('Designations')
 @ApiBearerAuth()
@@ -49,11 +36,9 @@ export class DesignationController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
 
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
+    
 
     const departmentId =
       departmentIdQuery && !isNaN(Number(departmentIdQuery))
@@ -75,63 +60,6 @@ export class DesignationController {
     });
   }
 
-  @Get('roles')
-  @ApiOperation({ summary: 'Get all roles directly derived from Employee Designations' })
-  @ApiQuery({ name: 'customerId', required: false })
-  async getRoles(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
-    return this.designationService.getDesignationRoles(targetCustomerId);
-  }
-
-  @Get(':id/permissions')
-  @ApiOperation({ summary: 'Get permissions for a specific Designation' })
-  @ApiQuery({ name: 'customerId', required: false })
-  async getPermissions(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-    @Param('id', ParseIntPipe) id: number,
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
-    return this.designationService.getDesignationPermissions(targetCustomerId, id);
-  }
-
-  @Put(':id/permissions')
-  @ApiOperation({ summary: 'Update permissions for a specific Designation and emit real-time refresh' })
-  @ApiQuery({ name: 'customerId', required: false })
-  async savePermissions(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[]; crmMobileAccess?: boolean },
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    if (!isSuperAdmin && !targetCustomerId) {
-      throw new ForbiddenException('User does not belong to any customer');
-    }
-    return this.designationService.saveDesignationPermissions(
-      targetCustomerId,
-      id,
-      body?.permissions || [],
-      user,
-      body?.crmMobileAccess,
-    );
-  }
-
   @Get(':id')
   @ApiOperation({ summary: 'Get designation details by ID' })
   async findOne(
@@ -141,7 +69,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.findOne(targetCustomerId, id);
   }
 
@@ -154,7 +82,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.create(targetCustomerId, dto);
   }
 
@@ -168,7 +96,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.update(targetCustomerId, id, dto);
   }
 
@@ -181,7 +109,7 @@ export class DesignationController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
     return this.designationService.remove(targetCustomerId, id);
   }
 }

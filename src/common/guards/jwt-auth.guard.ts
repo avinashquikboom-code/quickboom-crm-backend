@@ -1,6 +1,8 @@
-import { Injectable, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, ExecutionContext, UnauthorizedException, ForbiddenException, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
+import { randomUUID } from 'crypto';
+import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -97,9 +99,28 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           );
         }
 
-        this.logger.warn(
-          `[AUTH DEBUG] endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} tokenPresent=${hasValidToken} [JWT_AUTH_FAILURE] Reason: ${failureReason}`,
+        const isTokenExpired = Boolean(
+          failureReason?.toLowerCase().includes('expired') ||
+          (info as any)?.name === 'TokenExpiredError' ||
+          err?.name === 'TokenExpiredError',
         );
+        const category = JwtAuthGuard.failureCategory(hasValidToken, isTokenExpired, failureReason, Boolean(err));
+        const correlationId = JwtAuthGuard.correlationIdFor(request);
+        const response = context?.switchToHttp ? context.switchToHttp().getResponse() : null;
+        if (response && typeof response.setHeader === 'function' && !response.headersSent) {
+          response.setHeader('x-correlation-id', correlationId);
+        }
+        this.logger.warn(
+          `[AUTH DEBUG] correlationId=${correlationId} endpoint=${request.url} method=${request.method} authHeaderPresent=${hasHeader} bearer=${hasBearer} tokenPresent=${hasValidToken} tokenExpired=${isTokenExpired} category=${category} tokenExp=${hasValidToken ? JwtAuthGuard.unverifiedExpiry(tokenVal as string) : 'n/a'} [JWT_AUTH_FAILURE] Reason: ${failureReason}`,
+        );
+        if (!err) {
+          const code = !hasValidToken ? 'TOKEN_MISSING' : isTokenExpired ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID';
+          throw new UnauthorizedException({
+            message: 'Invalid or expired authentication token',
+            error: 'Unauthorized',
+            code,
+          });
+        }
       }
       throw err || new UnauthorizedException('Invalid or expired authentication token');
     }
@@ -116,7 +137,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
       if (isBulkLeadEndpoint) {
         this.logger.log(
-          `[JWT_AUTH_SUCCESS] endpoint=${request.url} method=${request.method} userId=${user.id} role=${user.role} companyId=${user.customerId || user.companyId || 'NONE'}`,
+          `[JWT_AUTH_SUCCESS] endpoint=${request.url} method=${request.method} userId=${user.id} role=${user.role} companyId=${user.companyId || 'NONE'}`,
         );
       } else {
         this.logger.debug?.(
@@ -125,7 +146,38 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       }
     }
 
+    if (user.accountType === 'CUSTOMER' && (!context || !this.reflector.getAllAndOverride<boolean>('customerBillingAccess', [context.getHandler(), context.getClass()]))) throw new ForbiddenException('Customer billing access only');
     return user;
+  }
+
+  private static failureCategory(
+    tokenPresent: boolean,
+    expired: boolean,
+    reason: string,
+    rejectedByValidation: boolean,
+  ): string {
+    if (!tokenPresent) return 'missing';
+    if (expired) return 'expired';
+    if (rejectedByValidation) return 'account_rejected';
+    const normalized = String(reason || '').toLowerCase();
+    if (normalized.includes('invalid signature')) return 'invalid_signature';
+    if (normalized.includes('malformed') || normalized.includes('invalid token')) return 'malformed';
+    return 'invalid';
+  }
+
+  private static correlationIdFor(request: any): string {
+    const incoming = request?.headers?.['x-correlation-id'] || request?.headers?.['x-request-id'];
+    if (typeof incoming === 'string' && /^[A-Za-z0-9._-]{1,100}$/.test(incoming)) {
+      return incoming;
+    }
+    return randomUUID();
+  }
+
+  // Unverified decode: only used to log `exp`, never for authorization.
+  private static unverifiedExpiry(token: string): string {
+    const decoded = jwt.decode(token);
+    const exp = decoded && typeof decoded === 'object' ? (decoded as jwt.JwtPayload).exp : undefined;
+    return typeof exp === 'number' ? new Date(exp * 1000).toISOString() : 'unknown';
   }
 }
 

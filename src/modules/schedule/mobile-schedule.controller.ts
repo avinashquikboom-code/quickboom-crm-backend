@@ -13,7 +13,6 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 
-import { WorkPermissionService } from '../work/work-permission.service';
 
 /**
  * Mobile-specific schedule endpoint.
@@ -28,7 +27,6 @@ export class MobileScheduleController {
   constructor(
     private readonly scheduleService: ScheduleService,
     private readonly prisma: PrismaService,
-    private readonly workPermissionService: WorkPermissionService,
   ) {}
 
   /**
@@ -89,15 +87,7 @@ export class MobileScheduleController {
       },
       include: {
         designation: true,
-        user: {
-          include: {
-            userRoles: {
-              include: {
-                role: true,
-              },
-            },
-          },
-        },
+        user: true,
       },
     });
 
@@ -105,27 +95,13 @@ export class MobileScheduleController {
       return { items: [], data: [], total: 0, message: 'Employee profile not found.' };
     }
 
-    const tenantCustomerId = numCustomerId || employee.customerId;
-
-    // Step 2: Resolve effective permissions and normalized role using the unified WorkPermissionService
-    const permResult = await this.workPermissionService.getEmployeeEffectivePermissions(
-      tenantCustomerId,
-      { employeeId: employee.id },
-    );
-
-    const grantedModules = permResult.workPermissions || [];
-    const effectivePermissions = permResult.effectivePermissions || {};
-    const roleName = permResult.role;
-    const isFullAccess =
-      roleName.toUpperCase() === 'ADMIN' ||
-      roleName.toUpperCase() === 'SUPER_ADMIN' ||
-      roleName.toUpperCase().includes('ADMIN');
+    const tenantCustomerId = numCustomerId || undefined;
 
     // Step 3: Fetch schedules directly assigned to this employee
     const where: any = {
       deletedAt: null,
       assignedEmployeeId: employee.id,
-      customerId: tenantCustomerId,
+      
     };
 
     if (status && (status as string) !== 'ALL') {
@@ -145,34 +121,19 @@ export class MobileScheduleController {
       where,
       orderBy: { startDate: 'asc' },
       include: {
-        customer: { select: { id: true, name: true } },
+        
         plan: { select: { id: true, name: true, code: true } },
         assignedEmployee: { select: { id: true, firstName: true, lastName: true } },
       },
     });
 
-    // Step 4: Permission-based filtering using real role & work module permissions
-    const filtered = allAssignedSchedules.filter((schedule) => {
-      if (isFullAccess) return true; // Admins / full access users see all
-      if (grantedModules.length === 0) return true; // Safe fallback if no restrictions configured
-
-      const planName = schedule.plan?.name || schedule.title || '';
-      const scheduleModules = this.mapPlanToWorkModuleKeys(planName);
-
-      // If schedule maps to 'all' (generic plan), show to all employees
-      if (scheduleModules.includes('all')) return true;
-
-      // Check if employee has at least one matching active permission
-      return scheduleModules.some(
-        (mod) => effectivePermissions[mod] === true || grantedModules.includes(mod),
-      );
-    });
+    const filtered = allAssignedSchedules;
 
     const mapped = filtered.map((item) => ({
       id: item.id,
-      title: item.title || `${item.customer?.name || 'Customer'} - ${item.plan?.name || 'Plan'}`,
-      customerId: item.customerId,
-      customerName: item.customer?.name || 'Customer',
+      title: item.title || `${'Customer'} - ${item.plan?.name || 'Plan'}`,
+      
+      customerName: 'Customer',
       planName: item.plan?.name || null,
       planCode: item.plan?.code || null,
       status: item.status,
@@ -191,25 +152,7 @@ export class MobileScheduleController {
       data: mapped,
       total: mapped.length,
       employeeId: employee.id,
-      role: roleName,
-      grantedModules,
     };
   }
 
-  @Get('calendar')
-  @ApiOperation({ summary: 'Get calendar view of employee-specific schedules' })
-  @ApiQuery({ name: 'month', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  @ApiQuery({ name: 'from', required: false })
-  @ApiQuery({ name: 'to', required: false })
-  async getMyCalendar(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
-    return this.getMySchedules(user, customerId, month, year, from, to);
-  }
 }

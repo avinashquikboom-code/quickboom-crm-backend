@@ -1,3 +1,4 @@
+import { ScheduleAccessGuard } from './schedule-access.guard';
 import { Module } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { ScheduleController } from './schedule.controller';
@@ -9,7 +10,7 @@ import { EmailModule } from '../email/email.module';
 @Module({
   imports: [PrismaModule, WorkModule, EmailModule],
   controllers: [ScheduleController, MobileScheduleController],
-  providers: [ScheduleService],
+  providers: [ScheduleAccessGuard, ScheduleService],
   exports: [ScheduleService],
 })
 export class ScheduleModule {}

@@ -278,5 +278,109 @@ describe('MetaTemplateService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('rejects if a required template variable has an empty value', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(mockApprovedTemplate);
+
+      await expect(
+        service.testSend(
+          {
+            templateId: 10,
+            to: '+91 98200 10000',
+            variables: { '1': 'Test Customer', '2': '   ' },
+          },
+          { id: 1, customerId: 1 },
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('successfully dispatches template with zero variables and empty parameters', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue({
+        ...mockApprovedTemplate,
+        id: 20,
+        body: 'Simple greeting message without any variable parameters.',
+      });
+
+      const result = await service.testSend(
+        {
+          templateId: 20,
+          to: '+91 98200 10000',
+        },
+        { id: 1, customerId: 1 },
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWhatsappService.sendTemplate).toHaveBeenCalledWith(
+        '919820010000',
+        'appointment_notice',
+        [],
+        'en_US',
+        undefined,
+        'TEMPLATE_TEST',
+        1,
+        1,
+        expect.any(Object),
+      );
+    });
+
+    it('throws BadRequestException with descriptive error when WhatsApp integration is disabled', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(mockApprovedTemplate);
+      mockWhatsappService.sendTemplate.mockResolvedValueOnce({
+        success: false,
+        errorCode: 'INTEGRATION_DISABLED',
+        message: 'WhatsApp integration is disabled in Admin Settings. Please configure WhatsApp Business API in Settings → Integrations → WhatsApp.',
+        details: 'WhatsApp integration is disabled in Admin Settings. Please configure WhatsApp Business API in Settings → Integrations → WhatsApp.',
+      });
+
+      try {
+        await service.testSend(
+          {
+            templateId: 10,
+            to: '+91 98200 10000',
+            variables: { '1': 'Test Customer', '2': '25 Sep 2026' },
+          },
+          { id: 1, customerId: 1 },
+        );
+        fail('Should have thrown BadRequestException');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(BadRequestException);
+        const resp = err.getResponse();
+        expect(resp.statusCode).toBe(400);
+        expect(resp.errorCode).toBe('INTEGRATION_DISABLED');
+        expect(resp.message).toContain('WhatsApp integration is disabled in Admin Settings');
+      }
+    });
+
+    it('exposes Meta Cloud API error details in the 400 BadRequestException response', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(mockApprovedTemplate);
+      mockWhatsappService.sendTemplate.mockResolvedValueOnce({
+        success: false,
+        errorCode: 'REQUEST_ERROR',
+        providerStatus: 400,
+        metaErrorCode: 100,
+        metaErrorType: 'OAuthException',
+        metaErrorMessage: 'Param template.components[0].parameters[0] is invalid',
+        details: 'WhatsApp rejected the message request: Param template.components[0].parameters[0] is invalid',
+      });
+
+      try {
+        await service.testSend(
+          {
+            templateId: 10,
+            to: '+91 98200 10000',
+            variables: { '1': 'Test Customer', '2': '25 Sep 2026' },
+          },
+          { id: 1, customerId: 1 },
+        );
+        fail('Should have thrown BadRequestException');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(BadRequestException);
+        const resp = err.getResponse();
+        expect(resp.statusCode).toBe(400);
+        expect(resp.metaErrorCode).toBe(100);
+        expect(resp.metaErrorMessage).toBe('Param template.components[0].parameters[0] is invalid');
+        expect(resp.details).toContain('Param template.components[0].parameters[0] is invalid');
+      }
+    });
   });
 });

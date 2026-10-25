@@ -1,3 +1,4 @@
+import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import {
   Controller,
   Post,
@@ -6,6 +7,8 @@ import {
   Headers,
   UseGuards,
   Req,
+  Res,
+  Param,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
@@ -17,10 +20,12 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 
 @ApiTags('Payments & Razorpay')
+@CustomerBillingAccess()
 @Controller('payments')
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
@@ -34,8 +39,8 @@ export class PaymentController {
 
   @Post('razorpay/order')
   @Post('create-order')
-  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
+  @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create Razorpay Order for customer plan purchase' })
   async createRazorpayOrder(
@@ -43,7 +48,7 @@ export class PaymentController {
     @Req() req: any,
     @Body() dto: CreateRazorpayOrderDto,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.createRazorpayOrder(user, dto, customerId);
   }
 
@@ -57,7 +62,7 @@ export class PaymentController {
     @Req() req: any,
     @Body() dto: VerifyRazorpayPaymentDto,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.verifyRazorpayPayment(user, dto, customerId);
   }
 
@@ -71,7 +76,7 @@ export class PaymentController {
     @Req() req: any,
     @Body() dto: any,
   ) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.createOfflinePayment(user, dto, customerId);
   }
 
@@ -82,17 +87,44 @@ export class PaymentController {
     @Headers('x-razorpay-signature') signature: string,
     @Body() body: any,
   ) {
-    const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
+    const rawBody = req.rawBody?.toString('utf8') || (typeof body === 'string' ? body : '');
     return this.paymentService.handleWebhook(rawBody, signature);
+  }
+
+  @Get(':id/agreement/download')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Download Service Agreement PDF' })
+  async downloadAgreement(
+    @Param('id') paymentId: string,
+    @CurrentCustomer() customerIdStr: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Res() res: any,
+  ) {
+    const customerId = Number(customerIdStr ?? undefined);
+    const { buffer, filename } = await this.paymentService.downloadAgreementPdf(
+      paymentId,
+      Number.isFinite(customerId) && customerId > 0 ? customerId : undefined,
+      user,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
   }
 
   @Get('history')
   @Get('orders')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get authenticated customer purchase and payment transaction history' })
+  @UseGuards(WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'PAYMENTS', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get organization payment transaction history' })
   async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
-    const customerId = req?.customerId || user?.customerId;
+    const customerId = undefined;
     return this.paymentService.getPaymentHistory(user, customerId);
   }
 

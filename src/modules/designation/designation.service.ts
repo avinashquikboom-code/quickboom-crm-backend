@@ -10,13 +10,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDesignationDto, UpdateDesignationDto } from './dto/designation.dto';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
-import {
-  STANDARD_PERMISSIONS,
-  ROLE_PERMISSION_DEFAULTS,
-  toPermissionKey,
-  fromPermissionKey,
-} from '../../common/constants/rbac.constants';
-import { RoleType } from '@prisma/client';
 
 @Injectable()
 export class DesignationService {
@@ -29,15 +22,7 @@ export class DesignationService {
   ) {}
 
   private async resolveCustomerId(customerId: number | string): Promise<number> {
-    if (typeof customerId === 'number' && customerId > 0) return customerId;
-    if (typeof customerId === 'string' && !isNaN(Number(customerId)) && Number(customerId) > 0) {
-      return Number(customerId);
-    }
-    const firstCustomer = await this.prisma.customer.findFirst({
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    return firstCustomer?.id || 1;
+return undefined;
   }
 
   private generateCode(name: string): string {
@@ -59,7 +44,7 @@ export class DesignationService {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const { departmentId, search, isActive, status, page = 1, limit = 100 } = options;
 
-    const where: any = { customerId: numCustomerId };
+    const where: any = {  };
 
     if (departmentId !== undefined && departmentId !== null && !isNaN(Number(departmentId))) {
       const numDeptId = Number(departmentId);
@@ -147,7 +132,7 @@ export class DesignationService {
   async findOne(customerId: number | string, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const designation = await this.prisma.designation.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         department: {
           select: {
@@ -195,7 +180,7 @@ export class DesignationService {
     // Validate departmentId if provided
     if (dto.departmentId) {
       const dept = await this.prisma.department.findFirst({
-        where: { id: dto.departmentId, customerId: numCustomerId },
+        where: { id: dto.departmentId },
       });
       if (!dept) {
         throw new BadRequestException(`Department #${dto.departmentId} does not exist`);
@@ -205,7 +190,7 @@ export class DesignationService {
     // Check duplicate code or name
     const existing = await this.prisma.designation.findFirst({
       where: {
-        customerId: numCustomerId,
+        
         OR: [{ name: { equals: name, mode: 'insensitive' } }, { code: { equals: code } }],
       },
     });
@@ -227,7 +212,7 @@ export class DesignationService {
 
     const created = await this.prisma.designation.create({
       data: {
-        customerId: numCustomerId,
+        
         name,
         code,
         departmentId: dto.departmentId || null,
@@ -243,22 +228,6 @@ export class DesignationService {
         },
       },
     });
-
-    // Auto-create / link the matching Role via ensureRoleForDesignation so that:
-    // 1. The Role.designationId FK is properly set (the critical fix)
-    // 2. Duplicate prevention is handled consistently
-    // 3. GET /designations/roles and GET /designations/:id/permissions work immediately
-    try {
-      await this.ensureRoleForDesignation({
-        id: created.id,
-        name: created.name,
-        customerId: numCustomerId,
-        description: created.description,
-        audience: dto.audience === 'CUSTOMER' ? 'CUSTOMER' : 'EMPLOYEE',
-      });
-    } catch (roleErr) {
-      this.logger.warn(`[DESIGNATION_CREATE] Could not auto-link Role for Designation #${created.id}: ${roleErr}`);
-    }
 
     return {
       id: created.id,
@@ -281,7 +250,7 @@ export class DesignationService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const existing = await this.prisma.designation.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
     });
 
     if (!existing) {
@@ -290,7 +259,7 @@ export class DesignationService {
 
     if (dto.departmentId !== undefined && dto.departmentId !== null) {
       const dept = await this.prisma.department.findFirst({
-        where: { id: dto.departmentId, customerId: numCustomerId },
+        where: { id: dto.departmentId },
       });
       if (!dept) {
         throw new BadRequestException(`Department #${dto.departmentId} does not exist`);
@@ -300,7 +269,7 @@ export class DesignationService {
     if (dto.name) {
       const duplicateName = await this.prisma.designation.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           name: { equals: dto.name.trim(), mode: 'insensitive' },
           NOT: { id },
         },
@@ -313,7 +282,7 @@ export class DesignationService {
     if (dto.code) {
       const duplicateCode = await this.prisma.designation.findFirst({
         where: {
-          customerId: numCustomerId,
+          
           code: { equals: dto.code.trim().toUpperCase() },
           NOT: { id },
         },
@@ -362,7 +331,7 @@ export class DesignationService {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     const designation = await this.prisma.designation.findFirst({
-      where: { id, customerId: numCustomerId },
+      where: { id },
       include: {
         _count: {
           select: {
@@ -375,6 +344,8 @@ export class DesignationService {
     if (!designation) {
       throw new NotFoundException(`Designation #${id} not found`);
     }
+
+    
 
     // Safety rule: If employees have this designation, soft-deactivate to avoid losing employee reference
     if (designation._count.employees > 0) {
@@ -389,6 +360,9 @@ export class DesignationService {
     }
 
     await this.prisma.designation.delete({ where: { id } });
+
+
+
     return {
       message: `Designation #${id} deleted successfully.`,
       deleted: true,
@@ -401,7 +375,7 @@ export class DesignationService {
    */
   async seedInitialDesignationsIfEmpty(customerId: number): Promise<void> {
     try {
-      const count = await this.prisma.designation.count({ where: { customerId } });
+      const count = await this.prisma.designation.count({ where: {  } });
       if (count > 0) return;
 
       this.logger.log(`[DESIGNATIONS] Seeding initial designations for customer #${customerId}`);
@@ -420,7 +394,7 @@ export class DesignationService {
       for (const item of standardDesignations) {
         let desig = await this.prisma.designation.findFirst({
           where: {
-            customerId,
+            
             name: { equals: item.name, mode: 'insensitive' },
           },
         });
@@ -428,7 +402,7 @@ export class DesignationService {
         if (!desig) {
           desig = await this.prisma.designation.create({
             data: {
-              customerId,
+              
               name: item.name,
               code: item.code,
               level: item.level,
@@ -437,40 +411,15 @@ export class DesignationService {
             },
           });
         }
-
-        // Link to existing DB role if one matches this designation by name
-        if (desig) {
-          const upperName = item.name.toUpperCase().replace(/\s+/g, '_');
-          const matchedRole = await this.prisma.role.findFirst({
-            where: {
-              OR: [
-                { name: { equals: item.name, mode: 'insensitive' } },
-                { name: { equals: upperName, mode: 'insensitive' } },
-              ],
-              designationId: null,
-              name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
-            },
-          });
-
-          if (matchedRole) {
-            await this.prisma.role.update({
-              where: { id: matchedRole.id },
-              data: { designationId: desig.id },
-            });
-            this.logger.log(`[DESIGNATIONS] Linked Role #${matchedRole.id} (${matchedRole.name}) to Designation #${desig.id} (${desig.name})`);
-          } else {
-            await this.ensureRoleForDesignation(desig);
-          }
-        }
       }
 
       // Link any existing unassigned employee in this customer to Telecaller
       const telecallerDesig = await this.prisma.designation.findFirst({
-        where: { customerId, name: { equals: 'Telecaller', mode: 'insensitive' } },
+        where: {  name: { equals: 'Telecaller', mode: 'insensitive' } },
       });
       if (telecallerDesig) {
         await this.prisma.employee.updateMany({
-          where: { customerId, designationId: null },
+          where: {  designationId: null },
           data: { designationId: telecallerDesig.id },
         });
       }
@@ -479,119 +428,18 @@ export class DesignationService {
     }
   }
 
-  /**
-   * Ensure a Role entity exists and is linked 1:1 with this Designation.
-   */
-  async ensureRoleForDesignation(designation: { id: number; name: string; customerId: number; description?: string | null; audience?: string | null }) {
-    let role = await this.prisma.role.findUnique({
-      where: { designationId: designation.id },
-      include: {
-        rolePermissions: { include: { permission: true } },
-      },
-    });
-
-    if (role) return role;
-
-    // Check if a role exists with matching name that has no designation attached
-    const upperName = designation.name.toUpperCase().replace(/\s+/g, '_');
-    const existingUnlinked = await this.prisma.role.findFirst({
-      where: {
-        OR: [
-          { name: { equals: designation.name, mode: 'insensitive' } },
-          { name: { equals: upperName, mode: 'insensitive' } },
-        ],
-        designationId: null,
-        name: { notIn: ['CUSTOMER', 'SUPER_ADMIN', 'COMPANY_ADMIN', 'EMPLOYEE'] },
-      },
-      include: {
-        rolePermissions: { include: { permission: true } },
-      },
-    });
-
-    if (existingUnlinked) {
-      role = await this.prisma.role.update({
-        where: { id: existingUnlinked.id },
-        data: { designationId: designation.id },
-        include: {
-          rolePermissions: { include: { permission: true } },
-        },
-      });
-      return role;
-    }
-
-    // Otherwise create a new Role for this designation
-    const newRole = await this.prisma.role.create({
-      data: {
-        name: designation.name,
-        description: designation.description || `${designation.name} role`,
-        type: RoleType.CUSTOM,
-        customerId: designation.customerId,
-        designationId: designation.id,
-      },
-    });
-
-    // Seed default permissions for this role
-    let defaultKeys: { module: string; action: string }[] = [];
-    if (ROLE_PERMISSION_DEFAULTS[upperName]) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS[upperName];
-    } else if (upperName.includes('DESIGNER')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.DESIGNER || [];
-    } else if (upperName.includes('EDITOR')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.EDITOR || [];
-    } else if (upperName.includes('SOCIAL') || upperName.includes('SMM')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER || [];
-    } else if (upperName.includes('PHOTO')) {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.PHOTOGRAPHER || [];
-    } else if (designation.audience === 'CUSTOMER') {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.CUSTOMER || [];
-    } else {
-      defaultKeys = ROLE_PERMISSION_DEFAULTS.TELECALLER || [];
-    }
-
-    for (const p of defaultKeys) {
-      let permRecord = await this.prisma.permission.findUnique({
-        where: { module_action: { module: p.module, action: p.action } },
-      });
-      if (!permRecord) {
-        permRecord = await this.prisma.permission.create({
-          data: {
-            module: p.module,
-            action: p.action,
-            description: `${p.action} permission for ${p.module}`,
-          },
-        });
-      }
-      if (permRecord) {
-        await this.prisma.rolePermission.create({
-          data: { roleId: newRole.id, permissionId: permRecord.id },
-        }).catch(() => null);
-      }
-    }
-
-    return this.prisma.role.findUnique({
-      where: { id: newRole.id },
-      include: {
-        rolePermissions: { include: { permission: true } },
-      },
-    });
+  async ensureRoleForDesignation(designation: { id: number; name: string; customerId?: number; description?: string | null; audience?: string | null }) {
+    return null;
   }
 
-  /**
-   * Fetch all roles directly derived from Employee Designations (single source of truth).
-   */
-  /**
-   * Customer mobile role, stored as a designation so the existing
-   * Roles & Permissions screen can edit it. Does not replace employee roles.
-   */
   async ensureCustomerAppDesignation(customerId: number) {
     let designation = await this.prisma.designation.findFirst({
-      where: { customerId, code: 'CUSTOMER' },
+      where: {  code: 'CUSTOMER' },
     });
 
     if (!designation) {
       designation = await this.prisma.designation.create({
         data: {
-          customerId,
           name: 'Customer',
           code: 'CUSTOMER',
           level: 0,
@@ -608,323 +456,6 @@ export class DesignationService {
       });
     }
 
-    const existingRole = await this.prisma.role.findUnique({
-      where: { designationId: designation.id },
-      include: { rolePermissions: true },
-    });
-    if (existingRole) return designation;
-
-    const role = await this.prisma.role.create({
-      data: {
-        name: 'Customer',
-        description: designation.description || 'Customer mobile app access',
-        type: RoleType.CUSTOM,
-        customerId,
-        designationId: designation.id,
-      },
-    });
-
-    for (const p of ROLE_PERMISSION_DEFAULTS.CUSTOMER || []) {
-      let permRecord = await this.prisma.permission.findUnique({
-        where: { module_action: { module: p.module, action: p.action } },
-      });
-      if (!permRecord) {
-        permRecord = await this.prisma.permission.create({
-          data: {
-            module: p.module,
-            action: p.action,
-            description: `${p.action} permission for ${p.module}`,
-          },
-        });
-      }
-      await this.prisma.rolePermission.create({
-        data: { roleId: role.id, permissionId: permRecord.id },
-      }).catch(() => null);
-    }
-
     return designation;
-  }
-
-  async getDesignationRoles(customerId: number | string) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    await this.seedInitialDesignationsIfEmpty(numCustomerId);
-    await this.ensureCustomerAppDesignation(numCustomerId);
-
-    let designations: any[];
-    try {
-      designations = await this.prisma.designation.findMany({
-        where: { customerId: numCustomerId },
-        include: {
-          department: { select: { id: true, name: true, code: true } },
-          role: {
-            include: {
-              rolePermissions: { include: { permission: true } },
-            },
-          },
-          _count: {
-            select: { employees: true, mobileCustomers: true },
-          },
-        },
-        orderBy: [{ level: 'asc' }, { name: 'asc' }],
-      });
-    } catch {
-      designations = await this.prisma.designation.findMany({
-        where: { customerId: numCustomerId },
-        include: {
-          department: { select: { id: true, name: true, code: true } },
-          role: {
-            include: {
-              rolePermissions: { include: { permission: true } },
-            },
-          },
-          _count: {
-            select: { employees: true },
-          },
-        },
-        orderBy: [{ level: 'asc' }, { name: 'asc' }],
-      });
-    }
-
-    const result = [];
-    for (const d of designations) {
-      let role = d.role;
-      if (!role) {
-        role = await this.ensureRoleForDesignation(d);
-      }
-      const perms = role?.rolePermissions || [];
-
-      result.push({
-        id: String(d.id),
-        roleId: role ? String(role.id) : String(d.id),
-        designationId: d.id,
-        name: d.name,
-        code: d.code,
-        audience:
-          d.audience === 'CUSTOMER' || String(d.code || '').toUpperCase() === 'CUSTOMER'
-            ? 'CUSTOMER'
-            : d.audience || 'EMPLOYEE',
-        departmentName: d.department?.name || 'General',
-        department: d.department,
-        description: d.description || `${d.name} role`,
-        permissionsCount: perms.length,
-        usersCount: d.audience === 'CUSTOMER' || String(d.code || '').toUpperCase() === 'CUSTOMER'
-          ? (d._count as any).mobileCustomers ?? 0
-          : d._count.employees,
-        isSystem: false,
-        isActive: d.isActive,
-        crmMobileAccess: Boolean(d.crmMobileAccess),
-        permissionsUpdatedAt: role?.permissionsUpdatedAt || d.updatedAt,
-        permissions: perms.map((rp) => ({
-          module: rp.permission.module,
-          action: rp.permission.action,
-          key: toPermissionKey(rp.permission.module, rp.permission.action),
-          description: rp.permission.description,
-        })),
-      });
-    }
-
-    return result;
-  }
-
-  /**
-   * Get permissions for a specific Designation.
-   */
-  async getDesignationPermissions(customerId: number | string, designationId: number) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const designation = await this.prisma.designation.findFirst({
-      where: { id: designationId, customerId: numCustomerId },
-      include: {
-        role: {
-          include: {
-            rolePermissions: { include: { permission: true } },
-          },
-        },
-      },
-    });
-
-    if (!designation) {
-      throw new NotFoundException(`Designation #${designationId} not found`);
-    }
-
-    let role = designation.role;
-    if (!role) {
-      role = await this.ensureRoleForDesignation(designation);
-    }
-
-    const perms = role?.rolePermissions || [];
-    return {
-      roleId: role?.id,
-      designationId: designation.id,
-      designationName: designation.name,
-      crmMobileAccess: Boolean(designation.crmMobileAccess),
-      permissionsCount: perms.length,
-      permissionsUpdatedAt: role?.permissionsUpdatedAt,
-      permissions: perms.map((rp) => ({
-        module: rp.permission.module,
-        action: rp.permission.action,
-        key: toPermissionKey(rp.permission.module, rp.permission.action),
-        description: rp.permission.description,
-      })),
-    };
-  }
-
-  /**
-   * Save permissions for a specific Designation, updating the linked Role
-   * and emitting real-time notification to all active employees assigned to this designation.
-   */
-  async saveDesignationPermissions(
-    customerId: number | string,
-    designationId: number,
-    permissions: (string | { module?: string; action?: string; key?: string })[],
-    adminUser?: any,
-    crmMobileAccess?: boolean,
-  ) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const designation = await this.prisma.designation.findFirst({
-      where: { id: designationId, customerId: numCustomerId },
-    });
-
-    if (!designation) {
-      throw new NotFoundException(`Designation #${designationId} not found`);
-    }
-
-    const role = await this.ensureRoleForDesignation(designation);
-    if (!role) {
-      throw new BadRequestException(`Could not resolve role for designation #${designationId}`);
-    }
-
-    // Normalize incoming permissions
-    const normalizedList: { module: string; action: string }[] = [];
-    const seen = new Set<string>();
-
-    for (const item of permissions || []) {
-      let m = '';
-      let a = '';
-      if (typeof item === 'string') {
-        const parsed = fromPermissionKey(item);
-        m = parsed.module;
-        a = parsed.action;
-      } else if (item && typeof item === 'object') {
-        if (item.key) {
-          const parsed = fromPermissionKey(item.key);
-          m = parsed.module;
-          a = parsed.action;
-        } else if (item.module && item.action) {
-          m = item.module.trim().toUpperCase();
-          a = item.action.trim().toUpperCase();
-        }
-      }
-
-      if (m && a) {
-        const uniqueKey = `${m}:${a}`;
-        if (!seen.has(uniqueKey)) {
-          seen.add(uniqueKey);
-          normalizedList.push({ module: m, action: a });
-        }
-      }
-    }
-
-    // Delete existing role permissions
-    await this.prisma.rolePermission.deleteMany({
-      where: { roleId: role.id },
-    });
-
-    // Ensure permissions exist and link
-    for (const p of normalizedList) {
-      let permRecord = await this.prisma.permission.findUnique({
-        where: { module_action: { module: p.module, action: p.action } },
-      });
-      if (!permRecord) {
-        const standardMatch = STANDARD_PERMISSIONS.find(
-          (sp) => sp.module === p.module && sp.action === p.action,
-        );
-        permRecord = await this.prisma.permission.create({
-          data: {
-            module: p.module,
-            action: p.action,
-            description: standardMatch?.description || `${p.action} permission for ${p.module}`,
-          },
-        });
-      }
-      if (permRecord) {
-        await this.prisma.rolePermission.create({
-          data: {
-            roleId: role.id,
-            permissionId: permRecord.id,
-          },
-        });
-      }
-    }
-
-    // Update permissionsUpdatedAt timestamp on Role
-    const now = new Date();
-    await this.prisma.role.update({
-      where: { id: role.id },
-      data: { permissionsUpdatedAt: now },
-    });
-
-    // If crmMobileAccess is explicitly passed, update Designation
-    if (crmMobileAccess !== undefined) {
-      await this.prisma.designation.update({
-        where: { id: designationId },
-        data: { crmMobileAccess: Boolean(crmMobileAccess) },
-      });
-    }
-
-    // Find all active employees assigned to this designation
-    const activeEmployees = await this.prisma.employee.findMany({
-      where: { designationId, status: 'ACTIVE' },
-      select: { id: true },
-    });
-
-    const affectedEmployeeIds = activeEmployees.map((e) => e.id);
-
-    // Update permissionsUpdatedAt on affected employees
-    if (affectedEmployeeIds.length > 0) {
-      await this.prisma.employee.updateMany({
-        where: { id: { in: affectedEmployeeIds } },
-        data: { permissionsUpdatedAt: now },
-      });
-    }
-
-    // Emit real-time notification to affected employees via WebSocket
-    this.planScheduleGateway.notifyDesignationPermissionsUpdated(designationId, affectedEmployeeIds);
-
-    this.logger.log(
-      `[RBAC_REALTIME] Designation #${designationId} (${designation.name}) updated with ${normalizedList.length} permissions. Notified ${affectedEmployeeIds.length} employees.`,
-    );
-
-    // Audit Log recording
-    try {
-      if (this.prisma?.auditLog?.create) {
-        await this.prisma.auditLog.create({
-          data: {
-            customerId: numCustomerId,
-            userId: adminUser?.id || adminUser?.userId || null,
-            userName: adminUser?.firstName
-              ? `${adminUser.firstName} ${adminUser.lastName || ''}`.trim()
-              : adminUser?.email || 'Admin',
-            userRole: adminUser?.role || 'ADMIN',
-            source: 'ADMIN_PANEL',
-            action: 'UPDATE',
-            module: 'ROLES_PERMISSIONS',
-            description: `Updated role permissions for Designation "${designation.name}" (${normalizedList.length} permissions)`,
-            entityType: 'DesignationRolePermission',
-            entityId: String(designation.id),
-            details: {
-              designationId: designation.id,
-              designationName: designation.name,
-              roleId: role.id,
-              totalAssigned: normalizedList.length,
-              affectedEmployeesCount: affectedEmployeeIds.length,
-            },
-          },
-        });
-      }
-    } catch (auditErr) {
-      this.logger.warn(`Failed to log audit for saveDesignationPermissions: ${auditErr}`);
-    }
-
-    return this.getDesignationPermissions(numCustomerId, designationId);
   }
 }

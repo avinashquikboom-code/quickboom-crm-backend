@@ -33,63 +33,8 @@ export class AiCreditService {
    * NEVER falls back to user.id as customerId.
    */
   async resolveCustomerId(user: any, headers?: Record<string, any>): Promise<number> {
-    const rawHeader = headers?.['x-customer-id'] || headers?.['customer-id'];
-    const headerId = rawHeader ? parseInt(String(rawHeader), 10) : null;
-
-    if (headerId && !isNaN(headerId) && headerId > 0) {
-      const customer = await this.prisma.customer.findUnique({
-        where: { id: headerId },
-        select: { id: true },
-      });
-      if (customer) {
-        return customer.id;
-      }
-    }
-
-    const candidateId =
-      user?.customerId ??
-      user?.customer?.id ??
-      user?.employee?.customerId;
-
-    if (candidateId) {
-      const parsed = parseInt(String(candidateId), 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        return parsed;
-      }
-    }
-
-    if (user?.id) {
-      const linkedCustomer = await this.prisma.customer.findFirst({
-        where: {
-          OR: [
-            { users: { some: { id: user.id } } },
-            { employees: { some: { userId: user.id } } },
-            ...(user.email ? [{ email: user.email }] : []),
-          ],
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-
-      if (linkedCustomer) {
-        return linkedCustomer.id;
-      }
-    }
-
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.roles?.includes('SUPER_ADMIN');
-    const isAdmin = isSuperAdmin || user?.role === 'ADMIN' || user?.roles?.includes('ADMIN') || user?.role === 'TENANT_ADMIN';
-    if (isAdmin) {
-      const firstCustomer = await this.prisma.customer.findFirst({
-        where: { deletedAt: null, isActive: true },
-        orderBy: { id: 'asc' },
-        select: { id: true },
-      });
-      if (firstCustomer) {
-        return firstCustomer.id;
-      }
-    }
-
-    throw new ForbiddenException('Valid customer authentication session is required');
+if (!user?.id) throw new ForbiddenException('Authentication required');
+return undefined; // Shared organization wallet; legacy tenant headers are ignored.
   }
 
   /**
@@ -97,13 +42,13 @@ export class AiCreditService {
    */
   async getOrCreateWallet(customerId: number) {
     let wallet = await this.prisma.aiCreditWallet.findUnique({
-      where: { customerId },
+      where: { singletonKey: "GLOBAL" },
     });
 
     if (!wallet) {
       wallet = await this.prisma.aiCreditWallet.create({
         data: {
-          customerId,
+          
           balance: 20, // 20 welcome credits for new customers
           totalEarned: 20,
           totalSpent: 0,
@@ -113,7 +58,7 @@ export class AiCreditService {
       await this.prisma.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          customerId,
+          
           amount: 20,
           balanceAfter: 20,
           type: 'GRANT',
@@ -141,7 +86,7 @@ export class AiCreditService {
    */
   async getTransactions(customerId: number) {
     return this.prisma.aiCreditTransaction.findMany({
-      where: { customerId },
+      where: {  },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
@@ -189,7 +134,7 @@ export class AiCreditService {
    * Deducts credits atomically and idempotently ONLY after generation completes successfully.
    */
   async deductCreditsOnSuccess(params: {
-    customerId: number;
+    customerId?: number;
     serviceCode: string;
     generationDbId: number;
     generationCode: string;
@@ -201,7 +146,7 @@ export class AiCreditService {
       // 1. Idempotency check: Has this generation already had credits deducted?
       const existingTx = await tx.aiCreditTransaction.findFirst({
         where: {
-          customerId,
+          
           generationId: generationDbId,
           type: { in: ['CONSUMED', 'USAGE'] },
         },
@@ -211,7 +156,7 @@ export class AiCreditService {
         this.logger.warn(
           `[AI_CREDIT_IDEMPOTENT] Generation #${generationDbId} (${generationCode}) already deducted credits. Skipping duplicate deduction.`,
         );
-        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
+        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { singletonKey: "GLOBAL" } });
         return {
           creditsSpent: Math.abs(existingTx.amount),
           newBalance: currentWallet?.balance ?? existingTx.balanceAfter,
@@ -224,7 +169,7 @@ export class AiCreditService {
         where: { id: generationDbId },
       });
       if (existingGen && existingGen.creditsSpent > 0) {
-        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
+        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { singletonKey: "GLOBAL" } });
         return {
           creditsSpent: existingGen.creditsSpent,
           newBalance: currentWallet?.balance ?? 0,
@@ -240,11 +185,11 @@ export class AiCreditService {
       }
 
       // 3. Get customer wallet and verify balance inside the atomic transaction
-      let wallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
+      let wallet = await tx.aiCreditWallet.findUnique({ where: { singletonKey: "GLOBAL" } });
       if (!wallet) {
         wallet = await tx.aiCreditWallet.create({
           data: {
-            customerId,
+            
             balance: 20,
             totalEarned: 20,
             totalSpent: 0,
@@ -274,7 +219,7 @@ export class AiCreditService {
       const creditTx = await tx.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          customerId,
+          
           amount: -cost,
           balanceAfter,
           type: 'CONSUMED',
@@ -336,7 +281,7 @@ export class AiCreditService {
     await this.prisma.aiCreditTransaction.create({
       data: {
         walletId: wallet.id,
-        customerId,
+        
         amount: -requiredCredits,
         balanceAfter: newBalance,
         type: 'CONSUMED',
@@ -371,7 +316,7 @@ export class AiCreditService {
     await this.prisma.aiCreditTransaction.create({
       data: {
         walletId: wallet.id,
-        customerId,
+        
         amount,
         balanceAfter: newBalance,
         type: 'REFUND',
@@ -417,7 +362,7 @@ export class AiCreditService {
           currency: 'INR',
           receipt,
           notes: {
-            customerId: String(customerId),
+            
             creditsCount: String(dto.creditsCount),
             type: 'AI_CREDITS_PURCHASE',
           },
@@ -482,7 +427,7 @@ export class AiCreditService {
     const tx = await this.prisma.aiCreditTransaction.create({
       data: {
         walletId: wallet.id,
-        customerId,
+        
         amount: dto.creditsCount,
         balanceAfter: newBalance,
         type: 'PURCHASE',
@@ -550,11 +495,7 @@ export class AiCreditService {
     const [items, total] = await Promise.all([
       this.prisma.aiCreditTransaction.findMany({
         where,
-        include: {
-          customer: {
-            select: { id: true, name: true, email: true, phone: true, companyName: true },
-          },
-        },
+        
         orderBy: { id: 'desc' },
         take: query?.limit ? parseInt(query.limit, 10) : 50,
         skip: query?.offset ? parseInt(query.offset, 10) : 0,
@@ -569,17 +510,11 @@ export class AiCreditService {
    * Retrieves customer wallet and ledger transactions for Admin inspection
    */
   async getCustomerWalletAdmin(customerId: number) {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-      select: { id: true, name: true, email: true, phone: true, companyName: true },
-    });
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found`);
-    }
+    
 
     const wallet = await this.getOrCreateWallet(customerId);
     const rawTransactions = await this.prisma.aiCreditTransaction.findMany({
-      where: { customerId },
+      where: {  },
       orderBy: { id: 'desc' },
       take: 100,
     });
@@ -605,7 +540,7 @@ export class AiCreditService {
       return {
         id: tx.id,
         walletId: tx.walletId,
-        customerId: tx.customerId,
+        
         amount: tx.amount,
         balanceBefore,
         balanceAfter: tx.balanceAfter,
@@ -620,7 +555,7 @@ export class AiCreditService {
     });
 
     return {
-      customer,
+      
       wallet,
       balance: wallet.balance,
       transactions,
@@ -640,25 +575,20 @@ export class AiCreditService {
       throw new BadRequestException('Reason is required for manual credit adjustment');
     }
 
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-    });
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found`);
-    }
+    
 
     const adminId = adminUser?.id ?? adminUser?.userId ?? null;
     const adminName = adminUser?.name || adminUser?.email || `Admin #${adminId || 'System'}`;
 
     return this.prisma.$transaction(async (tx) => {
       let wallet = await tx.aiCreditWallet.findUnique({
-        where: { customerId },
+        where: { singletonKey: "GLOBAL" },
       });
 
       if (!wallet) {
         wallet = await tx.aiCreditWallet.create({
           data: {
-            customerId,
+            
             balance: 20,
             totalEarned: 20,
             totalSpent: 0,
@@ -689,7 +619,7 @@ export class AiCreditService {
       const transaction = await tx.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          customerId,
+          
           amount,
           balanceAfter,
           type: 'CREDIT_GRANT',
@@ -712,7 +642,7 @@ export class AiCreditService {
         transaction: {
           id: transaction.id,
           walletId: transaction.walletId,
-          customerId: transaction.customerId,
+          
           amount: transaction.amount,
           balanceBefore,
           balanceAfter,
@@ -738,25 +668,20 @@ export class AiCreditService {
       throw new BadRequestException('Reason is required for manual credit adjustment');
     }
 
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-    });
-    if (!customer) {
-      throw new NotFoundException(`Customer #${customerId} not found`);
-    }
+    
 
     const adminId = adminUser?.id ?? adminUser?.userId ?? null;
     const adminName = adminUser?.name || adminUser?.email || `Admin #${adminId || 'System'}`;
 
     return this.prisma.$transaction(async (tx) => {
       let wallet = await tx.aiCreditWallet.findUnique({
-        where: { customerId },
+        where: { singletonKey: "GLOBAL" },
       });
 
       if (!wallet) {
         wallet = await tx.aiCreditWallet.create({
           data: {
-            customerId,
+            
             balance: 20,
             totalEarned: 20,
             totalSpent: 0,
@@ -794,7 +719,7 @@ export class AiCreditService {
       const transaction = await tx.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          customerId,
+          
           amount: -amount,
           balanceAfter,
           type: 'ADMIN_ADJUSTMENT',
@@ -817,7 +742,7 @@ export class AiCreditService {
         transaction: {
           id: transaction.id,
           walletId: transaction.walletId,
-          customerId: transaction.customerId,
+          
           amount: transaction.amount,
           balanceBefore,
           balanceAfter,

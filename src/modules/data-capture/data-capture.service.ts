@@ -1,22 +1,20 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ConflictException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LeadService } from '../lead/lead.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   ExtractPlacesDto,
-  ImportToLeadsDto,
   CreateDataCaptureDto,
   UpdateDataCaptureDto,
   DataCaptureQueryDto,
   RejectDataCaptureDto,
   BulkActionDto,
-  CreateLeadFromPlaceDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
@@ -38,6 +36,7 @@ export class DataCaptureService implements OnModuleInit {
     'places.id',
     'places.displayName',
     'places.formattedAddress',
+    'places.addressComponents',
     'places.location',
     'places.primaryType',
     'places.primaryTypeDisplayName',
@@ -128,7 +127,7 @@ export class DataCaptureService implements OnModuleInit {
     try {
       const emp = await this.prisma.employee.findFirst({
         where: {
-          ...(customerId > 0 ? { customerId } : {}),
+          ...(customerId > 0 ? {  } : {}),
           status: 'ACTIVE',
           OR: [
             { employeeCode: { equals: strVal, mode: 'insensitive' } },
@@ -141,7 +140,7 @@ export class DataCaptureService implements OnModuleInit {
 
       return await this.prisma.employee.findFirst({
         where: {
-          ...(customerId > 0 ? { customerId } : {}),
+          ...(customerId > 0 ? {  } : {}),
           OR: [
             { employeeCode: { equals: strVal, mode: 'insensitive' } },
             ...(!isNaN(numVal) && numVal > 0 ? [{ id: numVal }, { userId: numVal }] : []),
@@ -450,134 +449,14 @@ export class DataCaptureService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
     @Optional()
-    @Inject(forwardRef(() => LeadService))
-    private readonly leadService?: LeadService,
+    private readonly notificationService?: NotificationService,
   ) {}
 
   async onModuleInit() {
-    try {
-      await this.repairBadLeadRecords();
-    } catch (err: any) {
-      this.logger.warn(`Initial repair of bad lead records skipped: ${err?.message || err}`);
-    }
-    try {
+try {
       await this.backfillHistoricalPlacePhotos();
     } catch (err: any) {
       this.logger.warn(`Initial backfill of place photos skipped: ${err?.message || err}`);
-    }
-  }
-
-  /**
-   * Safely repairs existing CRM Leads created with generic "Business Lead" fallbacks
-   * by cross-referencing their captureRequestId, googlePlaceId, or sourceRecordId
-   * against the original DataCapturePlace records.
-   */
-  async repairBadLeadRecords(customerId?: number): Promise<{ repairedCount: number }> {
-    try {
-      const where: any = {
-        deletedAt: null,
-        OR: [
-          { title: 'Business Lead' },
-          { companyName: 'Business Lead' },
-          { title: 'Direct Lead' },
-          { companyName: 'Direct Lead' },
-          { title: 'Unnamed Business' },
-          { companyName: 'Unnamed Business' },
-          { AND: [{ firstName: 'Business' }, { lastName: 'Lead' }] },
-        ],
-      };
-      if (customerId && !isNaN(customerId) && customerId > 0) {
-        where.customerId = customerId;
-      }
-
-      const badLeads = await this.prisma.lead.findMany({ where, take: 50 });
-      let repairedCount = 0;
-
-      for (const lead of badLeads) {
-        let matchingPlace: any = null;
-        // 1. Match by googlePlaceId
-        if (lead.googlePlaceId && !lead.googlePlaceId.startsWith('custom_')) {
-          matchingPlace = await this.prisma.dataCapturePlace.findFirst({
-            where: { customerId: lead.customerId, googlePlaceId: lead.googlePlaceId, deletedAt: null },
-          });
-        }
-        // 2. Match by sourceRecordId
-        if (!matchingPlace && lead.sourceRecordId && !lead.sourceRecordId.startsWith('custom_')) {
-          const numSourceId = Number(lead.sourceRecordId);
-          matchingPlace = await this.prisma.dataCapturePlace.findFirst({
-            where: {
-              customerId: lead.customerId,
-              deletedAt: null,
-              OR: [
-                ...(!isNaN(numSourceId) && numSourceId > 0 ? [{ id: numSourceId }] : []),
-                { googlePlaceId: lead.sourceRecordId },
-                { sourceRecordId: lead.sourceRecordId },
-              ],
-            },
-          });
-        }
-        // 3. Match by parsing jobId from captureRequestId (e.g. job-60abe77e_custom_0 -> job-60abe77e)
-        if (!matchingPlace && lead.captureRequestId) {
-          const jobIdMatch = lead.captureRequestId.match(/^(job-[a-zA-Z0-9]+)/);
-          if (jobIdMatch) {
-            const parsedJobId = jobIdMatch[1];
-            const idxMatch = lead.captureRequestId.match(/_custom_(\d+)/);
-            const targetIdx = idxMatch ? parseInt(idxMatch[1], 10) : 0;
-            const jobPlaces = await this.prisma.dataCapturePlace.findMany({
-              where: { customerId: lead.customerId, jobId: parsedJobId, deletedAt: null },
-              orderBy: { id: 'asc' },
-            });
-            if (jobPlaces.length > 0) {
-              matchingPlace = jobPlaces[targetIdx] || jobPlaces[0];
-            }
-          }
-        }
-
-        if (matchingPlace && matchingPlace.businessName && matchingPlace.businessName !== 'Business Lead' && matchingPlace.businessName !== 'Direct Lead' && matchingPlace.businessName !== 'Unnamed Business') {
-          const repairedName = matchingPlace.businessName.trim();
-          const parsedAddr = this.parseAddressComponents(matchingPlace.address);
-          await this.prisma.lead.update({
-            where: { id: lead.id },
-            data: {
-              title: repairedName,
-              companyName: repairedName,
-              firstName: (lead.firstName === 'Business' && lead.lastName === 'Lead') || lead.firstName === 'Business' ? '' : lead.firstName,
-              lastName: (lead.firstName === 'Business' && lead.lastName === 'Lead') || lead.lastName === 'Lead' ? '' : lead.lastName,
-              googlePlaceId: (lead.googlePlaceId && !lead.googlePlaceId.startsWith('custom_')) ? lead.googlePlaceId : (matchingPlace.googlePlaceId || undefined),
-              sourceRecordId: lead.sourceRecordId || String(matchingPlace.id),
-              phone: lead.phone || matchingPlace.phone || undefined,
-              email: lead.email || matchingPlace.email || undefined,
-              website: lead.website || matchingPlace.website || undefined,
-              address: lead.address || matchingPlace.address || undefined,
-              city: lead.city || parsedAddr.city || undefined,
-              state: lead.state || parsedAddr.state || undefined,
-              pincode: lead.pincode || parsedAddr.pincode || undefined,
-              category: (lead.category === 'General' || !lead.category) && matchingPlace.category ? matchingPlace.category : lead.category,
-              rating: lead.rating ?? matchingPlace.rating,
-              reviewCount: lead.reviewCount ?? matchingPlace.reviewCount,
-              latitude: lead.latitude ?? matchingPlace.latitude,
-              longitude: lead.longitude ?? matchingPlace.longitude,
-              socialMedia: lead.socialMedia || matchingPlace.socialMedia || undefined,
-            },
-          });
-
-          // Update matchingPlace as imported
-          await this.prisma.dataCapturePlace.update({
-            where: { id: matchingPlace.id },
-            data: { isImported: true, importedLeadId: lead.id, status: 'LEAD_CREATED', sourceRecordId: String(matchingPlace.id) },
-          }).catch(() => {});
-          repairedCount++;
-        }
-      }
-
-      if (repairedCount > 0) {
-        this.logger.log(`[DATA CAPTURE REPAIR] Successfully repaired ${repairedCount} leads with real business data.`);
-      }
-
-      return { repairedCount };
-    } catch (err: any) {
-      this.logger.warn(`repairBadLeadRecords failed: ${err?.message || err}`);
-      return { repairedCount: 0 };
     }
   }
 
@@ -603,34 +482,9 @@ export class DataCaptureService implements OnModuleInit {
     const user = typeof userOrUserId === 'object' && userOrUserId !== null ? userOrUserId : undefined;
     const directUserId = typeof userOrUserId === 'number' || typeof userOrUserId === 'string' ? userOrUserId : user?.id;
 
-    // 1. Resolve Effective Customer ID (Tenant Isolation & SuperAdmin Fallback)
-    let effectiveCustomerId: number | undefined;
-    const directCustomerNum = Number(customerId);
-    if (!isNaN(directCustomerNum) && directCustomerNum > 0) {
-      effectiveCustomerId = directCustomerNum;
-    } else if (dto.customerId && !isNaN(Number(dto.customerId)) && Number(dto.customerId) > 0) {
-      effectiveCustomerId = Number(dto.customerId);
-    } else if (dto.tenantId && !isNaN(Number(dto.tenantId)) && Number(dto.tenantId) > 0) {
-      effectiveCustomerId = Number(dto.tenantId);
-    } else if (dto.companyId && !isNaN(Number(dto.companyId)) && Number(dto.companyId) > 0) {
-      effectiveCustomerId = Number(dto.companyId);
-    } else if (user?.customerId && !isNaN(Number(user.customerId)) && Number(user.customerId) > 0) {
-      effectiveCustomerId = Number(user.customerId);
-    }
-
-    if (!effectiveCustomerId || effectiveCustomerId <= 0) {
-      const activeCustomer = await this.prisma.customer.findFirst({
-        where: { deletedAt: null, isActive: true },
-        select: { id: true },
-        orderBy: { id: 'asc' },
-      });
-      effectiveCustomerId = activeCustomer ? activeCustomer.id : 1;
-    }
-
-    const effectiveUserId =
-      Number(directUserId) && !isNaN(Number(directUserId)) && Number(directUserId) > 0
-        ? Number(directUserId)
-        : 1;
+    const effectiveCustomerId = undefined;
+    const effectiveUserId = Number(directUserId);
+    if (!Number.isInteger(effectiveUserId) || effectiveUserId <= 0) throw new UnauthorizedException('Authentication required');
 
     // 2. Resolve and Normalize Extraction Input (keyword, location, query, category, city)
     let keyword = (dto.keyword || dto.category || dto.search || '').trim();
@@ -696,6 +550,8 @@ export class DataCaptureService implements OnModuleInit {
     let tProcessTotal = 0;
     let allPlaces: CapturedPlace[] = [];
     let googleApiRequests = 0;
+    let foundResults = 0;
+    let captureStatus = 'COMPLETED';
     let nextPageToken: string | undefined = undefined;
 
     if (mapsConfig.isEnabled && apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE') {
@@ -739,6 +595,7 @@ export class DataCaptureService implements OnModuleInit {
 
           const tPStart = Date.now();
           const rawPlaces: any[] = response.data?.places || [];
+          foundResults += rawPlaces.length;
           nextPageToken = response.data?.nextPageToken;
 
           for (const p of rawPlaces) {
@@ -771,7 +628,7 @@ export class DataCaptureService implements OnModuleInit {
               source: 'GOOGLE_PLACES',
               status: 'CAPTURED',
               capturedAt: new Date(),
-              customerId: String(effectiveCustomerId),
+
               capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
               rawData: p || {},
@@ -796,7 +653,16 @@ export class DataCaptureService implements OnModuleInit {
           `[Google Places API] Live search failed for "${textQuery}": ${err.message}`,
         );
 
+        if (allPlaces.length === 0) {
+          await this.prisma.dataCaptureJob.create({ data: {
+            jobId, userId: effectiveUserId, keyword, location,
+            requestedResults: maxAllowed, capturedResults: 0,
+            googleApiRequests, foundResults, captureStatus: 'FAILED',
+            createdFrom: resolveCreatedFrom(req, user || userOrUserId, dto.createdFrom),
+          } });
+        }
         if (allPlaces.length > 0) {
+          captureStatus = 'PARTIALLY_COMPLETED';
           this.logger.log(`[Google Places API] Returning ${allPlaces.length} places captured before error`);
         } else if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
           throw new HttpException(
@@ -813,30 +679,11 @@ export class DataCaptureService implements OnModuleInit {
             `Google Places search error: ${err.response?.data?.error?.message || err.message}`,
           );
         } else {
-          allPlaces = this.generateSandboxPlaces(
-            keyword,
-            location,
-            maxAllowed,
-            String(effectiveCustomerId),
-            String(effectiveUserId),
-            jobId,
-          );
-          googleApiRequests = 1;
+          throw new HttpException('Google Places search failed. Please try again later.', HttpStatus.BAD_GATEWAY);
         }
       }
     } else {
-      this.logger.log(
-        `[Google Places API] No production API key configured. Generating realistic verified sandbox places for "${textQuery}"`,
-      );
-      allPlaces = this.generateSandboxPlaces(
-        keyword,
-        location,
-        maxAllowed,
-        String(effectiveCustomerId),
-        String(effectiveUserId),
-        jobId,
-      );
-      googleApiRequests = 1;
+      throw new HttpException('Google Places is not configured or enabled. Configure Google Maps in Integration Settings.', HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     // 5. Duplicate Detection Before Insertion
@@ -848,30 +695,12 @@ export class DataCaptureService implements OnModuleInit {
       .map((p) => p.googlePlaceId)
       .filter((id): id is string => Boolean(id));
 
-    if (candidatePlaceIds.length > 0) {
-      const existingLeads = await this.prisma.lead.findMany({
-        where: {
-          customerId: effectiveCustomerId,
-          deletedAt: null,
-          OR: [
-            { googlePlaceId: { in: candidatePlaceIds } },
-            { sourceRecordId: { in: candidatePlaceIds } },
-          ],
-        },
-        select: { googlePlaceId: true, sourceRecordId: true },
-      });
-      for (const el of existingLeads) {
-        if (el.googlePlaceId) existingPlaceIds.add(el.googlePlaceId);
-        if (el.sourceRecordId) existingPlaceIds.add(el.sourceRecordId);
-      }
-    }
-
     const resolvedCreatedFrom = resolveCreatedFrom(req, user || userOrUserId, dto.createdFrom);
 
     const placesToCreate = allPlaces.map((p) => {
       const isDuplicate = Boolean(p.googlePlaceId && existingPlaceIds.has(p.googlePlaceId));
       return {
-        customerId: effectiveCustomerId,
+
         googlePlaceId: p.googlePlaceId,
         sourceRecordId: p.googlePlaceId || undefined,
         businessName: p.businessName,
@@ -904,13 +733,15 @@ export class DataCaptureService implements OnModuleInit {
     const createdJob = await this.prisma.dataCaptureJob.create({
       data: {
         jobId,
-        customerId: effectiveCustomerId,
+
         userId: effectiveUserId,
         createdFrom: resolvedCreatedFrom,
         keyword,
         location,
         requestedResults: maxAllowed,
         capturedResults: allPlaces.length,
+        captureStatus,
+        foundResults,
         googleApiRequests,
         places: {
           create: placesToCreate,
@@ -933,7 +764,7 @@ export class DataCaptureService implements OnModuleInit {
         const emp = await this.prisma.employee.findFirst({
           where: {
             userId: effectiveUserId,
-            customerId: effectiveCustomerId,
+
             status: 'ACTIVE',
           },
           select: { id: true },
@@ -950,7 +781,7 @@ export class DataCaptureService implements OnModuleInit {
         if (clientRequestId) {
           const existingSearch = await this.prisma.dataCaptureSearch.findFirst({
             where: {
-              customerId: effectiveCustomerId,
+
               employeeId,
               requestId: clientRequestId,
             },
@@ -965,7 +796,7 @@ export class DataCaptureService implements OnModuleInit {
           const searchQuery = `${keyword} in ${location}`;
           await this.prisma.dataCaptureSearch.create({
             data: {
-              customerId: effectiveCustomerId,
+
               employeeId,
               userId: effectiveUserId,
               searchQuery,
@@ -1006,7 +837,7 @@ export class DataCaptureService implements OnModuleInit {
         status: p.status || 'CAPTURED',
         isImported: p.isImported,
         capturedAt: p.createdAt,
-        customerId: String(p.customerId),
+
         capturedBy: String(effectiveUserId),
         extractionJobId: p.jobId || undefined,
         notes: p.notes || undefined,
@@ -1081,34 +912,12 @@ export class DataCaptureService implements OnModuleInit {
     user?: any,
   ) {
     try {
-      const isSuperAdmin = isUserSuperAdmin(user);
-      // SUPER_ADMIN may optionally pass an explicit target customerId via query param / header
-      // (CustomerGuard resolves that into request.customerId; stays undefined for platform-wide view)
-      const numCustomerId = Number(customerId);
-      const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
-
       const page = Math.max(Number(query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
       const skip = (page - 1) * limit;
 
-      // Build tenant-scoped where clause with isolated AND conditions:
-      // - SUPER_ADMIN, no explicit customerId => see ALL records (no customer filter)
-      // - SUPER_ADMIN, explicit customerId   => scoped to that customer
-      // - Normal user                        => strictly scoped to their customerId
+      // Records are shared within the single organization. Employee search counts stay separate.
       const andConditions: any[] = [{ deletedAt: null }];
-
-      if (isSuperAdmin) {
-        if (hasExplicitCustomer) {
-          andConditions.push({ customerId: numCustomerId });
-        }
-        // else: SUPER_ADMIN — no customerId filter, full platform view
-      } else {
-        const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : Number(user?.customerId);
-        if (isNaN(effectiveCustomerId) || effectiveCustomerId <= 0) {
-          throw new UnauthorizedException('User is not associated with any customer account');
-        }
-        andConditions.push({ customerId: effectiveCustomerId });
-      }
 
       if (query.search && query.search.trim()) {
         const search = query.search.trim();
@@ -1218,11 +1027,12 @@ export class DataCaptureService implements OnModuleInit {
           status: p.status || 'CAPTURED',
           notes: p.notes || undefined,
           rawData: p.rawData || undefined,
-          isImported: p.isImported,
+          isImported: Boolean(p.importedLeadId) || p.isImported,
           importedLeadId: p.importedLeadId || undefined,
+
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
-          customerId: String(p.customerId),
+
           extractionJobId: p.jobId || undefined,
           googlePhotos: normGP.length > 0 ? normGP : [],
           photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
@@ -1269,7 +1079,7 @@ export class DataCaptureService implements OnModuleInit {
       deletedAt: null,
     };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const place = await this.prisma.dataCapturePlace.findFirst({
@@ -1284,7 +1094,7 @@ export class DataCaptureService implements OnModuleInit {
     }
 
     // Run duplicate detection against CRM entities (Lead, Company, Contact)
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
+    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || undefined, place);
 
     const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
       (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos,
@@ -1320,11 +1130,12 @@ export class DataCaptureService implements OnModuleInit {
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
-      isImported: place.isImported,
+      isImported: Boolean(place.importedLeadId) || place.isImported,
       importedLeadId: place.importedLeadId || undefined,
+
       capturedAt: place.createdAt,
       updatedAt: place.updatedAt,
-      customerId: String(place.customerId),
+
       extractionJobId: place.jobId || undefined,
       duplicateMatches,
       googlePhotos: placeGP.length > 0 ? placeGP : [],
@@ -1342,13 +1153,13 @@ export class DataCaptureService implements OnModuleInit {
     dto: CreateDataCaptureDto,
     req?: any,
   ): Promise<CapturedPlace> {
-    let numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      const defaultCustomer = await this.prisma.customer.findFirst({ where: { isActive: true } });
-      numCustomerId = defaultCustomer?.id || 1;
+    if (String(dto.status || '').trim().toUpperCase() === 'LEAD_CREATED') {
+      throw new BadRequestException('Use Lead import to create and link a Lead');
     }
+    let numCustomerId = Number(customerId);
 
-    const resolvedCreatedFrom = resolveCreatedFrom(req, { id: userId, customerId: numCustomerId }, (dto as any)?.createdFrom);
+
+    const resolvedCreatedFrom = resolveCreatedFrom(req, { id: userId }, (dto as any)?.createdFrom);
 
     const resolvedPhone = dto.phone?.trim()
       || dto.mobile?.trim()
@@ -1376,7 +1187,7 @@ export class DataCaptureService implements OnModuleInit {
 
     const place = await this.prisma.dataCapturePlace.create({
       data: {
-        customerId: numCustomerId,
+
         businessName: dto.businessName.trim(),
         category: dto.category?.trim(),
         address: dto.address?.trim(),
@@ -1423,11 +1234,12 @@ export class DataCaptureService implements OnModuleInit {
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: place.rawData || undefined,
-      isImported: place.isImported,
+      isImported: Boolean(place.importedLeadId) || place.isImported,
       importedLeadId: place.importedLeadId || undefined,
+
       capturedAt: place.createdAt,
       updatedAt: place.updatedAt,
-      customerId: String(place.customerId),
+
       duplicateMatches,
       googlePhotos: placeGP.length > 0 ? placeGP : [],
       photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
@@ -1448,7 +1260,7 @@ export class DataCaptureService implements OnModuleInit {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const existing = await this.prisma.dataCapturePlace.findFirst({
@@ -1459,14 +1271,25 @@ export class DataCaptureService implements OnModuleInit {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
+    const currentStatus = String(existing.status || 'CAPTURED').trim().toUpperCase();
+    const nextStatus = dto.status?.trim().toUpperCase();
+    if ((dto.isImported !== undefined && dto.isImported !== existing.isImported) ||
+        (nextStatus === 'LEAD_CREATED' && !existing.importedLeadId)) {
+      throw new BadRequestException('Use Lead import to create and link a Lead');
+    }
+    if (nextStatus && nextStatus !== currentStatus &&
+        (existing.importedLeadId || ['VALIDATED', 'REJECTED', 'LEAD_CREATED'].includes(currentStatus))) {
+      throw new BadRequestException('This record already has a final decision');
+    }
+
     let updatedPhotosField: any = undefined;
     if (dto.photos !== undefined || dto.googlePhotos !== undefined) {
       const { googlePhotos: inGP, photos: inUrls } = this.normalizeStoredPhotos(dto.photos || dto.googlePhotos);
       updatedPhotosField = inGP.length > 0 ? inGP : (inUrls.length > 0 ? inUrls : null);
     }
 
-    const updated = await this.prisma.dataCapturePlace.update({
-      where: { id: numId },
+    const changed = await this.prisma.dataCapturePlace.updateMany({
+      where: { id: numId, deletedAt: null, importedLeadId: existing.importedLeadId, status: existing.status },
       data: {
         businessName: dto.businessName !== undefined ? dto.businessName.trim() : undefined,
         category: dto.category !== undefined ? dto.category?.trim() : undefined,
@@ -1482,16 +1305,18 @@ export class DataCaptureService implements OnModuleInit {
         googleMapsUrl: dto.googleMapsUrl !== undefined ? dto.googleMapsUrl : undefined,
         businessStatus: dto.businessStatus !== undefined ? dto.businessStatus : undefined,
         source: dto.source !== undefined ? dto.source : undefined,
-        status: dto.status !== undefined ? dto.status.toUpperCase() : undefined,
+        status: nextStatus,
         notes: dto.notes !== undefined ? dto.notes : undefined,
-        isImported: dto.isImported !== undefined ? dto.isImported : undefined,
         rawData: dto.rawData !== undefined ? dto.rawData : undefined,
         photos: updatedPhotosField as any,
         socialMedia: (dto.socialMedia !== undefined ? dto.socialMedia : undefined) as any,
       },
     });
 
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || updated.customerId, updated);
+    if (changed.count !== 1) throw new ConflictException('Record changed; refresh its details before saving');
+    const updated = await this.prisma.dataCapturePlace.findUniqueOrThrow({ where: { id: numId } });
+
+    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || undefined, updated);
     const { googlePhotos: updatedGP, photos: updatedPhotoUrls } = this.normalizeStoredPhotos(updated.photos);
 
     return {
@@ -1515,11 +1340,12 @@ export class DataCaptureService implements OnModuleInit {
       status: updated.status || 'CAPTURED',
       notes: updated.notes || undefined,
       rawData: updated.rawData || undefined,
-      isImported: updated.isImported,
+      isImported: Boolean(updated.importedLeadId) || updated.isImported,
       importedLeadId: updated.importedLeadId || undefined,
+
       capturedAt: updated.createdAt,
       updatedAt: updated.updatedAt,
-      customerId: String(updated.customerId),
+
       extractionJobId: updated.jobId || undefined,
       duplicateMatches,
       googlePhotos: updatedGP.length > 0 ? updatedGP : [],
@@ -1537,7 +1363,7 @@ export class DataCaptureService implements OnModuleInit {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const existing = await this.prisma.dataCapturePlace.findFirst({
@@ -1579,7 +1405,7 @@ export class DataCaptureService implements OnModuleInit {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const existing = await this.prisma.dataCapturePlace.findFirst({
@@ -1608,7 +1434,7 @@ export class DataCaptureService implements OnModuleInit {
 
     const where: any = { id: numId, deletedAt: null };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const place = await this.prisma.dataCapturePlace.findFirst({
@@ -1619,7 +1445,7 @@ export class DataCaptureService implements OnModuleInit {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
-    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
+    const duplicateMatches = await this.findDuplicateMatches(numCustomerId || undefined, place);
     return { duplicateMatches };
   }
 
@@ -1628,7 +1454,7 @@ export class DataCaptureService implements OnModuleInit {
    */
   private extractContactFromPlace(place: any): { firstName: string; lastName: string; phone?: string; email?: string } {
     const rawData = (place.rawData && typeof place.rawData === 'object' ? place.rawData : {}) as any;
-    const nested = rawData.lead_data || rawData.google_lead || rawData.data || rawData.lead || {};
+    const nested = rawData.lead_data || rawData.google_lead || rawData.data || undefined || {};
 
     let firstName = '';
     let lastName = '';
@@ -1818,351 +1644,6 @@ export class DataCaptureService implements OnModuleInit {
     return list;
   }
 
-  async createLeadFromPlace(
-    customerId: string | number,
-    userId: any,
-    id: number | string,
-    captureRequestId?: string,
-    dto?: CreateLeadFromPlaceDto,
-    req?: any,
-  ): Promise<{
-    success: boolean;
-    statusCode?: number;
-    leadId?: number;
-    lead: any;
-    data: any;
-    place: CapturedPlace;
-    message: string;
-    isDuplicate: boolean;
-  }> {
-    const effectiveUser = typeof userId === 'object' && userId !== null ? userId : null;
-    const effectiveUserId = effectiveUser ? Number(effectiveUser.id) : (Number(userId) || 1);
-    let numCustomerId = Number(customerId);
-    if ((isNaN(numCustomerId) || numCustomerId <= 0) && effectiveUser?.customerId) {
-      numCustomerId = Number(effectiveUser.customerId);
-    }
-
-    const numId = Number(id);
-
-    let place = !isNaN(numId)
-      ? await this.prisma.dataCapturePlace.findFirst({
-          where: {
-            id: numId,
-            ...(numCustomerId > 0 ? { customerId: numCustomerId } : {}),
-            deletedAt: null,
-          },
-        })
-      : null;
-
-    if (!place && typeof id === 'string') {
-      place = await this.prisma.dataCapturePlace.findFirst({
-        where: {
-          ...(numCustomerId > 0 ? { customerId: numCustomerId } : {}),
-          deletedAt: null,
-          OR: [
-            { googlePlaceId: id },
-            { jobId: id },
-            { sourceRecordId: id },
-          ],
-        },
-      });
-    }
-
-    if (!place && !isNaN(numId)) {
-      place = await this.prisma.dataCapturePlace.findFirst({
-        where: { id: numId, deletedAt: null },
-      });
-    }
-
-    if (!place && (dto?.googlePlaceId || dto?.sourceRecordId)) {
-      const gId = dto.googlePlaceId || dto.sourceRecordId;
-      place = await this.prisma.dataCapturePlace.findFirst({
-        where: {
-          ...(numCustomerId > 0 ? { customerId: numCustomerId } : {}),
-          deletedAt: null,
-          OR: [
-            { googlePlaceId: gId },
-            { sourceRecordId: gId },
-          ],
-        },
-      });
-    }
-
-    // Fallback: If place record is not yet in DB but dto has business details, persist place first
-    if (!place && (dto?.businessName || dto?.companyName)) {
-      const rawBiz = (dto.businessName || dto.companyName || '').trim();
-      if (rawBiz) {
-        try {
-          const tenantIdToUse = numCustomerId > 0 ? numCustomerId : (effectiveUser?.customerId || 1);
-          place = await this.prisma.dataCapturePlace.create({
-            data: {
-              customerId: tenantIdToUse,
-              businessName: ContactExtractor.normalizeCompanyName(rawBiz) || rawBiz,
-              phone: dto.phone ? ContactExtractor.normalizePhoneNumber(dto.phone) : undefined,
-              email: dto.email ? ContactExtractor.normalizeEmail(dto.email) : undefined,
-              website: dto.website ? ContactExtractor.normalizeWebsiteUrl(dto.website) : undefined,
-              address: dto.address && dto.address !== 'N/A' ? dto.address : undefined,
-              category: dto.category || 'General',
-              googlePlaceId: dto.googlePlaceId && !dto.googlePlaceId.startsWith('custom_') ? dto.googlePlaceId : undefined,
-              sourceRecordId: dto.sourceRecordId || dto.googlePlaceId || String(id),
-              source: dto.source || 'GOOGLE_PLACES',
-              createdFrom: RecordCreatedFrom.MOBILE_APP,
-              status: 'CAPTURED',
-              socialMedia: dto.socialMedia as any,
-              rating: dto.rating ? Number(dto.rating) : undefined,
-              reviewCount: dto.reviewCount ? Number(dto.reviewCount) : undefined,
-              latitude: dto.latitude ? Number(dto.latitude) : undefined,
-              longitude: dto.longitude ? Number(dto.longitude) : undefined,
-            },
-          });
-          numCustomerId = place.customerId;
-        } catch (_) {}
-      }
-    }
-
-    if (!place) {
-      throw new NotFoundException(`Data Capture record with ID "${id}" not found.`);
-    }
-
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      numCustomerId = place.customerId;
-    }
-
-    // Resolve authenticated Employee context & Assignment (Sections 9 & 10)
-    let resolvedEmployeeId: number | null = effectiveUser?.employee?.id ? Number(effectiveUser.employee.id) : null;
-    let resolvedAssignedToId: number | null = effectiveUserId;
-
-    if (!resolvedEmployeeId) {
-      try {
-        const emp =
-          (await this.prisma.employee.findFirst({
-            where: { userId: effectiveUserId, customerId: numCustomerId, status: 'ACTIVE' },
-            select: { id: true, userId: true },
-          })) ||
-          (await this.prisma.employee.findFirst({
-            where: { userId: effectiveUserId, status: 'ACTIVE' },
-            select: { id: true, userId: true },
-          })) ||
-          (await this.prisma.employee.findFirst({
-            where: { userId: effectiveUserId },
-            select: { id: true, userId: true },
-          }));
-        if (emp) {
-          resolvedEmployeeId = emp.id;
-          if (emp.userId) resolvedAssignedToId = emp.userId;
-        }
-      } catch (_) {}
-    }
-
-    if (dto?.assignedToId || dto?.employeeId) {
-      const explicitEmp = await this.resolveTargetEmployee(dto.assignedToId || dto.employeeId, numCustomerId);
-      if (explicitEmp) {
-        resolvedEmployeeId = explicitEmp.id;
-        if (explicitEmp.userId) resolvedAssignedToId = explicitEmp.userId;
-      }
-    }
-
-    // Safe request logging (Section 2 of prompt)
-    this.logger.log(
-      `[CREATE LEAD FROM DATA CAPTURE]\n` +
-      `dataCaptureId: ${place.id}\n` +
-      `sourceRecordId: ${place.sourceRecordId || place.id}\n` +
-      `googlePlaceId: ${place.googlePlaceId || 'N/A'}\n` +
-      `businessName: ${dto?.businessName || dto?.companyName || place.businessName}\n` +
-      `phone: ${dto?.phone || place.phone || 'N/A'}\n` +
-      `email: ${dto?.email || place.email || 'N/A'}\n` +
-      `website: ${dto?.website || place.website || 'N/A'}\n` +
-      `address: ${dto?.address || place.address || 'N/A'}\n` +
-      `source: ${dto?.source || place.source || 'GOOGLE_PLACES'}\n` +
-      `employeeId: ${resolvedEmployeeId || 'N/A'}\n` +
-      `companyId/tenantId: ${numCustomerId}\n` +
-      `isImported: ${place.isImported}`
-    );
-
-    // If already imported with an active lead, verify and return existing lead
-    if (place.isImported && place.importedLeadId) {
-      const existingLead = await this.prisma.lead.findFirst({
-        where: { id: place.importedLeadId, customerId: numCustomerId, deletedAt: null },
-        include: {
-          stage: true,
-          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
-          createdBy: { select: { id: true, firstName: true, lastName: true } },
-          employee: { select: { id: true, firstName: true, lastName: true } },
-          socialProfiles: true,
-        },
-      });
-      if (existingLead) {
-        this.logger.log(
-          `[CREATE LEAD ALREADY IMPORTED]\n` +
-          `leadId: ${existingLead.id}\n` +
-          `companyName: ${existingLead.companyName}\n` +
-          `googlePlaceId: ${existingLead.googlePlaceId || 'N/A'}`
-        );
-        const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
-          (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos,
-        );
-        return {
-          success: true,
-          statusCode: 200,
-          leadId: existingLead.id,
-          lead: existingLead,
-          data: {
-            leadId: existingLead.id,
-            companyName: existingLead.companyName,
-            lead: existingLead,
-            place,
-          },
-          place: {
-            id: place.id,
-            provider: place.source || 'GOOGLE_PLACES',
-            googlePlaceId: place.googlePlaceId || undefined,
-            businessName: place.businessName,
-            category: place.category || undefined,
-            address: place.address || undefined,
-            phone: place.phone || undefined,
-            email: place.email || undefined,
-            website: place.website || undefined,
-            rating: place.rating || undefined,
-            reviewCount: place.reviewCount || undefined,
-            source: place.source || 'GOOGLE_PLACES',
-            status: 'DUPLICATE',
-            isImported: true,
-            importedLeadId: existingLead.id,
-            capturedAt: place.createdAt,
-            updatedAt: place.updatedAt,
-            customerId: String(place.customerId),
-            googlePhotos: placeGP.length > 0 ? placeGP : [],
-            photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
-            socialMedia: this.extractSocialMediaFromPlace(place),
-          },
-          message: `Record was already imported into Lead #${existingLead.id}`,
-          isDuplicate: true,
-        };
-      }
-    }
-
-    const rawBizName = (
-      (dto?.businessName && dto.businessName.trim().length > 0 ? dto.businessName.trim() : null) ||
-      (dto?.companyName && dto.companyName.trim().length > 0 ? dto.companyName.trim() : null) ||
-      place.businessName ||
-      ''
-    ).trim();
-
-    const importPlace = {
-      ...place,
-      id: place.id,
-      businessName: ContactExtractor.normalizeCompanyName(rawBizName) || rawBizName,
-      phone: dto?.phone || place.phone,
-      email: dto?.email || place.email,
-      website: dto?.website || place.website,
-      address: dto?.address || place.address,
-      googlePlaceId: (dto?.googlePlaceId && !dto.googlePlaceId.startsWith('custom_') ? dto.googlePlaceId : null) || place.googlePlaceId,
-      sourceRecordId: dto?.sourceRecordId || place.sourceRecordId || String(place.id),
-      category: dto?.category || place.category,
-      source: (dto?.source && dto.source !== 'GOOGLE_DISCOVERY' ? dto.source : null) || (place.source && place.source !== 'GOOGLE_DISCOVERY' ? place.source : null) || 'GOOGLE_PLACES',
-      rating: dto?.rating ?? place.rating,
-      reviewCount: dto?.reviewCount ?? place.reviewCount,
-      latitude: dto?.latitude ?? place.latitude,
-      longitude: dto?.longitude ?? place.longitude,
-      photos: (place as any).photos,
-      googlePhotos: (place as any)?.rawData?.googlePhotos,
-      socialMedia: dto?.socialMedia || (place as any)?.socialMedia || (place as any)?.rawData?.socialMedia,
-      assignedToId: resolvedAssignedToId,
-      employeeId: resolvedEmployeeId,
-    };
-
-    const importRes = await this.importToLeads(
-      numCustomerId,
-      userId,
-      {
-        placeIds: [String(place.id)],
-        places: [importPlace],
-        captureRequestId: captureRequestId || dto?.captureRequestId || place.jobId,
-        assignedToId: resolvedAssignedToId || undefined,
-        employeeId: resolvedEmployeeId || undefined,
-        createdFrom: (dto?.createdFrom || place.createdFrom || RecordCreatedFrom.MOBILE_APP) as any,
-      },
-      req,
-    );
-
-    let lead = importRes.lead || importRes.leads?.[0] || null;
-    const isDup = importRes.skippedDuplicates > 0;
-    if (!lead && isDup && importRes.records?.[0]?.existingLeadId) {
-      lead = await this.prisma.lead.findFirst({
-        where: { id: importRes.records[0].existingLeadId, customerId: numCustomerId, deletedAt: null },
-        include: {
-          stage: true,
-          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
-          createdBy: { select: { id: true, firstName: true, lastName: true } },
-          employee: { select: { id: true, firstName: true, lastName: true } },
-          socialProfiles: true,
-        },
-      });
-    }
-
-    // [LEAD CREATED] safe debug logging (Section 21)
-    if (lead) {
-      this.logger.log(
-        `[LEAD CREATED]\n` +
-        `leadId: ${lead.id}\n` +
-        `companyName: ${lead.companyName}\n` +
-        `googlePlaceId: ${lead.googlePlaceId || 'N/A'}\n` +
-        `sourceRecordId: ${lead.sourceRecordId || place.id}\n` +
-        `assignedToId: ${lead.assignedToId || 'N/A'}\n` +
-        `employeeId: ${lead.employeeId || 'N/A'}\n` +
-        `source: ${lead.source || 'N/A'}\n` +
-        `createdFrom: ${lead.createdFrom || 'N/A'}`
-      );
-    }
-
-    const freshPlace = (await this.prisma.dataCapturePlace.findFirst({
-      where: { id: place.id },
-    })) || place;
-
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
-      (freshPlace as any).photos || (freshPlace as any).rawData?.photos || (freshPlace as any).rawData?.googlePhotos,
-    );
-
-    return {
-      success: true,
-      statusCode: isDup ? 200 : 201,
-      leadId: lead?.id,
-      lead,
-      data: {
-        leadId: lead?.id,
-        companyName: lead?.companyName,
-        lead,
-        place: freshPlace,
-      },
-      place: {
-        id: freshPlace.id,
-        provider: freshPlace.source || 'GOOGLE_PLACES',
-        googlePlaceId: freshPlace.googlePlaceId || undefined,
-        businessName: freshPlace.businessName,
-        category: freshPlace.category || undefined,
-        address: freshPlace.address || undefined,
-        phone: freshPlace.phone || undefined,
-        email: freshPlace.email || undefined,
-        website: freshPlace.website || undefined,
-        rating: freshPlace.rating || undefined,
-        reviewCount: freshPlace.reviewCount || undefined,
-        source: freshPlace.source || 'GOOGLE_PLACES',
-        createdFrom: freshPlace.createdFrom || undefined,
-        status: isDup ? 'DUPLICATE' : 'LEAD_CREATED',
-        isImported: true,
-        importedLeadId: lead?.id || freshPlace.importedLeadId,
-        capturedAt: freshPlace.createdAt,
-        updatedAt: freshPlace.updatedAt,
-        customerId: String(freshPlace.customerId),
-        googlePhotos: placeGP.length > 0 ? placeGP : [],
-        photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
-        socialMedia: this.extractSocialMediaFromPlace(freshPlace),
-      },
-      message: isDup ? `Lead already exists in CRM.` : `Lead created successfully`,
-      isDuplicate: isDup,
-    };
-  }
-
   /**
    * Bulk actions for Data Capture places
    */
@@ -2183,7 +1664,7 @@ export class DataCaptureService implements OnModuleInit {
     switch (dto.action) {
       case 'validate': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids }, customerId: numCustomerId, deletedAt: null },
+          where: { id: { in: dto.ids }, deletedAt: null, importedLeadId: null, isImported: false, status: { in: ['CAPTURED', 'PENDING', 'NEW'] } },
           data: { status: 'VALIDATED' },
         });
         affectedCount = res.count;
@@ -2191,7 +1672,7 @@ export class DataCaptureService implements OnModuleInit {
       }
       case 'reject': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids }, customerId: numCustomerId, deletedAt: null },
+          where: { id: { in: dto.ids }, deletedAt: null, importedLeadId: null, isImported: false, status: { in: ['CAPTURED', 'PENDING', 'NEW'] } },
           data: { status: 'REJECTED' },
         });
         affectedCount = res.count;
@@ -2199,7 +1680,7 @@ export class DataCaptureService implements OnModuleInit {
       }
       case 'mark_duplicate': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids }, customerId: numCustomerId, deletedAt: null },
+          where: { id: { in: dto.ids }, deletedAt: null, importedLeadId: null, isImported: false, status: { in: ['CAPTURED', 'PENDING', 'NEW'] } },
           data: { status: 'DUPLICATE' },
         });
         affectedCount = res.count;
@@ -2207,25 +1688,10 @@ export class DataCaptureService implements OnModuleInit {
       }
       case 'delete': {
         const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids }, customerId: numCustomerId, deletedAt: null },
+          where: { id: { in: dto.ids },  deletedAt: null },
           data: { deletedAt: new Date() },
         });
         affectedCount = res.count;
-        break;
-      }
-      case 'import_leads': {
-        const places = await this.prisma.dataCapturePlace.findMany({
-          where: { id: { in: dto.ids }, customerId: numCustomerId, deletedAt: null },
-        });
-
-        for (const p of places) {
-          try {
-            await this.createLeadFromPlace(numCustomerId, numUserId, p.id);
-            affectedCount++;
-          } catch {
-            // Ignore single failure
-          }
-        }
         break;
       }
       default:
@@ -2239,802 +1705,36 @@ export class DataCaptureService implements OnModuleInit {
     };
   }
 
-  /**
-   * Import captured prospects into CRM Leads (Batch & Single)
-   */
-  async importToLeads(
-    customerId: string | number,
-    userId: any,
-    dto: ImportToLeadsDto,
-    req?: any,
-  ): Promise<{
-    success: boolean;
-    totalRequested: number;
-    imported: number;
-    skippedDuplicates: number;
-    duplicateNames: string[];
-    records?: any[];
-    data?: any;
-    leadId?: number;
-    lead?: any;
-    leads?: any[];
-    capture?: { id: string; status: string };
-    message: string;
-  }> {
-    const effectiveUser = typeof userId === 'object' && userId !== null ? userId : null;
-    const numUserId = effectiveUser ? Number(effectiveUser.id) : (Number(userId) || 1);
-    let numCustomerId = Number(customerId);
-    if ((isNaN(numCustomerId) || numCustomerId <= 0) && effectiveUser?.customerId) {
-      numCustomerId = Number(effectiveUser.customerId);
+  async getCaptureHistory(user: any, query: { page?: number; limit?: number; search?: string; from?: string; to?: string }) {
+    const userId = Number(user?.id);
+    if (!Number.isSafeInteger(userId) || userId < 1) throw new UnauthorizedException('Authentication required');
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const where: any = { userId };
+    if (query.search?.trim()) {
+      where.OR = ['keyword', 'location'].map(field => ({ [field]: { contains: query.search.trim(), mode: 'insensitive' } }));
     }
-
-    // Resolve tenant customerId safely if missing or NaN (Section 14)
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      if (dto.jobId) {
-        const job = await this.prisma.dataCaptureJob.findFirst({
-          where: { jobId: dto.jobId },
-          select: { customerId: true },
-        });
-        if (job) {
-          numCustomerId = job.customerId;
-        }
-      }
-      if (isNaN(numCustomerId) || numCustomerId <= 0) {
-        const activeCustomer = await this.prisma.customer.findFirst({
-          where: { deletedAt: null, isActive: true },
-          select: { id: true },
-          orderBy: { id: 'asc' },
-        });
-        numCustomerId = activeCustomer?.id || 1;
-      }
+    if (query.from || query.to) {
+      where.createdAt = {
+        ...(query.from ? { gte: new Date(query.from) } : {}),
+        ...(query.to ? { lt: new Date(query.to) } : {}),
+      };
     }
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.dataCaptureJob.findMany({ where, skip: (page - 1) * limit, take: limit,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { jobId: true, keyword: true, location: true, createdAt: true,
+          requestedResults: true, capturedResults: true, foundResults: true, captureStatus: true },
+      }),
+      this.prisma.dataCaptureJob.count({ where }),
+    ]);
+    return { data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } };
+  }
 
-    // Resolve valid createdById user safely (Section 15)
-    let validCreatedById: number = numUserId;
-    try {
-      const userExists = await this.prisma.user.findFirst({
-        where: { id: numUserId },
-        select: { id: true },
-      });
-      if (!userExists) {
-        const fallbackUser = await this.prisma.user.findFirst({
-          where: { customerId: numCustomerId, deletedAt: null },
-          select: { id: true },
-          orderBy: { id: 'asc' },
-        });
-        if (fallbackUser) {
-          validCreatedById = fallbackUser.id;
-        } else {
-          const anyUser = await this.prisma.user.findFirst({
-            where: { deletedAt: null },
-            select: { id: true },
-            orderBy: { id: 'asc' },
-          });
-          if (anyUser) validCreatedById = anyUser.id;
-        }
-      }
-    } catch (_) {}
-
-    // Resolve authenticated Employee context & Assignment (Section 6, 9 & 15)
-    let employeeId: number | null = effectiveUser?.employee?.id ? Number(effectiveUser.employee.id) : null;
-    let assignedToUserId: number | null = validCreatedById || numUserId;
-    if (!employeeId) {
-      try {
-        let emp = await this.prisma.employee.findFirst({
-          where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
-          select: { id: true, userId: true, customerId: true },
-        });
-        if (!emp) {
-          emp = await this.prisma.employee.findFirst({
-            where: { userId: numUserId, customerId: numCustomerId },
-            select: { id: true, userId: true, customerId: true },
-          });
-        }
-        if (!emp) {
-          emp = await this.prisma.employee.findFirst({
-            where: { userId: numUserId, status: 'ACTIVE' },
-            select: { id: true, userId: true, customerId: true },
-          });
-        }
-        if (!emp) {
-          emp = await this.prisma.employee.findFirst({
-            where: { userId: numUserId },
-            select: { id: true, userId: true, customerId: true },
-          });
-        }
-        if (emp) {
-          employeeId = emp.id;
-          if (emp.userId) assignedToUserId = emp.userId;
-          if (isNaN(numCustomerId) || numCustomerId <= 0) {
-            numCustomerId = emp.customerId;
-          }
-        }
-      } catch (_) {}
-    }
-
-    // Check if dto passed explicit assignedToId or employeeId
-    const dtoAssignee = dto.assignedToId || dto.employeeId;
-    if (dtoAssignee) {
-      const explicitEmp = await this.resolveTargetEmployee(dtoAssignee, numCustomerId);
-      if (explicitEmp) {
-        employeeId = explicitEmp.id;
-        if (explicitEmp.userId) assignedToUserId = explicitEmp.userId;
-      }
-    }
-
-    // Gather candidate descriptors from DTO (Section 3)
-    let rawCandidates: any[] = [];
-    if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
-      rawCandidates = dto.places;
-    } else if (dto.placeIds && Array.isArray(dto.placeIds) && dto.placeIds.length > 0) {
-      rawCandidates = dto.placeIds.map((id) => ({ ...dto, id, googlePlaceId: id, sourceRecordId: id }));
-    } else if (dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id) {
-      const singleId = dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id;
-      rawCandidates = [{ ...dto, id: singleId, sourceRecordId: dto.sourceRecordId || singleId }];
-    } else if (dto.googlePlaceId) {
-      rawCandidates = [{ ...dto, googlePlaceId: dto.googlePlaceId, sourceRecordId: dto.sourceRecordId || dto.googlePlaceId }];
-    } else if (dto.jobId) {
-      const jobPlaces = await this.prisma.dataCapturePlace.findMany({
-        where: { jobId: dto.jobId, customerId: numCustomerId, deletedAt: null },
-        orderBy: { id: 'asc' },
-      });
-      rawCandidates = jobPlaces;
-    } else if (dto.companyName || dto.businessName) {
-      rawCandidates = [dto];
-    }
-
-    if (rawCandidates.length === 0) {
-      throw new BadRequestException('No valid prospects selected for import.');
-    }
-
-    let importedCount = 0;
-    let skippedDuplicates = 0;
-    const duplicateNames: string[] = [];
-    const createdLeads: any[] = [];
-    const perRecordResults: any[] = [];
-    let firstDuplicateLead: any = null;
-
-    for (let idx = 0; idx < rawCandidates.length; idx++) {
-      const candidate = rawCandidates[idx];
-
-      // 1. Authoritative resolution of DataCapturePlace from database (Sections 2, 3, 4, 14)
-      let dbPlace: any = null;
-      const candidateNumId = Number(candidate.id || candidate.dataCaptureId || candidate.dataCapturePlaceId || candidate.sourceRecordId);
-      const candGoogleId =
-        candidate.googlePlaceId &&
-        String(candidate.googlePlaceId).trim().length > 0 &&
-        String(candidate.googlePlaceId).trim() !== 'N/A' &&
-        !String(candidate.googlePlaceId).startsWith('custom_')
-          ? String(candidate.googlePlaceId).trim()
-          : null;
-      const candSourceId =
-        candidate.sourceRecordId &&
-        String(candidate.sourceRecordId).trim().length > 0 &&
-        String(candidate.sourceRecordId).trim() !== 'N/A' &&
-        !String(candidate.sourceRecordId).startsWith('custom_')
-          ? String(candidate.sourceRecordId).trim()
-          : null;
-
-      // Priority A: Match by primary key id
-      if (!isNaN(candidateNumId) && candidateNumId > 0) {
-        dbPlace = await this.prisma.dataCapturePlace.findFirst({
-          where: { id: candidateNumId, customerId: numCustomerId, deletedAt: null },
-        });
-      }
-
-      // Priority B: Match by googlePlaceId
-      if (!dbPlace && candGoogleId) {
-        dbPlace = await this.prisma.dataCapturePlace.findFirst({
-          where: { googlePlaceId: candGoogleId, customerId: numCustomerId, deletedAt: null },
-        });
-      }
-
-      // Priority C: Match by sourceRecordId
-      if (!dbPlace && candSourceId) {
-        const numCandidateSrc = Number(candSourceId);
-        dbPlace = await this.prisma.dataCapturePlace.findFirst({
-          where: {
-            customerId: numCustomerId,
-            deletedAt: null,
-            OR: [
-              ...(!isNaN(numCandidateSrc) && numCandidateSrc > 0 ? [{ id: numCandidateSrc }] : []),
-              { sourceRecordId: candSourceId },
-              { googlePlaceId: candSourceId },
-            ],
-          },
-        });
-      }
-
-      // Priority D: Match within extraction job
-      const activeJobId = dto.jobId || candidate.jobId;
-      if (!dbPlace && activeJobId) {
-        const jobPlaces = await this.prisma.dataCapturePlace.findMany({
-          where: { customerId: numCustomerId, jobId: activeJobId, deletedAt: null },
-          orderBy: { id: 'asc' },
-        });
-        const customMatch = String(candidate.id || candidate.googlePlaceId || candidate.captureRequestId || '').match(/custom_(\d+)/);
-        if (customMatch) {
-          const targetIdx = parseInt(customMatch[1], 10);
-          if (jobPlaces[targetIdx]) dbPlace = jobPlaces[targetIdx];
-        }
-        if (!dbPlace && jobPlaces.length > 0) {
-          const candName = (candidate.businessName || candidate.companyName || candidate.title || '').trim().toLowerCase();
-          if (candName && candName !== 'business lead' && candName !== 'direct lead' && candName !== 'new lead') {
-            dbPlace = jobPlaces.find((p) => p.businessName.trim().toLowerCase() === candName);
-          }
-          if (!dbPlace && rawCandidates.length === 1 && jobPlaces.length === 1) {
-            dbPlace = jobPlaces[0];
-          }
-        }
-      }
-
-      // Priority E: If not found in DB but candidate has real prospect data, persist to data_capture_places first (Section 2 & 4)
-      if (!dbPlace) {
-        const rawBizCandidate = (
-          (candidate.businessName && candidate.businessName !== 'Business Lead' && candidate.businessName !== 'Direct Lead' && candidate.businessName !== 'New Lead' ? candidate.businessName : null) ||
-          (candidate.companyName && candidate.companyName !== 'Business Lead' && candidate.companyName !== 'Direct Lead' && candidate.companyName !== 'New Lead' ? candidate.companyName : null) ||
-          (typeof candidate.displayName === 'object' && candidate.displayName?.text && candidate.displayName.text !== 'Business Lead' ? candidate.displayName.text : (typeof candidate.displayName === 'string' && candidate.displayName !== 'Business Lead' ? candidate.displayName : null)) ||
-          (candidate.placeName && candidate.placeName !== 'Business Lead' ? candidate.placeName : null) ||
-          candidate.establishmentName ||
-          candidate.organizationName ||
-          (candidate.title && candidate.title !== 'Business Lead' && candidate.title !== 'Direct Lead' && candidate.title !== 'New Lead' ? candidate.title : null) ||
-          ''
-        ).trim();
-
-        if (rawBizCandidate && rawBizCandidate.toLowerCase() !== 'unnamed business') {
-          if (this.prisma.dataCapturePlace && typeof this.prisma.dataCapturePlace.create === 'function') {
-            try {
-              dbPlace = await this.prisma.dataCapturePlace.create({
-                data: {
-                  customerId: numCustomerId,
-                  jobId: activeJobId || undefined,
-                  googlePlaceId: candGoogleId || undefined,
-                  sourceRecordId: candSourceId || candGoogleId || undefined,
-                  businessName: ContactExtractor.normalizeCompanyName(rawBizCandidate) || rawBizCandidate,
-                  category: candidate.category || 'General',
-                  address: candidate.address && candidate.address !== 'N/A' ? candidate.address : undefined,
-                  phone: ContactExtractor.normalizePhoneNumber(candidate.phone) || undefined,
-                  email: ContactExtractor.normalizeEmail(candidate.email) || undefined,
-                  website: ContactExtractor.normalizeWebsiteUrl(candidate.website) || undefined,
-                  rating: candidate.rating ? Number(candidate.rating) : undefined,
-                  reviewCount: candidate.reviewCount ? Number(candidate.reviewCount) : undefined,
-                  latitude: candidate.latitude ? Number(candidate.latitude) : undefined,
-                  longitude: candidate.longitude ? Number(candidate.longitude) : undefined,
-                  googleMapsUrl: candidate.googleMapsUrl || candidate.website || undefined,
-                  source: candidate.source || 'GOOGLE_PLACES',
-                  createdFrom: resolveCreatedFrom(req, { id: validCreatedById, customerId: numCustomerId }, (dto as any)?.createdFrom),
-                  status: 'CAPTURED',
-                  photos: (candidate.photos || candidate.googlePhotos || undefined) as any,
-                  socialMedia: (candidate.socialMedia || undefined) as any,
-                },
-              });
-            } catch (_) {}
-          }
-          if (!dbPlace) {
-            dbPlace = {
-              id: candidate.id || idx + 1,
-              customerId: numCustomerId,
-              jobId: activeJobId || undefined,
-              googlePlaceId: candGoogleId || undefined,
-              sourceRecordId: candSourceId || candGoogleId || undefined,
-              businessName: ContactExtractor.normalizeCompanyName(rawBizCandidate) || rawBizCandidate,
-              category: candidate.category || 'General',
-              address: candidate.address && candidate.address !== 'N/A' ? candidate.address : undefined,
-              phone: ContactExtractor.normalizePhoneNumber(candidate.phone) || undefined,
-              email: ContactExtractor.normalizeEmail(candidate.email) || undefined,
-              website: ContactExtractor.normalizeWebsiteUrl(candidate.website) || undefined,
-              rating: candidate.rating ? Number(candidate.rating) : undefined,
-              reviewCount: candidate.reviewCount ? Number(candidate.reviewCount) : undefined,
-              latitude: candidate.latitude ? Number(candidate.latitude) : undefined,
-              longitude: candidate.longitude ? Number(candidate.longitude) : undefined,
-              googleMapsUrl: candidate.googleMapsUrl || candidate.website || undefined,
-              source: candidate.source || 'GOOGLE_PLACES',
-              status: 'CAPTURED',
-              photos: (candidate.photos || candidate.googlePhotos || undefined) as any,
-              socialMedia: (candidate.socialMedia || undefined) as any,
-            } as any;
-          }
-        }
-      }
-
-      if (!dbPlace) {
-        this.logger.warn(`Could not resolve DataCapturePlace record for candidate idx=${idx}: ${JSON.stringify(candidate)}`);
-        continue;
-      }
-
-      // 2. Authoritative field mapping from candidate and dbPlace (Sections 4, 5, 6, 7, 8)
-      const rawBusinessName = (
-        (candidate.businessName && candidate.businessName !== 'Business Lead' && candidate.businessName !== 'Direct Lead' && candidate.businessName !== 'New Lead' ? candidate.businessName : null) ||
-        (candidate.companyName && candidate.companyName !== 'Business Lead' && candidate.companyName !== 'Direct Lead' && candidate.companyName !== 'New Lead' ? candidate.companyName : null) ||
-        (dbPlace.businessName && dbPlace.businessName !== 'Business Lead' && dbPlace.businessName !== 'Direct Lead' && dbPlace.businessName !== 'New Lead' ? dbPlace.businessName : null) ||
-        ''
-      ).trim();
-      const businessName = ContactExtractor.normalizeCompanyName(rawBusinessName) || rawBusinessName;
-      if (!businessName || businessName === 'Business Lead' || businessName === 'Direct Lead' || businessName === 'New Lead') {
-        this.logger.warn(`Invalid or placeholder business name for candidate: "${businessName}". Skipping.`);
-        continue;
-      }
-      if (!dbPlace.businessName || dbPlace.businessName.length === 0) {
-        dbPlace.businessName = businessName;
-      }
-
-      const googlePlaceId = (dbPlace.googlePlaceId && !dbPlace.googlePlaceId.startsWith('custom_') && dbPlace.googlePlaceId !== 'N/A') ? dbPlace.googlePlaceId : null;
-      const sourceRecordId = candidate.sourceRecordId || dbPlace.sourceRecordId || (googlePlaceId || String(dbPlace.id));
-      const placeCaptureRequestId = dto.captureRequestId || candidate.captureRequestId || `${activeJobId || 'job'}_${googlePlaceId || dbPlace.id}`;
-
-      const resolvedPhone = dbPlace.phone || candidate.phone;
-      const normalizedPhone = ContactExtractor.normalizePhoneNumber(resolvedPhone);
-      const phoneDigits = resolvedPhone ? String(resolvedPhone).replace(/\D/g, '') : '';
-
-      const resolvedEmail = dbPlace.email || candidate.email;
-      const normalizedEmail = ContactExtractor.normalizeEmail(resolvedEmail);
-
-      const resolvedWebsite = dbPlace.website || candidate.website;
-      const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(resolvedWebsite);
-
-      const resolvedAddress = (dbPlace.address && dbPlace.address !== 'N/A' ? dbPlace.address : null) || (candidate.address && candidate.address !== 'N/A' ? candidate.address : null);
-      const resolvedCategory = dbPlace.category || candidate.category || 'General';
-      const resolvedRating = dbPlace.rating ?? (candidate.rating ? Number(candidate.rating) : null);
-      const resolvedReviewCount = dbPlace.reviewCount ?? (candidate.reviewCount ? Number(candidate.reviewCount) : null);
-      const resolvedLatitude = dbPlace.latitude ?? (candidate.latitude ? Number(candidate.latitude) : null);
-      const resolvedLongitude = dbPlace.longitude ?? (candidate.longitude ? Number(candidate.longitude) : null);
-
-      // Parse Address Components (city, state, pincode)
-      const parsedAddress = this.parseAddressComponents(resolvedAddress);
-
-      // Contact Person details (Section 7)
-      const { firstName: genuineFirstName, lastName: genuineLastName } = this.extractContactFromPlace(dbPlace);
-
-      // Social Media (Section 10)
-      const placeSocialMedia = dbPlace.socialMedia || (dbPlace.rawData as any)?.socialMedia || candidate.socialMedia || null;
-
-      // 3. Duplicate Detection against CRM Leads (Section 13)
-      const leadOrConditions: any[] = [];
-      if (googlePlaceId) {
-        leadOrConditions.push({ googlePlaceId });
-        leadOrConditions.push({ sourceRecordId: googlePlaceId });
-      }
-      leadOrConditions.push({ sourceRecordId });
-      if (normalizedPhone && phoneDigits.length >= 10) {
-        leadOrConditions.push({ phone: normalizedPhone });
-        leadOrConditions.push({ phone: { contains: phoneDigits.slice(-10) } });
-      }
-      if (normalizedEmail) {
-        leadOrConditions.push({ email: { equals: normalizedEmail, mode: 'insensitive' } });
-      }
-
-      let matchedLead: any = null;
-      let duplicateMatchReason: string | null = null;
-
-      // 3.5 Per-candidate employee resolution (Sections 3, 6, 9)
-      let candEmployeeId = employeeId;
-      let candAssignedToUserId = assignedToUserId;
-
-      const candAssignee =
-        candidate.assignedToId ||
-        candidate.employeeId ||
-        (candidate.rawData as any)?.employeeId ||
-        (candidate.rawData as any)?.capturedBy ||
-        (dbPlace.rawData as any)?.employeeId ||
-        (dbPlace.rawData as any)?.capturedBy;
-
-      if (candAssignee) {
-        const resolved = await this.resolveTargetEmployee(candAssignee, numCustomerId);
-        if (resolved) {
-          candEmployeeId = resolved.id;
-          if (resolved.userId) candAssignedToUserId = resolved.userId;
-        }
-      }
-      if (!candEmployeeId && employeeId) candEmployeeId = employeeId;
-      if (!candAssignedToUserId && assignedToUserId) candAssignedToUserId = assignedToUserId;
-
-      if (leadOrConditions.length > 0) {
-        const candidateLeads = await this.prisma.lead.findMany({
-          where: {
-            customerId: numCustomerId,
-            deletedAt: null,
-            OR: leadOrConditions,
-          },
-          select: {
-            id: true,
-            title: true,
-            companyName: true,
-            phone: true,
-            email: true,
-            website: true,
-            googlePlaceId: true,
-            sourceRecordId: true,
-            assignedToId: true,
-            employeeId: true,
-          },
-          take: 5,
-        });
-
-        for (const cl of candidateLeads) {
-          if (googlePlaceId && (cl.googlePlaceId === googlePlaceId || cl.sourceRecordId === googlePlaceId)) {
-            matchedLead = cl;
-            duplicateMatchReason = `Google Place ID match (${googlePlaceId})`;
-            break;
-          }
-          if (cl.sourceRecordId === sourceRecordId) {
-            matchedLead = cl;
-            duplicateMatchReason = `Data Capture source record ID match (${sourceRecordId})`;
-            break;
-          }
-          if (phoneDigits.length >= 10 && cl.phone && cl.phone.replace(/\D/g, '').slice(-10) === phoneDigits.slice(-10)) {
-            matchedLead = cl;
-            duplicateMatchReason = `Phone match (${cl.phone})`;
-            break;
-          }
-          if (normalizedEmail && cl.email && cl.email.toLowerCase() === normalizedEmail.toLowerCase()) {
-            matchedLead = cl;
-            duplicateMatchReason = `Email match (${cl.email})`;
-            break;
-          }
-        }
-      }
-
-      if (matchedLead) {
-        skippedDuplicates++;
-        duplicateNames.push(businessName);
-
-        // Always ensure employeeId is set so the importing employee can see the lead on Mobile
-        const needsEmployeeUpdate =
-          candEmployeeId &&
-          (matchedLead.employeeId == null || matchedLead.employeeId !== candEmployeeId);
-        const needsAssigneeUpdate = !matchedLead.assignedToId && candAssignedToUserId;
-
-        if (needsEmployeeUpdate || needsAssigneeUpdate) {
-          try {
-            const updated = await this.prisma.lead.update({
-              where: { id: matchedLead.id },
-              data: {
-                ...(needsAssigneeUpdate ? { assignedToId: candAssignedToUserId } : {}),
-                ...(needsEmployeeUpdate ? { employeeId: candEmployeeId } : {}),
-              },
-            });
-            matchedLead = { ...matchedLead, ...updated };
-          } catch (_) {}
-        }
-
-        if (!firstDuplicateLead) {
-          firstDuplicateLead = matchedLead;
-        }
-        try {
-          await this.prisma.dataCapturePlace.update({
-            where: { id: dbPlace.id },
-            data: { status: 'DUPLICATE', isImported: true, importedLeadId: matchedLead.id },
-          });
-        } catch (_) {}
-        perRecordResults.push({
-          sourceRecordId,
-          googlePlaceId: googlePlaceId || undefined,
-          businessName,
-          imported: false,
-          duplicate: true,
-          existingLeadId: matchedLead.id,
-          leadId: matchedLead.id,
-          duplicateMatchReason,
-        });
-        // Include duplicate lead in response leads array so mobile can upsert it into local cache
-        createdLeads.push(matchedLead);
-        continue;
-      }
-
-      // 4. Transactional Lead Creation & State Update (Sections 12, 14, 15)
-      const runTransaction = typeof (this.prisma as any).$transaction === 'function'
-        ? (cb: any, opts?: any) => (this.prisma as any).$transaction(cb, opts)
-        : (cb: any) => cb(this.prisma);
-
-      let createdViaDirectTx = false;
-      const leadResult = await runTransaction(
-        async (tx: any) => {
-          // Resolve initial stage: 'NEW'
-          let newStage = await tx.leadStage.findFirst({
-            where: { customerId: numCustomerId, key: 'NEW', deletedAt: null, isActive: true },
-            orderBy: { sortOrder: 'asc' },
-          });
-          if (!newStage) {
-            newStage = await tx.leadStage.findFirst({
-              where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
-              orderBy: { sortOrder: 'asc' },
-            });
-          }
-          if (!newStage) {
-            newStage = await tx.leadStage.findFirst({
-              where: { key: 'NEW', deletedAt: null },
-              orderBy: { id: 'asc' },
-            });
-          }
-
-          // Create Lead with exact Data Capture fields (Section 5, 6, 7, 8, 9, 10)
-          const leadCreatedFrom =
-            (dto as any)?.createdFrom ||
-            dbPlace.createdFrom ||
-            resolveCreatedFrom(req, effectiveUser || { id: validCreatedById, customerId: numCustomerId }, (dto as any)?.createdFrom) ||
-            RecordCreatedFrom.MOBILE_APP;
-
-          const resolvedSource =
-            (candidate.source && candidate.source !== 'GOOGLE_DISCOVERY' ? candidate.source : null) ||
-            (dbPlace.source && dbPlace.source !== 'GOOGLE_DISCOVERY' ? dbPlace.source : null) ||
-            'GOOGLE_PLACES';
-
-          let created: any = null;
-          if (tx.lead && typeof tx.lead.create === 'function') {
-            try {
-              created = await tx.lead.create({
-                data: {
-                  customerId: numCustomerId,
-                  title: businessName,
-                  companyName: businessName,
-                  firstName: genuineFirstName,
-                  lastName: genuineLastName,
-                  phone: normalizedPhone || null,
-                  email: normalizedEmail || null,
-                  website: normalizedWebsite || null,
-                  address: resolvedAddress,
-                  city: parsedAddress.city,
-                  state: parsedAddress.state,
-                  pincode: parsedAddress.pincode,
-                  category: resolvedCategory,
-                  source: resolvedSource,
-                  createdFrom: leadCreatedFrom,
-                  status: 'NEW',
-                  stageId: newStage?.id || null,
-                  priority: resolvedRating && resolvedRating >= 4.5 ? 'HIGH' : 'MEDIUM',
-                  value: 0,
-                  createdById: validCreatedById,
-                  employeeId: candEmployeeId || employeeId || null,
-                  assignedToId: candAssignedToUserId || assignedToUserId || validCreatedById || null,
-                  googlePlaceId,
-                  latitude: resolvedLatitude,
-                  longitude: resolvedLongitude,
-                  rating: resolvedRating,
-                  reviewCount: resolvedReviewCount,
-                  captureRequestId: placeCaptureRequestId,
-                  sourceRecordId,
-                  socialMedia: placeSocialMedia || null,
-                },
-              });
-              createdViaDirectTx = true;
-            } catch (createErr: any) {
-              this.logger.error(`[IMPORT ERROR] tx.lead.create failed for "${businessName}": ${createErr?.message || createErr}`);
-              throw createErr;
-            }
-          }
-
-          if (!created && this.leadService && typeof this.leadService.createLead === 'function') {
-            const leadPayload = {
-              companyName: businessName,
-              title: businessName,
-              phone: normalizedPhone || undefined,
-              email: normalizedEmail || undefined,
-              captureRequestId: placeCaptureRequestId,
-              sourceRecordId,
-              googlePlaceId: googlePlaceId || undefined,
-              assignedToId: assignedToUserId || validCreatedById || undefined,
-              createdFrom: leadCreatedFrom,
-            };
-            created = req
-              ? await this.leadService.createLead(numCustomerId, validCreatedById, leadPayload, req)
-              : await this.leadService.createLead(numCustomerId, validCreatedById, leadPayload);
-          }
-
-          if (!created) {
-            throw new BadRequestException(`Failed to create Lead for "${businessName}"`);
-          }
-
-          // Attach Social Profiles to LeadSocialProfile (Section 10)
-          const spProfiles = this.extractSocialProfileList(placeSocialMedia);
-          if (tx.leadSocialProfile && typeof tx.leadSocialProfile.create === 'function') {
-            for (const sp of spProfiles) {
-              await tx.leadSocialProfile.create({
-                data: {
-                  leadId: created.id,
-                  platform: sp.platform,
-                  url: sp.url,
-                },
-              });
-            }
-          }
-
-          // Mark DataCapturePlace as imported with importedLeadId (Section 12)
-          if (tx.dataCapturePlace && typeof tx.dataCapturePlace.update === 'function') {
-            await tx.dataCapturePlace.update({
-              where: { id: dbPlace.id },
-              data: {
-                isImported: true,
-                importedLeadId: created.id,
-                status: 'LEAD_CREATED',
-                captureRequestId: placeCaptureRequestId,
-                sourceRecordId,
-              },
-            });
-          }
-
-          // Create lead activity timeline and metadata note
-          if (tx.leadActivityTimeline && typeof tx.leadActivityTimeline.create === 'function') {
-            await tx.leadActivityTimeline.create({
-              data: {
-                leadId: created.id,
-                action: 'PROSPECT_IMPORTED_FROM_DATA_CAPTURE',
-                description: `Imported prospect "${businessName}" into CRM Leads`,
-                metadata: {
-                  dataCapturePlaceId: dbPlace.id,
-                  googlePlaceId,
-                  jobId: activeJobId,
-                  source: candidate.source || dbPlace.source || (googlePlaceId ? 'GOOGLE_PLACES' : 'GOOGLE_DISCOVERY'),
-                  captureRequestId: placeCaptureRequestId,
-                },
-              },
-            });
-          }
-
-          return created;
-        },
-        { timeout: 15000 },
-      );
-
-
-      // 5. REQUIRED DEBUG LOGS (Section 25)
-      this.logger.log(
-        `[DATA CAPTURE SOURCE]\n` +
-        `dataCaptureId: ${dbPlace.id}\n` +
-        `businessName: ${dbPlace.businessName}\n` +
-        `googlePlaceId: ${dbPlace.googlePlaceId || 'N/A'}\n` +
-        `phone: ${dbPlace.phone || 'N/A'}\n` +
-        `email: ${dbPlace.email || 'N/A'}\n` +
-        `website: ${dbPlace.website || 'N/A'}\n` +
-        `address: ${dbPlace.address || 'N/A'}\n\n` +
-        `[IMPORT REQUEST]\n` +
-        `endpoint: POST /api/v1/data-capture/import-to-leads\n` +
-        `payload: ${JSON.stringify({ jobId: dto.jobId, placeIds: dto.placeIds, placeCount: rawCandidates.length })}\n` +
-        `sourceRecordId: ${sourceRecordId}\n` +
-        `googlePlaceId: ${googlePlaceId || 'N/A'}\n` +
-        `captureRequestId: ${placeCaptureRequestId}\n\n` +
-        `[IMPORT SERVICE]\n` +
-        `resolvedDataCaptureId: ${dbPlace.id}\n` +
-        `resolvedBusinessName: ${businessName}\n` +
-        `resolvedGooglePlaceId: ${googlePlaceId || 'N/A'}\n\n` +
-        `[LEAD CREATE]\n` +
-        `companyName: ${businessName}\n` +
-        `phone: ${normalizedPhone || 'N/A'}\n` +
-        `website: ${normalizedWebsite || 'N/A'}\n` +
-        `googlePlaceId: ${googlePlaceId || 'N/A'}\n` +
-        `sourceRecordId: ${sourceRecordId}\n` +
-        `captureRequestId: ${placeCaptureRequestId}\n\n` +
-        `[DATABASE]\n` +
-        `leadId: ${leadResult.id}\n` +
-        `companyName: ${leadResult.companyName}\n` +
-        `googlePlaceId: ${leadResult.googlePlaceId || 'N/A'}\n` +
-        `sourceRecordId: ${leadResult.sourceRecordId || 'N/A'}\n\n` +
-        `[GET LEAD]\n` +
-        `leadId: ${leadResult.id}\n` +
-        `companyName: ${leadResult.companyName}\n` +
-        `googlePlaceId: ${leadResult.googlePlaceId || 'N/A'}`
-      );
-
-      // Query complete lead with images and relations
-      const freshLead = (this.leadService && typeof this.leadService.getLeadById === 'function')
-        ? await this.leadService.getLeadById(numCustomerId, leadResult.id).catch(() => leadResult)
-        : leadResult;
-
-      perRecordResults.push({
-        sourceRecordId,
-        googlePlaceId: googlePlaceId || undefined,
-        businessName,
-        imported: true,
-        leadId: leadResult.id,
-        duplicate: false,
-        duplicateMatchReason: null,
-      });
-
-      createdLeads.push(freshLead || leadResult);
-      importedCount++;
-
-      // Trigger automatic Email & WhatsApp communication for NEW Lead (Data Capture flow)
-      if (this.leadService && freshLead) {
-        const initialStageName = freshLead.stage?.name || freshLead.status || 'New';
-        this.logger.log(
-          `[LEAD_AUTOMATION]\n` +
-          `leadId=${freshLead.id}\n` +
-          `stage=NEW\n` +
-          `tenantId=${numCustomerId}\n` +
-          `emailTemplateLookup=START\n` +
-          `whatsappTemplateLookup=START`
-        );
-
-        const emailPromise = typeof this.leadService.handleLeadStageChangeNotification === 'function'
-          ? this.leadService.handleLeadStageChangeNotification(
-              numCustomerId,
-              freshLead,
-              '',
-              initialStageName,
-              validCreatedById,
-              undefined,
-              undefined,
-              undefined,
-              'LEAD_CREATED',
-              freshLead.stageId,
-            ).catch((err: any) => {
-              this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] Data capture lead #${freshLead.id}: ${err?.message}`);
-            })
-          : Promise.resolve();
-
-        const whatsappPromise = typeof this.leadService.handleLeadStageChangeWhatsappNotification === 'function'
-          ? this.leadService.handleLeadStageChangeWhatsappNotification(
-              numCustomerId,
-              freshLead,
-              '',
-              initialStageName,
-              validCreatedById,
-              undefined,
-              undefined,
-              'LEAD_CREATED',
-              freshLead.stageId,
-            ).catch((err: any) => {
-              this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] Data capture lead #${freshLead.id}: ${err?.message}`);
-            })
-          : Promise.resolve();
-
-        await Promise.allSettled([emailPromise, whatsappPromise]);
-      }
-
-      // Trigger Lead Assignment push notification if assigned to an employee and created directly via tx
-      if (
-        createdViaDirectTx &&
-        this.leadService &&
-        freshLead &&
-        (candEmployeeId || employeeId || candAssignedToUserId || (assignedToUserId && assignedToUserId !== validCreatedById))
-      ) {
-        const assignedEmpId = candEmployeeId || employeeId || null;
-        const assignedUsrId =
-          candAssignedToUserId || (assignedToUserId !== validCreatedById ? assignedToUserId : null);
-        const displayName =
-          freshLead.companyName ||
-          freshLead.title ||
-          [freshLead.firstName, freshLead.lastName].filter(Boolean).join(' ').trim() ||
-          `Lead #${freshLead.id}`;
-
-        await (this.leadService as any)
-          .sendLeadAssignedNotification?.({
-            customerId: numCustomerId,
-            employeeId: assignedEmpId,
-            userId: assignedUsrId,
-            leadId: freshLead.id,
-            leadName: displayName,
-          })
-          ?.catch?.((err: any) => {
-            this.logger.warn(
-              `Failed to dispatch LEAD_ASSIGNED push for data-capture lead #${freshLead.id}: ${err?.message}`,
-            );
-          });
-      }
-    }
-
-    const primaryLead = createdLeads[0] || firstDuplicateLead || null;
-
-    return {
-      success: true,
-      totalRequested: rawCandidates.length,
-      imported: importedCount,
-      skippedDuplicates,
-      duplicateNames,
-      records: perRecordResults,
-      data: {
-        leadId: primaryLead?.id,
-        lead: primaryLead,
-        leads: createdLeads,
-      },
-      leadId: primaryLead?.id,
-      lead: primaryLead,
-      leads: createdLeads,
-      capture: {
-        id: dto.jobId || 'captured',
-        status: importedCount > 0 ? 'IMPORTED' : (skippedDuplicates > 0 ? 'DUPLICATE' : 'FAILED'),
-      },
-      message: `Successfully imported ${importedCount} leads into CRM (${skippedDuplicates} duplicates skipped).`,
-    };
+  async getCaptureHistoryRecords(user: any, jobId: string, query: DataCaptureQueryDto) {
+    const job = await this.prisma.dataCaptureJob.findFirst({ where: { jobId, userId: Number(user?.id) }, select: { jobId: true } });
+    if (!job) throw new NotFoundException('Capture session not found');
+    return this.listPlaces(undefined, { ...query, jobId }, user);
   }
 
   /**
@@ -3044,7 +1744,7 @@ export class DataCaptureService implements OnModuleInit {
     const numCustomerId = Number(customerId);
     const where: any = {};
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const jobs = await this.prisma.dataCaptureJob.findMany({
@@ -3059,7 +1759,7 @@ export class DataCaptureService implements OnModuleInit {
 
     return jobs.map((j) => ({
       jobId: j.jobId,
-      customerId: String(j.customerId),
+
       userId: String(j.userId),
       keyword: j.keyword,
       location: j.location,
@@ -3087,11 +1787,12 @@ export class DataCaptureService implements OnModuleInit {
           businessStatus: p.businessStatus || 'OPERATIONAL',
           source: p.source || 'GOOGLE_PLACES',
           status: p.status || 'CAPTURED',
-          isImported: p.isImported,
+          isImported: Boolean(p.importedLeadId) || p.isImported,
           importedLeadId: p.importedLeadId || undefined,
+
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
-          customerId: String(p.customerId),
+
           capturedBy: String(j.userId),
           extractionJobId: j.jobId,
           googlePhotos: normGP.length > 0 ? normGP : [],
@@ -3109,7 +1810,7 @@ export class DataCaptureService implements OnModuleInit {
     const numCustomerId = Number(customerId);
     const where: any = { jobId: jobId.trim() };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+
     }
 
     const job = await this.prisma.dataCaptureJob.findFirst({
@@ -3127,7 +1828,7 @@ export class DataCaptureService implements OnModuleInit {
 
     return {
       jobId: job.jobId,
-      customerId: String(job.customerId),
+
       userId: String(job.userId),
       keyword: job.keyword,
       location: job.location,
@@ -3155,11 +1856,12 @@ export class DataCaptureService implements OnModuleInit {
           businessStatus: p.businessStatus || 'OPERATIONAL',
           source: p.source || 'GOOGLE_PLACES',
           status: p.status || 'CAPTURED',
-          isImported: p.isImported,
+          isImported: Boolean(p.importedLeadId) || p.isImported,
           importedLeadId: p.importedLeadId || undefined,
+
           capturedAt: p.createdAt,
           updatedAt: p.updatedAt,
-          customerId: String(p.customerId),
+
           capturedBy: String(job.userId),
           extractionJobId: job.jobId,
           googlePhotos: normGP.length > 0 ? normGP : [],
@@ -3177,7 +1879,7 @@ export class DataCaptureService implements OnModuleInit {
     const numCustomerId = Number(customerId);
     const customerWhere: any = {};
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      customerWhere.customerId = numCustomerId;
+
     }
 
     // Resolve employee for employee-specific search count
@@ -3187,7 +1889,7 @@ export class DataCaptureService implements OnModuleInit {
       const emp = await this.prisma.employee.findFirst({
         where: {
           userId: Number(directUserId),
-          ...(customerWhere.customerId ? { customerId: customerWhere.customerId } : {}),
+          ...({}),
           status: 'ACTIVE',
         },
         select: { id: true },
@@ -3213,14 +1915,14 @@ export class DataCaptureService implements OnModuleInit {
       employeeId
         ? this.prisma.dataCaptureSearch.count({
             where: {
-              ...(customerWhere.customerId ? { customerId: customerWhere.customerId } : {}),
+              ...({}),
               employeeId,
             },
           })
         : (directUserId
             ? this.prisma.dataCaptureSearch.count({
                 where: {
-                  ...(customerWhere.customerId ? { customerId: customerWhere.customerId } : {}),
+                  ...({}),
                   userId: Number(directUserId),
                 },
               })
@@ -3232,7 +1934,7 @@ export class DataCaptureService implements OnModuleInit {
     const quotaLimit = 1000;
 
     return {
-      customerId: customerId ? String(customerId) : 'ALL',
+
       totalExtractions,
       totalLeadsCaptured,
       totalGoogleApiCalls,
@@ -3260,47 +1962,6 @@ export class DataCaptureService implements OnModuleInit {
     },
   ): Promise<DuplicateMatch[]> {
     const matches: DuplicateMatch[] = [];
-    if (!customerId || isNaN(customerId)) {
-      return matches;
-    }
-
-    // Check Leads
-    const leadConditions: any[] = [];
-    if (place.googlePlaceId) leadConditions.push({ googlePlaceId: place.googlePlaceId });
-    if (place.phone && place.phone !== 'N/A') leadConditions.push({ phone: place.phone });
-    if (place.email) leadConditions.push({ email: place.email });
-    if (place.businessName) leadConditions.push({ title: { equals: place.businessName, mode: 'insensitive' } });
-
-    if (leadConditions.length > 0) {
-      const duplicateLeads = await this.prisma.lead.findMany({
-        where: { customerId, deletedAt: null, OR: leadConditions },
-        take: 3,
-      });
-
-      for (const dl of duplicateLeads) {
-        let field: 'googlePlaceId' | 'phone' | 'email' | 'website' | 'businessName' = 'businessName';
-        let val = dl.title;
-        if (place.googlePlaceId && dl.googlePlaceId === place.googlePlaceId) {
-          field = 'googlePlaceId';
-          val = dl.googlePlaceId;
-        } else if (place.phone && dl.phone === place.phone) {
-          field = 'phone';
-          val = dl.phone;
-        } else if (place.email && dl.email === place.email) {
-          field = 'email';
-          val = dl.email;
-        }
-        matches.push({
-          type: 'LEAD',
-          id: dl.id,
-          title: `Lead: ${dl.title}`,
-          matchField: field,
-          matchValue: val,
-          status: dl.status,
-        });
-      }
-    }
-
     // Check Companies
     const companyConditions: any[] = [];
     if (place.googlePlaceId) companyConditions.push({ googlePlaceId: place.googlePlaceId });
@@ -3310,7 +1971,7 @@ export class DataCaptureService implements OnModuleInit {
 
     if (companyConditions.length > 0) {
       const duplicateCompanies = await this.prisma.company.findMany({
-        where: { customerId, deletedAt: null, OR: companyConditions },
+        where: {  deletedAt: null, OR: companyConditions },
         take: 3,
       });
 
@@ -3393,7 +2054,7 @@ export class DataCaptureService implements OnModuleInit {
         source: 'GOOGLE_PLACES',
         status: 'CAPTURED',
         capturedAt: new Date(),
-        customerId,
+
         capturedBy: userId,
         extractionJobId: jobId,
         googlePhotos: [],

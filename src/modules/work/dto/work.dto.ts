@@ -1,8 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsInt, Min, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { WorkType, WorkStatus, WorkPriority } from '@prisma/client';
 
 export class CreateWorkDto {
+  @ApiPropertyOptional({ description: 'Actual customer account ID, not the originating lead ID' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  customerId?: number;
+
+  @ApiPropertyOptional({ example: 12, description: 'CRM company associated with this calendar work item' })
+  @IsOptional()
+  companyId?: number | string;
+
   @ApiProperty({ example: 'Reels Shoot for Summer Launch' })
   @IsString()
   @IsNotEmpty()
@@ -53,20 +63,22 @@ export class CreateWorkDto {
   @IsOptional()
   notes?: string;
 
-  @ApiPropertyOptional({ example: 1, description: 'Purchase / Subscription ID' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'PUR-001', description: 'Purchase reference code' })
   @IsString()
   @IsOptional()
   purchaseId?: string;
+
+  
 }
 
 export class UpdateWorkDto {
-  @ApiPropertyOptional({ example: 1, description: 'Purchase / Subscription ID' })
+  @ApiPropertyOptional({ example: 12, description: 'CRM company associated with this calendar work item; null clears the link' })
   @IsOptional()
-  subscriptionId?: number | string;
+  companyId?: number | string | null;
+
+  
 
   @ApiPropertyOptional({ example: 'PUR-001', description: 'Purchase reference code' })
   @IsString()
@@ -149,3 +161,4 @@ export class AssignWorkDto {
   @IsOptional()
   teamId?: number | string;
 }
+

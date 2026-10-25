@@ -1,0 +1,2590 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Plan {
+  id               Int               @id @default(autoincrement())
+  name             String            @unique
+  code             String            @unique
+  description      String?
+  monthlyPrice     Float
+  yearlyPrice      Float
+  userLimit        Int
+  storageLimit     BigInt
+  features         Json
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+  monthlySchedules MonthlySchedule[]
+  commissions      Commission[]
+  couponPlans      CouponPlan[]
+
+  @@index([deletedAt])
+}
+
+model Coupon {
+  id                    Int              @id @default(autoincrement())
+  code                  String           @unique
+  name                  String?
+  description           String?
+  discountPct           Float
+  discountType          String           @default("PERCENTAGE")
+  discountValue         Float?
+  minimumAmount         Float?
+  maximumDiscountAmount Float?
+  startsAt              DateTime?
+  maxRedemptions        Int              @default(100)
+  timesRedeemed         Int              @default(0)
+  appliesToAllPlans     Boolean          @default(true)
+  expiresAt             DateTime?
+  isActive              Boolean          @default(true)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  deletedAt             DateTime?
+  plans                 CouponPlan[]
+  payments              PaymentHistory[]
+
+  @@index([code])
+  @@index([deletedAt])
+}
+
+model CouponPlan {
+  couponId Int
+  planId   Int
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, planId])
+  @@map("coupon_plans")
+}
+
+model PaymentHistory {
+  id             Int                       @id @default(autoincrement())
+  amount         Float
+  currency       String                    @default("INR")
+  paymentMethod  PaymentMethod             @default(RAZORPAY)
+  paymentId      String?
+  orderId        String?
+  status         String
+  invoiceUrl     String?
+  orderNumber    String?
+  planId         Int?
+  planName       String?
+  billingCycle   SubscriptionBillingCycle?
+  taxAmount      Float?
+  totalAmount    Float?
+  transactionId  String?
+  couponId       Int?
+  couponCode     String?
+  originalAmount Float?
+  discountAmount Float?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  deletedAt      DateTime?
+  coupon         Coupon?                   @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  commission     Commission?
+
+  @@index([deletedAt])
+}
+
+model User {
+  accountType             String            @default("EMPLOYEE")
+  id                      Int               @id @default(autoincrement())
+  email                   String            @unique
+  phone                   String?           @unique
+  passwordHash            String
+  firstName               String
+  lastName                String
+  avatar                  String?
+  designation             String?
+  isActive                Boolean           @default(true)
+  isVerified              Boolean           @default(false)
+  isPhoneVerified         Boolean           @default(false)
+  otpCode                 String?
+  otpExpiresAt            DateTime?
+  otpAttempts             Int               @default(0)
+  otpLastSentAt           DateTime?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  deletedAt               DateTime?
+  auditLogs               AuditLog[]
+  assignedContacts        Contact[]         @relation("AssignedContacts")
+  dataCaptureJobs         DataCaptureJob[]
+  assignedDeals           Deal[]            @relation("AssignedDeals")
+  employee                Employee?
+  notifications           Notification[]
+  refreshTokens           RefreshToken[]
+  sessions                Session[]
+  assignedTickets         SupportTicket[]   @relation("AssignedTickets")
+  createdTickets          SupportTicket[]   @relation("CreatedTickets")
+  assignedTasks           Task[]            @relation("AssignedTasks")
+  createdTasks            Task[]            @relation("CreatedTasks")
+  ticketComments          TicketComment[]
+  deviceTokens            UserDeviceToken[]
+  createdTrendingContents TrendingContent[] @relation("CreatedTrendingContents")
+  createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
+  createdMarketingVideos  MarketingVideo[]  @relation("CreatedMarketingVideos")
+  emailLogs               EmailLog[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([deletedAt])
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  ipAddress String?
+  userAgent String?
+  device    String?
+  lastSeen  DateTime @default(now())
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Company {
+  id            Int       @id @default(autoincrement())
+  name          String
+  domain        String?
+  industry      String?
+  phone         String?
+  email         String?
+  address       String?
+  city          String?
+  country       String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+  category      String?
+  googlePlaceId String?
+  latitude      Float?
+  longitude     Float?
+  notes         String?
+  postalCode    String?
+  rating        Float?
+  reviewCount   Int?
+  source        String?   @default("MANUAL")
+  state         String?
+  status        String?   @default("ACTIVE")
+  website       String?
+  contacts      Contact[]
+  deals         Deal[]
+  visits        Visit[]
+
+  @@index([googlePlaceId])
+  @@index([deletedAt])
+}
+
+model Contact {
+  id              Int                    @id @default(autoincrement())
+  companyId       Int?
+  type            ContactType            @default(CUSTOMER)
+  firstName       String
+  lastName        String
+  email           String?
+  phone           String?
+  designation     String?
+  tags            String[]
+  notes           String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  deletedAt       DateTime?
+  alternateMobile String?
+  assignedToId    Int?
+  mobile          String?
+  source          String?                @default("DIRECT")
+  status          String?                @default("ACTIVE")
+  website         String?
+  communications  CommunicationHistory[]
+  assignedTo      User?                  @relation("AssignedContacts", fields: [assignedToId], references: [id])
+  company         Company?               @relation(fields: [companyId], references: [id])
+  deals           Deal[]
+  invoices        Invoice[]
+  quotations      Quotation[]
+  visits          Visit[]
+
+  @@index([companyId])
+  @@index([deletedAt])
+}
+
+model CommunicationHistory {
+  id        Int      @id @default(autoincrement())
+  contactId Int
+  type      String
+  summary   String
+  details   String?
+  timestamp DateTime @default(now())
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model Pipeline {
+  id        Int             @id @default(autoincrement())
+  name      String
+  isDefault Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  deletedAt DateTime?
+  deals     Deal[]
+  stages    PipelineStage[]
+
+  @@index([deletedAt])
+}
+
+model PipelineStage {
+  id          Int      @id @default(autoincrement())
+  pipelineId  Int
+  name        String
+  order       Int
+  probability Float    @default(50.0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deals       Deal[]
+  pipeline    Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  @@index([pipelineId])
+}
+
+model Deal {
+  id              Int           @id @default(autoincrement())
+  pipelineId      Int
+  stageId         Int
+  contactId       Int?
+  companyId       Int?
+  title           String
+  amount          Float
+  expectedClosing DateTime?
+  probability     Float         @default(50.0)
+  isWon           Boolean       @default(false)
+  isLost          Boolean       @default(false)
+  lostReason      String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  assignedToId    Int?
+  currency        String?       @default("INR")
+  description     String?
+  notes           String?
+  source          String?       @default("CRM")
+  assignedTo      User?         @relation("AssignedDeals", fields: [assignedToId], references: [id])
+  company         Company?      @relation(fields: [companyId], references: [id])
+  contact         Contact?      @relation(fields: [contactId], references: [id])
+  pipeline        Pipeline      @relation(fields: [pipelineId], references: [id])
+  stage           PipelineStage @relation(fields: [stageId], references: [id])
+  quotations      Quotation[]
+  visits          Visit[]
+
+  @@index([pipelineId])
+  @@index([stageId])
+  @@index([deletedAt])
+}
+
+model Task {
+  id                Int           @id @default(autoincrement())
+  title             String
+  description       String?
+  status            TaskStatus    @default(PENDING)
+  priority          TaskPriority  @default(MEDIUM)
+  dueDate           DateTime?
+  isRecurring       Boolean       @default(false)
+  recurrence        String?
+  assignedToId      Int?
+  createdById       Int
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
+  approvedAt        DateTime?
+  approvedById      Int?
+  approvedByName    String?
+  category          String?
+  departmentId      Int?
+  designationId     Int?
+  dueAt             DateTime?
+  dueTime           String?
+  employeeId        Int?
+  notes             String?
+  rejectedAt        DateTime?
+  rejectedById      Int?
+  rejectedByName    String?
+  rejectionReason   String?
+  startDate         DateTime?
+  startTime         String?
+  submissionComment String?
+  submittedAt       DateTime?
+  taskNumber        String?
+  completedAt       DateTime?
+  startedAt         DateTime?
+  assignedTo        User?         @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  createdBy         User          @relation("CreatedTasks", fields: [createdById], references: [id])
+  department        Department?   @relation(fields: [departmentId], references: [id])
+  designation       Designation?  @relation(fields: [designationId], references: [id])
+  employee          Employee?     @relation(fields: [employeeId], references: [id])
+  history           TaskHistory[]
+  proofs            TaskProof[]
+  reviews           TaskReview[]
+
+  @@index([employeeId])
+  @@index([departmentId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([dueAt])
+  @@index([deletedAt])
+  @@index([deletedAt, createdAt])
+  @@index([assignedToId, status, deletedAt])
+}
+
+model TaskProof {
+  id         Int      @id @default(autoincrement())
+  taskId     Int
+  employeeId Int?
+  fileUrl    String
+  fileName   String?
+  fileType   String?
+  fileSize   Int?
+  comment    String?
+  uploadedAt DateTime @default(now())
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([employeeId])
+}
+
+model TaskReview {
+  id             Int      @id @default(autoincrement())
+  taskId         Int
+  reviewedById   Int
+  reviewedByName String?
+  status         String
+  comment        String?
+  reviewedAt     DateTime @default(now())
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model TaskHistory {
+  id                   Int      @id @default(autoincrement())
+  taskId               Int
+  action               String
+  performedById        Int?
+  performedByName      String?
+  oldStatus            String?
+  newStatus            String?
+  previousEmployeeId   Int?
+  previousEmployeeName String?
+  newEmployeeId        Int?
+  newEmployeeName      String?
+  comment              String?
+  createdAt            DateTime @default(now())
+  task                 Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model Product {
+  id             Int             @id @default(autoincrement())
+  name           String
+  sku            String
+  description    String?
+  unitPrice      Float
+  currency       String          @default("INR")
+  taxRate        Float           @default(18.0)
+  stock          Int             @default(0)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  deletedAt      DateTime?
+  invoiceItems   InvoiceItem[]
+  quotationItems QuotationItem[]
+
+  @@unique([sku])
+  @@index([deletedAt])
+}
+
+model Quotation {
+  id          Int             @id @default(autoincrement())
+  contactId   Int?
+  dealId      Int?
+  quotationNo String
+  status      QuotationStatus @default(DRAFT)
+  subTotal    Float
+  taxAmount   Float
+  discount    Float           @default(0)
+  totalAmount Float
+  validUntil  DateTime
+  notes       String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  invoices    Invoice[]
+  contact     Contact?        @relation(fields: [contactId], references: [id])
+  deal        Deal?           @relation(fields: [dealId], references: [id])
+  items       QuotationItem[]
+
+  @@index([contactId])
+  @@index([deletedAt])
+}
+
+model QuotationItem {
+  id          Int       @id @default(autoincrement())
+  quotationId Int
+  productId   Int
+  quantity    Int
+  unitPrice   Float
+  total       Float
+  product     Product   @relation(fields: [productId], references: [id])
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id          Int           @id @default(autoincrement())
+  contactId   Int
+  quotationId Int?
+  invoiceNo   String
+  status      InvoiceStatus @default(DRAFT)
+  issueDate   DateTime
+  dueDate     DateTime
+  subTotal    Float
+  taxAmount   Float
+  discount    Float         @default(0)
+  totalAmount Float
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+  contact     Contact       @relation(fields: [contactId], references: [id])
+  quotation   Quotation?    @relation(fields: [quotationId], references: [id])
+  items       InvoiceItem[]
+
+  @@index([contactId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model InvoiceItem {
+  id        Int     @id @default(autoincrement())
+  invoiceId Int
+  productId Int
+  quantity  Int
+  unitPrice Float
+  total     Float
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model SupportTicket {
+  id           Int             @id @default(autoincrement())
+  ticketNo     String
+  subject      String
+  description  String
+  status       TicketStatus    @default(OPEN)
+  priority     TicketPriority  @default(MEDIUM)
+  assignedToId Int?
+  createdById  Int
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  deletedAt    DateTime?
+  assignedTo   User?           @relation("AssignedTickets", fields: [assignedToId], references: [id])
+  createdBy    User            @relation("CreatedTickets", fields: [createdById], references: [id])
+  comments     TicketComment[]
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model TicketComment {
+  id        Int           @id @default(autoincrement())
+  ticketId  Int
+  userId    Int
+  comment   String
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id])
+
+  @@index([ticketId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([userId, isRead, createdAt])
+  @@index([createdAt])
+}
+
+model NotificationCampaign {
+  id               Int       @id @default(autoincrement())
+  title            String
+  message          String
+  notificationType String    @default("OFFER")
+  targetType       String // "EMPLOYEES"
+  audience         String // "ALL" | "SPECIFIC"
+  targetIds        Json? // Array of target IDs when audience is SPECIFIC
+  imageUrl         String?
+  showCta          Boolean   @default(false)
+  ctaText          String?
+  ctaActionType    String? // "DEEP_LINK" | "WEB_URL"
+  ctaActionValue   String?
+  scheduledAt      DateTime?
+  status           String    @default("SENT") // "SENT" | "SCHEDULED" | "FAILED"
+  recipientCount   Int       @default(0)
+  sentCount        Int       @default(0)
+  failedCount      Int       @default(0)
+  createdById      Int?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([createdAt])
+}
+
+model UserDeviceToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  platform  String   @default("ANDROID")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([token])
+}
+
+model AuditLog {
+  id           Int      @id @default(autoincrement())
+  userId       Int?
+  userName     String?
+  userRole     String? // CUSTOMER, EMPLOYEE, ADMIN, SUPER_ADMIN
+  source       String   @default("ADMIN_PANEL") // ADMIN_PANEL, MOBILE_APP
+  action       String // LOGIN, LOGOUT, CREATE, UPDATE, DELETE, APPROVE, REJECT, SUBMIT, etc.
+  module       String // Attendance, Leave, Remote Work, Influencers, CRM, Settings, Payroll, etc.
+  description  String?
+  entityType   String?
+  entityId     String?
+  endpoint     String?
+  method       String? // POST, PUT, PATCH, DELETE, GET
+  ipAddress    String?
+  device       String?
+  status       String   @default("SUCCESS") // SUCCESS, FAILED
+  errorMessage String?
+  details      Json?
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([source])
+  @@index([userRole])
+  @@index([module])
+  @@index([action])
+  @@index([status])
+  @@index([entityType, entityId])
+}
+
+model FeatureToggle {
+  id        Int      @id @default(autoincrement())
+  feature   String
+  isEnabled Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([feature])
+}
+
+model EmployeeLocation {
+  id                 Int          @id @default(autoincrement())
+  employeeId         Int
+  latitude           Float
+  longitude          Float
+  accuracy           Float?
+  address            String?
+  distanceFromOffice Float?
+  locationStatus     String?
+  trackingType       TrackingType @default(ATTENDANCE)
+  attendanceId       Int?
+  visitId            Int?
+  timestamp          DateTime     @default(now())
+  createdAt          DateTime     @default(now())
+  employee           Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([timestamp])
+  @@index([employeeId, timestamp])
+}
+
+model BranchGeofence {
+  id                 Int                @id @default(autoincrement())
+  name               String
+  code               String?
+  address            String?
+  city               String?
+  state              String?
+  country            String?            @default("India")
+  postalCode         String?
+  latitude           Float
+  longitude          Float
+  radiusMeters       Float              @default(200.0)
+  isActive           Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  attendances        Attendance[]
+  attendancePolicies AttendancePolicy[]
+  claimPolicies      ClaimPolicy[]
+  employees          Employee[]
+  leavePolicies      LeavePolicy[]
+  publicHolidays     PublicHoliday[]
+  salaryPolicies     SalaryPolicy[]
+
+  @@index([isActive])
+}
+
+model LocationTrackingSetting {
+  id               Int                      @id @default(autoincrement())
+  employeeId       Int                      @unique
+  isEnabled        Boolean                  @default(true)
+  trackingMode     TrackingMode             @default(ATTENDANCE_ONLY)
+  permissionStatus LocationPermissionStatus @default(GRANTED)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([employeeId])
+}
+
+model Department {
+  id           Int           @id @default(autoincrement())
+  name         String
+  code         String
+  description  String?
+  headId       Int?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  designations Designation[]
+  employees    Employee[]
+  tasks        Task[]
+
+  @@unique([code])
+}
+
+model Designation {
+  id                Int                 @id @default(autoincrement())
+  departmentId      Int?
+  name              String
+  code              String
+  description       String?
+  level             Int                 @default(1)
+  isActive          Boolean             @default(true)
+  crmMobileAccess   Boolean             @default(false)
+  commissionEnabled Boolean             @default(false)
+  commissionType    CommissionType      @default(PERCENTAGE)
+  commissionRate    Float               @default(0.0)
+  audience          DesignationAudience @default(EMPLOYEE)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  department        Department?         @relation(fields: [departmentId], references: [id])
+  employees         Employee[]
+  tasks             Task[]
+
+  @@unique([code])
+}
+
+model Employee {
+  id                       Int                      @id @default(autoincrement())
+  userId                   Int?                     @unique
+  employeeCode             String
+  firstName                String
+  lastName                 String
+  email                    String
+  phone                    String?
+  gender                   String?
+  dob                      DateTime?
+  joiningDate              DateTime                 @default(now())
+  departmentId             Int?
+  designationId            Int?
+  managerId                Int?
+  employmentType           String                   @default("FULL_TIME")
+  employeeType             EmployeeType             @default(COMPANY)
+  city                     String?
+  branch                   String                   @default("Head Office")
+  address                  String?
+  emergencyContact         String?
+  bankDetails              Json?
+  documents                Json?
+  status                   String                   @default("ACTIVE")
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+  mobileLoginEnabled       Boolean                  @default(true)
+  officeId                 Int?
+  shiftId                  Int?
+  attendances              Attendance[]
+  department               Department?              @relation(fields: [departmentId], references: [id])
+  designation              Designation?             @relation(fields: [designationId], references: [id])
+  office                   BranchGeofence?          @relation(fields: [officeId], references: [id])
+  shift                    Shift?                   @relation(fields: [shiftId], references: [id])
+  user                     User?                    @relation(fields: [userId], references: [id])
+  employeeClaims           EmployeeClaim[]
+  dataCaptureSearches      DataCaptureSearch[]
+  leaveBalances            EmployeeLeaveBalance[]
+  employeeLoans            EmployeeLoan[]
+  employeeLocations        EmployeeLocation[]
+  leaveAdjustments         LeaveAdjustmentHistory[]
+  leaveRequests            LeaveRequest[]
+  payrollItems             PayrollItem[]
+  remoteRequests           RemoteRequest[]
+  salarySlips              SalarySlip[]
+  salaryStructures         SalaryStructure[]
+  tasks                    Task[]
+  teamMembers              TeamMember[]
+  visits                   Visit[]
+  works                    Work[]                   @relation("AssignedEmployeeWorks")
+  editedWorks              Work[]                   @relation("AssignedEditorWorks")
+  workTasks                WorkTask[]
+  assignedMonthlySchedules MonthlySchedule[]
+  workAccessRequests       WorkAccessRequest[]
+  ledTeams                 Team[]                   @relation("TeamLeader")
+  commissionConfig         CommissionConfig?
+  commissions              Commission[]
+  commissionShares         CommissionShare[]
+
+  @@unique([employeeCode])
+  @@index([email])
+  @@index([officeId])
+}
+
+model Attendance {
+  id                        Int               @id @default(autoincrement())
+  employeeId                Int
+  date                      DateTime          @default(now())
+  punchIn                   DateTime?
+  punchOut                  DateTime?
+  workingHours              Float             @default(0.0)
+  workingMinutes            Int?              @default(0)
+  breakDuration             Float             @default(0.0)
+  lateMinutes               Int?              @default(0)
+  isLate                    Boolean?          @default(false)
+  workMode                  String?           @default("OFFICE")
+  locationStatus            String?           @default("INSIDE_RADIUS")
+  status                    AttendanceStatus  @default(PRESENT)
+  locationIn                String?
+  locationOut               String?
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  distanceFromOffice        Float?
+  latitude                  Float?
+  longitude                 Float?
+  accuracy                  Float?
+  punchOutLatitude          Float?
+  punchOutLongitude         Float?
+  punchOutAccuracy          Float?
+  officeId                  Int?
+  punchInBiometricVerified  Boolean?          @default(false)
+  punchOutBiometricVerified Boolean?          @default(false)
+  employee                  Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  office                    BranchGeofence?   @relation(fields: [officeId], references: [id])
+  breaks                    AttendanceBreak[]
+
+  @@index([employeeId])
+  @@index([officeId])
+  @@index([date])
+  @@index([status])
+  @@index([workMode])
+  @@index([employeeId, date])
+}
+
+model AttendanceBreak {
+  id           Int        @id @default(autoincrement())
+  attendanceId Int
+  breakStart   DateTime   @default(now())
+  breakEnd     DateTime?
+  duration     Float      @default(0.0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @default(now()) @updatedAt
+  attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+
+  @@index([attendanceId])
+  @@index([breakStart])
+}
+
+model LeaveType {
+  id                 Int                      @id @default(autoincrement())
+  name               String
+  code               String
+  daysAllowedPerYear Int                      @default(12)
+  isCarryForward     Boolean                  @default(false)
+  isActive           Boolean                  @default(true)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  leaveBalances      EmployeeLeaveBalance[]
+  leaveAdjustments   LeaveAdjustmentHistory[]
+  leaveRequests      LeaveRequest[]
+
+  @@unique([code])
+}
+
+model LeaveRequest {
+  id              Int           @id @default(autoincrement())
+  employeeId      Int
+  leaveTypeId     Int
+  fromDate        DateTime
+  toDate          DateTime
+  days            Int           @default(1)
+  reason          String?
+  attachmentUrl   String?
+  status          RequestStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType       LeaveType     @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([employeeId])
+}
+
+model PublicHoliday {
+  id          Int             @id @default(autoincrement())
+  name        String
+  date        DateTime
+  description String?
+  officeId    Int?
+  isActive    Boolean         @default(true)
+  createdById Int?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  office      BranchGeofence? @relation(fields: [officeId], references: [id])
+
+  @@index([officeId])
+  @@index([date])
+  @@index([isActive])
+}
+
+model EmployeeLeaveBalance {
+  id            Int                      @id @default(autoincrement())
+  employeeId    Int
+  leaveTypeId   Int
+  year          Int                      @default(2026)
+  allocatedDays Float                    @default(12.0)
+  usedDays      Float                    @default(0.0)
+  remainingDays Float                    @default(12.0)
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+  employee      Employee                 @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType     LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  adjustments   LeaveAdjustmentHistory[]
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@index([employeeId])
+  @@index([leaveTypeId])
+}
+
+model LeaveAdjustmentHistory {
+  id               Int                   @id @default(autoincrement())
+  employeeId       Int
+  leaveTypeId      Int
+  balanceId        Int?
+  previousBalance  Float
+  adjustmentType   String
+  adjustmentAmount Float
+  newBalance       Float
+  reason           String
+  adjustedById     Int?
+  adjustedByName   String?
+  createdAt        DateTime              @default(now())
+  balance          EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id])
+  employee         Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType        LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@index([createdAt])
+}
+
+model AttendancePolicy {
+  id                         Int             @id @default(autoincrement())
+  officeId                   Int?
+  name                       String          @default("Standard Attendance Policy")
+  workingDaysPerWeek         Int             @default(5)
+  workingHoursPerDay         Float           @default(8.0)
+  gracePeriodMinutes         Int             @default(15)
+  lateArrivalThresholdMins   Int             @default(30)
+  earlyCheckoutThresholdMins Int             @default(30)
+  fullDayAbsenceDeductionPct Float           @default(100.0)
+  halfDayDeductionPct        Float           @default(50.0)
+  lateArrivalDeductionPct    Float           @default(25.0)
+  earlyCheckoutDeductionPct  Float           @default(25.0)
+  minWorkingHoursForHalfDay  Float           @default(4.0)
+  overtimeEligible           Boolean         @default(true)
+  breakAllowed               Boolean         @default(true)
+  maxBreakDurationMins       Int             @default(60)
+  maxBreaksPerDay            Int             @default(2)
+  officeAttendanceRequired   Boolean         @default(true)
+  gpsRequired                Boolean         @default(true)
+  allowOutsideCheckIn        Boolean         @default(false)
+  allowOutsideCheckOut       Boolean         @default(false)
+  isActive                   Boolean         @default(true)
+  createdById                Int?
+  updatedById                Int?
+  updatedByName              String?
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
+  officeStartTime            String          @default("09:30")
+  officeEndTime              String          @default("18:30")
+  punchInRequired            Boolean         @default(true)
+  earlyPunchInAllowed        Boolean         @default(true)
+  multiplePunchInAllowed     Boolean         @default(false)
+  lateRuleAction             String          @default("MARK_LATE")
+  punchOutRequired           Boolean         @default(true)
+  minWorkingHours            Float           @default(8.0)
+  earlyCheckoutGraceMinutes  Int             @default(15)
+  earlyCheckoutAction        String          @default("MARK_EARLY")
+  autoPunchOut               Boolean         @default(false)
+  breakRequired              Boolean         @default(false)
+  minBreakDurationMins       Int             @default(15)
+  breakGracePeriodMins       Int             @default(5)
+  breakType                  String          @default("UNPAID")
+  breakExcessAction          String          @default("DEDUCT_EXCESS")
+  breakExcessDeductionPct    Float           @default(100.0)
+  allowBreakExtension        Boolean         @default(false)
+  office                     BranchGeofence? @relation(fields: [officeId], references: [id])
+
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model LeavePolicy {
+  id                          Int             @id @default(autoincrement())
+  officeId                    Int?
+  name                        String          @default("Standard Leave Policy")
+  allowHalfDay                Boolean         @default(true)
+  allowBackdatedLeave         Boolean         @default(false)
+  maxBackdatedDays            Int             @default(3)
+  allowFutureLeave            Boolean         @default(true)
+  maxFutureDays               Int             @default(90)
+  allowProbationLeave         Boolean         @default(false)
+  includeHolidaysInLeave      Boolean         @default(false)
+  includeWeekendsInLeave      Boolean         @default(false)
+  minNoticePeriodDays         Int             @default(2)
+  maxConsecutiveDays          Int             @default(10)
+  requiresManagerApproval     Boolean         @default(true)
+  requiresHrApproval          Boolean         @default(true)
+  requiresAttachmentAboveDays Int             @default(3)
+  isActive                    Boolean         @default(true)
+  createdById                 Int?
+  updatedById                 Int?
+  updatedByName               String?
+  createdAt                   DateTime        @default(now())
+  updatedAt                   DateTime        @updatedAt
+  office                      BranchGeofence? @relation(fields: [officeId], references: [id])
+
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model SalaryPolicy {
+  id                        Int             @id @default(autoincrement())
+  officeId                  Int?
+  name                      String          @default("Standard Salary Policy")
+  salaryCycle               String          @default("MONTHLY")
+  payrollCycleStartDay      Int             @default(1)
+  workingDaysPerMonth       Int             @default(30)
+  fullDayDeductionPct       Float           @default(100.0)
+  halfDayDeductionPct       Float           @default(50.0)
+  lateArrivalDeductionPct   Float           @default(25.0)
+  earlyCheckoutDeductionPct Float           @default(25.0)
+  overtimeEnabled           Boolean         @default(true)
+  overtimeMultiplier        Float           @default(1.5)
+  overtimeCalculationMethod String          @default("HOURLY_BASE")
+  commissionEnabled         Boolean         @default(false)
+  commissionType            String          @default("PERCENTAGE")
+  commissionPercentage      Float           @default(0.0)
+  pfPercent                 Float           @default(12.0)
+  esiPercent                Float           @default(0.75)
+  isActive                  Boolean         @default(true)
+  createdById               Int?
+  updatedById               Int?
+  updatedByName             String?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  office                    BranchGeofence? @relation(fields: [officeId], references: [id])
+
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model ClaimPolicy {
+  id                         Int             @id @default(autoincrement())
+  officeId                   Int?
+  name                       String          @default("Standard Claim Policy")
+  claimsEnabled              Boolean         @default(true)
+  maxClaimAmountPerReceipt   Float           @default(25000.0)
+  monthlyClaimLimit          Float           @default(100000.0)
+  annualClaimLimit           Float           @default(500000.0)
+  receiptRequired            Boolean         @default(true)
+  receiptRequiredAboveAmount Float           @default(500.0)
+  approvalRequired           Boolean         @default(true)
+  autoApprovalThreshold      Float           @default(0.0)
+  allowedCategories          String[]        @default(["TRAVEL", "FOOD", "FUEL", "ACCOMMODATION", "MEDICAL", "COMMUNICATION", "OFFICE_SUPPLIES", "OTHER"])
+  isActive                   Boolean         @default(true)
+  createdById                Int?
+  updatedById                Int?
+  updatedByName              String?
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
+  office                     BranchGeofence? @relation(fields: [officeId], references: [id])
+
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model RemoteRequest {
+  id              Int           @id @default(autoincrement())
+  employeeId      Int
+  fromDate        DateTime
+  toDate          DateTime
+  startTime       String?       @default("09:00 AM")
+  endTime         String?       @default("06:00 PM")
+  days            Int           @default(1)
+  reason          String?
+  attachmentUrl   String?
+  status          RequestStatus @default(PENDING)
+  rejectionReason String?
+  approvedById    Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  approvedByName  String?
+  approvedAt      DateTime?
+  rejectedById    Int?
+  rejectedByName  String?
+  rejectedAt      DateTime?
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([fromDate])
+  @@index([toDate])
+}
+
+model Shift {
+  id                    Int            @id @default(autoincrement())
+  name                  String
+  code                  String
+  startTime             String         @default("09:30 AM")
+  endTime               String         @default("06:30 PM")
+  durationHours         Float          @default(9.0)
+  gracePeriodMinutes    Int            @default(15)
+  halfDayThresholdHours Float          @default(4.5)
+  breakDurationMinutes  Int            @default(60)
+  isNightShift          Boolean        @default(false)
+  isRotational          Boolean        @default(false)
+  workingDays           String[]       @default(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+  color                 String?        @default("#3B82F6")
+  status                String         @default("ACTIVE")
+  notes                 String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  deletedAt             DateTime?
+  employees             Employee[]
+  guidance              ShiftGuidance?
+
+  @@unique([code])
+  @@index([status])
+}
+
+model ShiftGuidance {
+  id                       Int      @id @default(autoincrement())
+  shiftId                  Int      @unique
+  overtimeRule             String?  @default("Overtime commences after 9 hours of active shift work; calculated at 1.5x regular hourly wage.")
+  punchInRule              String?  @default("Punch-in allowed 30 minutes prior to shift start. Late arrival recorded after 15-minute grace period.")
+  punchOutRule             String?  @default("Early departure before shift completion requires manager half-day authorization.")
+  breakPolicy              String?  @default("1-hour lunch break between 01:00 PM and 02:00 PM + two 15-minute tea breaks.")
+  nightShiftAllowance      String?  @default("₹250 per night shift allowance + complimentary company transport.")
+  swapPolicy               String?  @default("Shift swap requests must be submitted at least 24 hours in advance with mutual employee approval.")
+  geofenceRequirement      String?  @default("Mandatory punch within 150m of assigned office geofence or approved client site.")
+  emergencyContactProtocol String?  @default("Contact HR Duty Manager immediately for emergency shift cancellations.")
+  notes                    String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+}
+
+model Visit {
+  id               Int         @id @default(autoincrement())
+  employeeId       Int
+  customerName     String
+  purpose          String
+  date             DateTime    @default(now())
+  time             String?
+  location         String
+  latitude         Float?
+  longitude        Float?
+  status           VisitStatus @default(SCHEDULED)
+  notes            String?
+  duration         Float?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  companyId        Int?
+  contactId        Int?
+  dealId           Int?
+  nextFollowUpDate DateTime?
+  outcome          String?
+  visitType        String?     @default("CLIENT_MEETING")
+  completedBy      String?
+  completedById    Int?
+  scheduledBy      String?
+  scheduledById    Int?
+  company          Company?    @relation(fields: [companyId], references: [id])
+  contact          Contact?    @relation(fields: [contactId], references: [id])
+  deal             Deal?       @relation(fields: [dealId], references: [id])
+  employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([companyId])
+  @@index([contactId])
+  @@index([dealId])
+  @@index([completedById])
+  @@index([scheduledById])
+}
+
+model SalaryStructure {
+  id               Int             @id @default(autoincrement())
+  employeeId       Int
+  basicSalary      Float
+  hra              Float           @default(0.0)
+  allowances       Float           @default(0.0)
+  specialAllowance Float           @default(0.0)
+  bonus            Float           @default(0.0)
+  commission       Float           @default(0.0)
+  overtime         Float           @default(0.0)
+  otherEarnings    Float           @default(0.0)
+  pf               Float           @default(0.0)
+  esi              Float           @default(0.0)
+  professionalTax  Float           @default(0.0)
+  tds              Float           @default(0.0)
+  otherDeductions  Float           @default(0.0)
+  grossSalary      Float
+  totalDeductions  Float
+  netSalary        Float
+  effectiveFrom    DateTime        @default(now())
+  effectiveTo      DateTime?
+  status           StructureStatus @default(ACTIVE)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+}
+
+model Payroll {
+  id              Int           @id @default(autoincrement())
+  month           Int
+  year            Int
+  departmentId    Int?
+  status          PayrollStatus @default(DRAFT)
+  grossSalary     Float         @default(0.0)
+  totalDeductions Float         @default(0.0)
+  netSalary       Float         @default(0.0)
+  totalEmployees  Int           @default(0)
+  processedAt     DateTime?
+  approvedAt      DateTime?
+  disbursedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  items           PayrollItem[]
+
+  @@unique([month, year, departmentId])
+}
+
+model PayrollItem {
+  commissionShares    CommissionShare[]
+  id                  Int               @id @default(autoincrement())
+  payrollId           Int
+  employeeId          Int
+  basicSalary         Float
+  hra                 Float             @default(0.0)
+  allowances          Float             @default(0.0)
+  specialAllowance    Float             @default(0.0)
+  bonus               Float             @default(0.0)
+  commission          Float             @default(0.0)
+  overtime            Float             @default(0.0)
+  otherEarnings       Float             @default(0.0)
+  reimbursement       Float             @default(0.0)
+  pf                  Float             @default(0.0)
+  esi                 Float             @default(0.0)
+  professionalTax     Float             @default(0.0)
+  tds                 Float             @default(0.0)
+  otherDeductions     Float             @default(0.0)
+  loanDeduction       Float             @default(0.0)
+  grossSalary         Float
+  totalDeductions     Float
+  netSalary           Float
+  workingDays         Int               @default(30)
+  presentDays         Int               @default(30)
+  absentDays          Int               @default(0)
+  halfDays            Int               @default(0)
+  paidLeaveDays       Int               @default(0)
+  unpaidLeaveDays     Int               @default(0)
+  wfhDays             Int               @default(0)
+  payableDays         Float             @default(0)
+  holidayDays         Float             @default(0)
+  weeklyOffDays       Float             @default(0)
+  lopDays             Float             @default(0)
+  lopDeduction        Float             @default(0)
+  advanceDeduction    Float             @default(0)
+  paidAt              DateTime?
+  emailStatus         String            @default("EMAIL_PENDING")
+  whatsappStatus      String            @default("WHATSAPP_PENDING")
+  calculationSnapshot Json?
+  status              String            @default("GENERATED")
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  employee            Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payroll             Payroll           @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+  salarySlips         SalarySlip[]
+
+  @@index([payrollId])
+  @@index([employeeId])
+}
+
+model SalarySlip {
+  id              Int         @id @default(autoincrement())
+  payrollItemId   Int
+  employeeId      Int
+  slipNumber      String      @unique
+  payPeriod       String
+  grossSalary     Float
+  totalDeductions Float
+  netSalary       Float
+  pdfUrl          String?
+  generatedAt     DateTime    @default(now())
+  status          String      @default("GENERATED")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payrollItem     PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+}
+
+model PayrollPolicy {
+  singletonKey        String   @unique @default("GLOBAL")
+  id                  Int      @id @default(autoincrement())
+  workingDaysPerMonth Int      @default(30)
+  lateDeductionRate   Float    @default(0.0)
+  overtimeMultiplier  Float    @default(1.5)
+  pfPercent           Float    @default(12.0)
+  esiPercent          Float    @default(0.75)
+  taxExemptionLimit   Float    @default(300000)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Team {
+  id          Int          @id @default(autoincrement())
+  name        String
+  description String?
+  leaderId    Int?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  leader      Employee?    @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  members     TeamMember[]
+  works       Work[]
+
+  @@index([leaderId])
+}
+
+model TeamMember {
+  id         Int      @id @default(autoincrement())
+  teamId     Int
+  employeeId Int
+  role       String   @default("MEMBER")
+  joinedAt   DateTime @default(now())
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, employeeId])
+  @@index([teamId])
+  @@index([employeeId])
+}
+
+model PlanEntitlement {
+  id           Int       @id @default(autoincrement())
+  planId       Int?
+  serviceName  String
+  totalQty     Int       @default(0)
+  usedQty      Int       @default(0)
+  scheduledQty Int       @default(0)
+  validUntil   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  works        Work[]
+}
+
+model Work {
+  id            Int              @id @default(autoincrement())
+  planId        Int?
+  entitlementId Int?
+  teamId        Int?
+  assignedToId  Int?
+  editorId      Int?
+  workType      WorkType         @default(REELS_SHOOT)
+  title         String
+  description   String?
+  scheduledDate DateTime         @default(now())
+  scheduledTime String?
+  status        WorkStatus       @default(SCHEDULED)
+  priority      WorkPriority     @default(MEDIUM)
+  notes         String?
+  outputUrl     String?
+  feedback      String?
+  revisionCount Int              @default(0)
+  submittedAt   DateTime?
+  approvedAt    DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  assignedTo    Employee?        @relation("AssignedEmployeeWorks", fields: [assignedToId], references: [id])
+  editor        Employee?        @relation("AssignedEditorWorks", fields: [editorId], references: [id])
+  entitlement   PlanEntitlement? @relation(fields: [entitlementId], references: [id])
+  team          Team?            @relation(fields: [teamId], references: [id])
+  tasks         WorkTask[]
+
+  @@index([teamId])
+  @@index([assignedToId])
+  @@index([editorId])
+  @@index([scheduledDate])
+  @@index([status])
+}
+
+model WorkTask {
+  id           Int        @id @default(autoincrement())
+  workId       Int
+  title        String
+  stepOrder    Int        @default(1)
+  assignedToId Int?
+  status       TaskStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  assignedTo   Employee?  @relation(fields: [assignedToId], references: [id])
+  work         Work       @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@index([workId])
+  @@index([assignedToId])
+}
+
+model DataCaptureJob {
+  id                Int                @id @default(autoincrement())
+  jobId             String             @unique
+  userId            Int
+  keyword           String
+  location          String
+  requestedResults  Int                @default(20)
+  capturedResults   Int                @default(0)
+  googleApiRequests Int                @default(1)
+  createdFrom       RecordCreatedFrom?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  places            DataCapturePlace[]
+
+  @@index([jobId])
+  @@index([createdFrom])
+}
+
+model DataCapturePlace {
+  id               Int                @id @default(autoincrement())
+  jobId            String?
+  googlePlaceId    String?
+  businessName     String
+  category         String?
+  address          String?
+  phone            String?
+  email            String?
+  website          String?
+  rating           Float?
+  reviewCount      Int?
+  latitude         Float?
+  longitude        Float?
+  googleMapsUrl    String?
+  businessStatus   String?            @default("OPERATIONAL")
+  source           String?            @default("GOOGLE_PLACES")
+  status           String?            @default("CAPTURED")
+  rawData          Json?
+  photos           Json? // Array of Google photo URLs for this business
+  socialMedia      Json? // Discovered social media handles & website
+  notes            String?
+  isImported       Boolean            @default(false)
+  captureRequestId String?
+  sourceRecordId   String?
+  createdFrom      RecordCreatedFrom?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @default(now()) @updatedAt
+  deletedAt        DateTime?
+  job              DataCaptureJob?    @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([googlePlaceId])
+  @@index([status])
+  @@index([captureRequestId])
+  @@index([createdFrom])
+  @@index([deletedAt])
+  @@index([deletedAt, createdAt])
+}
+
+model DataCaptureSearch {
+  id          Int      @id @default(autoincrement())
+  employeeId  Int
+  userId      Int?
+  searchQuery String
+  location    String?
+  requestId   String?
+  searchedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([requestId])
+  @@index([searchedAt])
+  @@index([employeeId, searchedAt])
+}
+
+model EmployeeLoan {
+  id               Int        @id @default(autoincrement())
+  employeeId       Int
+  loanAmount       Float
+  approvedAmount   Float?
+  reason           String
+  termMonths       Int        @default(12)
+  monthlyEmi       Float      @default(0.0)
+  interestRate     Float      @default(0.0)
+  startDate        DateTime?
+  remainingBalance Float?
+  status           LoanStatus @default(PENDING)
+  rejectionReason  String?
+  approvedById     Int?
+  approvedByName   String?
+  documents        String[]   @default([])
+  notes            String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  employee         Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+}
+
+model EmployeeClaim {
+  id              Int         @id @default(autoincrement())
+  employeeId      Int
+  category        String      @default("TRAVEL")
+  amount          Float
+  approvedAmount  Float?
+  claimDate       DateTime    @default(now())
+  description     String
+  receiptUrl      String?
+  status          ClaimStatus @default(PENDING)
+  rejectionReason String?
+  paymentStatus   String      @default("UNPAID")
+  paidAt          DateTime?
+  reviewedById    Int?
+  reviewedByName  String?
+  reviewedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([category])
+}
+
+enum EmployeeType {
+  COMPANY
+  FREELANCER
+}
+
+enum SubscriptionBillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum RecordCreatedFrom {
+  MOBILE_APP
+  ADMIN_PANEL
+}
+
+enum ContactType {
+  CUSTOMER
+  VENDOR
+  PARTNER
+  PROSPECT
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  SUBMITTED
+  UNDER_REVIEW
+  REJECTED
+  BLOCKED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+  PENDING
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  BANK_TRANSFER
+  CASH
+  CREDIT_CARD
+  OTHER
+}
+
+enum TrackingType {
+  ATTENDANCE
+  VISIT
+  WORKING_HOURS
+  MANUAL
+}
+
+enum TrackingMode {
+  OFF
+  ATTENDANCE_ONLY
+  DURING_VISIT
+  WORKING_HOURS
+  ACTIVE_TRACKING
+}
+
+enum LocationPermissionStatus {
+  GRANTED
+  DENIED
+  UNAVAILABLE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+  REMOTE
+  LEAVE
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VisitStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PayrollStatus {
+  DRAFT
+  PROCESSING
+  CALCULATED
+  PENDING_APPROVAL
+  APPROVED
+  GENERATED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum StructureStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum WorkType {
+  REELS_SHOOT
+  VIDEO_EDITING
+  POST_DESIGN
+  STORY_DESIGN
+  UPLOADING
+  INFLUENCER_PROMO
+  ADS_MANAGEMENT
+  REEL
+  CREATIVE_POST
+  STORY
+  INFLUENCER_PROMOTION
+  GRAPHIC_DESIGN
+  VIDEO
+  SHOOT
+  EDITING
+  SOCIAL_MEDIA_MANAGEMENT
+  CONTENT_WRITING
+  META_ADS
+  GOOGLE_ADS
+  PERFORMANCE_REPORT
+}
+
+enum WorkStatus {
+  SCHEDULED
+  ASSIGNED
+  IN_PROGRESS
+  PROCESSING
+  SUBMITTED
+  CUSTOMER_REVIEW
+  REVISION_REQUESTED
+  APPROVED
+  UNDER_REVIEW
+  COMPLETED
+  CANCELLED
+  BLOCKED
+}
+
+enum WorkPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ACTIVE
+  PAID
+  CANCELLED
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+}
+
+enum ScheduleStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+model MonthlySchedule {
+  id                 Int            @id @default(autoincrement())
+  planId             Int?
+  month              Int
+  year               Int
+  startDate          DateTime
+  endDate            DateTime
+  status             ScheduleStatus @default(PLANNED)
+  assignedEmployeeId Int?
+  title              String?
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  deletedAt          DateTime?
+
+  plan             Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+  assignedEmployee Employee? @relation(fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+
+  @@index([planId])
+  @@index([assignedEmployeeId])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([status])
+  @@index([month, year])
+  @@index([deletedAt])
+  @@map("monthly_schedules")
+}
+
+model CustomPlanOption {
+  id                   Int       @id @default(autoincrement())
+  name                 String
+  code                 String    @unique
+  description          String?
+  category             String    @default("CONTENT") // CONTENT, CREATIVES, ADS, CRM, STORAGE, SUPPORT
+  monthlyPrice         Float
+  pricingType          String    @default("PER_UNIT") // FLAT, PER_UNIT
+  unitName             String?   @default("unit")
+  minQuantity          Int       @default(1)
+  maxQuantity          Int       @default(100)
+  defaultQuantity      Int       @default(1)
+  isIncludedInStandard Boolean   @default(false)
+  isActive             Boolean   @default(true)
+  sortOrder            Int       @default(0)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
+
+  @@index([category])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("custom_plan_options")
+}
+
+model IntegrationSetting {
+  id              Int       @id @default(autoincrement())
+  provider        String    @unique // e.g. "RAZORPAY", "GOOGLE_MAPS", "TWILIO", "WHATSAPP", "SENDGRID"
+  isEnabled       Boolean   @default(true)
+  environment     String    @default("LIVE") // "LIVE" | "TEST"
+  credentials     Json // Encrypted payload of sensitive fields (e.g. keySecret, apiKey) + plain identifiers (e.g. keyId, webhookSecret)
+  config          Json? // Provider-specific non-sensitive configurations (e.g. routing, geocoding options)
+  updatedByUserId Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@index([provider, isEnabled])
+  @@index([deletedAt])
+  @@map("integration_settings")
+}
+
+model PaymentSetting {
+  id                    Int      @id @default(autoincrement())
+  singletonKey          String   @unique @default("DEFAULT")
+  razorpayEnabled       Boolean  @default(true)
+  paymentMode           String   @default("TEST") // "TEST" | "LIVE"
+  razorpayTestKeyId     String?  @default("")
+  razorpayTestKeySecret String?  @default("")
+  razorpayLiveKeyId     String?  @default("")
+  razorpayLiveKeySecret String?  @default("")
+  offlinePaymentEnabled Boolean  @default(false)
+  updatedByUserId       Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("payment_settings")
+}
+
+enum TrendingCategory {
+  REEL
+  STORY
+  OFFER
+  HIGH_ROI_AD
+}
+
+model TrendingContent {
+  id             Int              @id @default(autoincrement())
+  title          String
+  description    String?
+  category       TrendingCategory
+  thumbnailUrl   String?
+  mediaUrl       String?
+  ctaText        String?
+  ctaUrl         String?
+  platform       String?          @default("INSTAGRAM")
+  objective      String?          @default("ENGAGEMENT")
+  priority       Int              @default(0)
+  isPublished    Boolean          @default(true)
+  isActive       Boolean          @default(true)
+  isFeatured     Boolean          @default(false)
+  views          Int?             @default(0)
+  likes          Int?             @default(0)
+  shares         Int?             @default(0)
+  comments       Int?             @default(0)
+  duration       String?
+  engagementRate Float?           @default(0.0)
+  startAt        DateTime?
+  endAt          DateTime?
+  createdBy      Int?
+  createdByUser  User?            @relation("CreatedTrendingContents", fields: [createdBy], references: [id], onDelete: SetNull)
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  deletedAt      DateTime?
+
+  @@index([isActive, isPublished])
+  @@index([category])
+  @@index([priority])
+  @@index([isFeatured])
+  @@index([deletedAt])
+  @@map("trending_contents")
+}
+
+model MarketingBanner {
+  id             Int       @id @default(autoincrement())
+  title          String
+  subtitle       String?
+  description    String?
+  imageUrl       String
+  imagePublicId  String?
+  imageKey       String?
+  mobileImageUrl String?
+  ctaText        String?
+  ctaUrl         String?
+  priority       Int       @default(0)
+  isActive       Boolean   @default(true)
+  isPublished    Boolean   @default(true)
+  startAt        DateTime?
+  endAt          DateTime?
+  createdBy      Int?
+  createdByUser  User?     @relation("CreatedMarketingBanners", fields: [createdBy], references: [id], onDelete: SetNull)
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  @@index([isActive, isPublished])
+  @@index([priority])
+  @@index([startAt, endAt])
+  @@index([deletedAt])
+  @@map("marketing_banners")
+}
+
+model MarketingVideo {
+  id                 Int       @id @default(autoincrement())
+  title              String
+  subtitle           String?
+  description        String?
+  videoUrl           String
+  videoKey           String?
+  thumbnailUrl       String?
+  thumbnailKey       String?
+  ctaText            String?
+  ctaUrl             String?
+  status             String    @default("ACTIVE") // DRAFT, ACTIVE, INACTIVE, EXPIRED
+  priority           Int       @default(0)
+  isActive           Boolean   @default(true)
+  isPublished        Boolean   @default(true)
+  showOnHome         Boolean   @default(true)
+  showInIntroduction Boolean   @default(false)
+  startAt            DateTime?
+  endAt              DateTime?
+  createdBy          Int?
+  createdByUser      User?     @relation("CreatedMarketingVideos", fields: [createdBy], references: [id], onDelete: SetNull)
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  @@index([isActive, status])
+  @@index([priority])
+  @@index([showOnHome])
+  @@index([showInIntroduction])
+  @@index([startAt, endAt])
+  @@index([deletedAt])
+  @@map("marketing_videos")
+}
+
+model SocialMediaHandler {
+  id           Int       @id @default(autoincrement())
+  platform     String
+  accountName  String
+  accountUrl   String?
+  handlerName  String?
+  handlerPhone String?
+  handlerEmail String?
+  workType     String?
+  status       String    @default("ACTIVE")
+  notes        String?
+  startDate    DateTime?
+  endDate      DateTime?
+  durationDays Int?      @default(30)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@index([platform])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("social_media_handlers")
+}
+
+enum WorkAccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model WorkAccessRequest {
+  id              Int                     @id @default(autoincrement())
+  employeeId      Int
+  workModule      String
+  status          WorkAccessRequestStatus @default(PENDING)
+  reason          String?
+  rejectionReason String?
+  approvedById    Int?
+  reviewedAt      DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  employee        Employee                @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("work_access_requests")
+}
+
+enum DesignationAudience {
+  EMPLOYEE
+  CUSTOMER
+}
+
+model MarketplaceTool {
+  id          Int       @id @default(autoincrement())
+  title       String
+  subtitle    String?
+  description String?
+  icon        String?
+  category    String    @default("GROWTH_TOOLS")
+  route       String?
+  externalUrl String?
+  badge       String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  isPublished Boolean   @default(true)
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([isActive, isPublished])
+  @@index([sortOrder])
+  @@index([category])
+  @@index([deletedAt])
+  @@map("marketplace_tools")
+}
+
+model InfluencerCategory {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  slug        String       @unique
+  icon        String?
+  description String?
+  sortOrder   Int          @default(0)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  influencers Influencer[]
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("influencer_categories")
+}
+
+model Influencer {
+  id                 Int                 @id @default(autoincrement())
+  name               String
+  handle             String?
+  avatarUrl          String?
+  profileImage       String?
+  coverImage         String?
+  platform           String              @default("INSTAGRAM") // INSTAGRAM, YOUTUBE, SNAPCHAT, TIKTOK
+  categoryId         Int?
+  categoryName       String?
+  category           InfluencerCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  location           String?             @default("India")
+  city               String?
+  localArea          String?
+  followers          Int                 @default(0)
+  followersCount     String?             @default("0")
+  engagementRate     Float               @default(0.0)
+  isVerified         Boolean             @default(true)
+  isFeatured         Boolean             @default(true)
+  isActive           Boolean             @default(true)
+  status             String              @default("PENDING") // PENDING, APPROVED, REJECTED, SUSPENDED, ACTIVE
+  verificationStatus String              @default("VERIFIED") // VERIFIED, PENDING, UNVERIFIED
+  topCreator         Boolean             @default(false)
+  startingPrice      Float?
+  bio                String?
+  languages          String[]            @default(["English", "Hindi"])
+  instagramHandle    String?
+  youtubeHandle      String?
+  email              String?             @unique
+  phone              String?
+  passwordHash       String?
+  userId             Int?
+  socialLinks        Json?
+  rejectionReason    String?
+  approvedAt         DateTime?
+  approvedBy         Int?
+  rejectedAt         DateTime?
+  rejectedBy         Int?
+  suspendedAt        DateTime?
+  suspendedBy        Int?
+  gender             String?
+  ageRange           String?
+  bookingUrl         String?
+  pricing            Float?
+  rating             Float?              @default(4.9)
+  sortOrder          Int                 @default(0)
+  metadata           Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  deletedAt          DateTime?
+
+  packages       InfluencerPackage[]
+  availabilities InfluencerAvailability[]
+  portfolios     InfluencerPortfolio[]
+  reviews        InfluencerReview[]
+  bookings       InfluencerBooking[]
+
+  @@index([status])
+  @@index([email])
+  @@index([isActive, isFeatured])
+  @@index([categoryId])
+  @@index([platform])
+  @@index([sortOrder])
+  @@index([deletedAt])
+  @@map("influencers")
+}
+
+model InfluencerPackage {
+  id           Int                 @id @default(autoincrement())
+  influencerId Int
+  influencer   Influencer          @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  name         String
+  type         String              @default("POST") // STORY, REEL, POST, CUSTOM
+  description  String?
+  duration     String?
+  price        Float
+  isPopular    Boolean             @default(false)
+  status       String              @default("ACTIVE") // ACTIVE, INACTIVE
+  sortOrder    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  deletedAt    DateTime?
+  bookings     InfluencerBooking[]
+
+  @@index([influencerId])
+  @@index([status])
+  @@map("influencer_packages")
+}
+
+model InfluencerAvailability {
+  id           Int        @id @default(autoincrement())
+  influencerId Int
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  date         DateTime
+  isAvailable  Boolean    @default(true)
+  startTime    String?
+  endTime      String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  @@index([influencerId, date])
+  @@map("influencer_availabilities")
+}
+
+model InfluencerBooking {
+  id                Int                        @id @default(autoincrement())
+  bookingId         String                     @unique
+  influencerId      Int
+  influencer        Influencer                 @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  packageId         Int?
+  package           InfluencerPackage?         @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  campaignDate      DateTime
+  brandName         String
+  contactPerson     String
+  mobileNumber      String
+  email             String
+  businessName      String
+  instagramId       String?
+  campaignObjective String?
+  notes             String?
+  packageAmount     Float
+  platformFee       Float                      @default(500)
+  gst               Float                      @default(0)
+  totalAmount       Float
+  bookingStatus     String                     @default("PENDING") // PENDING, CONFIRMED, REJECTED, CANCELLED, COMPLETED
+  paymentStatus     String                     @default("PENDING") // PENDING, PROCESSING, PAID, FAILED, REFUNDED
+  paymentMethod     String?                    @default("RAZORPAY")
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+  rejectionReason   String?
+  cancelledAt       DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  deletedAt         DateTime?
+  payments          InfluencerBookingPayment[]
+
+  @@index([influencerId])
+  @@index([bookingStatus])
+  @@index([paymentStatus])
+  @@index([deletedAt])
+  @@map("influencer_bookings")
+}
+
+model InfluencerBookingPayment {
+  id            Int               @id @default(autoincrement())
+  bookingId     Int
+  booking       InfluencerBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amount        Float
+  currency      String            @default("INR")
+  paymentMethod String            @default("RAZORPAY")
+  paymentId     String?
+  orderId       String?
+  signature     String?
+  status        String            @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  rawResponse   Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([bookingId])
+  @@map("influencer_booking_payments")
+}
+
+model InfluencerPortfolio {
+  id            Int        @id @default(autoincrement())
+  influencerId  Int
+  influencer    Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  title         String
+  mediaUrl      String
+  mediaType     String     @default("IMAGE") // IMAGE, VIDEO
+  caption       String?
+  likesCount    Int        @default(0)
+  commentsCount Int        @default(0)
+  viewsCount    Int        @default(0)
+  sortOrder     Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
+
+  @@index([influencerId])
+  @@map("influencer_portfolios")
+}
+
+model InfluencerReview {
+  id           Int        @id @default(autoincrement())
+  influencerId Int
+  influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  brandName    String
+  rating       Float      @default(5.0)
+  comment      String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  @@index([influencerId])
+  @@map("influencer_reviews")
+}
+
+// =========================================================================
+// AI STUDIO & SOCIAL MEDIA PUBLISHING MODELS
+// =========================================================================
+
+model AiServiceConfig {
+  id             Int       @id @default(autoincrement())
+  code           String    @unique // AI_POST, AI_POSTER, AI_VIDEO, AI_CAPTION, AI_HASHTAGS, AI_REGENERATE
+  name           String
+  description    String?
+  creditCost     Int       @default(1)
+  pricePerCredit Float     @default(10.0) // In INR
+  packPrice      Float?
+  isActive       Boolean   @default(true)
+  sortOrder      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  @@index([code])
+  @@index([isActive])
+  @@map("ai_service_configs")
+}
+
+model AiCreditWallet {
+  singletonKey String                @unique @default("GLOBAL")
+  id           Int                   @id @default(autoincrement())
+  balance      Int                   @default(20) // Welcome credits
+  totalEarned  Int                   @default(20)
+  totalSpent   Int                   @default(0)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  transactions AiCreditTransaction[]
+
+  @@map("ai_credit_wallets")
+}
+
+model AiCreditTransaction {
+  id              Int            @id @default(autoincrement())
+  walletId        Int
+  wallet          AiCreditWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount          Int // Positive for top-ups, negative for usage
+  balanceAfter    Int
+  type            String // PURCHASE, USAGE, REFUND, GRANT
+  serviceCode     String? // AI_POST, AI_POSTER, AI_VIDEO, etc.
+  generationId    Int?
+  paymentId       String?
+  razorpayOrderId String?
+  notes           String?
+  createdAt       DateTime       @default(now())
+
+  @@index([walletId])
+  @@map("ai_credit_transactions")
+}
+
+model AiGeneration {
+  id             Int                 @id @default(autoincrement())
+  generationId   String              @unique // AIGEN-YYYYMMDD-XXXX
+  type           String // POST, POSTER, VIDEO, CAPTION, HASHTAGS
+  status         String              @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  product        String
+  objective      String?
+  targetAudience String?
+  platform       String? // INSTAGRAM, FACEBOOK, YOUTUBE, TIKTOK, LINKEDIN
+  language       String?             @default("English")
+  tone           String?             @default("Premium")
+  cta            String?
+  instructions   String?
+  creditsSpent   Int                 @default(0)
+  caption        String?
+  hashtags       String[]            @default([])
+  mediaUrl       String?
+  mediaType      String?             @default("IMAGE") // IMAGE, VIDEO, TEXT
+  errorMessage   String?
+  metadata       Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  deletedAt      DateTime?
+  assets         AiGenerationAsset[]
+  publishes      SocialPublish[]
+
+  @@index([type])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("ai_generations")
+}
+
+model AiGenerationAsset {
+  id           Int          @id @default(autoincrement())
+  generationId Int
+  generation   AiGeneration @relation(fields: [generationId], references: [id], onDelete: Cascade)
+  assetType    String       @default("IMAGE") // IMAGE, VIDEO, THUMBNAIL, VOICE
+  url          String
+  fileKey      String?
+  width        Int?
+  height       Int?
+  duration     Float?
+  createdAt    DateTime     @default(now())
+
+  @@index([generationId])
+  @@map("ai_generation_assets")
+}
+
+model SocialAccount {
+  id                    Int             @id @default(autoincrement())
+  platform              String // INSTAGRAM, FACEBOOK, YOUTUBE, TIKTOK, LINKEDIN
+  accountName           String
+  username              String?
+  profilePic            String?
+  externalAccountId     String
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  tokenExpiresAt        DateTime?
+  scopes                String[]        @default([])
+  isConnected           Boolean         @default(true)
+  metadata              Json?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  deletedAt             DateTime?
+  publishes             SocialPublish[]
+
+  @@unique([platform, externalAccountId])
+  @@index([platform])
+  @@index([isConnected])
+  @@index([deletedAt])
+  @@map("social_accounts")
+}
+
+model SocialPublish {
+  id              Int           @id @default(autoincrement())
+  publishId       String        @unique // PUB-YYYYMMDD-XXXX
+  socialAccountId Int
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  generationId    Int?
+  generation      AiGeneration? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  platform        String
+  content         String?
+  mediaUrls       String[]      @default([])
+  status          String        @default("QUEUED") // DRAFT, QUEUED, PROCESSING, PUBLISHED, FAILED, SCHEDULED, CANCELLED
+  scheduledFor    DateTime?
+  publishedAt     DateTime?
+  externalPostId  String?
+  externalPostUrl String?
+  errorMessage    String?
+  retryCount      Int           @default(0)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([socialAccountId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("social_publishes")
+}
+
+model MasterItem {
+  id          Int      @id @default(autoincrement())
+  type        String // "EMPLOYEE_TYPE", "WORK_TYPE", "ACTIVITY_TYPE", "TASK_STATUS", "EXPENSE_CATEGORY", "LOAN_TYPE", "PAYMENT_METHOD"
+  code        String
+  name        String
+  category    String?
+  description String?
+  color       String?
+  icon        String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  isSystem    Boolean  @default(false)
+  meta        Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([type, code])
+  @@index([type])
+  @@map("master_items")
+}
+
+model EmailTemplate {
+  id                 Int       @id @default(autoincrement())
+  name               String
+  key                String
+  subject            String
+  body               String    @db.Text
+  description        String?
+  category           String?   @default("GENERAL")
+  supportedVariables String[]  @default([])
+  isSystem           Boolean   @default(false)
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  emailLogs EmailLog[]
+
+  @@index([key])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("email_templates")
+}
+
+model EmailLog {
+  id                Int      @id @default(autoincrement())
+  userId            Int?
+  contactId         Int?
+  templateId        Int?
+  appointmentId     Int?
+  planId            Int?
+  channel           String?  @default("EMAIL")
+  identifierKey     String?
+  recipientEmail    String
+  subject           String
+  renderedContent   String?  @db.Text
+  eventType         String?  @default("GENERAL")
+  previousStage     String?
+  newStage          String?
+  status            String   @default("SENT") // SENT, FAILED
+  providerMessageId String?
+  errorMessage      String?
+  sentAt            DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  user     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  template EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([templateId])
+  @@index([appointmentId])
+  @@index([planId])
+  @@index([identifierKey])
+  @@index([recipientEmail])
+  @@index([eventType])
+  @@index([status])
+  @@index([createdAt])
+  @@map("email_logs")
+}
+
+model MetaTemplate {
+  id              Int       @id @default(autoincrement())
+  name            String
+  templateName    String
+  key             String?
+  language        String    @default("en_US")
+  category        String    @default("UTILITY") // MARKETING, UTILITY, AUTHENTICATION
+  status          String    @default("APPROVED") // APPROVED, PENDING, REJECTED, PAUSED, DISABLED
+  metaTemplateId  String?
+  headerType      String?   @default("NONE") // NONE, TEXT, IMAGE, DOCUMENT, VIDEO
+  headerContent   String?   @db.Text
+  body            String    @db.Text
+  footer          String?
+  buttons         Json?
+  variables       String[]  @default([])
+  rejectionReason String?
+  isLocalActive   Boolean   @default(true)
+  isSystem        Boolean   @default(false)
+  lastSyncedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@index([templateName])
+  @@index([key])
+  @@index([status])
+  @@index([isLocalActive])
+  @@index([deletedAt])
+  @@map("meta_templates")
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED
+}
+
+enum CommissionConfigStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+model CommissionConfig {
+  id              Int                    @id @default(autoincrement())
+  employeeId      Int                    @unique
+  commissionType  CommissionType         @default(PERCENTAGE)
+  commissionValue Float                  @default(0)
+  status          CommissionConfigStatus @default(ACTIVE)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("commission_configs")
+}
+
+model Commission {
+  id               Int               @id @default(autoincrement())
+  employeeId       Int?
+  sourceKey        String?           @unique
+  teamId           Int?
+  leaderId         Int?
+  reviewReason     String?
+  qualifyingAt     DateTime?
+  history          Json?
+  shares           CommissionShare[]
+  planId           Int?
+  purchaseId       Int?              @unique @map("purchase_id")
+  orderId          String?           @map("order_id")
+  commissionType   CommissionType
+  commissionRate   Float             @default(0)
+  purchaseAmount   Float             @default(0)
+  commissionAmount Float             @default(0)
+  status           CommissionStatus  @default(PENDING)
+  paidAt           DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  employee Employee?       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  plan     Plan?           @relation(fields: [planId], references: [id], onDelete: SetNull)
+  purchase PaymentHistory? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@index([planId])
+  @@index([purchaseId])
+  @@index([orderId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([qualifyingAt])
+  @@map("commissions")
+}
+
+model CommissionShare {
+  id            Int              @id @default(autoincrement())
+  commissionId  Int
+  employeeId    Int
+  recipientRole String
+  effectiveRate Float
+  amount        Float
+  status        CommissionStatus @default(APPROVED)
+  paidAt        DateTime?
+  payrollItemId Int?
+  commission    Commission       @relation(fields: [commissionId], references: [id], onDelete: Restrict)
+  employee      Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  payrollItem   PayrollItem?     @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+
+  @@unique([commissionId, recipientRole])
+  @@unique([commissionId, employeeId])
+  @@index([employeeId, status])
+  @@index([payrollItemId])
+  @@map("commission_shares")
+}

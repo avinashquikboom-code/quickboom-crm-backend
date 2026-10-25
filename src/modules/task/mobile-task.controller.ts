@@ -86,6 +86,6 @@ export class MobileTaskController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
   ) {
-    return this.taskService.getMyTask(user, customerId, id).then((t) => t.history);
+    return this.taskService.getMyTask(user, customerId, id).then((t: any) => t.history);
   }
 }

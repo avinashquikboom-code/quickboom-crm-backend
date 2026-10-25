@@ -360,7 +360,7 @@ export class FcmService implements OnModuleInit {
         : cleanToken || 'EMPTY';
 
     if (!cleanToken) {
-      this.logger.warn(`[FCM] No active device tokens found for customer ${meta?.customerId ?? 'N/A'}`);
+      this.logger.warn(`[FCM] No active device tokens found for customer ${'N/A'}`);
       return { success: false, error: 'EMPTY_TOKEN', details: 'FCM token cannot be empty' };
     }
 
@@ -383,7 +383,7 @@ export class FcmService implements OnModuleInit {
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
-        `[FCM] Send failed:\nFIREBASE_NOT_INITIALIZED - Firebase Admin SDK credentials are not configured on backend (customerId: ${meta?.customerId ?? 'N/A'}, token: ${maskedToken})`,
+        `[FCM] Send failed:\nFIREBASE_NOT_INITIALIZED - Firebase Admin SDK credentials are not configured on backend (customerId: ${'N/A'}, token: ${maskedToken})`,
       );
       return {
         success: false,
@@ -441,7 +441,7 @@ export class FcmService implements OnModuleInit {
     const validTokens = (tokens || []).filter((t) => typeof t === 'string' && t.trim().length > 0);
 
     if (validTokens.length === 0) {
-      this.logger.warn(`[FCM] No active device tokens found for customer ${meta?.customerId ?? 'N/A'}`);
+      this.logger.warn(`[FCM] No active device tokens found for customer ${'N/A'}`);
       return {
         successCount: 0,
         failureCount: 0,
@@ -474,7 +474,7 @@ export class FcmService implements OnModuleInit {
 
     if (!this.ready() || !this.firebaseApp) {
       this.logger.error(
-        `[FCM] Send failed:\nFIREBASE_NOT_INITIALIZED - Firebase Admin SDK credentials are not configured on backend (customerId: ${meta?.customerId ?? 'N/A'})`,
+        `[FCM] Send failed:\nFIREBASE_NOT_INITIALIZED - Firebase Admin SDK credentials are not configured on backend (customerId: ${'N/A'})`,
       );
       return {
         successCount: 0,

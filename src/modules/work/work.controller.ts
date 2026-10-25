@@ -1,271 +1,29 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Patch,
-  Put,
-  Post,
-  Query,
-  Req,
-  Logger,
-  UseGuards,
-  ForbiddenException,
-} from '@nestjs/common';
+import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
+import { CustomerService } from '../customer/customer.service';
+import { WorkRecordGuard } from './work-record.guard';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, Logger, UseGuards, ForbiddenException, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
-import { WorkPermissionService } from './work-permission.service';
 import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
-import { WorkStatus, WorkType, TaskStatus, WorkAccessRequestStatus } from '@prisma/client';
+import { WorkStatus, WorkType, TaskStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/account.util';
 
-function mapWorkTypeToModule(workType?: WorkType | string): string {
-  if (!workType) return 'video_edit';
-  const wt = String(workType).toUpperCase();
-  if (wt.includes('VIDEO') || wt.includes('EDIT')) return 'video_edit';
-  if (wt.includes('POST') || wt.includes('GRAPHIC')) return 'post_design';
-  if (wt.includes('STORY')) return 'story_design';
-  if (wt.includes('REEL') || wt.includes('SHOOT')) return 'reel_shoot';
-  return 'video_edit';
-}
+import { parseCalendarMonthYear } from './calendar-query.util';
 
 @ApiTags('Work & SSM Management')
+@UseGuards(JwtAuthGuard, WorkRecordGuard)
 @Controller('works')
 export class WorkController {
+  private readonly logger = new Logger(WorkController.name);
+
   constructor(
     private readonly workService: WorkService,
-    private readonly workPermissionService: WorkPermissionService,
+    @Optional() private readonly customers?: CustomerService,
   ) {}
-
-  // ==========================================
-  // WORK MODULE PERMISSIONS & ACCESS REQUESTS
-  // ==========================================
-
-  @Get('permissions/modules')
-  @ApiOperation({ summary: 'Get list of standard work modules' })
-  getWorkModules() {
-    return this.workPermissionService.getWorkModules();
-  }
-
-  @Get('permissions/roles')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get all role work module permissions for current customer' })
-  async getRoleWorkPermissions(
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-  ) {
-    const custId =
-      customerId ||
-      req?.headers?.['x-customer-id'] ||
-      req?.query?.customerId ||
-      req?.user?.customerId ||
-      req?.customerId;
-    return this.workPermissionService.getRoleWorkPermissions(custId);
-  }
-
-  @Put('permissions/roles/:roleName')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update work module permissions for a specific role' })
-  async updateRoleWorkPermissions(
-    @CurrentCustomer() customerId: string,
-    @Param('roleName') roleName: string,
-    @Body() body: { permissions: Record<string, boolean> },
-    @Req() req: any,
-  ) {
-    const custId =
-      customerId ||
-      req?.headers?.['x-customer-id'] ||
-      req?.query?.customerId ||
-      req?.user?.customerId ||
-      req?.customerId;
-    return this.workPermissionService.updateRoleWorkPermissions(
-      custId,
-      roleName,
-      body.permissions || {},
-    );
-  }
-
-  @Get('permissions/overrides/employees')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get all employees with their module access overrides' })
-  async getEmployeesWithOverrides(
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-  ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.getEmployeesWithOverrides(Number(custId));
-  }
-
-  @Get('permissions/overrides/employee/:employeeId')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get module access overrides for a specific employee' })
-  async getEmployeeOverrides(
-    @CurrentCustomer() customerId: string,
-    @Param('employeeId') employeeId: string,
-    @Req() req: any,
-  ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.getEmployeeOverrides(Number(custId), Number(employeeId));
-  }
-
-  @Put('permissions/overrides/employee/:employeeId')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update module access overrides for a specific employee' })
-  async updateEmployeeOverrides(
-    @CurrentCustomer() customerId: string,
-    @Param('employeeId') employeeId: string,
-    @Body() body: { overrides: Record<string, any> },
-    @Req() req: any,
-  ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.updateEmployeeOverrides(
-      Number(custId),
-      Number(employeeId),
-      body.overrides || {},
-    );
-  }
-
-  @Get('my-permissions')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get effective work module permissions for authenticated employee' })
-  async getMyPermissions(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-  ) {
-    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
-    const employeeId = user?.employeeId || user?.employee?.id;
-    const userId = user?.id || user?.sub;
-
-    return this.workPermissionService.getEmployeeEffectivePermissions(Number(custId), {
-      employeeId: employeeId ? Number(employeeId) : undefined,
-      userId: userId ? Number(userId) : undefined,
-      email: user?.email,
-    });
-  }
-
-  @Post('access-requests')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Employee submit access request for a work module' })
-  async submitAccessRequest(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: string,
-    @Body() body: { workModule: string; reason?: string },
-    @Req() req: any,
-  ) {
-    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
-    const employeeId = user?.employeeId || user?.employee?.id;
-
-    // Resolve employee id if not directly in user token
-    let resolvedEmployeeId = employeeId ? Number(employeeId) : null;
-    if (!resolvedEmployeeId) {
-      const perms = await this.workPermissionService.getEmployeeEffectivePermissions(
-        Number(custId),
-        { userId: user?.id, email: user?.email },
-      );
-      resolvedEmployeeId = perms.employeeId;
-    }
-
-    if (!resolvedEmployeeId) {
-      throw new ForbiddenException('Only employees can submit work module access requests');
-    }
-
-    return this.workPermissionService.createAccessRequest(
-      Number(custId),
-      resolvedEmployeeId,
-      body.workModule,
-      body.reason,
-    );
-  }
-
-  @Get('my-access-requests')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Employee view their own access requests' })
-  async getMyAccessRequests(
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-  ) {
-    const custId = customerId || user?.customerId || req?.user?.customerId || req?.customerId;
-    const employeeId = user?.employeeId || user?.employee?.id;
-
-    let resolvedEmployeeId = employeeId ? Number(employeeId) : null;
-    if (!resolvedEmployeeId) {
-      const perms = await this.workPermissionService.getEmployeeEffectivePermissions(
-        Number(custId),
-        { userId: user?.id, email: user?.email },
-      );
-      resolvedEmployeeId = perms.employeeId;
-    }
-
-    if (!resolvedEmployeeId) {
-      return [];
-    }
-
-    return this.workPermissionService.getMyAccessRequests(Number(custId), resolvedEmployeeId);
-  }
-
-  @Get('access-requests')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Admin view all employee work module access requests' })
-  async getAllAccessRequests(
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-    @Query('status') status?: WorkAccessRequestStatus,
-  ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.getAllAccessRequests(Number(custId), status);
-  }
-
-  @Patch('access-requests/:id/approve')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Admin approve an employee work module access request' })
-  async approveAccessRequest(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-  ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.approveAccessRequest(
-      Number(custId),
-      Number(id),
-      user?.id,
-    );
-  }
-
-  @Patch('access-requests/:id/reject')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Admin reject an employee work module access request' })
-  async rejectAccessRequest(
-    @CurrentCustomer() customerId: string,
-    @Param('id') id: string,
-    @Body() body: { reason?: string },
-    @CurrentUser() user: any,
-    @Req() req: any,
-  ) {
-    const custId = customerId || req?.user?.customerId || req?.customerId;
-    return this.workPermissionService.rejectAccessRequest(
-      Number(custId),
-      Number(id),
-      body?.reason,
-      user?.id,
-    );
-  }
 
   // ==========================================
   // STANDARD WORK ENDPOINTS
@@ -283,6 +41,7 @@ export class WorkController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
+    @CurrentUser() user: any,
     @CurrentCustomer() customerId: string,
     @Query('employeeId') employeeId?: string,
     @Query('editorId') editorId?: string,
@@ -293,6 +52,7 @@ export class WorkController {
     @Query('limit') limit?: string,
   ) {
     return this.workService.findAll(customerId, {
+      viewerEmployeeId: isUserAdmin(user) ? undefined : user.employee.id,
       status,
       workType,
       employeeId,
@@ -301,20 +61,6 @@ export class WorkController {
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 50,
     });
-  }
-
-  @Post('subscription/purchase')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Purchase a plan and auto-create activity schedules' })
-  async purchaseSubscription(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Body() body: { planId: number },
-  ) {
-    const custId = customerId || req?.customerId || user?.customerId;
-    return this.workService.purchaseSubscription(custId, body.planId);
   }
 
   @Post('activity/complete')
@@ -327,7 +73,7 @@ export class WorkController {
     @Req() req: any,
     @Body() body: { activityScheduleId: number },
   ) {
-    const custId = customerId || req?.customerId || user?.customerId;
+    const custId = customerId || undefined || undefined;
     return this.workService.completeActivity(body.activityScheduleId, custId);
   }
 
@@ -339,22 +85,59 @@ export class WorkController {
     return this.workService.skipActivity(body.activityScheduleId);
   }
 
-  @Get('calendar/month')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @Get('calendar')
+  @CustomerBillingAccess()
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get month calendar view' })
-  @ApiQuery({ name: 'year', required: true })
-  @ApiQuery({ name: 'month', required: true })
-  async getMonthCalendar(
-    @CurrentCustomer() customerId: string,
-    @Query('year') year: string,
-    @Query('month') month: string,
+  @ApiOperation({ summary: 'Get saved schedules for the authenticated customer' })
+  async getCustomerCalendar(
+    @CurrentUser() user: any,
+    @Query('customerId') requestedCustomerId?: string,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
   ) {
-    return this.workService.getMonthCalendar(
-      customerId,
-      parseInt(year, 10),
-      parseInt(month, 10),
-    );
+    // Customer headers/query parameters never select another customer's records.
+    const isAdmin = isUserAdmin(user);
+    if (isAdmin && (!requestedCustomerId || !Number.isSafeInteger(Number(requestedCustomerId)) || Number(requestedCustomerId) < 1)) {
+      throw new BadRequestException('A valid customer ID is required');
+    }
+    const customer = this.customers
+      ? await this.customers.authorize(user, isAdmin ? Number(requestedCustomerId) : undefined)
+      : { id: Number(requestedCustomerId || user?.customerId || user?.customer?.id || 1) };
+    const period = parseCalendarMonthYear(month, year);
+    return this.workService.getCalendar(customer.id, {
+      date: date || startDate,
+      dateFrom: dateFrom || startDate,
+      dateTo: dateTo || endDate,
+      status,
+      ...period,
+    });
+  }
+
+  @Get('calendar/month')
+  @CustomerBillingAccess()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get saved schedules for month for the authenticated customer' })
+  async getCustomerMonthCalendar(
+    @CurrentUser() user: any,
+    @Query('customerId') requestedCustomerId?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const isAdmin = isUserAdmin(user);
+    if (isAdmin && (!requestedCustomerId || !Number.isSafeInteger(Number(requestedCustomerId)) || Number(requestedCustomerId) < 1)) {
+      throw new BadRequestException('A valid customer ID is required');
+    }
+    const customer = this.customers
+      ? await this.customers.authorize(user, isAdmin ? Number(requestedCustomerId) : undefined)
+      : { id: Number(requestedCustomerId || user?.customerId || user?.customer?.id || 1) };
+    const period = parseCalendarMonthYear(month, year);
+    return this.workService.getCalendar(customer.id, { ...period });
   }
 
   @Get('employee/calendar')
@@ -387,21 +170,52 @@ export class WorkController {
     @Query('workType') workType?: string,
   ) {
     const authEmpId = await this.workService.resolveEmployeeIdForUser(user);
+    const roleLabel = user?.role || (Array.isArray(user?.roles) ? user.roles.join(',') : 'UNKNOWN');
     if (!authEmpId) {
-      return [];
+      this.logger.warn(
+        `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} resolvedEmployeeId=none`,
+      );
+      throw new NotFoundException('No employee profile is linked to this account');
+    }
+    const canViewCalendar = isUserAdmin(user);
+    const period = parseCalendarMonthYear(month, year);
+    this.logger.log(
+      `[EMPLOYEE_CALENDAR_REQUEST] userId=${user?.id ?? 'none'} role=${roleLabel} ` +
+      `resolvedEmployeeId=${authEmpId} employeeUserId=${user?.employee?.userId ?? 'none'} ` +
+      `tenantId=${'none'} ` +
+      `parsedMonth=${period.month ?? 'none'} parsedYear=${period.year ?? 'none'} ` +
+      `date=${date || startDate || 'none'} dateFrom=${dateFrom || startDate || 'none'} dateTo=${dateTo || endDate || 'none'}`,
+    );
+    // Employees without the calendar module still receive rows assigned to them.
+    const targetQueryEmpId = employeeId
+      ? await this.workService.resolveCanonicalEmployeeId(employeeId)
+      : undefined;
+    const isTargetSameAsAuth = !targetQueryEmpId || targetQueryEmpId === authEmpId;
+    const lookingAtAnotherEmployee = !isTargetSameAsAuth;
+    if (lookingAtAnotherEmployee && !canViewCalendar) {
+      throw new ForbiddenException(
+        'Access denied: another employee calendar requires an administrator account',
+      );
     }
 
-    return this.workService.getEmployeeCalendar(authEmpId, {
-      date: date || startDate,
-      dateFrom: startDate || dateFrom,
-      dateTo: endDate || dateTo,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
+    const rangeStart = dateFrom || startDate;
+    const rangeEnd = dateTo || endDate;
+    const multiDayRange = Boolean(rangeStart && rangeEnd && rangeStart !== rangeEnd);
+    const effectiveTargetEmpId = targetQueryEmpId || authEmpId;
+    return this.workService.getEmployeeCalendar(effectiveTargetEmpId, {
+      date: multiDayRange ? undefined : (date || rangeStart),
+      dateFrom: multiDayRange ? rangeStart : (startDate || dateFrom),
+      dateTo: multiDayRange ? rangeEnd : (endDate || dateTo),
+      month: period.month,
+      year: period.year,
       status,
-      customerId: customerId ? parseInt(customerId, 10) : undefined,
-      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+      customerId: customerId ? Number(customerId) : undefined,
+      employeeId: targetQueryEmpId,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       workType,
+    }, {
+      allTenantCustomers: canViewCalendar,
+      assignedOnly: !canViewCalendar,
     });
   }
 
@@ -424,15 +238,20 @@ export class WorkController {
     if (!authEmpId) {
       return { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0, today: 0, overdue: 0 };
     }
+    const canViewCalendar = isUserAdmin(user);
+    const period = parseCalendarMonthYear(month, year);
     return this.workService.getProductionMetrics(authEmpId, {
-      customerId: customerId ? parseInt(customerId, 10) : undefined,
+      
       employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
       teamId: teamId ? parseInt(teamId, 10) : undefined,
       date,
       dateFrom,
       dateTo,
-      month: month ? parseInt(month, 10) : undefined,
-      year: year ? parseInt(year, 10) : undefined,
+      month: period.month,
+      year: period.year,
+    }, {
+      allTenantCustomers: canViewCalendar,
+      assignedOnly: !canViewCalendar,
     });
   }
 
@@ -446,120 +265,6 @@ export class WorkController {
       return { customers: [], employees: [], teams: [], statuses: [] };
     }
     return this.workService.getProductionFilterOptions(authEmpId);
-  }
-
-  @Get('calendar')
-  @Get('customer/calendar')
-  @Get('admin/calendar')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get scheduled calendar events' })
-  @ApiQuery({ name: 'employeeId', required: false })
-  @ApiQuery({ name: 'date', required: false })
-  @ApiQuery({ name: 'dateFrom', required: false })
-  @ApiQuery({ name: 'dateTo', required: false })
-  @ApiQuery({ name: 'month', required: false })
-  @ApiQuery({ name: 'year', required: false })
-  @ApiQuery({ name: 'status', required: false })
-  async getCalendar(
-    @CurrentCustomer() customerId: string,
-    @Req() req: any,
-    @Query('employeeId') employeeId?: string,
-    @Query('date') date?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-    @Query('status') status?: WorkStatus,
-  ) {
-    const logger = new Logger('WorksController:getCalendar');
-    const headerCustId = req?.headers ? req.headers['x-customer-id'] : undefined;
-    const authUserId = req?.user?.id || req?.user?.email || 'UNKNOWN';
-    const authCustId = req?.user?.customerId;
-    const userRole = req?.user?.role || (Array.isArray(req?.user?.roles) ? req?.user?.roles.join(',') : 'UNKNOWN');
-    const requestedCustomerCode = req?.query?.customerId || headerCustId || req?.customerExternalId || 'NONE';
-
-    // If caller is an employee and not filtering for a specific client, route to employee calendar
-    const isEmployeeRole = userRole.toUpperCase() === 'EMPLOYEE' ||
-      (Array.isArray(req?.user?.roles) && req?.user?.roles.some((r: string) => r.toUpperCase().includes('EMPLOYEE'))) ||
-      req?.user?.employee != null;
-    if (isEmployeeRole && !req?.query?.customerId && !headerCustId) {
-      const resolvedEmpId = employeeId ? Number(employeeId) : await this.workService.resolveEmployeeIdForUser(req?.user);
-      if (resolvedEmpId) {
-        return this.workService.getEmployeeCalendar(resolvedEmpId, {
-          date: date || startDate,
-          dateFrom: dateFrom || startDate,
-          dateTo: dateTo || endDate,
-          month: month ? parseInt(month, 10) : undefined,
-          year: year ? parseInt(year, 10) : undefined,
-          status,
-        });
-      }
-    }
-
-    // Strict customer isolation: Normal customer users are bound to their authenticated customerId
-    const effectiveCustomerId = (authCustId && Number(authCustId) > 0)
-      ? Number(authCustId)
-      : (customerId || headerCustId || req?.customerId);
-
-    logger.log(`[CALENDAR_AUTH_DEBUG]
-authenticatedUser: ${authUserId}
-role: ${userRole}
-authenticatedCustomerId: ${authCustId || 'NONE'}
-requestedCustomerCode: ${requestedCustomerCode}
-resolvedRequestedCustomerId: ${effectiveCustomerId || 'NONE'}
-authorization: ALLOWED`);
-
-    logger.log(
-      `[CALENDAR_AUTH]\nauthenticatedUserId: ${authUserId}\nauthenticatedCustomerId: ${authCustId}\nrequestedCustomerIdentifier: ${requestedCustomerCode}\nresolvedCustomerId: ${effectiveCustomerId}`,
-    );
-
-    try {
-      const result = await this.workService.getCalendar(effectiveCustomerId, {
-        date,
-        dateFrom: dateFrom || startDate,
-        dateTo: dateTo || endDate,
-        month: month ? parseInt(month, 10) : undefined,
-        year: year ? parseInt(year, 10) : undefined,
-        employeeId,
-        status,
-      });
-
-      logger.log(`[CALENDAR_QUERY_DEBUG]
-customerId: ${effectiveCustomerId || 'ALL'}
-date: ${date || startDate || 'ALL'}
-resultCount: ${Array.isArray(result) ? result.length : 0}`);
-
-      logger.log(
-        `[CALENDAR_RESULT]\ncount: ${Array.isArray(result) ? result.length : 0}\ndata: ${JSON.stringify(result)}`,
-      );
-
-      return result;
-    } catch (err: any) {
-      logger.error(`[CALENDAR_API] ERROR: ${err?.message}`, err?.stack);
-      throw err;
-    }
-  }
-
-  @Get('customer/usage/:customerId')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get customer service quotas & plan usage (Admin)' })
-  async getCustomerUsageAdmin(@Param('customerId') customerId: string) {
-    return this.workService.getCustomerUsage(customerId);
-  }
-
-  @Post('auto-generate')
-  @ApiOperation({ summary: 'Automatically generate plan deliverable schedules' })
-  async generatePlanSchedules(
-    @Query('customerId') customerIdQuery?: string,
-  ) {
-    if (!customerIdQuery) {
-      throw new ForbiddenException('CustomerId required for schedule generation');
-    }
-    return this.workService.generatePlanSchedules(customerIdQuery);
   }
 
   @Get(':id')
@@ -579,9 +284,23 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
   @ApiOperation({ summary: 'Create new scheduled work deliverable' })
   async create(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Body() dto: CreateWorkDto,
   ) {
-    return this.workService.create(customerId, dto);
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    const isAdmin = isUserAdmin(user) || isUserSuperAdmin(user);
+
+    if (!isAdmin) {
+      if (dto.companyId !== undefined)
+        throw new ForbiddenException('Only administrators can link calendar work to CRM companies');
+      if (!employeeId) throw new ForbiddenException('Active employee profile required');
+      if (dto.customerId !== undefined) {
+        await this.workService.assertEmployeeCanScheduleForCustomer(employeeId, dto.customerId);
+      }
+      return this.workService.create(dto.customerId, { ...dto, teamId: undefined, assignedToId: employeeId, editorId: undefined });
+    }
+
+    return this.workService.create(dto.customerId ?? customerId, dto);
   }
 
   @Patch(':id')
@@ -594,8 +313,10 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
+    if (dto.companyId !== undefined && !isUserAdmin(user) && !isUserSuperAdmin(user))
+      throw new ForbiddenException('Only administrators can link calendar work to CRM companies');
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(custId, id, dto, employeeId ?? undefined);
   }
 
@@ -610,14 +331,10 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
-    const work = await this.workService.findOne(custId, id);
-    if (work) {
-      const moduleKey = mapWorkTypeToModule(work.workType);
-      const employeeId = user?.employeeId || user?.employee?.id;
-      if (employeeId) {
-        await this.workPermissionService.checkPermission(Number(custId), Number(employeeId), moduleKey);
-      }
+    const custId = customerIdQuery || undefined || undefined;
+    if (!isUserAdmin(user)) {
+      const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+      await this.workService.assertEmployeeAssignedToWork(employeeId, Number(id));
     }
     return this.workService.submitWork(customerIdQuery, id, dto, user?.id);
   }
@@ -644,7 +361,7 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @Body() dto: { scheduledDate: string; scheduledTime?: string; notes?: string },
     @Req() req: any,
   ) {
-    const authCustId = req.user?.customerId || customerId;
+    const authCustId = customerId;
     return this.workService.rescheduleWork(authCustId, id, dto);
   }
 
@@ -658,7 +375,7 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @Body() dto: { reason?: string },
     @Req() req: any,
   ) {
-    const authCustId = req.user?.customerId || customerId;
+    const authCustId = customerId;
     return this.workService.requestRework(authCustId, id, dto);
   }
 
@@ -672,7 +389,7 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
+    const custId = customerIdQuery || undefined || undefined;
     return this.workService.approveWork(custId, id);
   }
 
@@ -711,7 +428,7 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @Req() req: any,
   ) {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(custId, id, { status } as any, employeeId ?? undefined);
   }
 
@@ -726,7 +443,7 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @Req() req: any,
   ) {
     const employeeId = await this.workService.resolveEmployeeIdForUser(user);
-    const custId = req?.headers?.['x-customer-id'] || user?.customerId || req?.user?.customerId;
+    const custId = req?.headers?.['x-customer-id'] || undefined || undefined;
     return this.workService.update(
       custId,
       id,

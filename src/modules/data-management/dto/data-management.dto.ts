@@ -90,3 +90,23 @@ export class BulkDeleteBinDto {
   employeeIds?: (number | string)[];
 }
 
+export class ResetSelectedCustomersDto {
+  @IsArray()
+  @IsNotEmpty()
+  customerIds: (number | string)[];
+
+  @IsString()
+  @IsOptional()
+  reason?: string;
+}
+
+export class ResetAllCustomersDto {
+  @IsString()
+  @IsNotEmpty()
+  confirmation: string;
+
+  @IsString()
+  @IsOptional()
+  reason?: string;
+}
+

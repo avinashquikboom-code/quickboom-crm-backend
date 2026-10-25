@@ -11,13 +11,13 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
-import { VisitStatus, LeadStatus } from '@prisma/client';
+import { VisitStatus,  } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 
 /**
  * Mobile-specific visit endpoints for employee field-visit management.
@@ -80,13 +80,13 @@ export class MobileVisitController {
       return { items: [], data: [], total: 0 };
     }
 
-    const numCustomerId = Number(customerId) || employee?.customerId || 1;
+    const numCustomerId = Number(customerId) || undefined || 1;
     const where: any = {
       ...(numCustomerId > 0
         ? {
             OR: [
-              { customerId: numCustomerId },
-              ...(employee?.customerId ? [{ customerId: employee.customerId }] : []),
+              
+              ...([]),
             ],
           }
         : {}),
@@ -96,8 +96,8 @@ export class MobileVisitController {
               {
                 OR: [
                   { employeeId: employee.id },
-                  { lead: { employeeId: employee.id } },
-                  { lead: { assignedToId: user.id } },
+                  
+                  
                   { completedById: employee.id },
                 ],
               },
@@ -114,13 +114,8 @@ export class MobileVisitController {
         where.AND.push({
           status: VisitStatus.SCHEDULED,
           OR: [
-            { leadId: null },
-            {
-              lead: {
-                status: { notIn: ['VISIT_DONE', 'WON', 'LOST'] },
-                deletedAt: null,
-              },
-            },
+            
+            
           ],
         });
       } else if (normalizedTab === 'ongoing' || normalizedTab === 'in_progress') {
@@ -131,9 +126,9 @@ export class MobileVisitController {
         where.AND.push({
           OR: [
             { status: VisitStatus.COMPLETED },
-            { lead: { status: 'VISIT_DONE' } },
-            { lead: { stage: { key: 'VISIT_DONE' } } },
-            { lead: { stage: { name: { equals: 'Visit Done', mode: 'insensitive' } } } },
+            
+            
+            
           ],
         });
         if (!isAdmin && employee) {
@@ -157,226 +152,29 @@ export class MobileVisitController {
         company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
         contact: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
         deal: { select: { id: true, title: true } },
-        lead: {
-          select: {
-            id: true,
-            title: true,
-            companyName: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            email: true,
-            address: true,
-            city: true,
-            value: true,
-            category: true,
-            status: true,
-            employeeId: true,
-            stage: { select: { key: true, name: true } },
-          },
-        },
+        
       },
     });
-
-    // ── When viewing upcoming / scheduled visits: ────────────────────────────
-    // Ensure all leads assigned to this visitor in VISIT_SCHEDULED stage appear
-    // in the Scheduled tab as per requirements and reference design.
-    if (normalizedTab === 'upcoming' || normalizedTab === 'scheduled') {
-      const existingLeadIds = new Set(visits.map((v) => v.leadId).filter(Boolean));
-
-      // Resolve all stages in the database that correspond to Visit Scheduled
-      const visitStages = await this.prisma.leadStage.findMany({
-        where: {
-          OR: [
-            { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
-            { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-            { name: { contains: 'Visit Schedule', mode: 'insensitive' } },
-            { name: { contains: 'Visit', mode: 'insensitive' } },
-          ],
-          deletedAt: null,
-        },
-        select: { id: true, key: true, name: true },
-      });
-
-      const validVisitStages = visitStages.filter((s) => {
-        const lower = s.name.toLowerCase();
-        return !lower.includes('done') && !lower.includes('cancel') && !lower.includes('lost');
-      });
-      const visitStageIds = validVisitStages.map((s) => s.id);
-      const visitStageKeys = validVisitStages.map((s) => s.key).filter(Boolean);
-
-      const leadWhere: any = {
-        deletedAt: null,
-        ...(numCustomerId > 0
-          ? {
-              OR: [
-                { customerId: numCustomerId },
-                ...(employee?.customerId ? [{ customerId: employee.customerId }] : []),
-              ],
-            }
-          : {}),
-        AND: [
-          {
-            OR: [
-              { status: LeadStatus.VISIT_SCHEDULED },
-              { status: 'VISIT' as any },
-              ...(visitStageIds.length > 0 ? [{ stageId: { in: visitStageIds } }] : []),
-              {
-                stage: {
-                  is: {
-                    OR: [
-                      { key: { in: ['VISIT_SCHEDULED', 'VISIT', ...visitStageKeys] } },
-                      { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-                      { name: { contains: 'Visit Schedule', mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              },
-            ],
-          },
-          ...(!isAdmin && !isVisitorUser && employee
-            ? [
-                {
-                  OR: [
-                    { employeeId: employee.id },
-                    { assignedToId: user.id },
-                  ],
-                },
-              ]
-            : []),
-          ...(existingLeadIds.size > 0 ? [{ id: { notIn: Array.from(existingLeadIds) as number[] } }] : []),
-        ],
-      };
-
-      const unlinkedLeads = await this.prisma.lead.findMany({
-        where: leadWhere,
-        include: {
-          stage: { select: { key: true, name: true } },
-          employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
-        },
-      });
-
-      for (const lead of unlinkedLeads) {
-        let visit = await this.prisma.visit.findFirst({
-          where: { leadId: lead.id },
-          orderBy: { createdAt: 'desc' },
-          include: {
-            employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
-            company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
-            contact: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
-            deal: { select: { id: true, title: true } },
-            lead: {
-              select: {
-                id: true,
-                title: true,
-                companyName: true,
-                firstName: true,
-                lastName: true,
-                phone: true,
-                email: true,
-                address: true,
-                city: true,
-                value: true,
-                category: true,
-                status: true,
-                employeeId: true,
-                stage: { select: { key: true, name: true } },
-              },
-            },
-          },
-        });
-
-        const effectiveEmpId =
-          (isVisitorUser && employee?.id) ? employee.id : (
-            lead.employeeId ||
-            employee?.id ||
-            (lead.assignedToId ? Number(lead.assignedToId) : null) ||
-            1
-          );
-
-        if (!visit && effectiveEmpId) {
-          visit = await this.prisma.visit.create({
-            data: {
-              customerId: lead.customerId || numCustomerId || 1,
-              leadId: lead.id,
-              employeeId: effectiveEmpId,
-              customerName:
-                lead.companyName ||
-                `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
-                lead.title ||
-                'Client',
-              purpose: lead.category || lead.title || 'Field Visit & Demo',
-              date: lead.nextFollowUpDate || new Date(),
-              time: lead.nextFollowUpTime || '11:00 AM',
-              location: lead.address || lead.city || 'Client Site',
-              status: VisitStatus.SCHEDULED,
-              notes: lead.workNotes || 'Scheduled lead assigned to visitor',
-              scheduledById: employee?.id || null,
-              scheduledBy: employee
-                ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
-                : 'Lead Assignment',
-            },
-            include: {
-              employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true } },
-              company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
-              contact: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
-              deal: { select: { id: true, title: true } },
-              lead: {
-                select: {
-                  id: true,
-                  title: true,
-                  companyName: true,
-                  firstName: true,
-                  lastName: true,
-                  phone: true,
-                  email: true,
-                  address: true,
-                  city: true,
-                  value: true,
-                  category: true,
-                  status: true,
-                  employeeId: true,
-                  stage: { select: { key: true, name: true } },
-                },
-              },
-            },
-          });
-
-          if (!lead.employeeId && employee?.id) {
-            await this.prisma.lead.update({
-              where: { id: lead.id },
-              data: { employeeId: employee.id },
-            }).catch(() => {});
-          }
-        }
-
-        if (visit && (visit.status === VisitStatus.SCHEDULED || !visit.status)) {
-          visits.push(visit);
-        }
-      }
-    }
 
     const mapped = visits.map((v) => {
       const assignedEmpName = v.employee
         ? `${v.employee.firstName || ''} ${v.employee.lastName || ''}`.trim()
         : null;
-      const leadName = v.lead
-        ? (v.lead.companyName || `${v.lead.firstName || ''} ${v.lead.lastName || ''}`.trim() || v.lead.title)
-        : null;
+      const leadName = null;
 
       const isLeadVisitDone =
-        v.lead?.status === 'VISIT_DONE' ||
-        v.lead?.stage?.key === 'VISIT_DONE' ||
-        (v.lead?.stage?.name || '').toUpperCase().includes('VISIT DONE');
+        undefined === 'VISIT_DONE' ||
+        undefined === 'VISIT_DONE' ||
+        ('').toUpperCase().includes('VISIT DONE');
       const isCompleted = v.status === VisitStatus.COMPLETED || isLeadVisitDone;
 
       return {
         id: v.id,
-        customer: v.customerName || leadName || v.company?.name || 'Unknown Customer',
+        
         customerName: v.customerName || leadName,
-        leadTitle: v.lead?.title,
-        leadId: v.leadId,
-        lead: v.lead,
+        leadTitle: undefined,
+        
+        
         assignedEmployee: assignedEmpName,
         completedBy: isCompleted ? (v.completedBy || null) : null,
         completedById: v.completedById || null,
@@ -409,8 +207,8 @@ export class MobileVisitController {
               minute: '2-digit',
             })
           : null,
-        phone: v.contact?.phone || v.lead?.phone || v.company?.phone || null,
-        email: v.contact?.email || v.lead?.email || v.company?.email || null,
+        phone: v.contact?.phone || undefined || v.company?.phone || null,
+        email: v.contact?.email || undefined || v.company?.email || null,
         createdAt: v.createdAt,
         updatedAt: v.updatedAt,
         company: v.company,
@@ -436,24 +234,7 @@ export class MobileVisitController {
         company: { select: { id: true, name: true, city: true, address: true, phone: true, email: true } },
         contact: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
         deal: { select: { id: true, title: true, amount: true } },
-        lead: {
-          select: {
-            id: true,
-            title: true,
-            companyName: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-            email: true,
-            address: true,
-            city: true,
-            value: true,
-            category: true,
-            status: true,
-            employeeId: true,
-            stage: { select: { key: true, name: true } },
-          },
-        },
+        
       },
     });
 
@@ -478,8 +259,8 @@ export class MobileVisitController {
     const isAssigned =
       !visit.employeeId ||
       visit.employeeId === employee?.id ||
-      visit.lead?.employeeId === employee?.id ||
-      (visit.lead as any)?.assignedToId === user?.id ||
+      undefined === employee?.id ||
+      (undefined as any)?.assignedToId === user?.id ||
       visit.completedById === employee?.id ||
       isVisitorUser;
     if (!isAdmin && employee && !isAssigned) {
@@ -489,23 +270,21 @@ export class MobileVisitController {
     const assignedEmpName = visit.employee
       ? `${visit.employee.firstName || ''} ${visit.employee.lastName || ''}`.trim()
       : null;
-    const leadName = visit.lead
-      ? (visit.lead.companyName || `${visit.lead.firstName || ''} ${visit.lead.lastName || ''}`.trim() || visit.lead.title)
-      : null;
+    const leadName = null;
 
     const isLeadVisitDone =
-      visit.lead?.status === 'VISIT_DONE' ||
-      visit.lead?.stage?.key === 'VISIT_DONE' ||
-      (visit.lead?.stage?.name || '').toUpperCase().includes('VISIT DONE');
+      undefined === 'VISIT_DONE' ||
+      undefined === 'VISIT_DONE' ||
+      ('').toUpperCase().includes('VISIT DONE');
     const isCompleted = visit.status === VisitStatus.COMPLETED || isLeadVisitDone;
 
     return {
       id: visit.id,
-      customer: visit.customerName || leadName || visit.company?.name || 'Unknown Customer',
+      
       customerName: visit.customerName || leadName,
-      leadTitle: visit.lead?.title,
-      leadId: visit.leadId,
-      lead: visit.lead,
+      leadTitle: undefined,
+      
+      
       assignedEmployee: assignedEmpName,
       completedBy: isCompleted ? (visit.completedBy || null) : null,
       completedById: visit.completedById || null,
@@ -539,8 +318,8 @@ export class MobileVisitController {
             minute: '2-digit',
           })
         : null,
-      phone: visit.contact?.phone || visit.lead?.phone || visit.company?.phone || null,
-      email: visit.contact?.email || visit.lead?.email || visit.company?.email || null,
+      phone: visit.contact?.phone || undefined || visit.company?.phone || null,
+      email: visit.contact?.email || undefined || visit.company?.email || null,
       company: visit.company,
       contact: visit.contact,
       deal: visit.deal,
@@ -560,7 +339,7 @@ export class MobileVisitController {
     const numId = Number(id);
     const visit = await this.prisma.visit.findUnique({
       where: { id: numId },
-      include: { lead: { select: { employeeId: true } } },
+      
     });
 
     if (!visit) {
@@ -589,8 +368,8 @@ export class MobileVisitController {
     const isAssigned =
       !visit.employeeId ||
       visit.employeeId === employee.id ||
-      visit.lead?.employeeId === employee.id ||
-      (visit.lead as any)?.assignedToId === user?.id ||
+      undefined === employee.id ||
+      (undefined as any)?.assignedToId === user?.id ||
       isVisitorUser;
     if (!isAdmin && !isAssigned) {
       throw new ForbiddenException('You do not have permission to start another employee\'s visit.');
@@ -605,24 +384,10 @@ export class MobileVisitController {
     if (body?.longitude) data.longitude = body.longitude;
     if (body?.address) data.location = body.address;
 
-    const numCustomerId = Number(customerId) || employee.customerId || visit.customerId;
+    const numCustomerId = Number(customerId) || undefined || undefined;
     const updated = await this.visitService.update(numCustomerId, id, data);
 
-    if (visit.leadId) {
-      await this.prisma.leadActivityTimeline.create({
-        data: {
-          leadId: visit.leadId,
-          action: 'VISIT_STARTED',
-          description: `Field Visit Started by ${employee.firstName || ''} ${employee.lastName || ''}`.trim(),
-          metadata: {
-            visitId: visit.id,
-            latitude: body?.latitude,
-            longitude: body?.longitude,
-            startedAt: data.startedAt,
-          },
-        },
-      }).catch(() => {});
-    }
+    
 
     return updated;
   }
@@ -644,7 +409,7 @@ export class MobileVisitController {
     const numId = Number(id);
     const visit = await this.prisma.visit.findUnique({
       where: { id: numId },
-      include: { lead: true },
+      
     });
 
     if (!visit) {
@@ -665,14 +430,14 @@ export class MobileVisitController {
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
       visit.employeeId === employee?.id ||
-      visit.lead?.employeeId === employee?.id ||
-      (visit.lead as any)?.assignedToId === user?.id ||
+      undefined === employee?.id ||
+      (undefined as any)?.assignedToId === user?.id ||
       isVisitorUser;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
 
-    const numCustomerId = Number(customerId) || employee?.customerId || visit.customerId;
+    const numCustomerId = Number(customerId) || undefined || undefined;
 
     // Build structured requirement string
     const requirementParts: string[] = [];
@@ -695,33 +460,7 @@ export class MobileVisitController {
     });
 
     // If attached to a lead, update budget and record timeline
-    if (visit.leadId) {
-      const budgetNum = typeof body.budget === 'number' ? body.budget : parseFloat(String(body.budget || '0').replace(/[^0-9.]/g, ''));
-      try {
-        await this.prisma.lead.update({
-          where: { id: visit.leadId },
-          data: {
-            ...(budgetNum > 0 ? { value: budgetNum } : {}),
-            ...(body.services ? { category: body.services.slice(0, 100) } : {}),
-          },
-        });
-
-        await this.prisma.leadActivityTimeline.create({
-          data: {
-            leadId: visit.leadId,
-            action: 'REQUIREMENT_CAPTURED',
-            description: `Field Visit Requirement recorded: ${body.requirement || body.services || 'Requirement Details'}`,
-            metadata: {
-              visitId: visit.id,
-              services: body.services,
-              budget: budgetNum,
-              timeline: body.timeline,
-              requirement: body.requirement,
-            },
-          },
-        }).catch(() => {});
-      } catch (_) {}
-    }
+    
 
     return updated;
   }
@@ -737,7 +476,7 @@ export class MobileVisitController {
     const numId = Number(id);
     const visit = await this.prisma.visit.findUnique({
       where: { id: numId },
-      include: { lead: { select: { employeeId: true } } },
+      
     });
 
     if (!visit) {
@@ -758,15 +497,15 @@ export class MobileVisitController {
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
       visit.employeeId === employee?.id ||
-      visit.lead?.employeeId === employee?.id ||
-      (visit.lead as any)?.assignedToId === user?.id ||
+      undefined === employee?.id ||
+      (undefined as any)?.assignedToId === user?.id ||
       visit.completedById === employee?.id ||
       isVisitorUser;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
 
-    const numCustomerId = Number(customerId) || employee?.customerId || visit.customerId;
+    const numCustomerId = Number(customerId) || undefined || undefined;
 
     const actingEmpName = employee
       ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
@@ -790,61 +529,7 @@ export class MobileVisitController {
       ...(body?.longitude != null ? { longitude: Number(body.longitude) } : {}),
     });
 
-    if (visit.leadId) {
-      try {
-        const visitDoneStage = await this.prisma.leadStage.findFirst({
-          where: {
-            AND: [
-              {
-                OR: [
-                  { key: 'VISIT_DONE' },
-                  { key: 'VISIT' },
-                  { name: { equals: 'Visit Done', mode: 'insensitive' } },
-                ],
-              },
-              {
-                OR: [
-                  ...(numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
-                  { customerId: null },
-                ],
-              },
-            ],
-            deletedAt: null,
-          },
-          orderBy: { customerId: 'desc' },
-        });
-
-        await this.prisma.lead.update({
-          where: { id: visit.leadId },
-          data: {
-            status: 'VISIT_DONE',
-            ...(visitDoneStage ? { stageId: visitDoneStage.id } : {}),
-          },
-        });
-
-        await this.prisma.leadActivityTimeline.create({
-          data: {
-            leadId: visit.leadId,
-            action: 'VISIT_COMPLETED',
-            description: `Field Visit Completed${actingEmpName ? ` by ${actingEmpName}` : ''}: ${finalOutcome} - ${body?.notes || ''}`.trim(),
-            metadata: {
-              visitId: visit.id,
-              outcome: finalOutcome,
-              notes: body?.notes,
-              rating: body?.rating,
-              feedback: body?.feedback,
-              completedById: employee?.id || null,
-              completedByName: actingEmpName || null,
-              completedLatitude: body?.latitude || null,
-              completedLongitude: body?.longitude || null,
-              completedAt: new Date(),
-            },
-          },
-        }).catch(() => {});
-      } catch (leadSyncErr: any) {
-        // Non-blocking timeline / stage update log
-      }
-    }
+    
 
     return updated;
   }

@@ -243,7 +243,7 @@ export function friendlyWhatsAppErrorMessage(errorCode: string, metaMessage?: st
     case WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR:
       return 'WhatsApp configuration error: Access token or Phone Number ID is invalid or failed decryption. Please re-save in Settings → Integrations → WhatsApp.';
     case WHATSAPP_ERROR_CODES.INTEGRATION_DISABLED:
-      return 'WhatsApp integration is disabled in Admin Settings.';
+      return 'WhatsApp integration is disabled in Admin Settings. Please configure WhatsApp Business API in Settings → Integrations → WhatsApp.';
     case WHATSAPP_ERROR_CODES.NO_PHONE:
       return 'No customer phone number found.';
     case WHATSAPP_ERROR_CODES.INVALID_PHONE:

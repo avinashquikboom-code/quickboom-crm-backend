@@ -19,10 +19,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
 import { Response } from 'express';
-import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
+import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 
 @ApiTags('Invoices & Payments')
 @ApiBearerAuth()
@@ -32,8 +32,8 @@ export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   @Get()
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_INVOICES', action: 'VIEW' })
+  @UseGuards(WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_INVOICES', action: 'VIEW' })
   @ApiOperation({ summary: 'Get all invoices with filtering' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -75,7 +75,7 @@ export class InvoiceController {
       {
         status: status as any,
         search,
-        customerId: queryCustomerId || queryClientId,
+        
         page: pageNum,
         limit: limitNum,
       },
@@ -92,30 +92,37 @@ export class InvoiceController {
     return response;
   }
 
-  @Get('customers/:customerId/invoices')
-  @ApiOperation({ summary: 'Get invoices for specific customer' })
-  async findCustomerInvoices(
-    @Param('customerId') custId: string,
+
+  @Get(':id/agreement/download')
+  @ApiOperation({ summary: 'Download agreement PDF for invoice' })
+  async downloadAgreement(
+    @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Query('status') status?: InvoiceStatus,
-    @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Param('id') id: string,
+    @Res() res: Response,
   ) {
-    return this.findAll(custId, user, status, search, page, limit, custId);
+    const pdfBuffer = await this.invoiceService.downloadAgreementPdf(customerId, id, user);
+    const invoice = await this.invoiceService.findOne(customerId, id, user);
+    
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Agreement_${invoice.invoiceNo}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.end(pdfBuffer);
   }
 
-  @Get('admin/customers/:customerId/invoices')
-  @ApiOperation({ summary: 'Get invoices for specific customer (Admin alias)' })
-  async findAdminCustomerInvoices(
-    @Param('customerId') custId: string,
+  @Get(':id/download')
+  @UseGuards(WorkspaceAccessGuard)
+  @WorkspaceAction({ module: 'CUSTOMER_INVOICES', action: 'DOWNLOAD' })
+  @ApiOperation({ summary: 'Download final tax invoice PDF' })
+  async downloadInvoice(
+    @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Query('status') status?: InvoiceStatus,
-    @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Param('id') id: string,
+    @Res() res: Response,
   ) {
-    return this.findAll(custId, user, status, search, page, limit, custId);
+    return this.invoiceService.downloadInvoicePdf(customerId, id, user, res);
   }
 
   @Get(':id')
@@ -126,19 +133,6 @@ export class InvoiceController {
     @Param('id') id: string,
   ) {
     return this.invoiceService.findOne(customerId, id, user);
-  }
-
-  @Get(':id/download')
-  @UseGuards(PermissionsGuard)
-  @RequirePermissions({ module: 'CUSTOMER_INVOICES', action: 'DOWNLOAD' })
-  @ApiOperation({ summary: 'Download final tax invoice PDF' })
-  async downloadInvoice(
-    @CurrentCustomer() customerId: string,
-    @CurrentUser() user: any,
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
-    return this.invoiceService.downloadInvoicePdf(customerId, id, user, res);
   }
 
   @Post()

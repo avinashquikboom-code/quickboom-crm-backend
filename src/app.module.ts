@@ -1,9 +1,9 @@
+import { CustomerModule } from './modules/customer/customer.module';
+import { LeadModule } from './modules/lead/lead.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { LeadModule } from './modules/lead/lead.module';
-import { LeadLimitModule } from './modules/lead-limit/lead-limit.module';
 import { ContactModule } from './modules/contact/contact.module';
 import { DealModule } from './modules/deal/deal.module';
 import { TaskModule } from './modules/task/task.module';
@@ -13,7 +13,6 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DataCaptureModule } from './modules/data-capture/data-capture.module';
 import { DataManagementModule } from './modules/data-management/data-management.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
-import { CustomerModule } from './modules/customer/customer.module';
 import { WorkModule } from './modules/work/work.module';
 import { EmployeeModule } from './modules/employee/employee.module';
 import { TeamModule } from './modules/team/team.module';
@@ -50,6 +49,7 @@ import { SocialPublishingModule } from './modules/social-publishing/social-publi
 import { MasterModule } from './modules/master/master.module';
 import { MetaTemplateModule } from './modules/meta-template/meta-template.module';
 import { CommissionModule } from './modules/commission/commission.module';
+import { CouponModule } from './modules/subscription/coupon.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -86,8 +86,6 @@ import { AppController } from './app.controller';
     ReportModule,
     NotificationModule,
     AuditLogModule,
-    LeadModule,
-    LeadLimitModule,
     CompanyModule,
     ContactModule,
     DealModule,
@@ -96,6 +94,7 @@ import { AppController } from './app.controller';
     PayrollModule,
     DashboardModule,
     DataCaptureModule,
+    LeadModule,
     DataManagementModule,
     ShiftModule,
     LoanModule,
@@ -109,6 +108,7 @@ import { AppController } from './app.controller';
     MasterModule,
     MetaTemplateModule,
     CommissionModule,
+    CouponModule,
   ],
   controllers: [AppController],
 })

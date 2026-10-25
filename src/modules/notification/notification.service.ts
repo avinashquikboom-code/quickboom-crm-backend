@@ -1,3 +1,4 @@
+import { GoneException } from '@nestjs/common';
 import { BadRequestException, Injectable, Logger, NotFoundException, ForbiddenException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FcmService, FcmSendResult } from './fcm.service';
@@ -5,7 +6,8 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { S3Service } from '../s3/s3.service';
-import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
+import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto, UpdateOfferCampaignDto } from './dto/device-token.dto';
+import { EmployeeCommunicationService } from './employee-communication.service';
 
 export interface SendPushOptions {
   userId?: number;
@@ -27,32 +29,11 @@ export class NotificationService {
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly s3Service?: S3Service,
+    @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
   ) {}
 
   async resolveCustomerEmail(customerId: number): Promise<{ email: string | null; customerName: string; companyName: string }> {
-    try {
-      const customer = await this.prisma.customer.findUnique({
-        where: { id: customerId },
-        select: {
-          id: true,
-          name: true,
-          companyName: true,
-          email: true,
-          users: {
-            where: { deletedAt: null },
-            select: { email: true, firstName: true, lastName: true },
-            take: 1,
-          },
-        },
-      });
-      if (!customer) return { email: null, customerName: 'Customer', companyName: 'QUIKBOOM' };
-      const rawEmail = customer.email || customer.users[0]?.email || null;
-      const customerName = customer.name || (customer.users[0] ? `${customer.users[0].firstName || ''} ${customer.users[0].lastName || ''}`.trim() : 'Customer');
-      const companyName = customer.companyName || customer.name || 'QUIKBOOM Digital Marketing Agency';
-      return { email: rawEmail ? rawEmail.trim() : null, customerName, companyName };
-    } catch {
-      return { email: null, customerName: 'Customer', companyName: 'QUIKBOOM' };
-    }
+throw new GoneException('Customer email lookup has been removed; provide an explicit recipient');
   }
 
   async findAll(
@@ -63,29 +44,46 @@ export class NotificationService {
     limit = 20,
     search?: string,
   ) {
-    const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : NaN;
+    const numCustomerId = NaN;
+    const numUserId = userId !== undefined && userId !== null ? Number(userId) : NaN;
     const numPage = Math.max(Number(page) || 1, 1);
     const numLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
     const skip = (numPage - 1) * numLimit;
 
-    const where: any = {};
+    const andConditions: any[] = [];
+
     if (!isNaN(numCustomerId)) {
-      where.customerId = numCustomerId;
+      andConditions.push();
     }
-    if (userId && !isNaN(Number(userId))) {
-      where.userId = Number(userId);
+
+    if (!isNaN(numUserId)) {
+      if (!isNaN(numCustomerId)) {
+        andConditions.push({
+          OR: [
+            { userId: numUserId },
+
+          ],
+        });
+      } else {
+        andConditions.push({ userId: numUserId });
+      }
     }
+
     if (unreadOnly) {
-      where.isRead = false;
+      andConditions.push({ isRead: false });
     }
 
     if (search && search.trim()) {
-      where.OR = [
-        { title: { contains: search.trim(), mode: 'insensitive' } },
-        { message: { contains: search.trim(), mode: 'insensitive' } },
-        { type: { contains: search.trim(), mode: 'insensitive' } },
-      ];
+      andConditions.push({
+        OR: [
+          { title: { contains: search.trim(), mode: 'insensitive' } },
+          { message: { contains: search.trim(), mode: 'insensitive' } },
+          { type: { contains: search.trim(), mode: 'insensitive' } },
+        ],
+      });
     }
+
+    const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const [items, total] = await Promise.all([
       this.prisma.notification.findMany({
@@ -141,7 +139,7 @@ export class NotificationService {
     if (numUserId) {
       where.userId = numUserId;
     } else if (numCustomerId) {
-      where.customerId = numCustomerId;
+
     }
     return this.prisma.notification.updateMany({
       where,
@@ -174,29 +172,75 @@ export class NotificationService {
 
     this.logger.log(`Registered device token for userId ${userId} (platform: ${platform}, length: ${cleanToken.length})`);
 
-    // Check if user has an unread recent WELCOME notification and deliver it to this newly registered device
+    // For genuinely brand-new accounts where FCM token was registered shortly after creation,
+    // deliver any pending un-delivered welcome push once.
+    // Existing customers logging in, refreshing session, or changing devices must NEVER receive "Account Created".
     try {
-      const pendingWelcome = await this.prisma.notification.findFirst({
-        where: {
-          userId,
-          type: 'WELCOME',
-          isRead: false,
-          createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-        },
-        orderBy: { createdAt: 'desc' },
+      const authUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, createdAt: true, deletedAt: true },
       });
 
-      if (pendingWelcome) {
-        this.logger.log(`[WELCOME] Delivering pending welcome push to newly registered token for userId=${userId}`);
-        const payload: Record<string, string> = {
-          type: 'WELCOME',
-          customerId: String(pendingWelcome.customerId || ''),
-          notificationId: String(pendingWelcome.id),
-        };
-        await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
-          customerId: pendingWelcome.customerId || undefined,
-          notificationType: 'WELCOME',
+      // If authUser was created more than 2 minutes ago, it is an existing account -> strictly skip
+      const isExistingUser = Boolean(
+        authUser?.createdAt && Date.now() - new Date(authUser.createdAt).getTime() > 2 * 60 * 1000,
+      );
+
+      if (!isExistingUser) {
+        const pendingWelcome = await this.prisma.notification.findFirst({
+          where: {
+            userId,
+            type: 'WELCOME',
+            isRead: false,
+            createdAt: { gte: new Date(Date.now() - 2 * 60 * 1000) },
+          },
+          orderBy: { createdAt: 'desc' },
         });
+
+        if (pendingWelcome) {
+          let welcomeData: any = pendingWelcome.data;
+          if (typeof welcomeData === 'string') {
+            try {
+              welcomeData = JSON.parse(welcomeData);
+            } catch (_) {
+              welcomeData = {};
+            }
+          }
+          welcomeData = welcomeData || {};
+
+          // Only deliver if never delivered to any device yet
+          const alreadyDelivered = Boolean(
+            welcomeData.fcmDelivered === true ||
+            welcomeData.fcmDelivered === 'true' ||
+            welcomeData.fcmDeliveredAt,
+          );
+
+          if (!alreadyDelivered) {
+            this.logger.log(`[WELCOME] Delivering initial welcome push to first registered token for brand-new userId=${userId}`);
+            const payload: Record<string, string> = {
+              type: 'WELCOME',
+
+              notificationId: String(pendingWelcome.id),
+            };
+
+            // Atomically mark delivered FIRST so concurrent/immediate calls (app startup, session restore) will never re-trigger
+            await this.prisma.notification.updateMany({
+              where: { id: pendingWelcome.id },
+              data: {
+                data: {
+                  ...welcomeData,
+                  fcmDelivered: true,
+                  fcmDeliveredAt: new Date().toISOString(),
+                },
+              },
+            });
+
+            await this.fcmService.sendToSingleToken(cleanToken, pendingWelcome.title, pendingWelcome.message, payload, {
+
+              notificationType: 'WELCOME',
+            });
+          }
+        }
       }
 
       // Check if user has an unread recent PLAN_PURCHASE_SUCCESS notification to deliver
@@ -210,19 +254,19 @@ export class NotificationService {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (pendingPlan) {
+      if (pendingPlan && pendingPlan.type === 'PLAN_PURCHASE_SUCCESS') {
         this.logger.log(`[PLAN] Delivering pending plan purchase push to newly registered token for userId=${userId}`);
         const planData = (pendingPlan.data as any) || {};
         const payload: Record<string, string> = {
           type: 'PLAN_PURCHASE_SUCCESS',
-          subscriptionId: String(planData.subscriptionId || ''),
+
           planId: String(planData.planId || ''),
           planName: String(planData.planName || ''),
-          customerId: String(pendingPlan.customerId || ''),
+
           notificationId: String(pendingPlan.id),
         };
         await this.fcmService.sendToSingleToken(cleanToken, pendingPlan.title, pendingPlan.message, payload, {
-          customerId: pendingPlan.customerId || undefined,
+
           notificationType: 'PLAN_PURCHASE_SUCCESS',
         });
       }
@@ -288,7 +332,7 @@ export class NotificationService {
       throw new NotFoundException('Notification not found');
     }
 
-    if (notif.customerId !== numCustomerId || notif.userId !== numUserId) {
+    if (notif.userId !== numUserId) {
       throw new ForbiddenException('You do not have permission to delete this notification');
     }
 
@@ -306,41 +350,38 @@ export class NotificationService {
     let targetUserId = userId;
     let targetCustomerId = customerId;
 
-    if (!targetUserId && !targetCustomerId) {
-      throw new Error('Either userId or customerId must be provided to send a notification');
-    }
 
-    // Resolve customerId if userId is given but customerId isn't
-    if (targetUserId && !targetCustomerId) {
-      const user = await this.prisma.user.findUnique({
-        where: { id: targetUserId },
-        select: { customerId: true },
-      });
-      if (!user?.customerId) {
-        throw new BadRequestException('The notification recipient is not associated with a customer.');
-      }
-      targetCustomerId = user.customerId;
-    }
 
-    // If customerId is given without userId, find customer owner/first user
-    if (!targetUserId && targetCustomerId) {
-      const firstUser = await this.prisma.user.findFirst({
-        where: { customerId: targetCustomerId, deletedAt: null },
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) throw new BadRequestException('An explicit recipient userId is required');
+    // 1. Create in-app Notification database record(s)
+    let dbNotification: any = null;
+    if (targetCustomerId && !userId) {
+      const customerUsers = await this.prisma.user.findMany({
+        where: {  deletedAt: null, isActive: true },
         select: { id: true },
       });
-      if (firstUser) {
-        targetUserId = firstUser.id;
-      } else {
-        throw new BadRequestException('The customer has no active user to receive this notification.');
-      }
-    }
+      const usersToNotify = customerUsers.length > 0
+        ? customerUsers
+        : (targetUserId ? [{ id: targetUserId }] : []);
 
-    // 1. Create in-app Notification database record
-    let dbNotification: any = null;
-    if (targetUserId && targetCustomerId) {
+      for (const u of usersToNotify) {
+        const created = await this.prisma.notification.create({
+          data: {
+
+            userId: u.id,
+            title,
+            message: body,
+            type,
+            data: data as any,
+            isRead: false,
+          },
+        });
+        if (!dbNotification) dbNotification = created;
+      }
+    } else if (targetUserId && targetCustomerId) {
       dbNotification = await this.prisma.notification.create({
         data: {
-          customerId: targetCustomerId,
+
           userId: targetUserId,
           title,
           message: body,
@@ -353,10 +394,18 @@ export class NotificationService {
 
     // 2. Fetch all active device tokens for the recipient(s)
     const tokenQuery: any = { isActive: true };
-    if (targetUserId) {
+    if (targetCustomerId && !userId) {
+      // Caller explicitly targeted a customer: retrieve all active tokens across devices of this customer
+      tokenQuery.user = {  deletedAt: null };
+    } else if (targetUserId && targetCustomerId) {
+      tokenQuery.OR = [
+        { userId: targetUserId },
+        { user: {  deletedAt: null } },
+      ];
+    } else if (targetUserId) {
       tokenQuery.userId = targetUserId;
     } else if (targetCustomerId) {
-      tokenQuery.user = { customerId: targetCustomerId, deletedAt: null };
+      tokenQuery.user = {  deletedAt: null };
     }
 
     const deviceRecords = await this.prisma.userDeviceToken.findMany({
@@ -364,7 +413,8 @@ export class NotificationService {
       select: { token: true },
     });
 
-    const tokens = deviceRecords.map((d) => d.token);
+    const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
+    const tokens = Array.from(new Set(rawTokens));
 
     if (tokens.length === 0) {
       this.logger.warn(
@@ -387,7 +437,7 @@ export class NotificationService {
 
     // 3. Dispatch multicast push via FCM Service
     const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
-      customerId: targetCustomerId,
+
       notificationType: type,
     });
 
@@ -437,14 +487,12 @@ export class NotificationService {
    */
   async sendCustomerTestNotification(targetCustomerId: number | string | undefined) {
     const customerId = Number(targetCustomerId);
-    if (!customerId || isNaN(customerId)) {
-      throw new BadRequestException('A valid customerId must be provided.');
-    }
+
 
     const deviceRecords = await this.prisma.userDeviceToken.findMany({
       where: {
         isActive: true,
-        user: { customerId, deletedAt: null },
+        user: {  deletedAt: null },
       },
       select: { token: true, userId: true },
     });
@@ -458,7 +506,7 @@ export class NotificationService {
       return {
         success: false,
         message: 'No active FCM device tokens registered for this customer.',
-        customerId,
+
       };
     }
 
@@ -466,12 +514,12 @@ export class NotificationService {
     const body = 'This is a test notification outside the app to verify background FCM delivery.';
     const payloadData: Record<string, string> = {
       type: 'TEST',
-      customerId: String(customerId),
+
       timestamp: new Date().toISOString(),
     };
 
     const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, payloadData, {
-      customerId,
+
       notificationType: 'TEST',
     });
 
@@ -482,7 +530,7 @@ export class NotificationService {
       messageId: messageId || (fcmResult.successCount > 0 ? 'FCM_SENT' : undefined),
       deliveredCount: fcmResult.successCount,
       failureCount: fcmResult.failureCount,
-      customerId,
+
     };
   }
 
@@ -560,7 +608,7 @@ export class NotificationService {
     try {
       const emp = await this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { userId: true, customerId: true, firstName: true },
+        select: { userId: true,  firstName: true },
       });
 
       if (!emp || !emp.userId) {
@@ -568,17 +616,38 @@ export class NotificationService {
         return null;
       }
 
+      // Idempotency: avoid duplicate notification within 15 minutes for the same leave record
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          userId: emp.userId,
+          type: 'LEAVE_APPROVED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.leaveId) === String(leave.id)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
       const leaveTypeName = leave.leaveType?.name || 'Leave';
       const fromStr = leave.fromDate ? new Date(leave.fromDate).toISOString().split('T')[0] : '';
       const toStr = leave.toDate ? new Date(leave.toDate).toISOString().split('T')[0] : '';
       const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
+      const remarksText = leave.remarks || leave.approvalRemarks ? ` Remarks: ${leave.remarks || leave.approvalRemarks}` : '';
+      const approverName = leave.approvedBy ? `${leave.approvedBy.firstName || ''} ${leave.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
 
       const title = isHalfDay ? 'Half-Day Leave Approved' : 'Leave Request Approved';
-      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been approved.`;
+      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been approved${approverText}.${remarksText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        customerId: emp.customerId,
+
         title,
         body,
         type: 'LEAVE_APPROVED',
@@ -589,6 +658,7 @@ export class NotificationService {
           status: 'APPROVED',
           isHalfDay: String(isHalfDay),
           dates: dateText,
+          approver: approverName,
         },
       });
     } catch (err: any) {
@@ -598,25 +668,66 @@ export class NotificationService {
   }
 
   /**
-   * Send New Lead Assignment Push Notification to Employee (Requirement: Task Send Push Notification when a new Lead is assigned)
+   * Lead Assignment Push Notification (SUPPRESSED per business rules)
+   * The following must remain silent:
+   * Lead created -> Lead assigned -> NO notification
+   * Lead reassigned -> NO notification
+   * Lead owner changed -> NO notification
    */
   async sendLeadAssignedNotification(params: {
-    customerId: number | string;
+    customerId?: number | string;
     employeeId?: number | string | null;
     userId?: number | string | null;
     leadId: number | string;
     leadName?: string | null;
   }) {
-    const { customerId, employeeId, userId, leadId, leadName } = params;
+    // Intentionally suppressed: Lead assignment / reassignment must work normally but silently.
+    this.logger.debug?.(`[FCM] Lead assignment notification suppressed for lead #${undefined}`);
+    return null;
+  }
+
+  /**
+   * 1. DATA IMPORT -> LEAD NOTIFICATION
+   * Fired ONLY after Lead data is successfully created via Data Import.
+   * Notifies the appropriate existing recipient based on existing Lead assignment/ownership.
+   */
+  async sendLeadImportedNotification(params: {
+    customerId?: number | string;
+    leadId: number | string;
+    leadName?: string | null;
+    companyName?: string | null;
+    source?: string | null;
+    employeeId?: number | string | null;
+    userId?: number | string | null;
+    createdById?: number | string | null;
+  }) {
+    const { customerId, leadId, leadName, companyName, source, employeeId, userId, createdById } = params;
     const numCustomerId = Number(customerId);
     const numLeadId = Number(leadId);
 
     try {
+      // 1. Idempotency / duplicate check (within 15 minutes for this leadId)
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          type: 'LEAD_IMPORTED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(undefined) === String(numLeadId)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      // 2. Resolve recipient using existing Lead ownership/assignment model
       let targetUserId: number | null = userId ? Number(userId) : null;
       let targetEmployeeId: number | null = employeeId ? Number(employeeId) : null;
 
-      // 1. Resolve employee and userId
-      if (targetEmployeeId && !targetUserId) {
+      if (!targetUserId && targetEmployeeId) {
         const emp = await this.prisma.employee.findUnique({
           where: { id: targetEmployeeId },
           select: { id: true, userId: true, email: true },
@@ -632,86 +743,201 @@ export class NotificationService {
             targetUserId = linkedUser.id;
           }
         }
-      } else if (targetUserId && !targetEmployeeId) {
-        const emp = await this.prisma.employee.findFirst({
-          where: { userId: targetUserId, customerId: numCustomerId },
-          select: { id: true },
-        });
-        if (emp) {
-          targetEmployeeId = emp.id;
-        }
       }
 
-      // If targetUserId is not found in User table, check if targetUserId was actually an Employee ID
-      if (targetUserId) {
-        const userExists = await this.prisma.user.findUnique({
-          where: { id: targetUserId },
+      if (!targetUserId && createdById) {
+        targetUserId = Number(createdById);
+      }
+
+      if (!targetUserId) {
+        const firstUser = await this.prisma.user.findFirst({
+          where: {  deletedAt: null },
           select: { id: true },
         });
-        if (!userExists) {
-          const emp = await this.prisma.employee.findUnique({
-            where: { id: targetUserId },
-            select: { id: true, userId: true },
-          });
-          if (emp?.userId) {
-            targetEmployeeId = emp.id;
-            targetUserId = emp.userId;
-          }
+        if (firstUser) {
+          targetUserId = firstUser.id;
         }
       }
 
       if (!targetUserId) {
-        this.logger.warn(
-          `[FCM] Lead assignment notification:\nEmployee ID: ${targetEmployeeId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: no\nSend status: skipped (no linked userId)`,
-        );
+        this.logger.warn(`[LEAD_IMPORT] No valid user found to notify for imported lead #${numLeadId}`);
         return null;
       }
 
-      // 2. Resolve lead name if not provided
-      let resolvedLeadName = (leadName || '').trim();
-      if (!resolvedLeadName) {
-        const lead = await this.prisma.lead.findUnique({
-          where: { id: numLeadId },
-          select: { id: true, firstName: true, lastName: true, companyName: true, title: true },
-        });
-        if (lead) {
-          const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-          resolvedLeadName = fullName || lead.companyName || lead.title || lead.firstName || `Lead #${lead.id}`;
-        } else {
-          resolvedLeadName = `Lead #${numLeadId}`;
+      // 3. Prepare title and body
+      const resolvedName = (leadName || '').trim() || (companyName || '').trim() || `Lead #${numLeadId}`;
+      const companyPart = companyName && companyName !== resolvedName ? ` (${companyName})` : '';
+      const sourcePart = source ? ` from ${source}` : '';
+
+      const title = 'Lead Imported Successfully';
+      const body = `Lead "${resolvedName}"${companyPart}${sourcePart} has been imported successfully.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+
+        title,
+        body,
+        type: 'LEAD_IMPORTED',
+        data: {
+          type: 'LEAD_IMPORTED',
+
+          leadName: resolvedName,
+          companyName: companyName || '',
+          source: source || 'Data Import',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending lead imported notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 3-DAY FOLLOW-UP REMINDER NOTIFICATION
+   * Fired ONLY after 3 days from the Follow-Up transition if the Lead is still eligible for follow-up.
+   * Notifies ONLY the responsible BPO for that Lead.
+   */
+  async sendLeadFollowUpReminderNotification(params: {
+    customerId?: number | string;
+    leadId: number | string;
+    leadName?: string | null;
+    companyName?: string | null;
+    transitionDate: Date;
+    bpoUserId: number | string;
+  }) {
+    const { customerId, leadId, leadName, companyName, transitionDate, bpoUserId } = params;
+    const numCustomerId = Number(customerId);
+    const numLeadId = Number(leadId);
+    const numBpoUserId = Number(bpoUserId);
+
+    if (!numBpoUserId || isNaN(numBpoUserId)) {
+      this.logger.warn(`[FOLLOW_UP_REMINDER] No valid BPO userId provided for lead #${numLeadId}. Skipping notification.`);
+      return null;
+    }
+
+    try {
+      const resolvedName = (leadName || '').trim() || (companyName || '').trim() || `Lead #${numLeadId}`;
+      const title = 'Follow-Up Reminder';
+      const body = `Follow-up is pending for Lead ${resolvedName}. Please review the lead and take the required action.`;
+
+      return await this.sendPushNotification({
+        userId: numBpoUserId,
+
+        title,
+        body,
+        type: 'LEAD_FOLLOW_UP_REMINDER',
+        data: {
+          type: 'LEAD_FOLLOW_UP_REMINDER',
+
+          leadName: resolvedName,
+          companyName: companyName || '',
+          followUpDate: transitionDate.toISOString(),
+          route: `/leads/${numLeadId}`,
+          channel: 'LEAD',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending 3-day follow-up reminder notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 2. VISIT SCHEDULED -> VISITOR NOTIFICATION
+   * Fired ONLY after Visit is successfully created and visitor assigned.
+   * Recipient: ONLY the assigned Visitor/Field Officer.
+   */
+  async sendVisitScheduledNotification(params: {
+    customerId?: number | string;
+    visitId: number | string;
+    employeeId: number | string;
+    customerName?: string | null;
+    purpose?: string | null;
+    date: Date | string;
+    time?: string | null;
+    location?: string | null;
+    notes?: string | null;
+    leadId?: number | string | null;
+  }) {
+    const { customerId, visitId, employeeId, customerName, purpose, date, time, location, notes, leadId } = params;
+    const numCustomerId = Number(customerId);
+    const numVisitId = Number(visitId);
+    const numEmployeeId = Number(employeeId);
+
+    try {
+      // 1. Idempotency check: prevent duplicate notification within 15 minutes for the same visitId
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          type: 'VISIT_SCHEDULED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.visitId) === String(numVisitId)) {
+          return { skippedDuplicate: true };
         }
       }
 
-      const title = 'New Lead Assigned';
-      const body = `You have been assigned a new lead: ${resolvedLeadName}`;
-
-      const res = await this.sendPushNotification({
-        userId: targetUserId,
-        customerId: numCustomerId,
-        title,
-        body,
-        type: 'LEAD_ASSIGNED',
-        data: {
-          type: 'LEAD_ASSIGNED',
-          leadId: String(numLeadId),
-          customerId: String(numCustomerId),
-          channel: 'LEAD',
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        },
+      // 2. Resolve assigned visitor's userId
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: numEmployeeId },
+        select: { id: true, userId: true, firstName: true, lastName: true, email: true },
       });
 
-      const tokenFound = (res?.status === 'NO_ACTIVE_TOKENS') ? 'no' : 'yes';
-      const sendStatus = (res?.delivered) ? 'success' : (res?.status === 'NO_ACTIVE_TOKENS' ? 'skipped (no tokens)' : 'failed');
+      let targetUserId = emp?.userId || null;
+      if (!targetUserId && emp?.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: { email: emp.email, deletedAt: null },
+          select: { id: true },
+        });
+        if (linkedUser) {
+          targetUserId = linkedUser.id;
+        }
+      }
 
-      this.logger.log(
-        `[FCM] Lead assignment notification:\nEmployee ID: ${targetEmployeeId ?? targetUserId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: ${tokenFound}\nSend status: ${sendStatus}`,
-      );
+      if (!targetUserId) {
+        this.logger.warn(`[VISIT_SCHEDULED] Visitor employee #${numEmployeeId} has no linked userId, skipping push.`);
+        return null;
+      }
 
-      return res;
+      // 3. Format date and text
+      let dateStr = '';
+      if (date) {
+        const d = new Date(date);
+        dateStr = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : String(date);
+      }
+      const timeStr = time ? ` at ${time}` : '';
+      const locStr = location ? ` at ${location}` : '';
+      const purposeStr = purpose ? ` for ${purpose}` : '';
+      const leadOrCustomer = customerName?.trim() || 'Customer';
+
+      const title = 'New Visit Scheduled';
+      const body = `New visit scheduled with ${leadOrCustomer}${purposeStr} on ${dateStr}${timeStr}${locStr}.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+
+        title,
+        body,
+        type: 'VISIT_SCHEDULED',
+        data: {
+          type: 'VISIT_SCHEDULED',
+          visitId: String(numVisitId),
+
+          customerName: leadOrCustomer,
+          purpose: purpose || '',
+          date: dateStr,
+          time: time || '',
+          location: location || '',
+          notes: notes || '',
+        },
+      });
     } catch (err: any) {
-      this.logger.warn(
-        `[FCM] Lead assignment notification:\nEmployee ID: ${employeeId ?? 'none'}\nLead ID: ${numLeadId}\nToken found: unknown\nSend status: failed (${err?.message})`,
-      );
+      this.logger.error(`Error sending visit scheduled notification: ${err?.message}`, err?.stack);
       return null;
     }
   }
@@ -723,8 +949,19 @@ export class NotificationService {
     try {
       const emp = await this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { userId: true, customerId: true, firstName: true },
+        select: { userId: true,  firstName: true },
       });
+
+      this.employeeCommunication?.notifySchedule({
+        employeeId,
+        workId: Number(work.id),
+        title: work.title || 'Scheduled Activity',
+        customerName: null,
+        date: work.scheduledDate,
+        time: work.scheduledTime,
+        notes: work.notes,
+        assignedBy: isReassignment ? 'Reassigned' : 'QB Suite',
+      }).catch((err: any) => this.logger.warn(`[SCHEDULE_ASSIGNED] ${err?.message}`));
 
       if (!emp || !emp.userId) {
         this.logger.warn(`Cannot send work assignment notification: employee #${employeeId} has no linked userId`);
@@ -733,15 +970,7 @@ export class NotificationService {
 
       // Fetch customer / company info
       let companyName = 'Customer Workspace';
-      if (work.customerId) {
-        const cust = await this.prisma.customer.findUnique({
-          where: { id: work.customerId },
-          select: { companyName: true, name: true },
-        });
-        if (cust) {
-          companyName = cust.companyName || cust.name || 'Customer Workspace';
-        }
-      }
+
 
       const workTitle = work.title || 'Scheduled Activity';
       const dateStr = work.scheduledDate ? new Date(work.scheduledDate).toISOString().split('T')[0] : '';
@@ -752,14 +981,14 @@ export class NotificationService {
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        customerId: emp.customerId,
+
         title,
         body,
         type: 'WORK_ASSIGNMENT',
         data: {
           type: 'WORK',
           workId: String(work.id),
-          customerId: String(work.customerId),
+
           title: workTitle,
           company: companyName,
           scheduledDate: dateStr,
@@ -777,22 +1006,27 @@ export class NotificationService {
   async sendSubscriptionExpiringNotification(customerId: number, subscription: any, daysRemaining = 3) {
     try {
       const planName = subscription.plan?.name || 'Subscription Plan';
-      const endDate = subscription.endDate ? new Date(subscription.endDate).toISOString().split('T')[0] : 'soon';
+      const endDate = subscription.endDate ? new Date(subscription.endDate).toISOString().split('T')[0] : 'today';
 
-      const title = '⚠️ Your Plan Expires Soon';
-      const body = `Your ${planName} plan will expire in 3 days. Renew your plan to continue using QB Suite.`;
+      const isToday = daysRemaining === 0;
+      const title = isToday ? '⚠️ Your Plan Expires Today' : '⚠️ Your Plan Expires in 3 Days';
+      const body = isToday
+        ? `Your ${planName} plan expires today (${endDate}). Renew now to avoid service interruption.`
+        : `Your ${planName} plan will expire in 3 days (${endDate}). Renew your plan to continue using QB Suite.`;
+      const notifType = isToday ? 'SUBSCRIPTION_EXPIRING_TODAY' : 'SUBSCRIPTION_EXPIRING_SOON';
 
       const pushResult = await this.sendPushNotification({
-        customerId,
+
         title,
         body,
-        type: 'SUBSCRIPTION_EXPIRING_SOON',
+        type: notifType,
         data: {
           type: 'SUBSCRIPTION',
-          subscriptionId: String(subscription.id),
-          customerId: String(customerId),
+
+
           planName,
           expiryDate: endDate,
+          daysRemaining: String(daysRemaining),
         },
       });
 
@@ -803,7 +1037,10 @@ export class NotificationService {
           if (email) {
             const template = await this.emailTemplateService.findByKey('PLAN_EXPIRY_REMINDER', customerId);
             const rendered = renderEmailTemplate(
-              { subject: template?.subject || 'Action Required: Your {{planName}} Plan Expires in 3 Days – {{companyName}}', body: template?.body || '' },
+              {
+                subject: template?.subject || (isToday ? 'Action Required: Your {{planName}} Plan Expires Today – {{companyName}}' : 'Action Required: Your {{planName}} Plan Expires in 3 Days – {{companyName}}'),
+                body: template?.body || '',
+              },
               {
                 customerName,
                 planName,
@@ -820,10 +1057,10 @@ export class NotificationService {
               text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
               recordType: 'customer',
               recordId: customerId,
-              eventType: 'PLAN_EXPIRY_REMINDER',
+              eventType: isToday ? 'PLAN_EXPIRY_TODAY' : 'PLAN_EXPIRY_REMINDER',
               templateId: template?.id,
             });
-            this.logger.log(`[EMAIL] 3-day plan expiry reminder email sent to customer #${customerId} (${email})`);
+            this.logger.log(`[EMAIL] ${daysRemaining}-day plan expiry reminder email sent to customer #${customerId} (${email})`);
           }
         }
       } catch (emailErr: any) {
@@ -834,12 +1071,12 @@ export class NotificationService {
       try {
         if (this.whatsappService) {
           await this.whatsappService.sendPlanExpiryReminderMessage({
-            customerId,
+
             planName,
             expiryDate: endDate,
             daysRemaining,
           });
-          this.logger.log(`[WHATSAPP] 3-day plan expiry reminder WhatsApp sent to customer #${customerId}`);
+          this.logger.log(`[WHATSAPP] ${daysRemaining}-day plan expiry reminder WhatsApp sent to customer #${customerId}`);
         }
       } catch (waErr: any) {
         this.logger.warn(`[WHATSAPP] Plan expiry reminder WhatsApp notice: ${waErr?.message}`);
@@ -858,7 +1095,7 @@ export class NotificationService {
   async sendCalendarReminderNotification(params: {
     recipientType: 'CUSTOMER' | 'EMPLOYEE';
     userId: number;
-    customerId: number;
+    customerId?: number;
     work: any;
   }) {
     try {
@@ -867,9 +1104,7 @@ export class NotificationService {
       const timeStr = work.scheduledTime ? ` at ${work.scheduledTime}` : '';
 
       let companyName = 'Customer Workspace';
-      if (work.customer) {
-        companyName = work.customer.companyName || work.customer.name || 'Customer Workspace';
-      }
+
 
       const title = `Tomorrow's Schedule: ${workTitle}`;
       const body =
@@ -879,14 +1114,14 @@ export class NotificationService {
 
       return await this.sendPushNotification({
         userId,
-        customerId,
+
         title,
         body,
         type: 'CALENDAR_SCHEDULE_REMINDER',
         data: {
           type: 'CALENDAR',
           workId: String(work.id),
-          customerId: String(customerId),
+
           title: workTitle,
           recipientType,
         },
@@ -904,7 +1139,7 @@ export class NotificationService {
     try {
       const emp = await this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { userId: true, customerId: true, firstName: true },
+        select: { userId: true,  firstName: true },
       });
 
       if (!emp || !emp.userId) {
@@ -912,18 +1147,38 @@ export class NotificationService {
         return null;
       }
 
+      // Idempotency: avoid duplicate notification within 15 minutes for the same leave record
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          userId: emp.userId,
+          type: 'LEAVE_REJECTED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.leaveId) === String(leave.id)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
       const leaveTypeName = leave.leaveType?.name || 'Leave';
       const fromStr = leave.fromDate ? new Date(leave.fromDate).toISOString().split('T')[0] : '';
       const toStr = leave.toDate ? new Date(leave.toDate).toISOString().split('T')[0] : '';
       const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
       const reasonText = leave.rejectionReason ? ` Reason: ${leave.rejectionReason}` : '';
+      const approverName = leave.approvedBy ? `${leave.approvedBy.firstName || ''} ${leave.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
 
       const title = isHalfDay ? 'Half-Day Leave Rejected' : 'Leave Request Rejected';
-      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been rejected.${reasonText}`;
+      const body = `Your ${isHalfDay ? 'half-day ' : ''}${leaveTypeName} request for ${dateText} has been rejected${approverText}.${reasonText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        customerId: emp.customerId,
+
         title,
         body,
         type: 'LEAVE_REJECTED',
@@ -934,6 +1189,7 @@ export class NotificationService {
           status: 'REJECTED',
           isHalfDay: String(isHalfDay),
           dates: dateText,
+          approver: approverName,
         },
       });
     } catch (err: any) {
@@ -943,18 +1199,38 @@ export class NotificationService {
   }
 
   /**
+   * 6. REMOTE WORK REQUEST APPROVAL / REJECTION
    * Send Remote Work Approval/Rejection Notification to Employee
    */
   async sendRemoteWorkNotification(employeeId: number, remoteRequest: any, approved: boolean) {
     try {
       const emp = await this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { userId: true, customerId: true, firstName: true },
+        select: { userId: true,  firstName: true },
       });
 
       if (!emp || !emp.userId) {
         this.logger.warn(`Cannot send remote-work notification: employee #${employeeId} has no linked userId`);
         return null;
+      }
+
+      // Idempotency: avoid duplicate notification within 15 minutes for the same remote request
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const notifType = approved ? 'REMOTE_WORK_APPROVED' : 'REMOTE_WORK_REJECTED';
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          userId: emp.userId,
+          type: notifType,
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.remoteRequestId) === String(remoteRequest.id)) {
+          return { skippedDuplicate: true };
+        }
       }
 
       const fromStr = remoteRequest.fromDate
@@ -966,21 +1242,24 @@ export class NotificationService {
       const dateText = fromStr === toStr ? fromStr : `${fromStr} to ${toStr}`;
       const reasonText =
         !approved && remoteRequest.rejectionReason ? ` Reason: ${remoteRequest.rejectionReason}` : '';
+      const approverName = remoteRequest.approvedBy ? `${remoteRequest.approvedBy.firstName || ''} ${remoteRequest.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
 
       const title = approved ? 'Remote Work Request Approved' : 'Remote Work Request Rejected';
-      const body = `Your remote work request for ${dateText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+      const body = `Your remote work request for ${dateText} has been ${approved ? 'approved' : 'rejected'}${approverText}.${reasonText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        customerId: emp.customerId,
+
         title,
         body,
-        type: approved ? 'REMOTE_WORK_APPROVED' : 'REMOTE_WORK_REJECTED',
+        type: notifType,
         data: {
           type: 'REMOTE_WORK',
           remoteRequestId: String(remoteRequest.id),
           status: approved ? 'APPROVED' : 'REJECTED',
           dates: dateText,
+          approver: approverName,
         },
       });
     } catch (err: any) {
@@ -990,18 +1269,38 @@ export class NotificationService {
   }
 
   /**
-   * Send Claim Approval/Rejection Notification to Employee
+   * 7. EXPENSE APPROVAL / REJECTION
+   * Send Expense/Claim Approval/Rejection Notification to Employee
    */
   async sendClaimNotification(employeeId: number, claim: any, approved: boolean) {
     try {
       const emp = await this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { userId: true, customerId: true, firstName: true },
+        select: { userId: true,  firstName: true },
       });
 
       if (!emp || !emp.userId) {
         this.logger.warn(`Cannot send claim notification: employee #${employeeId} has no linked userId`);
         return null;
+      }
+
+      // Idempotency: avoid duplicate notification within 15 minutes for the same claim
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const notifType = approved ? 'CLAIM_APPROVED' : 'CLAIM_REJECTED';
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          userId: emp.userId,
+          type: notifType,
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.claimId) === String(claim.id)) {
+          return { skippedDuplicate: true };
+        }
       }
 
       const category = claim.category || 'Expense';
@@ -1012,26 +1311,300 @@ export class NotificationService {
             ? `₹${Number(claim.amount).toLocaleString('en-IN')}`
             : '';
       const amountText = amountStr ? ` (${amountStr})` : '';
-      const reasonText = !approved && claim.rejectionReason ? ` Reason: ${claim.rejectionReason}` : '';
+      const approverName = claim.approvedBy ? `${claim.approvedBy.firstName || ''} ${claim.approvedBy.lastName || ''}`.trim() : '';
+      const approverText = approverName ? ` by ${approverName}` : '';
+      const reasonText = !approved && (claim.rejectionReason || claim.remarks) ? ` Reason: ${claim.rejectionReason || claim.remarks}` : '';
 
-      const title = approved ? 'Claim Request Approved' : 'Claim Request Rejected';
-      const body = `Your ${category} claim request #${claim.id}${amountText} has been ${approved ? 'approved' : 'rejected'}.${reasonText}`;
+      const title = approved ? 'Expense Approved' : 'Expense Rejected';
+      const body = `Your ${category} expense request #${claim.id}${amountText} has been ${approved ? 'approved' : 'rejected'}${approverText}.${reasonText}`;
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        customerId: emp.customerId,
+
         title,
         body,
-        type: approved ? 'CLAIM_APPROVED' : 'CLAIM_REJECTED',
+        type: notifType,
         data: {
           type: 'CLAIM',
           claimId: String(claim.id),
           category,
           status: approved ? 'APPROVED' : 'REJECTED',
+          approver: approverName,
         },
       });
     } catch (err: any) {
       this.logger.error(`Error sending claim notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 8. SALARY GENERATED -> EMPLOYEE NOTIFICATION
+   * Fired when salary/payslip is successfully generated for an employee.
+   * Does NOT expose sensitive salary amount in the push notification body.
+   * "Your salary for September 2026 has been generated."
+   */
+  async sendSalaryGeneratedNotification(params: {
+    customerId?: number | string;
+    employeeId: number | string;
+    payPeriod: string;
+    month?: number;
+    year?: number;
+    slipId?: number | string;
+  }) {
+    const { customerId, employeeId, payPeriod, month, year, slipId } = params;
+    const numCustomerId = Number(customerId);
+    const numEmployeeId = Number(employeeId);
+
+    try {
+      // 1. Idempotency: check if notification for this employee & payPeriod was already sent in last 30 days
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          type: 'SALARY_GENERATED',
+          createdAt: { gte: thirtyDaysAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (slipId) {
+        this.employeeCommunication?.notifySalarySlip({ slipId: Number(slipId) }).catch((err: any) => {
+          this.logger.warn(`[SALARY_SLIP] ${err?.message}`);
+        });
+      }
+
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.employeeId) === String(numEmployeeId) && data.payPeriod === payPeriod) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      // 2. Resolve employee user
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: numEmployeeId },
+        select: { id: true, userId: true, firstName: true, email: true },
+      });
+
+      let targetUserId = emp?.userId || null;
+      if (!targetUserId && emp?.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: { email: emp.email, deletedAt: null },
+          select: { id: true },
+        });
+        if (linkedUser) {
+          targetUserId = linkedUser.id;
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(`[SALARY_GENERATED] Employee #${numEmployeeId} has no linked userId, skipping push.`);
+        return null;
+      }
+
+      const title = 'Salary Generated';
+      const body = `Your salary for ${payPeriod} has been generated.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+
+        title,
+        body,
+        type: 'SALARY_GENERATED',
+        data: {
+          type: 'SALARY',
+          employeeId: String(numEmployeeId),
+          payPeriod,
+          month: month ? String(month) : '',
+          year: year ? String(year) : '',
+          slipId: slipId ? String(slipId) : '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending salary generated notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 9. CUSTOMER CALENDAR SCHEDULE -> CUSTOMER NOTIFICATION
+   * Fired when a customer calendar task/appointment/schedule is successfully created.
+   * Recipient is ONLY the relevant customer.
+   */
+  async sendCalendarScheduledNotification(params: {
+    customerId?: number | string;
+    workId: number | string;
+    title: string;
+    scheduledDate?: Date | string | null;
+    scheduledTime?: string | null;
+    location?: string | null;
+    employeeName?: string | null;
+    serviceName?: string | null;
+  }) {
+    const { customerId, workId, title, scheduledDate, scheduledTime, location, employeeName, serviceName } = params;
+    const numCustomerId = Number(customerId);
+    const numWorkId = Number(workId);
+
+    try {
+      // 1. Idempotency: duplicate check within 15 minutes for this workId
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          type: 'CALENDAR_SCHEDULE_CREATED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (String(data.workId) === String(numWorkId)) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      let dateStr = '';
+      if (scheduledDate) {
+        const d = new Date(scheduledDate);
+        dateStr = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : String(scheduledDate);
+      }
+      const timeStr = scheduledTime ? ` at ${scheduledTime}` : '';
+      const empStr = employeeName ? ` with ${employeeName}` : '';
+      const locStr = location ? ` at ${location}` : '';
+
+      const notifTitle = 'New Calendar Schedule Created';
+      const body = `Your schedule "${title}" has been scheduled for ${dateStr}${timeStr}${empStr}${locStr}.`;
+
+      return await this.sendPushNotification({
+
+        title: notifTitle,
+        body,
+        type: 'CALENDAR_SCHEDULE_CREATED',
+        data: {
+          type: 'CALENDAR',
+          workId: String(numWorkId),
+          title,
+          scheduledDate: dateStr,
+          scheduledTime: scheduledTime || '',
+          serviceName: serviceName || '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending calendar schedule notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
+   * 12. TASK RESCHEDULE -> PARTICULAR EMPLOYEE NOTIFICATION
+   * Fired when a task assigned to an employee is rescheduled.
+   * Recipient is ONLY the particular employee currently assigned to that task.
+   */
+  async sendTaskRescheduledNotification(params: {
+    customerId?: number | string;
+    employeeId: number | string;
+    workId: number | string;
+    taskName: string;
+    newDate?: Date | string | null;
+    newTime?: string | null;
+    previousDate?: string | null;
+    previousTime?: string | null;
+    customerName?: string | null;
+    cancelled?: boolean;
+  }) {
+    const { customerId, employeeId, workId, taskName, newDate, newTime, previousDate, previousTime, customerName, cancelled } = params;
+    const numCustomerId = Number(customerId);
+    const numEmployeeId = Number(employeeId);
+    const numWorkId = Number(workId);
+
+    try {
+      let dateStr = '';
+      if (newDate) {
+        const d = new Date(newDate);
+        dateStr = !isNaN(d.getTime()) ? d.toISOString().split('T')[0] : String(newDate);
+      }
+      const timeStr = newTime ? String(newTime).trim() : '';
+
+      // 1. Idempotency: duplicate check within 15 minutes for this workId & newDate & newTime
+      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      const duplicate = await this.prisma.notification.findFirst({
+        where: {
+
+          type: 'TASK_RESCHEDULED',
+          createdAt: { gte: fifteenMinutesAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (duplicate) {
+        const data = (duplicate.data as any) || {};
+        if (
+          String(data.workId) === String(numWorkId) &&
+          String(data.employeeId) === String(numEmployeeId) &&
+          data.newDate === dateStr &&
+          data.newTime === timeStr
+        ) {
+          return { skippedDuplicate: true };
+        }
+      }
+
+      this.employeeCommunication?.notifySchedule({
+        employeeId: numEmployeeId,
+        workId: numWorkId,
+        title: taskName,
+        customerName,
+        date: newDate,
+        time: timeStr,
+        previousDate: previousDate || null,
+        previousTime: previousTime || null,
+        cancelled: Boolean(cancelled),
+      }).catch((err: any) => this.logger.warn(`[SCHEDULE_UPDATED] ${err?.message}`));
+
+      // 2. Resolve employee userId
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: numEmployeeId },
+        select: { id: true, userId: true, email: true },
+      });
+
+      let targetUserId = emp?.userId || null;
+      if (!targetUserId && emp?.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: { email: emp.email, deletedAt: null },
+          select: { id: true },
+        });
+        if (linkedUser) {
+          targetUserId = linkedUser.id;
+        }
+      }
+
+      if (!targetUserId) {
+        this.logger.warn(`[TASK_RESCHEDULED] Employee #${numEmployeeId} has no linked userId, skipping push.`);
+        return null;
+      }
+
+      const formattedTimeStr = timeStr ? ` at ${timeStr}` : '';
+      const custStr = customerName ? ` for ${customerName}` : '';
+
+      const title = 'Task Rescheduled';
+      const body = `Task "${taskName}"${custStr} has been rescheduled to ${dateStr}${formattedTimeStr}.`;
+
+      return await this.sendPushNotification({
+        userId: targetUserId,
+
+        title,
+        body,
+        type: 'TASK_RESCHEDULED',
+        data: {
+          type: 'WORK',
+          workId: String(numWorkId),
+          employeeId: String(numEmployeeId),
+          taskName,
+          newDate: dateStr,
+          newTime: timeStr,
+          customerName: customerName || '',
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending task rescheduled notification: ${err?.message}`, err?.stack);
       return null;
     }
   }
@@ -1043,7 +1616,7 @@ export class NotificationService {
     try {
       const emp = await this.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { userId: true, customerId: true, firstName: true },
+        select: { userId: true,  firstName: true },
       });
 
       if (!emp || !emp.userId) {
@@ -1065,7 +1638,7 @@ export class NotificationService {
 
       return await this.sendPushNotification({
         userId: emp.userId,
-        customerId: emp.customerId,
+
         title,
         body,
         type: approved ? 'LOAN_APPROVED' : 'LOAN_REJECTED',
@@ -1150,13 +1723,11 @@ export class NotificationService {
 
     const isScheduled = dto.scheduledAt && new Date(dto.scheduledAt).getTime() > Date.now();
     const targetType = (dto.targetType || 'CUSTOMERS').toUpperCase();
-    const audience = (dto.audience || (dto.customerId ? 'SPECIFIC' : 'ALL')).toUpperCase();
+    const audience = (dto.audience || ('ALL')).toUpperCase();
     let specificIds: number[] = [];
     if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
       specificIds = dto.targetIds.map(Number).filter((n) => !isNaN(n) && n > 0);
-    } else if (dto.customerId) {
-      specificIds = [Number(dto.customerId)];
-    }
+    } else
 
     // If future scheduled delivery is requested, save as SCHEDULED campaign
     if (isScheduled) {
@@ -1206,15 +1777,13 @@ export class NotificationService {
     existingCampaignId?: number,
   ) {
     const targetType = (dto.targetType || 'CUSTOMERS').toUpperCase();
-    const audience = (dto.audience || (dto.customerId ? 'SPECIFIC' : 'ALL')).toUpperCase();
+    const audience = (dto.audience || ('ALL')).toUpperCase();
     let specificIds: number[] = [];
     if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
       specificIds = dto.targetIds.map(Number).filter((n) => !isNaN(n) && n > 0);
-    } else if (dto.customerId) {
-      specificIds = [Number(dto.customerId)];
     }
 
-    const recipientPairs: { customerId: number; userId: number }[] = [];
+    const recipientPairs: { customerId?: number; userId: number }[] = [];
 
     if (targetType === 'EMPLOYEES') {
       const whereClause: any = {
@@ -1231,7 +1800,7 @@ export class NotificationService {
           id: true,
           firstName: true,
           lastName: true,
-          customerId: true,
+
           userId: true,
         },
       });
@@ -1239,41 +1808,13 @@ export class NotificationService {
       for (const emp of employees) {
         if (emp.userId) {
           recipientPairs.push({
-            customerId: emp.customerId,
+
             userId: emp.userId,
           });
         }
       }
     } else {
-      // Default: CUSTOMERS
-      const whereClause: any = {
-        deletedAt: null,
-        isActive: true,
-      };
-      if (audience === 'SPECIFIC' && specificIds.length > 0) {
-        whereClause.id = { in: specificIds };
-      }
-
-      const customers = await this.prisma.customer.findMany({
-        where: whereClause,
-        select: {
-          id: true,
-          name: true,
-          users: {
-            where: { deletedAt: null, isActive: true },
-            select: { id: true },
-          },
-        },
-      });
-
-      for (const cust of customers) {
-        for (const u of cust.users) {
-          recipientPairs.push({
-            customerId: cust.id,
-            userId: u.id,
-          });
-        }
-      }
+      throw new GoneException('Customer notification audiences have been removed; select employees');
     }
 
     if (recipientPairs.length === 0) {
@@ -1330,14 +1871,14 @@ export class NotificationService {
     }
 
     // 1. Create in-app Notification records for all recipients
-    const uniqueRecipientMap = new Map<string, { customerId: number; userId: number }>();
+    const uniqueRecipientMap = new Map<string, { customerId?: number; userId: number }>();
     for (const r of recipientPairs) {
-      uniqueRecipientMap.set(`${r.customerId}_${r.userId}`, r);
+      uniqueRecipientMap.set(`${undefined}_${r.userId}`, r);
     }
     const deduplicatedRecipients = Array.from(uniqueRecipientMap.values());
 
     const inAppNotifications = deduplicatedRecipients.map((r) => ({
-      customerId: r.customerId,
+
       userId: r.userId,
       title: dto.title.trim(),
       message: dto.message.trim(),
@@ -1524,6 +2065,129 @@ export class NotificationService {
   }
 
   /**
+   * Update an existing offer notification campaign (Admin).
+   * Modifies campaign configuration without altering historical recipient counts or delivery statistics.
+   * Does NOT send notifications or trigger FCM.
+   */
+  async updateOfferCampaign(campaignId: number, dto: UpdateOfferCampaignDto) {
+    const id = Number(campaignId);
+    if (!id || Number.isNaN(id) || id <= 0) {
+      throw new BadRequestException('A valid campaign ID is required.');
+    }
+
+    const existing = await this.prisma.notificationCampaign.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Offer notification campaign not found');
+    }
+
+    const data: any = {};
+
+    if (dto.title !== undefined) {
+      const trimmed = dto.title.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Title cannot be empty.');
+      }
+      data.title = trimmed;
+    }
+
+    if (dto.message !== undefined) {
+      const trimmed = dto.message.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Message cannot be empty.');
+      }
+      data.message = trimmed;
+    }
+
+    if (dto.targetType !== undefined) {
+      data.targetType = dto.targetType.toUpperCase();
+    }
+
+    if (dto.audience !== undefined) {
+      const aud = dto.audience.toUpperCase();
+      data.audience = aud;
+      if (aud === 'ALL') {
+        data.targetIds = null;
+      }
+    }
+
+    if (dto.targetIds !== undefined && (dto.audience === 'SPECIFIC' || existing.audience === 'SPECIFIC')) {
+      if (Array.isArray(dto.targetIds) && dto.targetIds.length > 0) {
+        const cleanIds = dto.targetIds.map(Number).filter((n) => !Number.isNaN(n) && n > 0);
+        data.targetIds = cleanIds.length > 0 ? cleanIds : null;
+      } else {
+        data.targetIds = null;
+      }
+    }
+
+    if (dto.imageUrl !== undefined) {
+      data.imageUrl = dto.imageUrl && dto.imageUrl.trim() ? dto.imageUrl.trim() : null;
+    }
+
+    if (dto.showCta !== undefined) {
+      data.showCta = Boolean(dto.showCta);
+      if (data.showCta) {
+        if (dto.ctaText !== undefined) {
+          data.ctaText = dto.ctaText?.trim() || null;
+        }
+        if (dto.ctaActionType !== undefined) {
+          data.ctaActionType = (dto.ctaActionType || 'DEEP_LINK').toUpperCase();
+        }
+        if (dto.ctaActionValue !== undefined || dto.deepLink !== undefined) {
+          data.ctaActionValue = dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null;
+        }
+      } else {
+        data.ctaText = null;
+        data.ctaActionType = null;
+        data.ctaActionValue = null;
+      }
+    } else {
+      if (dto.ctaText !== undefined) {
+        data.ctaText = dto.ctaText?.trim() || null;
+      }
+      if (dto.ctaActionType !== undefined) {
+        data.ctaActionType = (dto.ctaActionType || 'DEEP_LINK').toUpperCase();
+      }
+      if (dto.ctaActionValue !== undefined || dto.deepLink !== undefined) {
+        data.ctaActionValue = dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null;
+      }
+    }
+
+    if (dto.scheduledAt !== undefined) {
+      if (dto.scheduledAt) {
+        const parsedDate = new Date(dto.scheduledAt);
+        if (isNaN(parsedDate.getTime())) {
+          throw new BadRequestException('Invalid scheduled date format.');
+        }
+        data.scheduledAt = parsedDate;
+      } else {
+        data.scheduledAt = null;
+      }
+    }
+
+    const updated = await this.prisma.notificationCampaign.update({
+      where: { id },
+      data,
+    });
+
+    const displayImageUrl =
+      updated.imageUrl && this.s3Service
+        ? (await this.s3Service.getPresignedUrl(updated.imageUrl, 604800)) ||
+          updated.imageUrl
+        : updated.imageUrl;
+
+    return {
+      success: true,
+      message: 'Offer notification campaign updated successfully',
+      data: {
+        ...updated,
+        imageUrl: displayImageUrl,
+      },
+    };
+  }
+
+  /**
    * Delete offer campaign history records by ID.
    * Follows existing in-app notification delete semantics (hard delete of the history row).
    * Does not modify FCM delivery or recipient in-app notifications.
@@ -1612,9 +2276,10 @@ export class NotificationService {
    * Creates in-app DB notification and dispatches FCM push to all valid customer devices.
    */
   async sendCustomerWelcomeNotification(params: {
-    customerId: number;
+    customerId?: number;
     userId?: number;
     customerName?: string;
+    isNewAccount?: boolean;
   }) {
     const { customerId } = params;
     let targetUserId = params.userId;
@@ -1624,11 +2289,23 @@ export class NotificationService {
     this.logger.log(`[FCM] Notification recipient customerId: ${customerId}`);
 
     try {
-      // 1. Resolve userId if not explicitly provided
+      // 1. Explicit skip if caller indicates this is an existing customer auth account
+      if (params.isNewAccount === false) {
+        this.logger.log(
+          `[NOTIFICATION] Customer #${customerId} auth account already existed (isNewAccount=false). Skipping 'Account Created' notification.`,
+        );
+        return {
+          success: true,
+          skippedExistingAccount: true,
+          fcmSent: false,
+        };
+      }
+
+      // 2. Resolve userId if not explicitly provided
       if (!targetUserId) {
         const firstUser = await this.prisma.user.findFirst({
-          where: { customerId, deletedAt: null },
-          select: { id: true },
+          where: {  deletedAt: null },
+          select: { id: true, createdAt: true },
         });
         if (firstUser) {
           targetUserId = firstUser.id;
@@ -1642,39 +2319,81 @@ export class NotificationService {
         return null;
       }
 
-      // 2. Idempotency Check: prevent duplicate welcome notifications for same customer
+      // 3. Verify actual auth account state using database relationship (Tenant & Account check)
+      // If the caller didn't explicitly flag isNewAccount: true, inspect auth account creation age & history
+      if (params.isNewAccount !== true) {
+        const authUser = await this.prisma.user.findFirst({
+          where: {
+            id: targetUserId,
+
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+
+            createdAt: true,
+            deletedAt: true,
+          },
+        });
+
+        if (authUser?.createdAt) {
+          const accountAgeMs = Date.now() - new Date(authUser.createdAt).getTime();
+          // If auth account was created more than 5 minutes ago, it's an existing login account
+          if (accountAgeMs > 5 * 60 * 1000) {
+            this.logger.log(
+              `[NOTIFICATION] Auth account #${targetUserId} for customer #${customerId} was created at ${authUser.createdAt.toISOString()} (age ${Math.round(accountAgeMs / 1000)}s). Skipping 'Account Created' notification for existing account.`,
+            );
+            return {
+              success: true,
+              skippedExistingAccount: true,
+              fcmSent: false,
+            };
+          }
+        }
+      }
+
+      // 4. Idempotency Check: prevent duplicate welcome notifications for same customer/user
+      const numCustomerId = Number(customerId);
+      const numTargetUserId = targetUserId ? Number(targetUserId) : undefined;
       const existingNotif = await this.prisma.notification.findFirst({
         where: {
-          customerId,
-          type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] },
+          OR: [
+            {  type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } },
+            ...(numTargetUserId ? [{ userId: numTargetUserId, type: { in: ['WELCOME', 'CUSTOMER_WELCOME'] } }] : []),
+          ],
         },
       });
+
+      if (existingNotif) {
+        this.logger.log(
+          `[NOTIFICATION] Welcome notification already exists for customerId=${customerId}, userId=${targetUserId}. Skipping duplicate dispatch.`,
+        );
+        return {
+          success: true,
+          skippedDuplicate: true,
+          fcmSent: false,
+          notification: existingNotif,
+        };
+      }
 
       const title = 'Welcome to QuikBoom! 🎉';
       const body = 'Your account has been created successfully. Welcome to QuikBoom!';
       const payloadData: Record<string, string> = {
         type: 'WELCOME',
-        customerId: String(customerId),
+
       };
 
-      let dbNotification = existingNotif;
-      if (!dbNotification) {
-        dbNotification = await this.prisma.notification.create({
-          data: {
-            customerId,
-            userId: targetUserId,
-            title,
-            message: body,
-            type: 'WELCOME',
-            isRead: false,
-            data: payloadData as any,
-          },
-        });
-      } else {
-        this.logger.log(
-          `[NOTIFICATION] Welcome notification already exists for customerId=${customerId}. Skipping DB duplicate.`,
-        );
-      }
+      const dbNotification = await this.prisma.notification.create({
+        data: {
+
+          userId: targetUserId,
+          title,
+          message: body,
+          type: 'WELCOME',
+          isRead: false,
+          data: payloadData as any,
+        },
+      });
 
       this.logger.log(`[NOTIFICATION] WELCOME created`);
       this.logger.log(`[FCM] Customer ID found`);
@@ -1688,7 +2407,7 @@ export class NotificationService {
           isActive: true,
           OR: [
             { userId: targetUserId },
-            { user: { customerId: Number(customerId), deletedAt: null } },
+            { user: {  deletedAt: null } },
           ],
         },
         select: { token: true },
@@ -1721,7 +2440,7 @@ export class NotificationService {
         };
 
         fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
-          customerId,
+
           notificationType: 'WELCOME',
         });
 
@@ -1731,6 +2450,17 @@ export class NotificationService {
 
         if (fcmResult.successCount > 0) {
           fcmSent = true;
+          await this.prisma.notification.updateMany({
+            where: { id: dbNotification.id },
+            data: {
+              data: {
+                ...payloadData,
+                fcmDelivered: true,
+                fcmDeliveredAt: new Date().toISOString(),
+                notificationId: String(dbNotification.id),
+              },
+            },
+          });
         }
 
         // 5. Clean up any invalid or expired tokens
@@ -1751,7 +2481,7 @@ export class NotificationService {
       try {
         if (this.whatsappService) {
           await this.whatsappService.sendCustomerWelcomeMessage({
-            customerId,
+
             customerName: params.customerName,
             notificationId: dbNotification?.id,
           });
@@ -1801,7 +2531,7 @@ export class NotificationService {
         type: 'CUSTOMER_REGISTERED',
         data: {
           type: 'CUSTOMER_REGISTERED',
-          customerId: String(customerId),
+
           route: '/customers',
         },
       }).catch((adminErr) =>
@@ -1824,18 +2554,20 @@ export class NotificationService {
    * Notify the BPO assigned to a lead when a field visit is completed.
    */
   async sendVisitCompletedNotification(params: {
-    customerId: number;
+    customerId?: number;
     visitId: number;
     leadId?: number | null;
     visitorName?: string | null;
     leadName?: string | null;
+    purpose?: string | null;
+    completedAt?: Date | string | null;
   }) {
-    const { customerId, visitId, leadId, visitorName, leadName } = params;
+    const { customerId, visitId, leadId, visitorName, leadName, purpose, completedAt } = params;
     try {
       const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
       const duplicate = await this.prisma.notification.findFirst({
         where: {
-          customerId,
+
           type: 'VISIT_COMPLETED',
           createdAt: { gte: fifteenMinutesAgo },
         },
@@ -1851,31 +2583,10 @@ export class NotificationService {
       let targetUserId: number | null = null;
       let resolvedLeadName = (leadName || '').trim();
 
-      if (leadId) {
-        const lead = await this.prisma.lead.findFirst({
-          where: { id: Number(leadId), customerId, deletedAt: null },
-          select: {
-            id: true,
-            assignedToId: true,
-            createdById: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            title: true,
-          },
-        });
-        if (lead) {
-          targetUserId = lead.assignedToId ? Number(lead.assignedToId) : null;
-          if (!targetUserId && lead.createdById) {
-            targetUserId = Number(lead.createdById);
-          }
-          if (!resolvedLeadName) {
-            const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
-            resolvedLeadName = fullName || lead.companyName || lead.title || `Lead #${lead.id}`;
-          }
-        }
-      }
-
+      const visit = await this.prisma.visit.findUnique({ where: { id: Number(visitId) }, include: { employee: { select: { userId: true } } } });
+      const organizer = visit?.scheduledById ? await this.prisma.employee.findUnique({ where: { id: visit.scheduledById }, select: { userId: true } }) : null;
+      targetUserId = organizer?.userId ?? visit?.employee?.userId ?? null;
+      resolvedLeadName = resolvedLeadName || visit?.customerName || '';
       if (!targetUserId) {
         this.logger.warn(
           `[FCM] Visit completed notification skipped — no BPO user for visitId=${visitId}, leadId=${leadId ?? 'none'}`,
@@ -1884,21 +2595,27 @@ export class NotificationService {
       }
 
       const visitorLabel = (visitorName || '').trim() || 'Visitor';
+      const purposePart = purpose ? ` (${purpose})` : '';
       const title = 'Visit Completed';
-      const body = `${visitorLabel} completed the visit for ${resolvedLeadName || 'the lead'}.`;
+      const body = `${visitorLabel} completed the visit for ${resolvedLeadName || 'the lead'}${purposePart}. Status: Completed.`;
+
+      const completionTimeStr = completedAt ? new Date(completedAt).toISOString() : new Date().toISOString();
 
       return await this.sendPushNotification({
         userId: targetUserId,
-        customerId,
+
         title,
         body,
         type: 'VISIT_COMPLETED',
         data: {
           type: 'VISIT_COMPLETED',
           visitId: String(visitId),
-          leadId: leadId ? String(leadId) : '',
+
           leadName: resolvedLeadName,
           visitorName: visitorLabel,
+          status: 'COMPLETED',
+          purpose: purpose || '',
+          completedAt: completionTimeStr,
         },
       });
     } catch (err: any) {
@@ -1908,109 +2625,21 @@ export class NotificationService {
   }
 
   private async resolveBpoUserIdForCustomer(customerId: number): Promise<number | null> {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-      select: {
-        assignedEmployeeId: true,
-        assignedEmployeeRel: { select: { userId: true } },
-        originLead: {
-          select: { assignedToId: true, createdById: true },
-        },
-      },
-    });
-    if (!customer) {
-      return null;
-    }
-
-    const fromLead = customer.originLead?.assignedToId
-      ? Number(customer.originLead.assignedToId)
-      : null;
-    if (fromLead) {
-      return fromLead;
-    }
-    if (customer.assignedEmployeeRel?.userId) {
-      return Number(customer.assignedEmployeeRel.userId);
-    }
-    if (customer.originLead?.createdById) {
-      return Number(customer.originLead.createdById);
-    }
-    return null;
+throw new GoneException('Customer sales attribution has been removed');
   }
 
   /**
    * Notify the relevant BPO when a customer successfully purchases a plan.
    */
   async sendPlanPurchaseBpoNotification(params: {
-    customerId: number;
+    customerId?: number;
     subscriptionId: number;
     planId: number;
     planName: string;
     paymentId?: string | number;
     purchaseAmount?: number;
-  }) {
-    const { customerId, subscriptionId, planId, planName, paymentId, purchaseAmount } = params;
-    try {
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-      const recent = await this.prisma.notification.findMany({
-        where: {
-          customerId,
-          type: 'PLAN_PURCHASE_BPO',
-          createdAt: { gte: fifteenMinutesAgo },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-      });
-      const isDuplicate = recent.some((n) => {
-        const data = (n.data as any) || {};
-        if (paymentId && data.paymentId && String(data.paymentId) === String(paymentId)) {
-          return true;
-        }
-        return (
-          String(data.subscriptionId) === String(subscriptionId) &&
-          String(data.planId) === String(planId)
-        );
-      });
-      if (isDuplicate) {
-        return { skippedDuplicate: true };
-      }
-
-      const targetUserId = await this.resolveBpoUserIdForCustomer(customerId);
-      if (!targetUserId) {
-        this.logger.warn(
-          `[FCM] Plan purchase BPO notification skipped — no assigned BPO for customerId=${customerId}`,
-        );
-        return null;
-      }
-
-      const customer = await this.prisma.customer.findUnique({
-        where: { id: customerId },
-        select: { name: true, companyName: true },
-      });
-      const customerLabel = customer?.companyName || customer?.name || `Customer #${customerId}`;
-      const title = 'Plan Purchased';
-      const amountSuffix =
-        purchaseAmount != null && purchaseAmount > 0 ? ` (₹${Math.round(purchaseAmount)})` : '';
-      const body = `${customerLabel} purchased ${planName}${amountSuffix}.`;
-
-      return await this.sendPushNotification({
-        userId: targetUserId,
-        customerId,
-        title,
-        body,
-        type: 'PLAN_PURCHASE_BPO',
-        data: {
-          type: 'PLAN_PURCHASE_BPO',
-          customerId: String(customerId),
-          subscriptionId: String(subscriptionId),
-          planId: String(planId),
-          planName,
-          paymentId: paymentId ? String(paymentId) : '',
-        },
-      });
-    } catch (err: any) {
-      this.logger.warn(`[FCM] Plan purchase BPO notification failed: ${err?.message}`);
-      return null;
-    }
+  }) : Promise<never> {
+throw new GoneException('This Customer/Lead operation has been removed');
   }
 
   /**
@@ -2019,276 +2648,14 @@ export class NotificationService {
    * Creates in-app DB notification and dispatches FCM push to all valid customer devices.
    */
   async sendPlanPurchaseSuccessNotification(params: {
-    customerId: number;
+    customerId?: number;
     userId?: number;
     subscriptionId: number;
     planId: number;
     planName: string;
     paymentId?: string | number;
-  }) {
-    const { customerId, subscriptionId, planId, planName, paymentId } = params;
-    let targetUserId = params.userId;
-
-    this.logger.log(`[PLAN] Payment verified: ${paymentId || 'N/A'}`);
-    this.logger.log(`[PLAN] Subscription ID: ${subscriptionId}`);
-    this.logger.log(`[PLAN] Subscription activated: ${subscriptionId}`);
-    this.logger.log(`[PLAN] Customer ID: ${customerId}`);
-    this.logger.log(`[PLAN] Plan status: ACTIVE`);
-    this.logger.log(`[PLAN] Triggering plan activation notification`);
-    this.logger.log(`[FCM] Notification recipient customerId: ${customerId}`);
-
-    try {
-      // 1. Resolve userId if not explicitly provided
-      if (!targetUserId) {
-        const firstUser = await this.prisma.user.findFirst({
-          where: { customerId, deletedAt: null },
-          select: { id: true },
-        });
-        if (firstUser) {
-          targetUserId = firstUser.id;
-        }
-      }
-
-      if (!targetUserId) {
-        this.logger.warn(
-          `[NOTIFICATION] No active user found for customerId=${customerId} to link plan purchase notification.`,
-        );
-        return null;
-      }
-
-      // 2. Idempotency Check: Prevent duplicate notifications within 15 minutes for the same payment or subscription
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-      const recentNotifs = await this.prisma.notification.findMany({
-        where: {
-          customerId,
-          type: 'PLAN_PURCHASE_SUCCESS',
-          createdAt: { gte: fifteenMinutesAgo },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-      });
-
-      const isDuplicate = recentNotifs.some((n) => {
-        const data = (n.data as any) || {};
-        if (paymentId && data.paymentId && String(data.paymentId) === String(paymentId)) {
-          return true;
-        }
-        if (
-          String(data.subscriptionId) === String(subscriptionId) &&
-          String(data.planId) === String(planId)
-        ) {
-          return true;
-        }
-        return false;
-      });
-
-      if (isDuplicate) {
-        this.logger.log(
-          `[NOTIFICATION] Plan purchase notification already sent for customerId=${customerId}, subscriptionId=${subscriptionId}. Skipping duplicate.`,
-        );
-        return {
-          notification: recentNotifs[0],
-          fcmSent: true,
-          skippedDuplicate: true,
-        };
-      }
-
-      const title = 'Plan Purchase Successful';
-      const body = `Your ${planName} has been purchased successfully.`;
-      const payloadData: Record<string, string> = {
-        type: 'PLAN_PURCHASE_SUCCESS',
-        subscriptionId: String(subscriptionId),
-        planId: String(planId),
-        planName,
-        customerId: String(customerId),
-        status: 'ACTIVE',
-      };
-
-      // 3. Create in-app Notification database record
-      const dbNotification = await this.prisma.notification.create({
-        data: {
-          customerId,
-          userId: targetUserId,
-          title,
-          message: body,
-          type: 'PLAN_PURCHASE_SUCCESS',
-          isRead: false,
-          data: {
-            ...payloadData,
-            status: 'ACTIVE',
-            paymentId: paymentId ? String(paymentId) : '',
-          } as any,
-        },
-      });
-
-      this.logger.log(`[NOTIFICATION] PLAN_PURCHASE_SUCCESS created`);
-      this.logger.log(`[FCM] Customer ID found`);
-
-      // 4. Fetch active device tokens for the customer and target user
-      this.logger.log(`[PLAN] Looking for FCM tokens...`);
-      this.logger.log(`[FCM] Customer token lookup started`);
-      this.logger.log(`[FCM] Customer ID: ${customerId}`);
-      const deviceRecords = await this.prisma.userDeviceToken.findMany({
-        where: {
-          isActive: true,
-          OR: [
-            { userId: targetUserId },
-            { user: { customerId: Number(customerId), deletedAt: null } },
-          ],
-        },
-        select: { token: true },
-      });
-
-      const rawTokens = deviceRecords.map((d) => d.token.trim()).filter((t) => t.length > 0);
-      const tokens = Array.from(new Set(rawTokens));
-      const tokenFound = tokens.length > 0;
-
-      this.logger.log(`[FCM] Token found: ${tokenFound ? 'YES' : 'NO'}`);
-      this.logger.log(`[FCM] Number of active tokens: ${tokens.length}`);
-
-      if (tokens.length === 0) {
-        this.logger.log(`[FCM] No active device tokens found for customer ${customerId}`);
-        this.logger.log(`[PLAN] Notification completed`);
-      } else {
-        this.logger.log(`[FCM] Device token found`);
-        const maskedTokens = tokens.map((t) => (t.length > 8 ? `****${t.slice(-4)}` : '****'));
-        this.logger.log(`[FCM] Active token suffix: ${maskedTokens.join(', ')}`);
-        this.logger.log(`[PLAN] FCM tokens found: ${tokens.length}`);
-        this.logger.log(`[PLAN] Calling FCM service...`);
-
-        // 5. Dispatch multicast push via FCM Service
-        const fcmPayload: Record<string, string> = {
-          ...payloadData,
-          notificationId: String(dbNotification.id),
-        };
-
-        const fcmResult = await this.fcmService.sendMulticast(tokens, title, body, fcmPayload, {
-          customerId,
-          notificationType: 'PLAN_PURCHASE_SUCCESS',
-        });
-
-        this.logger.log(
-          `[PLAN] FCM response: successCount=${fcmResult.successCount}, failureCount=${fcmResult.failureCount}`,
-        );
-
-        // 6. Clean up invalid tokens
-        if (fcmResult.invalidTokens.length > 0) {
-          await this.prisma.userDeviceToken.updateMany({
-            where: { token: { in: fcmResult.invalidTokens } },
-            data: { isActive: false, updatedAt: new Date() },
-          });
-          this.logger.log(
-            `[FCM] Cleaned up ${fcmResult.invalidTokens.length} invalid FCM token(s).`,
-          );
-        }
-
-        this.logger.log(`[PLAN] Notification completed`);
-      }
-
-      // WhatsApp Plan Activation Message (independent of FCM, non-blocking)
-      try {
-        if (this.whatsappService) {
-          const subDetails = await this.prisma.customerSubscription.findUnique({
-            where: { id: subscriptionId },
-            select: { billingCycle: true, startDate: true, endDate: true },
-          });
-
-          await this.whatsappService.sendPlanActivationMessage({
-            customerId,
-            planName,
-            subscriptionId,
-            paymentId,
-            billingCycle: subDetails?.billingCycle || 'Monthly',
-            startDate: subDetails?.startDate,
-            expiryDate: subDetails?.endDate,
-            notificationId: dbNotification?.id,
-          });
-        }
-      } catch (waErr: any) {
-        this.logger.warn(`[WHATSAPP] Plan activation message notice: ${waErr?.message}`);
-      }
-
-      // 6b. Email Plan Activation (independent of FCM & WhatsApp, non-blocking)
-      try {
-        if (this.emailService && this.emailTemplateService) {
-          const { email, customerName, companyName } = await this.resolveCustomerEmail(customerId);
-          if (email) {
-            const subDetails = await this.prisma.customerSubscription.findUnique({
-              where: { id: subscriptionId },
-              include: { plan: true },
-            });
-            const cycle = subDetails?.billingCycle || 'Monthly';
-            const startStr = subDetails?.startDate ? new Date(subDetails.startDate).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN');
-            const expiryStr = subDetails?.endDate ? new Date(subDetails.endDate).toLocaleDateString('en-IN') : 'Ongoing';
-            const plan = subDetails?.plan?.name || planName;
-
-            const template = await this.emailTemplateService.findByKey('PLAN_PURCHASE_SUCCESS', customerId);
-            const rendered = renderEmailTemplate(
-              { subject: template?.subject || 'Plan Activated: {{planName}} – {{companyName}}', body: template?.body || '' },
-              {
-                customerName: customerName || 'Valued Customer',
-                planName: plan,
-                billingCycle: cycle,
-                startDate: startStr,
-                expiryDate: expiryStr,
-                price: subDetails?.plan ? String(cycle === 'YEARLY' ? subDetails.plan.yearlyPrice : subDetails.plan.monthlyPrice) : '',
-                transactionId: paymentId ? String(paymentId) : 'Verified',
-                companyName,
-              },
-            );
-
-            await this.emailService.sendEmail({
-              to: email,
-              subject: rendered.subject,
-              html: rendered.body,
-              text: rendered.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
-              recordType: 'customer',
-              recordId: customerId,
-              eventType: 'PLAN_PURCHASE_SUCCESS',
-              templateId: template?.id,
-            });
-            this.logger.log(`[EMAIL] Plan activation email sent to customer #${customerId} (${email}) for plan "${plan}"`);
-          }
-        }
-      } catch (emailErr: any) {
-        this.logger.warn(`[EMAIL] Plan activation email notice: ${emailErr?.message}`);
-      }
-
-      // 7. Non-blocking Notification to Super Admins / Platform Admins
-      this.notifyAdmins({
-        title: 'New Plan Purchase',
-        body: `Customer #${customerId} has successfully purchased plan "${planName}".`,
-        type: 'PLAN_PURCHASE_SUCCESS',
-        data: {
-          type: 'PLAN_PURCHASE_SUCCESS',
-          customerId: String(customerId),
-          subscriptionId: String(subscriptionId),
-          planId: String(planId),
-          planName,
-          route: '/subscriptions',
-        },
-      }).catch((adminErr) =>
-        this.logger.warn(`Failed notifying admins of plan purchase: ${adminErr?.message}`),
-      );
-
-      await this.sendPlanPurchaseBpoNotification({
-        customerId,
-        subscriptionId,
-        planId,
-        planName,
-        paymentId,
-      }).catch((bpoErr) =>
-        this.logger.warn(`Failed notifying BPO of plan purchase: ${bpoErr?.message}`),
-      );
-
-      return {
-        notification: dbNotification,
-        fcmSent: tokens.length > 0,
-      };
-    } catch (err: any) {
-      this.logger.error(`[FCM] Send failed:\n${err?.message}`);
-      return null;
-    }
+  }) : Promise<never> {
+throw new GoneException('This Customer/Lead operation has been removed');
   }
 
   /**
@@ -2306,43 +2673,13 @@ export class NotificationService {
     const numCustomerId = customerId ? Number(customerId) : undefined;
 
     try {
-      // 1. Find all active Admin / Super Admin users (and company admins if customerId is specified)
-      const orConditions: any[] = [
-        {
-          userRoles: {
-            some: {
-              role: {
-                OR: [
-                  { type: 'SUPER_ADMIN' as any },
-                  { name: { in: ['SUPER_ADMIN', 'Super Admin', 'Super Administrator', 'ADMIN', 'Admin'] } },
-                ],
-              },
-            },
-          },
-        },
-        { customerId: null },
-      ];
-
-      if (numCustomerId) {
-        orConditions.push({
-          customerId: numCustomerId,
-          userRoles: {
-            some: {
-              role: {
-                name: { in: ['ADMIN', 'Admin', 'COMPANY_ADMIN', 'Company Admin', 'SUPER_ADMIN', 'Super Admin'] },
-              },
-            },
-          },
-        });
-      }
-
       const adminUsers = await this.prisma.user.findMany({
         where: {
           deletedAt: null,
           isActive: true,
-          OR: orConditions,
+          accountType: { in: ['SUPER_ADMIN', 'ADMIN'] },
         },
-        select: { id: true, customerId: true },
+        select: { id: true },
       });
 
       if (adminUsers.length === 0) {
@@ -2354,11 +2691,11 @@ export class NotificationService {
 
       // 2. Create in-app Notification database records for each admin
       for (const admin of adminUsers) {
-        const fallbackCustomerId = admin.customerId || numCustomerId || 1;
+        const fallbackCustomerId = numCustomerId || 1;
         try {
           await this.prisma.notification.create({
             data: {
-              customerId: fallbackCustomerId,
+
               userId: admin.id,
               title,
               message: body,

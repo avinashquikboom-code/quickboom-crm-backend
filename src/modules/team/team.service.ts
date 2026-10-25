@@ -4,6 +4,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { teamMemberEligibility } from './team-member-eligibility.util';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AddTeamMemberDto,
@@ -11,8 +13,8 @@ import {
   TeamQueryDto,
   UpdateTeamDto,
 } from './dto/team.dto';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
-import { normalizeActivityType } from '../work/work-permission.service';
+import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { normalizeActivityType } from '../work/work-assignment.service';
 
 @Injectable()
 export class TeamService {
@@ -63,7 +65,9 @@ export class TeamService {
         ...m,
         employee: this.formatEmployee(m.employee),
       })),
-      memberCount: team.members?.length || 0,
+      memberCount: team.members?.length || team._count?.members || 0,
+      workCount: team._count?.works || 0,
+      customerCount: team._count?.assignedCustomers || 0,
     };
   }
 
@@ -74,13 +78,7 @@ export class TeamService {
 
     const where: any = {};
 
-    if (customerId !== undefined && customerId !== null && String(customerId).trim() !== '') {
-      const numCustomerId = Number(customerId);
-      if (isNaN(numCustomerId) || numCustomerId <= 0) {
-        throw new BadRequestException('Invalid customer ID provided');
-      }
-      where.customerId = numCustomerId;
-    }
+
 
     if (query?.status === 'ACTIVE') {
       where.isActive = true;
@@ -137,6 +135,7 @@ export class TeamService {
             select: {
               members: true,
               works: true,
+              assignedCustomers: true,
             },
           },
         },
@@ -170,17 +169,12 @@ export class TeamService {
 
   async findOne(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
-    if (isNaN(numId) || numId <= 0) {
+    if (!Number.isSafeInteger(numId) || numId <= 0) {
       throw new BadRequestException('Valid Team ID is required');
     }
 
     const where: any = { id: numId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
-      }
-    }
+
 
     const team = await this.prisma.team.findFirst({
       where,
@@ -204,6 +198,7 @@ export class TeamService {
           select: {
             members: true,
             works: true,
+            assignedCustomers: true,
           },
         },
       },
@@ -218,14 +213,12 @@ export class TeamService {
 
   async create(customerId: number | string | undefined, dto: CreateTeamDto) {
     const numCustomerId = Number(customerId);
-    if (isNaN(numCustomerId) || numCustomerId <= 0) {
-      throw new BadRequestException('Valid Customer ID is required to create a team');
-    }
+
 
     // 1. Validate Leader if supplied
     if (dto.leaderId) {
       const leader = await this.prisma.employee.findFirst({
-        where: { id: Number(dto.leaderId), customerId: numCustomerId },
+        where: { id: Number(dto.leaderId) },
       });
       if (!leader) {
         throw new BadRequestException('Designated team leader does not exist or belong to your organization');
@@ -241,7 +234,7 @@ export class TeamService {
       const validEmployees = await this.prisma.employee.findMany({
         where: {
           id: { in: uniqueMemberIds },
-          customerId: numCustomerId,
+
         },
         select: { id: true },
       });
@@ -254,7 +247,7 @@ export class TeamService {
     const created = await this.prisma.$transaction(async (tx) => {
       const team = await tx.team.create({
         data: {
-          customerId: numCustomerId,
+
           name: dto.name.trim(),
           description: dto.description?.trim() || null,
           leaderId: dto.leaderId ? Number(dto.leaderId) : null,
@@ -290,12 +283,7 @@ export class TeamService {
   async update(customerId: number | string | undefined, id: number | string, dto: UpdateTeamDto) {
     const numId = Number(id);
     const where: any = { id: numId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
-      }
-    }
+
 
     // 1. Verify Team existence
     const existing = await this.prisma.team.findFirst({ where });
@@ -303,12 +291,12 @@ export class TeamService {
       throw new NotFoundException(`Team with ID ${id} not found in your organization`);
     }
 
-    const targetCustomerId = existing.customerId;
+    const targetCustomerId = undefined;
 
     // 2. Validate Leader if changing
     if (dto.leaderId !== undefined && dto.leaderId !== null) {
       const leader = await this.prisma.employee.findFirst({
-        where: { id: Number(dto.leaderId), customerId: targetCustomerId },
+        where: { id: Number(dto.leaderId) },
       });
       if (!leader) {
         throw new BadRequestException('Designated team leader does not exist or belong to your organization');
@@ -323,7 +311,7 @@ export class TeamService {
         const validEmployees = await this.prisma.employee.findMany({
           where: {
             id: { in: uniqueMemberIds },
-            customerId: targetCustomerId,
+
           },
           select: { id: true },
         });
@@ -381,19 +369,160 @@ export class TeamService {
     return this.formatTeam(updated);
   }
 
-  async remove(customerId: number | string | undefined, id: number | string, permanent = false) {
+  // Inspect persisted foreign keys as well as Prisma relations: legacy tables can
+  // outlive their Prisma models. Never infer that an unknown reference is safe.
+  private async additionalTeamDependencies(db: Prisma.TransactionClient, teamId: number) {
+    const columns = await db.$queryRaw<Array<{ tableName: string; columnName: string }>>`
+      SELECT DISTINCT source.relname AS "tableName", column_info.attname AS "columnName"
+      FROM pg_constraint constraint_info
+      JOIN pg_class source ON source.oid = constraint_info.conrelid
+      JOIN pg_namespace namespace ON namespace.oid = source.relnamespace
+      JOIN LATERAL unnest(constraint_info.conkey, constraint_info.confkey)
+        AS keys(source_key, target_key) ON true
+      JOIN pg_attribute column_info ON column_info.attrelid = source.oid
+        AND column_info.attnum = keys.source_key
+      JOIN pg_attribute target_column ON target_column.attrelid = constraint_info.confrelid
+        AND target_column.attnum = keys.target_key
+      WHERE constraint_info.contype = 'f'
+        AND constraint_info.confrelid = '"Team"'::regclass
+        AND namespace.nspname = current_schema() AND target_column.attname = 'id'
+      UNION
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'customers'
+        AND column_name = 'assignedTeamId'
+    `;
+    const managed = new Set(['TeamMember.teamId', 'Work.teamId', 'customer_accounts.assignedTeamId', 'commissions.teamId']);
+    const quote = (identifier: string) => '"' + identifier.replace(/"/g, '""') + '"';
+    return Promise.all(columns.filter(column => !managed.has(`${column.tableName}.${column.columnName}`)).map(async column => {
+      const rows = await db.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(*) AS count FROM ${Prisma.raw(quote(column.tableName))}
+        WHERE ${Prisma.raw(quote(column.columnName))} = ${teamId}
+      `);
+      const legacyCustomer = column.tableName === 'customers' && column.columnName === 'assignedTeamId';
+      return {
+        relation: `${column.tableName}.${column.columnName}`,
+        name: legacyCustomer ? 'Legacy Customers (including inactive records)' : `${column.tableName} (${column.columnName})`,
+        count: Number(rows[0].count),
+        blocking: !legacyCustomer && Number(rows[0].count) > 0,
+        action: legacyCustomer
+          ? 'Reassign or clear only the legacy customer team link; customer records are preserved.'
+          : 'Preserve these records. Resolve this relationship explicitly before permanent deletion, or deactivate the team.',
+      };
+    }));
+  }
+
+  async getDependencies(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
-    if (isNaN(numId) || numId <= 0) {
+    if (!Number.isSafeInteger(numId) || numId <= 0) {
+      throw new BadRequestException('Valid Team ID is required');
+    }
+
+    const team = await this.prisma.team.findFirst({
+      where: { id: numId },
+      include: {
+        leader: { select: this.employeeSelect },
+        _count: {
+          select: {
+            members: true,
+            works: true,
+          },
+        },
+      },
+    });
+    if (!team) {
+      throw new NotFoundException(`Team with ID ${id} not found in your organization`);
+    }
+
+    const [memberCount, workCount, customerCount, commissionCount] = await Promise.all([
+      typeof this.prisma.teamMember?.count === 'function'
+        ? this.prisma.teamMember.count({ where: { teamId: numId } })
+        : (team._count?.members ?? 0),
+      typeof this.prisma.work?.count === 'function'
+        ? this.prisma.work.count({ where: { teamId: numId } })
+        : (team._count?.works ?? 0),
+      typeof (this.prisma as any).customer?.count === 'function'
+        ? (this.prisma as any).customer.count({ where: { assignedTeamId: numId } })
+        : 0,
+      typeof (this.prisma as any).commission?.count === 'function'
+        ? (this.prisma as any).commission.count({ where: { teamId: numId } })
+        : 0,
+    ]);
+
+    const additionalRecords = await this.additionalTeamDependencies(this.prisma, numId);
+    const unresolvedDependencies = additionalRecords.some(record => record.blocking);
+    const relatedRecords = [
+      {
+        relation: 'TeamMember',
+        name: 'Assigned Employees',
+        count: memberCount,
+        blocking: memberCount > 0,
+        action: memberCount > 0 ? 'Reassign to another team or remove from team roster.' : 'None',
+      },
+      {
+        relation: 'Customer',
+        name: 'Assigned Customers',
+        count: customerCount,
+        blocking: customerCount > 0,
+        action: customerCount > 0 ? 'Reassign to another team or clear team assignment.' : 'None',
+      },
+      {
+        relation: 'Work',
+        name: 'Work Deliverables & Tasks',
+        count: workCount,
+        blocking: workCount > 0,
+        action: workCount > 0 ? 'Reassigned to target team or preserved unassigned.' : 'None',
+      },
+    ];
+
+    relatedRecords.push(...additionalRecords, {
+      relation: 'Commission', name: 'Historical Commissions', count: commissionCount,
+      blocking: false, action: 'Financial records are preserved; only their team link is reassigned or cleared.',
+    });
+    const hasDependencies = memberCount + workCount + customerCount + commissionCount > 0 || additionalRecords.some(record => record.count > 0);
+
+    return {
+      teamId: numId,
+      teamName: team.name,
+      isActive: team.isActive,
+      assignedEmployees: memberCount,
+      memberCount,
+      workCount,
+      customerCount,
+      commissionCount,
+      leader: team.leader
+        ? {
+            id: team.leader.id,
+            name: `${team.leader.firstName || ''} ${team.leader.lastName || ''}`.trim() || 'Leader',
+            employeeCode: team.leader.employeeCode,
+          }
+        : null,
+      relatedRecords,
+      hasDependencies,
+      canDelete: !hasDependencies,
+      canDeleteAfterUnassign: !unresolvedDependencies,
+      canDeleteAfterReassign: !unresolvedDependencies,
+      dependencies: [
+        { category: 'members', count: memberCount, action: 'Reassign membership or remove membership; employee accounts are preserved.' },
+        { category: 'works', count: workCount, action: 'Reassign or clear the team link; schedules and assignees are preserved.' },
+        { category: 'customers', count: customerCount, action: 'Reassign or clear the customer team assignment.' },
+        { category: 'commissions', count: commissionCount, action: 'Retained as historical financial records; does not block deletion.' },
+        ...additionalRecords.map(record => ({ category: record.relation, count: record.count, action: record.action })),
+      ],
+    };
+  }
+
+  async remove(
+    customerId: number | string | undefined,
+    id: number | string,
+    permanent = false,
+    reassignToTeamId?: number | string,
+  ) {
+    const numId = Number(id);
+    if (!Number.isSafeInteger(numId) || numId <= 0) {
       throw new BadRequestException('Valid Team ID is required');
     }
 
     const where: any = { id: numId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
-      }
-    }
 
     const team = await this.prisma.team.findFirst({
       where,
@@ -402,7 +531,6 @@ export class TeamService {
           select: {
             members: true,
             works: true,
-            assignedCustomers: true,
           },
         },
       },
@@ -412,30 +540,169 @@ export class TeamService {
     }
 
     if (permanent) {
-      const membersCount = (team as any)._count?.members ?? 0;
-      const worksCount = (team as any)._count?.works ?? 0;
-      const customersCount = (team as any)._count?.assignedCustomers ?? 0;
-      const hasLeader = team.leaderId !== null && team.leaderId !== undefined;
-
-      if (membersCount > 0 || worksCount > 0 || customersCount > 0 || hasLeader) {
-        throw new BadRequestException(
-          'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
-        );
+      const numReassignId = reassignToTeamId == null ? undefined : Number(reassignToTeamId);
+      if (numReassignId !== undefined && (!Number.isSafeInteger(numReassignId) || numReassignId < 1)) {
+        throw new BadRequestException('Valid target team ID for reassignment is required');
+      }
+      let targetTeam: any = null;
+      if (numReassignId) {
+        if (isNaN(numReassignId) || numReassignId <= 0) {
+          throw new BadRequestException('Valid target team ID for reassignment is required');
+        }
+        if (numReassignId === numId) {
+          throw new BadRequestException('Cannot reassign dependencies to the team being deleted');
+        }
+        targetTeam = await this.prisma.team.findFirst({
+          where: { id: numReassignId },
+        });
+        if (!targetTeam) {
+          throw new NotFoundException(`Target team with ID ${numReassignId} for reassignment not found`);
+        }
+        if (!targetTeam.isActive) {
+          throw new BadRequestException(`Cannot reassign to inactive team "${targetTeam.name}"`);
+        }
       }
 
       try {
-        await this.prisma.team.delete({
-          where: { id: numId },
+        await this.prisma.$transaction(async (tx) => {
+          const lockIds = [numId, ...(numReassignId ? [numReassignId] : [])].sort((a, b) => a - b);
+          await tx.$queryRaw`SELECT id FROM "Team" WHERE id IN (${Prisma.join(lockIds)}) ORDER BY id FOR UPDATE`;
+          const additionalRecords = await this.additionalTeamDependencies(tx, numId);
+          const blockers = additionalRecords.filter(record => record.blocking);
+          if (blockers.length) {
+            throw new BadRequestException(`Cannot permanently delete team "${team.name}": ${blockers.map(record => `${record.count} record(s) in ${record.relation}`).join(', ')} still reference it. Preserve these records and resolve their team relationship first, or deactivate the team.`);
+          }
+          if (!await tx.team.findFirst({ where: { id: numId } })) throw new NotFoundException('Team no longer exists');
+          if (numReassignId && !await tx.team.findFirst({ where: { id: numReassignId, isActive: true } })) {
+            throw new BadRequestException('Target team is no longer active');
+          }
+          if (numReassignId) {
+            // 1. Reassign team members (transfer members who aren't already on target team)
+            if (typeof tx.teamMember?.findMany === 'function' && typeof tx.teamMember?.createMany === 'function') {
+              const currentMembers = await tx.teamMember.findMany({
+                where: { teamId: numId },
+              });
+              const targetMembers = await tx.teamMember.findMany({
+                where: { teamId: numReassignId },
+                select: { employeeId: true },
+              });
+              const existingEmpIds = new Set(targetMembers.map((m: any) => m.employeeId));
+              const toAdd = currentMembers
+                .filter((m: any) => !existingEmpIds.has(m.employeeId))
+                .map((m: any) => ({
+                  teamId: numReassignId,
+                  employeeId: m.employeeId,
+                  role: m.role || 'MEMBER',
+                }));
+              if (toAdd.length > 0) {
+                if (typeof (tx as any).employee?.findMany === 'function') {
+                  const eligible = await (tx as any).employee.findMany({
+                    where: { AND: [
+                      { id: { in: toAdd.map(member => member.employeeId) } },
+                      teamMemberEligibility(targetTeam),
+                    ] }, select: { id: true },
+                  });
+                  if (eligible.length !== toAdd.length) {
+                    throw new BadRequestException('Some members are not eligible for the target team. Choose a compatible team or unassign memberships instead.');
+                  }
+                }
+                await tx.teamMember.createMany({
+                  data: toAdd,
+                  skipDuplicates: true,
+                });
+              }
+            }
+
+            // 2. Reassign works
+            if (typeof tx.work?.updateMany === 'function') {
+              await tx.work.updateMany({
+                where: { teamId: numId },
+                data: { teamId: numReassignId },
+              });
+            }
+
+            // 3. Reassign customers
+            if (typeof (tx as any).customer?.updateMany === 'function') {
+              await (tx as any).customer.updateMany({
+                where: { assignedTeamId: numId },
+                data: { assignedTeamId: numReassignId },
+              });
+            }
+
+            // 4. Update commission records if commission model exists
+            if (typeof (tx as any).commission?.updateMany === 'function') {
+              await (tx as any).commission.updateMany({
+                where: { teamId: numId },
+                data: { teamId: numReassignId },
+              });
+            }
+          } else {
+            // Unassign cleanly before deleting:
+            // 1. Unassign customers (prevent P2003 on customer_accounts / customers)
+            if (typeof (tx as any).customer?.updateMany === 'function') {
+              await (tx as any).customer.updateMany({
+                where: { assignedTeamId: numId },
+                data: { assignedTeamId: null },
+              });
+            }
+
+            // 2. Unassign works (prevent P2003 on Work)
+            if (typeof tx.work?.updateMany === 'function') {
+              await tx.work.updateMany({
+                where: { teamId: numId },
+                data: { teamId: null },
+              });
+            }
+
+            // 3. Remove teamId from commissions (financial records preserved with teamId: null)
+            if (typeof (tx as any).commission?.updateMany === 'function') {
+              await (tx as any).commission.updateMany({
+                where: { teamId: numId },
+                data: { teamId: null },
+              });
+            }
+          }
+
+          // The same legacy relation is counted in the dependency summary.
+          if (additionalRecords.some(record => record.relation === 'customers.assignedTeamId')) {
+            await tx.$executeRaw`
+              UPDATE "customers" SET "assignedTeamId" = ${numReassignId ?? null}
+              WHERE "assignedTeamId" = ${numId}
+            `;
+          }
+
+          // Always remove memberships of the team being deleted
+          if (typeof tx.teamMember?.deleteMany === 'function') {
+            await tx.teamMember.deleteMany({ where: { teamId: numId } });
+          }
+
+          // Delete the team record
+          await tx.team.delete({ where: { id: numId } });
         });
-        return { success: true, message: `Team "${team.name}" permanently deleted` };
       } catch (err: any) {
         if (err?.code === 'P2003' || err?.code === 'P2014') {
+          const [remMembers, remWorks, remCustomers] = await Promise.all([
+            typeof this.prisma.teamMember?.count === 'function' ? this.prisma.teamMember.count({ where: { teamId: numId } }) : 0,
+            typeof this.prisma.work?.count === 'function' ? this.prisma.work.count({ where: { teamId: numId } }) : 0,
+            typeof (this.prisma as any).customer?.count === 'function' ? (this.prisma as any).customer.count({ where: { assignedTeamId: numId } }) : 0,
+          ]);
+          const additionalRecords = await this.additionalTeamDependencies(this.prisma, numId);
+          const extraDetails = additionalRecords.filter(record => record.count > 0)
+            .map(record => `${record.count} record(s) in ${record.relation}`).join(', ');
+          const constraint = typeof err?.meta?.field_name === 'string' ? err.meta.field_name : 'unknown foreign key';
           throw new BadRequestException(
-            'Cannot delete this team because it has assigned employees or related records. Please reassign/remove them first.',
+            `Cannot permanently delete team "${team.name}" because related records still reference it (${remMembers} member(s), ${remWorks} work schedule(s), ${remCustomers} customer(s)${extraDetails ? `, ${extraDetails}` : ''}; constraint: ${constraint}). Please reassign or remove them first, or deactivate the team instead.`,
           );
         }
         throw err;
       }
+
+      return {
+        success: true,
+        message: numReassignId
+          ? `Team "${team.name}" permanently deleted and related records reassigned to "${targetTeam?.name || 'target team'}" successfully`
+          : `Team "${team.name}" permanently deleted`,
+      };
     }
 
     await this.prisma.team.update({
@@ -450,13 +717,8 @@ export class TeamService {
     const numTeamId = Number(teamId);
     const numEmployeeId = Number(dto.employeeId);
 
-    const where: any = { id: numTeamId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
-      }
-    }
+    const where: any = { id: numTeamId, isActive: true };
+
 
     const team = await this.prisma.team.findFirst({ where });
     if (!team) {
@@ -464,10 +726,10 @@ export class TeamService {
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: numEmployeeId, customerId: team.customerId },
+      where: { AND: [{ id: numEmployeeId }, teamMemberEligibility(team)] },
     });
     if (!employee) {
-      throw new BadRequestException('Employee does not exist or belong to your organization');
+      throw new BadRequestException('Employee is inactive, already a member, or not eligible for this team');
     }
 
     const member = await this.prisma.teamMember.upsert({
@@ -501,12 +763,7 @@ export class TeamService {
     const numEmployeeId = Number(employeeId);
 
     const where: any = { id: numTeamId };
-    if (customerId !== undefined && customerId !== null) {
-      const numCustomerId = Number(customerId);
-      if (!isNaN(numCustomerId) && numCustomerId > 0) {
-        where.customerId = numCustomerId;
-      }
-    }
+
 
     const team = await this.prisma.team.findFirst({ where });
     if (!team) {
@@ -560,7 +817,7 @@ export class TeamService {
     if (customerId) {
       const numCust = Number(customerId);
       if (!isNaN(numCust) && numCust > 0) {
-        where.customerId = numCust;
+
       }
     }
 
@@ -649,7 +906,7 @@ export class TeamService {
     const where: any = {
       OR: [
         { teamId: numTeamId },
-        { customer: { assignedTeamId: numTeamId } },
+
       ],
     };
 
@@ -702,22 +959,7 @@ export class TeamService {
       where,
       orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
       include: {
-        customer: {
-          select: {
-            id: true,
-            name: true,
-            companyName: true,
-            address: true,
-            city: true,
-            state: true,
-            assignedTeamId: true,
-            assignedTeam: { select: { id: true, name: true } },
-            socialMediaHandlers: {
-              take: 5,
-              select: { platform: true, accountName: true, accountUrl: true, status: true },
-            },
-          },
-        },
+
         team: {
           select: { id: true, name: true },
         },
@@ -737,12 +979,7 @@ export class TeamService {
             designation: { select: { id: true, name: true } },
           },
         },
-        subscription: {
-          select: {
-            id: true,
-            plan: { select: { name: true } },
-          },
-        },
+
         tasks: {
           select: { id: true, title: true, status: true, stepOrder: true, assignedToId: true, notes: true, createdAt: true },
           orderBy: { stepOrder: 'asc' },
@@ -855,15 +1092,15 @@ export class TeamService {
 
       const startTime = w.scheduledTime || '10:00 AM';
       const schedDateVal = formatScheduleDate(w.scheduledDate, targetDateStr);
-      const custLocation = [w.customer?.address, w.customer?.city, w.customer?.state]
+      const custLocation = [undefined, undefined, undefined]
         .filter(Boolean)
         .join(', ') || null;
 
-      const smHandler = w.customer?.socialMediaHandlers?.[0];
+      const smHandler = undefined;
       const platform = smHandler?.platform || 'Instagram';
       const smAccount = smHandler?.accountName
         ? `${platform} — @${smHandler.accountName}`
-        : (w.customer?.name ? `@${w.customer.name.toLowerCase().replace(/\s+/g, '')}` : 'Instagram');
+        : ('Instagram');
 
       return {
         id: w.id,
@@ -880,25 +1117,17 @@ export class TeamService {
         time: startTime,
         startTime: startTime,
         status: w.status,
-        customer: {
-          id: w.customer?.id || w.customerId,
-          name: w.customer?.name || 'Customer',
-          companyName: w.customer?.companyName || w.customer?.name || 'Customer',
-        },
-        customerId: String(w.customerId),
-        customerName: w.customer?.name || 'Customer',
-        customerBusiness: w.customer?.companyName || w.customer?.name || 'Customer',
+
+
+        customerName: 'Customer',
+        customerBusiness: 'Customer',
         team: {
           id: team.id,
           name: team.name,
         },
         assignedTeam: team.name,
         employee: assignedEmployeeObj,
-        assignedEmployee: assignedEmpName,
-        assignedToName: assignedEmpName,
         assignedEmployees: assignedEmpList,
-        assignedToId: w.assignedToId,
-        editorId: w.editorId,
         location: custLocation,
         socialMediaAccount: smAccount,
         platform: platform,

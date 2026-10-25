@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsEnum, IsInt, Min, Length } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum SubscriptionBillingCycle {
@@ -13,6 +13,8 @@ export enum PaymentOption {
 }
 
 export class CreateRazorpayOrderDto {
+  @IsOptional() @IsInt() @Min(1) customerId?: number;
+  @IsString() @Length(8, 100) idempotencyKey: string;
   @ApiProperty({ example: 1, description: 'Plan ID from database' })
   @IsNotEmpty()
   planId: number | string;
@@ -27,9 +29,7 @@ export class CreateRazorpayOrderDto {
   @IsString()
   paymentOption?: string;
 
-  @ApiPropertyOptional({ example: 101, description: 'Optional Subscription ID when paying balance' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'INR', default: 'INR' })
   @IsOptional()
@@ -43,6 +43,11 @@ export class CreateRazorpayOrderDto {
   @IsOptional()
   @IsString()
   activationDate?: string;
+
+  @ApiPropertyOptional({ description: 'Coupon code. The server recalculates the payable amount.' })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
 
 export class VerifyRazorpayPaymentDto {
@@ -75,9 +80,7 @@ export class VerifyRazorpayPaymentDto {
   @IsString()
   paymentOption?: string;
 
-  @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({
     example: '2026-10-03',
@@ -86,6 +89,11 @@ export class VerifyRazorpayPaymentDto {
   @IsOptional()
   @IsString()
   activationDate?: string;
+
+  @ApiPropertyOptional({ description: 'Coupon code used when the Razorpay order was created.' })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
 
 export class CreateOfflinePaymentDto {
@@ -103,9 +111,7 @@ export class CreateOfflinePaymentDto {
   @IsString()
   paymentOption?: string;
 
-  @ApiPropertyOptional({ example: 101, description: 'Subscription ID if paying balance' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'BANK_TRANSFER', description: 'Offline payment method' })
   @IsOptional()
@@ -129,16 +135,17 @@ export class CreateOfflinePaymentDto {
   @IsOptional()
   @IsString()
   activationDate?: string;
+
+  @ApiPropertyOptional({ description: 'Coupon code used when the Razorpay order was created.' })
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
 }
 
 export class SendPaymentReminderDto {
-  @ApiProperty({ example: 101, description: 'Target Customer ID' })
-  @IsNotEmpty()
-  customerId: number | string;
+  
 
-  @ApiPropertyOptional({ example: 501, description: 'Target Subscription ID' })
-  @IsOptional()
-  subscriptionId?: number | string;
+  
 
   @ApiPropertyOptional({ example: 'Your balance payment is due in 3 days.', description: 'Custom reminder note' })
   @IsOptional()

@@ -1,3 +1,4 @@
+import { GoneException } from '@nestjs/common';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -6,16 +7,7 @@ export class MasterService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-    if (customerId) {
-      const parsed = Number(customerId);
-      if (!isNaN(parsed) && parsed > 0) return parsed;
-    }
-    const defaultCust = await this.prisma.customer.findFirst({
-      where: { isActive: true },
-      orderBy: { id: 'asc' },
-      select: { id: true },
-    });
-    return defaultCust?.id || 1;
+return undefined;
   }
 
   // ==========================================
@@ -34,7 +26,7 @@ export class MasterService {
       where: {
         type: dto.type,
         code: cleanCode,
-        customerId: numCustomerId,
+        
       },
     });
     if (existing) {
@@ -43,7 +35,7 @@ export class MasterService {
 
     const item = await this.prisma.masterItem.create({
       data: {
-        customerId: numCustomerId,
+        
         type: dto.type,
         code: cleanCode,
         name: String(dto.name).trim(),
@@ -75,7 +67,7 @@ export class MasterService {
         where: {
           type: existing.type,
           code: cleanCode,
-          customerId: numCustomerId,
+          
           NOT: { id: Number(id) },
         },
       });
@@ -120,14 +112,14 @@ export class MasterService {
 
   private async ensureSeedData(type: string, customerId: number, defaults: any[]) {
     const count = await this.prisma.masterItem.count({
-      where: { type, customerId },
+      where: { type },
     });
     if (count === 0) {
       for (const d of defaults) {
         try {
           await this.prisma.masterItem.create({
             data: {
-              customerId,
+              
               type,
               code: d.code,
               name: d.name,
@@ -159,24 +151,22 @@ export class MasterService {
       departmentsCount,
       designationsCount,
       leaveTypesCount,
-      leadStagesCount,
+
       plansCount,
       totalEmployees,
       totalWorkItems,
-      totalLeads,
+
       totalClaims,
       totalLoans,
     ] = await Promise.all([
-      this.prisma.department.count({ where: { customerId: numCustomerId, isActive: true } }),
-      this.prisma.designation.count({ where: { customerId: numCustomerId, isActive: true } }),
-      this.prisma.leaveType.count({ where: { customerId: numCustomerId, isActive: true } }),
-      this.prisma.leadStage.count({ where: { customerId: numCustomerId, isActive: true } }),
+      this.prisma.department.count({ where: {  isActive: true } }),
+      this.prisma.designation.count({ where: {  isActive: true } }),
+      this.prisma.leaveType.count({ where: {  isActive: true } }),
       this.prisma.plan.count({ where: { isActive: true } }),
-      this.prisma.employee.count({ where: { customerId: numCustomerId } }),
-      this.prisma.work.count({ where: { customerId: numCustomerId } }),
-      this.prisma.lead.count({ where: { customerId: numCustomerId } }),
-      this.prisma.employeeClaim.count({ where: { customerId: numCustomerId } }),
-      this.prisma.employeeLoan.count({ where: { customerId: numCustomerId } }),
+      this.prisma.employee.count({ where: {  } }),
+      this.prisma.work.count({ where: {  } }),
+      this.prisma.employeeClaim.count({ where: {  } }),
+      this.prisma.employeeLoan.count({ where: {  } }),
     ]);
 
     return {
@@ -185,11 +175,11 @@ export class MasterService {
         departmentsCount,
         designationsCount,
         leaveTypesCount,
-        leadStagesCount,
+
         plansCount,
         totalEmployees,
         totalWorkItems,
-        totalLeads,
+
         totalClaims,
         totalLoans,
       },
@@ -220,12 +210,12 @@ export class MasterService {
 
     const [items, counts] = await Promise.all([
       this.prisma.masterItem.findMany({
-        where: { type: 'EMPLOYEE_TYPE', customerId: numCustomerId },
+        where: { type: 'EMPLOYEE_TYPE' },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.employee.groupBy({
         by: ['employeeType'],
-        where: { customerId: numCustomerId },
+        where: {  },
         _count: { id: true },
       }),
     ]);
@@ -268,12 +258,12 @@ export class MasterService {
 
     const [items, workCounts] = await Promise.all([
       this.prisma.masterItem.findMany({
-        where: { type: 'WORK_TYPE', customerId: numCustomerId },
+        where: { type: 'WORK_TYPE' },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.work.groupBy({
         by: ['workType'],
-        where: { customerId: numCustomerId },
+        where: {  },
         _count: { id: true },
       }),
     ]);
@@ -313,7 +303,7 @@ export class MasterService {
     ]);
 
     const items = await this.prisma.masterItem.findMany({
-      where: { type: 'ACTIVITY_TYPE', customerId: numCustomerId },
+      where: { type: 'ACTIVITY_TYPE' },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
     });
 
@@ -350,17 +340,17 @@ export class MasterService {
 
     const [items, taskCounts, workCounts] = await Promise.all([
       this.prisma.masterItem.findMany({
-        where: { type: 'TASK_STATUS', customerId: numCustomerId },
+        where: { type: 'TASK_STATUS' },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.task.groupBy({
         by: ['status'],
-        where: { customerId: numCustomerId },
+        where: {  },
         _count: { id: true },
       }),
       this.prisma.work.groupBy({
         by: ['status'],
-        where: { customerId: numCustomerId },
+        where: {  },
         _count: { id: true },
       }),
     ]);
@@ -399,48 +389,8 @@ export class MasterService {
     return { success: true, data };
   }
 
-  async getLeadSources(customerId?: number | string) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-
-    await this.ensureSeedData('LEAD_SOURCE', numCustomerId, [
-      { code: 'WEBSITE', name: 'Corporate Website', description: 'Inbound leads submitted via web contact forms.', sortOrder: 1 },
-      { code: 'GOOGLE_PLACES', name: 'Google Places / Maps', description: 'B2B leads captured from local business search.', sortOrder: 2 },
-      { code: 'REFERRAL', name: 'Client Referral', description: 'Warm introductions and word-of-mouth recommendations.', sortOrder: 3 },
-      { code: 'LINKEDIN', name: 'LinkedIn Outreach', description: 'B2B professional network prospecting and InMail.', sortOrder: 4 },
-      { code: 'COLD_CALL', name: 'Direct Cold Calling', description: 'Outbound sales tele-calling campaigns.', sortOrder: 5 },
-      { code: 'CAMPAIGN', name: 'Marketing Ad Campaign', description: 'Lead generation campaigns on Meta and Google Ads.', sortOrder: 6 },
-      { code: 'OTHER', name: 'Other Channels', description: 'Exhibitions, events, and miscellaneous sources.', sortOrder: 7 },
-    ]);
-
-    const [items, leadCounts] = await Promise.all([
-      this.prisma.masterItem.findMany({
-        where: { type: 'LEAD_SOURCE', customerId: numCustomerId },
-        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-      }),
-      this.prisma.lead.groupBy({
-        by: ['source'],
-        where: { customerId: numCustomerId },
-        _count: { id: true },
-      }),
-    ]);
-
-    const countMap: Record<string, number> = {};
-    for (const lc of leadCounts) {
-      if (lc.source) countMap[lc.source.toUpperCase()] = lc._count.id;
-    }
-
-    const data = items.map((it) => ({
-      id: it.id,
-      code: it.code,
-      name: it.name,
-      description: it.description,
-      count: countMap[it.code] || 0,
-      isActive: it.isActive,
-      isSystem: it.isSystem,
-      meta: it.meta,
-    }));
-
-    return { success: true, data };
+  async getLeadSources(customerId?: number | string) : Promise<never> {
+throw new GoneException('Customer and Lead functionality has been removed');
   }
 
   async getExpenseCategories(customerId?: number | string) {
@@ -459,16 +409,16 @@ export class MasterService {
 
     const [items, claimCounts, policy] = await Promise.all([
       this.prisma.masterItem.findMany({
-        where: { type: 'EXPENSE_CATEGORY', customerId: numCustomerId },
+        where: { type: 'EXPENSE_CATEGORY' },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.employeeClaim.groupBy({
         by: ['category'],
-        where: { customerId: numCustomerId },
+        where: {  },
         _count: { id: true },
       }),
       this.prisma.claimPolicy.findFirst({
-        where: { customerId: numCustomerId, isActive: true },
+        where: {  isActive: true },
       }),
     ]);
 
@@ -538,11 +488,11 @@ export class MasterService {
 
     const [items, activeLoans] = await Promise.all([
       this.prisma.masterItem.findMany({
-        where: { type: 'LOAN_TYPE', customerId: numCustomerId },
+        where: { type: 'LOAN_TYPE' },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.employeeLoan.count({
-        where: { customerId: numCustomerId, status: 'ACTIVE' },
+        where: {  status: 'ACTIVE' },
       }),
     ]);
 
@@ -624,7 +574,7 @@ export class MasterService {
     try {
       const counts = await this.prisma.paymentHistory.groupBy({
         by: ['paymentMethod'],
-        where: { customerId: numCustomerId, deletedAt: null },
+        where: {  deletedAt: null },
         _count: { id: true },
       });
 
@@ -638,7 +588,7 @@ export class MasterService {
     }
 
     const items = await this.prisma.masterItem.findMany({
-      where: { type: 'PAYMENT_METHOD', customerId: numCustomerId },
+      where: { type: 'PAYMENT_METHOD' },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
     });
 

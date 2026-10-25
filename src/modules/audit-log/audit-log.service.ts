@@ -105,20 +105,12 @@ export class AuditLogService {
       }
 
       let resolvedCustomerId: number | null = null;
-      if (params.customerId) {
-        try {
-          const custExists = await this.prisma.customer.findUnique({
-            where: { id: Number(params.customerId) },
-            select: { id: true },
-          });
-          if (custExists) resolvedCustomerId = custExists.id;
-        } catch (_) {}
-      }
+      
 
       return await this.prisma.auditLog.create({
         data: {
           userId: resolvedUserId,
-          customerId: resolvedCustomerId,
+          
           userName: params.userName || null,
           userRole: params.userRole ? params.userRole.toUpperCase() : null,
           source: cleanSource,
@@ -157,7 +149,7 @@ export class AuditLogService {
       action,
       module,
       details,
-      customerId: customerId ? Number(customerId) : null,
+      
       userId: userId ? Number(userId) : null,
       ipAddress,
       source: 'ADMIN_PANEL',
@@ -207,9 +199,7 @@ export class AuditLogService {
     }
 
     // Customer ID filter
-    if (filters.customerId) {
-      where.customerId = Number(filters.customerId);
-    }
+    
 
     // User ID filter
     if (filters.userId) {
@@ -267,12 +257,7 @@ export class AuditLogService {
               phone: true,
             },
           },
-          customer: {
-            select: {
-              id: true,
-              companyName: true,
-            },
-          },
+          
         },
       }),
       this.prisma.auditLog.count({ where }),
@@ -283,7 +268,7 @@ export class AuditLogService {
         log.userName ||
         (log.user ? `${log.user.firstName || ''} ${log.user.lastName || ''}`.trim() : null) ||
         (log.user?.email ? log.user.email : null) ||
-        (log.customerId ? `Customer #${log.customerId}` : 'System');
+        ('System');
 
       return {
         id: log.id,
@@ -307,8 +292,8 @@ export class AuditLogService {
         status: log.status || 'SUCCESS',
         errorMessage: log.errorMessage,
         details: log.details,
-        customerId: log.customerId,
-        companyName: log.customer?.companyName || null,
+        
+        companyName: null,
       };
     });
 
@@ -349,12 +334,7 @@ export class AuditLogService {
             phone: true,
           },
         },
-        customer: {
-          select: {
-            id: true,
-            companyName: true,
-          },
-        },
+        
       },
     });
 
@@ -366,7 +346,7 @@ export class AuditLogService {
       log.userName ||
       (log.user ? `${log.user.firstName || ''} ${log.user.lastName || ''}`.trim() : null) ||
       (log.user?.email ? log.user.email : null) ||
-      (log.customerId ? `Customer #${log.customerId}` : 'System');
+      ('System');
 
     return {
       id: log.id,
@@ -390,8 +370,8 @@ export class AuditLogService {
       status: log.status || 'SUCCESS',
       errorMessage: log.errorMessage,
       details: log.details,
-      customerId: log.customerId,
-      companyName: log.customer?.companyName || null,
+      
+      companyName: null,
     };
   }
 

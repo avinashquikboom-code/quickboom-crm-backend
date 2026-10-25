@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus, WorkType } from '@prisma/client';
+import { WorkAssignmentService } from './work-assignment.service';
 
 describe('Employee Calendar Isolation & Mapping Tests', () => {
   let workService: WorkService;
@@ -124,8 +125,62 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     },
   ];
 
+  const mockTaskItems = [
+    {
+      id: 501,
+      customerId: 10,
+      title: 'Store Verification & Client Meeting',
+      description: 'On-site verification',
+      priority: 'HIGH',
+      status: 'PENDING',
+      dueDate: new Date('2026-10-10T10:00:00.000Z'),
+      dueTime: '10:00 AM',
+      dueAt: new Date('2026-10-10T10:00:00.000Z'),
+      startDate: new Date('2026-10-10T10:00:00.000Z'),
+      startTime: '10:00 AM',
+      category: 'OPERATIONS',
+      employeeId: 1,
+      assignedToId: 1,
+      deletedAt: null,
+      notes: 'Check store setup and cameras',
+      customer: {
+        id: 10,
+        name: 'Acme Corp',
+        address: '123 Market St',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+      },
+      employee: {
+        id: 1,
+        firstName: 'John',
+        lastName: 'Photographer',
+        department: { name: 'Field Operations' },
+        designation: { name: 'Field Executive' },
+      },
+      department: { name: 'Field Operations' },
+      designation: { name: 'Field Executive' },
+      assignedTo: { id: 1, firstName: 'John', lastName: 'Photographer' },
+    },
+  ];
+
   beforeEach(async () => {
     prisma = {
+      task: {
+        findMany: jest.fn().mockImplementation(({ where }: any) => {
+          return mockTaskItems.filter((t: any) => {
+            if (where.deletedAt === null && t.deletedAt !== null) return false;
+            if (where.OR) {
+              const matchesOr = where.OR.some((cond: any) => {
+                if (cond.employeeId !== undefined && cond.employeeId === t.employeeId) return true;
+                if (cond.assignedToId !== undefined && (cond.assignedToId === t.assignedToId || cond.assignedToId === t.employeeId)) return true;
+                return false;
+              });
+              if (!matchesOr) return false;
+            }
+            return true;
+          });
+        }),
+      },
       work: {
         findMany: jest.fn().mockImplementation(({ where }: any) => {
           return mockWorkItems.filter((item: any) => {
@@ -155,7 +210,19 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
                   if (condition.assignedToId === null && item.assignedToId !== null) return false;
                   return true;
                 }
+                if (condition.teamId !== undefined) {
+                  const tId = item.teamId || item.team?.id;
+                  if (condition.teamId?.in && Array.isArray(condition.teamId.in)) {
+                    if (condition.teamId.in.includes(tId)) return true;
+                  } else if (condition.teamId === tId) {
+                    return true;
+                  }
+                }
                 if (condition.team !== undefined) {
+                  const tId = item.teamId || item.team?.id;
+                  if (condition.team?.id?.in && Array.isArray(condition.team?.id?.in)) {
+                    if (condition.team.id.in.includes(tId)) return true;
+                  }
                   if (condition.team.members?.some?.employeeId !== undefined) {
                     return item.team?.members?.some((m: any) => m.employeeId === condition.team.members.some.employeeId);
                   }
@@ -164,6 +231,8 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
                   }
                   return false;
                 }
+                if (condition.customerId !== undefined && item.customerId === condition.customerId) return true;
+                if (condition.customer?.id !== undefined && item.customerId === condition.customer.id) return true;
                 if (condition.assignedToId !== undefined && condition.assignedToId !== null && item.assignedToId === condition.assignedToId) return true;
                 if (condition.editorId !== undefined && condition.editorId !== null && item.editorId === condition.editorId) return true;
                 if (condition.tasks?.some?.assignedToId !== undefined) {
@@ -182,20 +251,20 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       },
       employee: {
         findUnique: jest.fn().mockImplementation(({ where }: any) => {
-          if (where.id === 1) return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1 };
-          if (where.id === 2) return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2 };
-          if (where.id === 3) return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3 };
+          if (where.id === 1) return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1, customerId: 10 };
+          if (where.id === 2) return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2, customerId: 10 };
+          if (where.id === 3) return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3, customerId: 20 };
           return null;
         }),
         findFirst: jest.fn().mockImplementation(({ where }: any) => {
           if (where.id === 1 || where.OR?.some((cond: any) => cond.userId === 1 || cond.email === 'emp1@crm.com')) {
-            return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1 };
+            return { id: 1, firstName: 'John', lastName: 'Photographer', userId: 1, customerId: 10 };
           }
           if (where.id === 2 || where.OR?.some((cond: any) => cond.userId === 2 || cond.email === 'emp2@crm.com')) {
-            return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2 };
+            return { id: 2, firstName: 'Alice', lastName: 'Editor', userId: 2, customerId: 10 };
           }
           if (where.id === 3 || where.OR?.some((cond: any) => cond.userId === 3 || cond.email === 'emp3@crm.com')) {
-            return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3 };
+            return { id: 3, firstName: 'Bob', lastName: 'Designer', userId: 3, customerId: 20 };
           }
           return null;
         }),
@@ -206,6 +275,18 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       providers: [
         WorkService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: WorkAssignmentService,
+          useValue: {
+            getEmployeeActivityTypes: jest.fn().mockResolvedValue({
+              role: 'STAFF',
+              allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT', 'POST_DESIGN']),
+              isFullAccess: true,
+              isProductionManager: false,
+              workPermissions: [],
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -213,7 +294,7 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
   });
 
   it('Employee 1 sees work assigned to them (as photographer)', async () => {
-    const calendar = await workService.getEmployeeCalendar(1);
+    const calendar = await workService.getEmployeeCalendar(1, { month: 9, year: 2026 });
     expect(calendar.length).toBeGreaterThanOrEqual(1);
     const item101 = calendar.find((c) => c.id === '101');
     expect(item101).toBeDefined();
@@ -225,21 +306,23 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
   });
 
   it('Employee 2 sees work assigned to them (as video editor)', async () => {
-    const calendar = await workService.getEmployeeCalendar(2);
+    const calendar = await workService.getEmployeeCalendar(2, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(1);
     expect(calendar[0].id).toBe('101');
-    expect(calendar[0].customerName).toBe('Acme Corp');
-    expect(calendar[0].assignedEmployee).toBe('John Photographer');
+    expect(calendar[0].assignedEmployees).toContain('John Photographer');
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+      expect(calendar[0]).toHaveProperty(field);
+    }
     expect(calendar[0].editorName).toBe('Alice Editor');
   });
 
   it('Employee 4 (unassigned) does NOT see Employee 1 or Employee 2 assigned work', async () => {
-    const calendar = await workService.getEmployeeCalendar(4);
+    const calendar = await workService.getEmployeeCalendar(4, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(0);
   });
 
   it('Employee 3 sees only their own work (Creative Post Design for Beta LLC)', async () => {
-    const calendar = await workService.getEmployeeCalendar(3);
+    const calendar = await workService.getEmployeeCalendar(3, { month: 9, year: 2026 });
     expect(calendar).toHaveLength(1);
     expect(calendar[0].id).toBe('102');
     expect(calendar[0].customerName).toBe('Beta LLC');
@@ -272,13 +355,10 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     expect(careGymItem).toBeUndefined();
   });
 
-  it('Employee 1 sees work assigned to their team (SSM Team A)', async () => {
+  it('Employee 1 does not see team design work outside their photographer role', async () => {
     const calendar = await workService.getEmployeeCalendar(1, { date: '2026-08-29' });
     const teamItem = calendar.find((c) => c.id === '104');
-    expect(teamItem).toBeDefined();
-    expect(teamItem?.team).toBe('SSM Team A');
-    expect(teamItem?.customerName).toBe('Delta Mart');
-    expect(teamItem?.title).toBe('Story Design');
+    expect(teamItem).toBeUndefined();
   });
 
   it('Employee 2 (not in SSM Team A) does NOT see team assigned work', async () => {
@@ -291,7 +371,49 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     const augustCalendar = await workService.getEmployeeCalendar(1, { year: 2026, month: 8 });
     const ids = augustCalendar.map((a) => a.id);
     expect(ids).toContain('103');
-    expect(ids).toContain('104');
+    expect(ids).not.toContain('104');
     expect(ids).not.toContain('101'); // 101 is September
+  });
+
+  it('When allTenantCustomers is true, employee sees scheduled company/tenant work for the month', async () => {
+    const septemberCalendar = await workService.getEmployeeCalendar(
+      1,
+      { year: 2026, month: 9 },
+      { allTenantCustomers: true },
+    );
+    expect(septemberCalendar.length).toBeGreaterThanOrEqual(1);
+    const item101 = septemberCalendar.find((c) => c.id === '101');
+    expect(item101).toBeDefined();
+    expect(item101?.customerName).toBe('Acme Corp');
+    expect(item101?.title).toBe('Reels Video Shoot');
+  });
+
+  it('When allTenantCustomers is true, employee sees scheduled work on target date', async () => {
+    const dateActivities = await workService.getEmployeeCalendar(
+      1,
+      { date: '2026-09-10' },
+      { allTenantCustomers: true },
+    );
+    expect(dateActivities.length).toBeGreaterThanOrEqual(1);
+    expect(dateActivities.some((c) => c.id === '101')).toBe(true);
+  });
+
+  it('Employee 1 sees assigned Task 501 on 2026-10-10 (Admin panel Task table)', async () => {
+    const calendar = await workService.getEmployeeCalendar(1, { date: '2026-10-10' });
+    expect(calendar.length).toBeGreaterThanOrEqual(1);
+    const task501 = calendar.find((c) => c.id === '501');
+    expect(task501).toBeDefined();
+    expect(task501?.title).toBe('Store Verification & Client Meeting');
+    expect(task501?.activityType).toBe('TASK');
+    expect(task501?.assignedEmployees).toContain('John Photographer');
+    for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
+      expect(task501).not.toHaveProperty(field);
+    }
+  });
+
+  it('Employee 2 (unassigned) does NOT see Task 501 on 2026-10-10', async () => {
+    const calendar = await workService.getEmployeeCalendar(2, { date: '2026-10-10' });
+    const task501 = calendar.find((c) => c.id === '501');
+    expect(task501).toBeUndefined();
   });
 });

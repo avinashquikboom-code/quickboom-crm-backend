@@ -1,0 +1,4336 @@
+{
+  "models": [
+    {
+      "model": "Customer",
+      "fields": [
+        "leadLimit                Int                       @default(500)",
+        "customerType             String?                   @default(\"ENTERPRISE\")",
+        "leadId                   Int?                      @unique",
+        "leads                    Lead[]",
+        "leadStages               LeadStage[]",
+        "moduleOverrides          CustomerModuleOverride[]",
+        "subscriptions            CustomerSubscription[]",
+        "marketingVideoViews      CustomerMarketingVideoView[]",
+        "roleLeadLimits           RoleLeadLimit[]",
+        "employeeLeadLimits       EmployeeLeadLimit[]",
+        "originLead               Lead?                     @relation(\"CustomerOriginLead\", fields: [leadId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([deletedAt])",
+        "@@index([isActive])",
+        "@@index([assignedEmployeeId])",
+        "@@index([createdByEmployeeId])",
+        "@@index([assignedTeamId])",
+        "@@index([mobileRoleId])"
+      ]
+    },
+    {
+      "model": "Plan",
+      "fields": [
+        "leadLimit        Int",
+        "subscriptions    CustomerSubscription[]"
+      ],
+      "constraints": [
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "CustomerSubscription",
+      "fields": [
+        "customerId         Int",
+        "customLeadLimit    Int?",
+        "customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([planId])",
+        "@@index([status])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Coupon",
+      "fields": [
+        "perCustomerLimit      Int                    @default(1)",
+        "subscriptions         CustomerSubscription[]"
+      ],
+      "constraints": [
+        "@@index([code])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "CouponRedemption",
+      "fields": [
+        "customerId       Int",
+        "customer         Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([couponId, customerId])"
+      ]
+    },
+    {
+      "model": "PaymentHistory",
+      "fields": [
+        "customerId     Int",
+        "customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "User",
+      "fields": [
+        "customerId              Int?",
+        "assignedLeads           Lead[]            @relation(\"AssignedLeads\")",
+        "createdLeads            Lead[]            @relation(\"CreatedLeads\")",
+        "leadNotes               LeadNote[]",
+        "customer                Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([email])",
+        "@@index([phone])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Role",
+      "fields": [
+        "customerId      Int?",
+        "customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Permission",
+      "fields": [
+        "customerOverrides CustomerModuleOverride[]"
+      ],
+      "constraints": [
+        "@@unique([module, action])"
+      ]
+    },
+    {
+      "model": "Lead",
+      "fields": [
+        "customerId           Int",
+        "status               LeadStatus             @default(NEW)",
+        "stage                LeadStage?             @relation(fields: [stageId], references: [id], onDelete: SetNull)",
+        "priority             LeadPriority           @default(MEDIUM)",
+        "customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "convertedCustomer    Customer?              @relation(\"CustomerOriginLead\")",
+        "timeline             LeadActivityTimeline[]",
+        "notes                LeadNote[]",
+        "reminders            LeadReminder[]",
+        "statusHistory        LeadStatusHistory[]"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([status])",
+        "@@index([stageId])",
+        "@@index([assignedToId])",
+        "@@index([employeeId])",
+        "@@index([googlePlaceId])",
+        "@@index([captureRequestId])",
+        "@@index([createdFrom])",
+        "@@index([deletedAt])",
+        "@@index([customerId, deletedAt, createdAt])",
+        "@@index([customerId, status, deletedAt])",
+        "@@index([customerId, phone])",
+        "@@index([customerId, email])"
+      ]
+    },
+    {
+      "model": "LeadStatusHistory",
+      "fields": [
+        "leadId      Int",
+        "fromStatus  LeadStatus?",
+        "toStatus    LeadStatus",
+        "lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([leadId])",
+        "@@index([toStageId])"
+      ]
+    },
+    {
+      "model": "LeadNote",
+      "fields": [
+        "leadId    Int",
+        "lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([leadId])"
+      ]
+    },
+    {
+      "model": "LeadActivityTimeline",
+      "fields": [
+        "leadId      Int",
+        "lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([leadId])"
+      ]
+    },
+    {
+      "model": "LeadReminder",
+      "fields": [
+        "leadId      Int",
+        "lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([leadId])"
+      ]
+    },
+    {
+      "model": "LeadStage",
+      "fields": [
+        "customerId  Int?",
+        "customer            Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "leads               Lead[]"
+      ],
+      "constraints": [
+        "@@unique([customerId, key])",
+        "@@index([customerId])",
+        "@@index([sortOrder])",
+        "@@index([deletedAt])",
+        "@@index([emailTemplateId])",
+        "@@index([whatsappTemplateId])"
+      ]
+    },
+    {
+      "model": "Company",
+      "fields": [
+        "customerId    Int",
+        "customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([googlePlaceId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Contact",
+      "fields": [
+        "customerId      Int",
+        "customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([companyId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Pipeline",
+      "fields": [
+        "customerId Int",
+        "customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Deal",
+      "fields": [
+        "customerId      Int",
+        "leadId          Int?",
+        "customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([pipelineId])",
+        "@@index([stageId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Task",
+      "fields": [
+        "customerId        Int",
+        "customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([departmentId])",
+        "@@index([assignedToId])",
+        "@@index([status])",
+        "@@index([dueAt])",
+        "@@index([deletedAt])",
+        "@@index([customerId, deletedAt, createdAt])",
+        "@@index([assignedToId, status, deletedAt])"
+      ]
+    },
+    {
+      "model": "Product",
+      "fields": [
+        "customerId     Int",
+        "customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, sku])",
+        "@@index([customerId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Quotation",
+      "fields": [
+        "customerId  Int",
+        "leadId      Int?",
+        "customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "lead        Lead?           @relation(fields: [leadId], references: [id])"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([contactId])",
+        "@@index([leadId])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Invoice",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([contactId])",
+        "@@index([status])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "SupportTicket",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([status])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "Notification",
+      "fields": [
+        "customerId Int",
+        "customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([userId])",
+        "@@index([isRead])",
+        "@@index([userId, isRead, createdAt])",
+        "@@index([customerId, createdAt])"
+      ]
+    },
+    {
+      "model": "AuditLog",
+      "fields": [
+        "customerId   Int?",
+        "customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([userId])",
+        "@@index([createdAt])",
+        "@@index([source])",
+        "@@index([userRole])",
+        "@@index([module])",
+        "@@index([action])",
+        "@@index([status])",
+        "@@index([entityType, entityId])"
+      ]
+    },
+    {
+      "model": "FeatureToggle",
+      "fields": [
+        "customerId Int",
+        "customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, feature])"
+      ]
+    },
+    {
+      "model": "EmployeeLocation",
+      "fields": [
+        "customerId         Int",
+        "customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([timestamp])",
+        "@@index([employeeId, timestamp])"
+      ]
+    },
+    {
+      "model": "BranchGeofence",
+      "fields": [
+        "customerId         Int",
+        "customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([isActive])"
+      ]
+    },
+    {
+      "model": "LocationTrackingSetting",
+      "fields": [
+        "customerId       Int",
+        "customer         Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])"
+      ]
+    },
+    {
+      "model": "Department",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "Designation",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "mobileCustomers Customer[] @relation(\"CustomerMobileRole\")"
+      ],
+      "constraints": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "Employee",
+      "fields": [
+        "customerId               Int",
+        "customer                 Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "leadLimit                EmployeeLeadLimit?",
+        "leads                    Lead[]                   @relation(\"EmployeeLeads\")",
+        "assignedCustomers        Customer[]               @relation(\"CustomerAssignedStaff\")",
+        "createdCustomers         Customer[]               @relation(\"CustomerCreatedStaff\")"
+      ],
+      "constraints": [
+        "@@unique([customerId, employeeCode])",
+        "@@index([customerId])",
+        "@@index([email])",
+        "@@index([officeId])"
+      ]
+    },
+    {
+      "model": "Attendance",
+      "fields": [
+        "customerId         Int"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([officeId])",
+        "@@index([date])",
+        "@@index([status])",
+        "@@index([workMode])",
+        "@@index([customerId, employeeId, date])"
+      ]
+    },
+    {
+      "model": "LeaveType",
+      "fields": [
+        "customerId         Int"
+      ],
+      "constraints": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "LeaveRequest",
+      "fields": [
+        "customerId      Int"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])"
+      ]
+    },
+    {
+      "model": "PublicHoliday",
+      "fields": [
+        "customerId  Int",
+        "customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([officeId])",
+        "@@index([date])",
+        "@@index([isActive])"
+      ]
+    },
+    {
+      "model": "EmployeeLeaveBalance",
+      "fields": [
+        "customerId    Int",
+        "customer      Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([employeeId, leaveTypeId, year])",
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([leaveTypeId])"
+      ]
+    },
+    {
+      "model": "LeaveAdjustmentHistory",
+      "fields": [
+        "customerId       Int",
+        "customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([leaveTypeId])",
+        "@@index([createdAt])"
+      ]
+    },
+    {
+      "model": "AttendancePolicy",
+      "fields": [
+        "customerId                 Int",
+        "customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([officeId])",
+        "@@index([isActive])"
+      ]
+    },
+    {
+      "model": "LeavePolicy",
+      "fields": [
+        "customerId                  Int",
+        "customer                    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([officeId])",
+        "@@index([isActive])"
+      ]
+    },
+    {
+      "model": "SalaryPolicy",
+      "fields": [
+        "customerId                Int",
+        "customer                  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([officeId])",
+        "@@index([isActive])"
+      ]
+    },
+    {
+      "model": "ClaimPolicy",
+      "fields": [
+        "customerId                 Int",
+        "customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([officeId])",
+        "@@index([isActive])"
+      ]
+    },
+    {
+      "model": "RemoteRequest",
+      "fields": [
+        "customerId      Int"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([fromDate])",
+        "@@index([toDate])"
+      ]
+    },
+    {
+      "model": "Shift",
+      "fields": [
+        "customerId            Int",
+        "customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, code])",
+        "@@index([customerId])",
+        "@@index([status])"
+      ]
+    },
+    {
+      "model": "ShiftGuidance",
+      "fields": [
+        "customerId               Int",
+        "customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "Visit",
+      "fields": [
+        "customerId       Int",
+        "leadId           Int?",
+        "customerName     String",
+        "lead             Lead?       @relation(fields: [leadId], references: [id])"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([leadId])",
+        "@@index([companyId])",
+        "@@index([contactId])",
+        "@@index([dealId])",
+        "@@index([completedById])",
+        "@@index([scheduledById])"
+      ]
+    },
+    {
+      "model": "SalaryStructure",
+      "fields": [
+        "customerId       Int"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])"
+      ]
+    },
+    {
+      "model": "Payroll",
+      "fields": [
+        "customerId      Int",
+        "customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, month, year, departmentId])",
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "PayrollItem",
+      "fields": [
+        "customerId       Int"
+      ],
+      "constraints": [
+        "@@index([payrollId])",
+        "@@index([customerId])",
+        "@@index([employeeId])"
+      ]
+    },
+    {
+      "model": "SalarySlip",
+      "fields": [
+        "customerId      Int"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])"
+      ]
+    },
+    {
+      "model": "PayrollPolicy",
+      "fields": [
+        "customerId          Int      @unique",
+        "customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "Team",
+      "fields": [
+        "customerId  Int",
+        "leaderId    Int?",
+        "customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "leader      Employee?    @relation(\"TeamLeader\", fields: [leaderId], references: [id], onDelete: SetNull)",
+        "assignedCustomers Customer[]   @relation(\"CustomerAssignedTeam\")"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([leaderId])"
+      ]
+    },
+    {
+      "model": "PlanEntitlement",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "Work",
+      "fields": [
+        "customerId     Int",
+        "customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "subscription   CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([subscriptionId])",
+        "@@index([teamId])",
+        "@@index([assignedToId])",
+        "@@index([editorId])",
+        "@@index([scheduledDate])",
+        "@@index([status])",
+        "@@index([customerId, scheduledDate])",
+        "@@index([customerId, status])"
+      ]
+    },
+    {
+      "model": "DataCaptureJob",
+      "fields": [
+        "customerId        Int",
+        "customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([jobId])",
+        "@@index([createdFrom])"
+      ]
+    },
+    {
+      "model": "DataCapturePlace",
+      "fields": [
+        "customerId     Int",
+        "importedLeadId   Int?",
+        "customer         Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([jobId])",
+        "@@index([customerId])",
+        "@@index([googlePlaceId])",
+        "@@index([status])",
+        "@@index([captureRequestId])",
+        "@@index([createdFrom])",
+        "@@index([deletedAt])",
+        "@@index([customerId, deletedAt, createdAt])"
+      ]
+    },
+    {
+      "model": "DataCaptureSearch",
+      "fields": [
+        "customerId  Int",
+        "customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([customerId, employeeId])",
+        "@@index([requestId])",
+        "@@index([searchedAt])",
+        "@@index([customerId, employeeId, searchedAt])"
+      ]
+    },
+    {
+      "model": "EmployeeLoan",
+      "fields": [
+        "customerId       Int",
+        "customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([status])"
+      ]
+    },
+    {
+      "model": "EmployeeClaim",
+      "fields": [
+        "customerId      Int",
+        "customer        Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([status])",
+        "@@index([category])"
+      ]
+    },
+    {
+      "model": "SubscriptionInstallment",
+      "fields": [
+        "customerId        Int",
+        "customer          Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "subscription      CustomerSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([subscriptionId])",
+        "@@index([status])",
+        "@@index([dueDate])",
+        "@@index([bufferEndDate])"
+      ]
+    },
+    {
+      "model": "MonthlySchedule",
+      "fields": [
+        "customerId         Int",
+        "customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@unique([customerId, subscriptionId, month, year])",
+        "@@index([customerId])",
+        "@@index([subscriptionId])",
+        "@@index([planId])",
+        "@@index([assignedEmployeeId])",
+        "@@index([startDate])",
+        "@@index([endDate])",
+        "@@index([status])",
+        "@@index([month, year])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "CustomPlanOrder",
+      "fields": [
+        "customerId       Int",
+        "customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([subscriptionId])",
+        "@@index([orderNumber])",
+        "@@index([status])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "TrendingContent",
+      "fields": [
+        "customerId    Int?",
+        "customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId, isActive, isPublished])",
+        "@@index([category])",
+        "@@index([priority])",
+        "@@index([isFeatured])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "MarketingBanner",
+      "fields": [
+        "customerId     Int?",
+        "customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId, isActive, isPublished])",
+        "@@index([priority])",
+        "@@index([startAt, endAt])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "MarketingVideo",
+      "fields": [
+        "customerId     Int?",
+        "customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "views              CustomerMarketingVideoView[]"
+      ],
+      "constraints": [
+        "@@index([customerId, isActive, status])",
+        "@@index([priority])",
+        "@@index([showOnHome])",
+        "@@index([showInIntroduction])",
+        "@@index([startAt, endAt])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "CustomerMarketingVideoView",
+      "fields": [
+        "customerId       Int",
+        "customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, marketingVideoId])",
+        "@@index([customerId])",
+        "@@index([marketingVideoId])"
+      ]
+    },
+    {
+      "model": "SocialMediaHandler",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([platform])",
+        "@@index([status])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "RoleWorkPermission",
+      "fields": [
+        "customerId  Int",
+        "customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, roleName, workModule])",
+        "@@index([customerId])",
+        "@@index([roleName])"
+      ]
+    },
+    {
+      "model": "WorkAccessRequest",
+      "fields": [
+        "customerId      Int",
+        "customer        Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([status])"
+      ]
+    },
+    {
+      "model": "EmployeeModuleOverride",
+      "fields": [
+        "customerId  Int",
+        "customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, employeeId, moduleKey])",
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([permissionId])"
+      ]
+    },
+    {
+      "model": "CustomerModuleOverride",
+      "fields": [
+        "subjectCustomerId Int",
+        "subjectCustomer   Customer           @relation(fields: [subjectCustomerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([subjectCustomerId, moduleKey])",
+        "@@index([subjectCustomerId])",
+        "@@index([permissionId])"
+      ]
+    },
+    {
+      "model": "RoleLeadLimit",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, roleName])",
+        "@@index([customerId])",
+        "@@index([roleName])"
+      ]
+    },
+    {
+      "model": "EmployeeLeadLimit",
+      "fields": [
+        "customerId   Int",
+        "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, employeeId])",
+        "@@index([customerId])",
+        "@@index([employeeId])"
+      ]
+    },
+    {
+      "model": "InfluencerBooking",
+      "fields": [
+        "customerId         Int",
+        "customer           Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([influencerId])",
+        "@@index([bookingStatus])",
+        "@@index([paymentStatus])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "InfluencerBookingPayment",
+      "fields": [
+        "customerId    Int",
+        "customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([bookingId])",
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "InfluencerReview",
+      "fields": [
+        "customerId   Int?",
+        "customer     Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([influencerId])"
+      ]
+    },
+    {
+      "model": "AiCreditWallet",
+      "fields": [
+        "customerId   Int                   @unique",
+        "customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])"
+      ]
+    },
+    {
+      "model": "AiCreditTransaction",
+      "fields": [
+        "customerId      Int",
+        "customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([walletId])"
+      ]
+    },
+    {
+      "model": "AiGeneration",
+      "fields": [
+        "customerId     Int",
+        "customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([type])",
+        "@@index([status])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "SocialAccount",
+      "fields": [
+        "customerId            Int",
+        "customer              Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([customerId, platform, externalAccountId])",
+        "@@index([customerId])",
+        "@@index([platform])",
+        "@@index([isConnected])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "SocialPublish",
+      "fields": [
+        "customerId      Int",
+        "customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([socialAccountId])",
+        "@@index([status])",
+        "@@index([scheduledFor])"
+      ]
+    },
+    {
+      "model": "MasterItem",
+      "fields": [
+        "customerId  Int?",
+        "customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@unique([type, code, customerId])",
+        "@@index([type, customerId])"
+      ]
+    },
+    {
+      "model": "EmailTemplate",
+      "fields": [
+        "customerId         Int?",
+        "customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "leadStages         LeadStage[]"
+      ],
+      "constraints": [
+        "@@index([key])",
+        "@@index([customerId])",
+        "@@index([isActive])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "EmailLog",
+      "fields": [
+        "customerId        Int?",
+        "leadId            Int?",
+        "customer          Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "lead              Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([userId])",
+        "@@index([leadId])",
+        "@@index([templateId])",
+        "@@index([appointmentId])",
+        "@@index([planId])",
+        "@@index([identifierKey])",
+        "@@index([recipientEmail])",
+        "@@index([eventType])",
+        "@@index([status])",
+        "@@index([createdAt])"
+      ]
+    },
+    {
+      "model": "MetaTemplate",
+      "fields": [
+        "customerId         Int?",
+        "customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "leadStages         LeadStage[]"
+      ],
+      "constraints": [
+        "@@index([templateName])",
+        "@@index([key])",
+        "@@index([customerId])",
+        "@@index([status])",
+        "@@index([isLocalActive])",
+        "@@index([deletedAt])"
+      ]
+    },
+    {
+      "model": "CommissionConfig",
+      "fields": [
+        "customerId      Int",
+        "customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([status])"
+      ]
+    },
+    {
+      "model": "Commission",
+      "fields": [
+        "customerId       Int",
+        "leaderId         Int?",
+        "leadId           Int?",
+        "customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)",
+        "lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)"
+      ],
+      "constraints": [
+        "@@index([customerId])",
+        "@@index([employeeId])",
+        "@@index([leadId])",
+        "@@index([planId])",
+        "@@index([purchaseId])",
+        "@@index([orderId])",
+        "@@index([status])",
+        "@@index([createdAt])",
+        "@@index([tenantId, qualifyingAt])"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "model": "Customer",
+      "field": "attendancePolicies",
+      "target": "AttendancePolicy",
+      "cardinality": "[]",
+      "definition": "attendancePolicies       AttendancePolicy[]"
+    },
+    {
+      "model": "Customer",
+      "field": "auditLogs",
+      "target": "AuditLog",
+      "cardinality": "[]",
+      "definition": "auditLogs                AuditLog[]"
+    },
+    {
+      "model": "Customer",
+      "field": "branchGeofences",
+      "target": "BranchGeofence",
+      "cardinality": "[]",
+      "definition": "branchGeofences          BranchGeofence[]"
+    },
+    {
+      "model": "Customer",
+      "field": "claimPolicies",
+      "target": "ClaimPolicy",
+      "cardinality": "[]",
+      "definition": "claimPolicies            ClaimPolicy[]"
+    },
+    {
+      "model": "Customer",
+      "field": "companies",
+      "target": "Company",
+      "cardinality": "[]",
+      "definition": "companies                Company[]"
+    },
+    {
+      "model": "Customer",
+      "field": "contacts",
+      "target": "Contact",
+      "cardinality": "[]",
+      "definition": "contacts                 Contact[]"
+    },
+    {
+      "model": "Customer",
+      "field": "dataCaptureJobs",
+      "target": "DataCaptureJob",
+      "cardinality": "[]",
+      "definition": "dataCaptureJobs          DataCaptureJob[]"
+    },
+    {
+      "model": "Customer",
+      "field": "dataCapturePlaces",
+      "target": "DataCapturePlace",
+      "cardinality": "[]",
+      "definition": "dataCapturePlaces        DataCapturePlace[]"
+    },
+    {
+      "model": "Customer",
+      "field": "dataCaptureSearches",
+      "target": "DataCaptureSearch",
+      "cardinality": "[]",
+      "definition": "dataCaptureSearches      DataCaptureSearch[]"
+    },
+    {
+      "model": "Customer",
+      "field": "deals",
+      "target": "Deal",
+      "cardinality": "[]",
+      "definition": "deals                    Deal[]"
+    },
+    {
+      "model": "Customer",
+      "field": "departments",
+      "target": "Department",
+      "cardinality": "[]",
+      "definition": "departments              Department[]"
+    },
+    {
+      "model": "Customer",
+      "field": "designations",
+      "target": "Designation",
+      "cardinality": "[]",
+      "definition": "designations             Designation[]"
+    },
+    {
+      "model": "Customer",
+      "field": "employees",
+      "target": "Employee",
+      "cardinality": "[]",
+      "definition": "employees                Employee[]"
+    },
+    {
+      "model": "Customer",
+      "field": "employeeClaims",
+      "target": "EmployeeClaim",
+      "cardinality": "[]",
+      "definition": "employeeClaims           EmployeeClaim[]"
+    },
+    {
+      "model": "Customer",
+      "field": "leaveBalances",
+      "target": "EmployeeLeaveBalance",
+      "cardinality": "[]",
+      "definition": "leaveBalances            EmployeeLeaveBalance[]"
+    },
+    {
+      "model": "Customer",
+      "field": "employeeLoans",
+      "target": "EmployeeLoan",
+      "cardinality": "[]",
+      "definition": "employeeLoans            EmployeeLoan[]"
+    },
+    {
+      "model": "Customer",
+      "field": "employeeLocations",
+      "target": "EmployeeLocation",
+      "cardinality": "[]",
+      "definition": "employeeLocations        EmployeeLocation[]"
+    },
+    {
+      "model": "Customer",
+      "field": "featureToggles",
+      "target": "FeatureToggle",
+      "cardinality": "[]",
+      "definition": "featureToggles           FeatureToggle[]"
+    },
+    {
+      "model": "Customer",
+      "field": "invoices",
+      "target": "Invoice",
+      "cardinality": "[]",
+      "definition": "invoices                 Invoice[]"
+    },
+    {
+      "model": "Customer",
+      "field": "leads",
+      "target": "Lead",
+      "cardinality": "[]",
+      "definition": "leads                    Lead[]"
+    },
+    {
+      "model": "Customer",
+      "field": "leadStages",
+      "target": "LeadStage",
+      "cardinality": "[]",
+      "definition": "leadStages               LeadStage[]"
+    },
+    {
+      "model": "Customer",
+      "field": "leaveAdjustments",
+      "target": "LeaveAdjustmentHistory",
+      "cardinality": "[]",
+      "definition": "leaveAdjustments         LeaveAdjustmentHistory[]"
+    },
+    {
+      "model": "Customer",
+      "field": "leavePolicies",
+      "target": "LeavePolicy",
+      "cardinality": "[]",
+      "definition": "leavePolicies            LeavePolicy[]"
+    },
+    {
+      "model": "Customer",
+      "field": "locationTrackingSettings",
+      "target": "LocationTrackingSetting",
+      "cardinality": "[]",
+      "definition": "locationTrackingSettings LocationTrackingSetting[]"
+    },
+    {
+      "model": "Customer",
+      "field": "notifications",
+      "target": "Notification",
+      "cardinality": "[]",
+      "definition": "notifications            Notification[]"
+    },
+    {
+      "model": "Customer",
+      "field": "payments",
+      "target": "PaymentHistory",
+      "cardinality": "[]",
+      "definition": "payments                 PaymentHistory[]"
+    },
+    {
+      "model": "Customer",
+      "field": "payrolls",
+      "target": "Payroll",
+      "cardinality": "[]",
+      "definition": "payrolls                 Payroll[]"
+    },
+    {
+      "model": "Customer",
+      "field": "payrollPolicy",
+      "target": "PayrollPolicy",
+      "cardinality": "?",
+      "definition": "payrollPolicy            PayrollPolicy?"
+    },
+    {
+      "model": "Customer",
+      "field": "pipelines",
+      "target": "Pipeline",
+      "cardinality": "[]",
+      "definition": "pipelines                Pipeline[]"
+    },
+    {
+      "model": "Customer",
+      "field": "planEntitlements",
+      "target": "PlanEntitlement",
+      "cardinality": "[]",
+      "definition": "planEntitlements         PlanEntitlement[]"
+    },
+    {
+      "model": "Customer",
+      "field": "products",
+      "target": "Product",
+      "cardinality": "[]",
+      "definition": "products                 Product[]"
+    },
+    {
+      "model": "Customer",
+      "field": "publicHolidays",
+      "target": "PublicHoliday",
+      "cardinality": "[]",
+      "definition": "publicHolidays           PublicHoliday[]"
+    },
+    {
+      "model": "Customer",
+      "field": "quotations",
+      "target": "Quotation",
+      "cardinality": "[]",
+      "definition": "quotations               Quotation[]"
+    },
+    {
+      "model": "Customer",
+      "field": "roles",
+      "target": "Role",
+      "cardinality": "[]",
+      "definition": "roles                    Role[]"
+    },
+    {
+      "model": "Customer",
+      "field": "salaryPolicies",
+      "target": "SalaryPolicy",
+      "cardinality": "[]",
+      "definition": "salaryPolicies           SalaryPolicy[]"
+    },
+    {
+      "model": "Customer",
+      "field": "shifts",
+      "target": "Shift",
+      "cardinality": "[]",
+      "definition": "shifts                   Shift[]"
+    },
+    {
+      "model": "Customer",
+      "field": "shiftGuidances",
+      "target": "ShiftGuidance",
+      "cardinality": "[]",
+      "definition": "shiftGuidances           ShiftGuidance[]"
+    },
+    {
+      "model": "Customer",
+      "field": "tickets",
+      "target": "SupportTicket",
+      "cardinality": "[]",
+      "definition": "tickets                  SupportTicket[]"
+    },
+    {
+      "model": "Customer",
+      "field": "mobileRole",
+      "target": "Designation",
+      "cardinality": "?",
+      "definition": "mobileRole               Designation?              @relation(\"CustomerMobileRole\", fields: [mobileRoleId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Customer",
+      "field": "moduleOverrides",
+      "target": "CustomerModuleOverride",
+      "cardinality": "[]",
+      "definition": "moduleOverrides          CustomerModuleOverride[]"
+    },
+    {
+      "model": "Customer",
+      "field": "tasks",
+      "target": "Task",
+      "cardinality": "[]",
+      "definition": "tasks                    Task[]"
+    },
+    {
+      "model": "Customer",
+      "field": "teams",
+      "target": "Team",
+      "cardinality": "[]",
+      "definition": "teams                    Team[]"
+    },
+    {
+      "model": "Customer",
+      "field": "users",
+      "target": "User",
+      "cardinality": "[]",
+      "definition": "users                    User[]"
+    },
+    {
+      "model": "Customer",
+      "field": "works",
+      "target": "Work",
+      "cardinality": "[]",
+      "definition": "works                    Work[]"
+    },
+    {
+      "model": "Customer",
+      "field": "subscriptions",
+      "target": "CustomerSubscription",
+      "cardinality": "[]",
+      "definition": "subscriptions            CustomerSubscription[]"
+    },
+    {
+      "model": "Customer",
+      "field": "couponRedemptions",
+      "target": "CouponRedemption",
+      "cardinality": "[]",
+      "definition": "couponRedemptions        CouponRedemption[]"
+    },
+    {
+      "model": "Customer",
+      "field": "monthlySchedules",
+      "target": "MonthlySchedule",
+      "cardinality": "[]",
+      "definition": "monthlySchedules         MonthlySchedule[]"
+    },
+    {
+      "model": "Customer",
+      "field": "customPlanOrders",
+      "target": "CustomPlanOrder",
+      "cardinality": "[]",
+      "definition": "customPlanOrders         CustomPlanOrder[]"
+    },
+    {
+      "model": "Customer",
+      "field": "installments",
+      "target": "SubscriptionInstallment",
+      "cardinality": "[]",
+      "definition": "installments             SubscriptionInstallment[]"
+    },
+    {
+      "model": "Customer",
+      "field": "trendingContents",
+      "target": "TrendingContent",
+      "cardinality": "[]",
+      "definition": "trendingContents         TrendingContent[]"
+    },
+    {
+      "model": "Customer",
+      "field": "marketingBanners",
+      "target": "MarketingBanner",
+      "cardinality": "[]",
+      "definition": "marketingBanners         MarketingBanner[]"
+    },
+    {
+      "model": "Customer",
+      "field": "marketingVideos",
+      "target": "MarketingVideo",
+      "cardinality": "[]",
+      "definition": "marketingVideos          MarketingVideo[]"
+    },
+    {
+      "model": "Customer",
+      "field": "marketingVideoViews",
+      "target": "CustomerMarketingVideoView",
+      "cardinality": "[]",
+      "definition": "marketingVideoViews      CustomerMarketingVideoView[]"
+    },
+    {
+      "model": "Customer",
+      "field": "socialMediaHandlers",
+      "target": "SocialMediaHandler",
+      "cardinality": "[]",
+      "definition": "socialMediaHandlers      SocialMediaHandler[]"
+    },
+    {
+      "model": "Customer",
+      "field": "roleWorkPermissions",
+      "target": "RoleWorkPermission",
+      "cardinality": "[]",
+      "definition": "roleWorkPermissions      RoleWorkPermission[]"
+    },
+    {
+      "model": "Customer",
+      "field": "workAccessRequests",
+      "target": "WorkAccessRequest",
+      "cardinality": "[]",
+      "definition": "workAccessRequests       WorkAccessRequest[]"
+    },
+    {
+      "model": "Customer",
+      "field": "employeeModuleOverrides",
+      "target": "EmployeeModuleOverride",
+      "cardinality": "[]",
+      "definition": "employeeModuleOverrides  EmployeeModuleOverride[]"
+    },
+    {
+      "model": "Customer",
+      "field": "roleLeadLimits",
+      "target": "RoleLeadLimit",
+      "cardinality": "[]",
+      "definition": "roleLeadLimits           RoleLeadLimit[]"
+    },
+    {
+      "model": "Customer",
+      "field": "employeeLeadLimits",
+      "target": "EmployeeLeadLimit",
+      "cardinality": "[]",
+      "definition": "employeeLeadLimits       EmployeeLeadLimit[]"
+    },
+    {
+      "model": "Customer",
+      "field": "assignedEmployeeRel",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "assignedEmployeeRel      Employee?                 @relation(\"CustomerAssignedStaff\", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Customer",
+      "field": "createdByEmployeeRel",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "createdByEmployeeRel     Employee?                 @relation(\"CustomerCreatedStaff\", fields: [createdByEmployeeId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Customer",
+      "field": "originLead",
+      "target": "Lead",
+      "cardinality": "?",
+      "definition": "originLead               Lead?                     @relation(\"CustomerOriginLead\", fields: [leadId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Customer",
+      "field": "assignedTeam",
+      "target": "Team",
+      "cardinality": "?",
+      "definition": "assignedTeam             Team?                     @relation(\"CustomerAssignedTeam\", fields: [assignedTeamId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Customer",
+      "field": "influencerBookings",
+      "target": "InfluencerBooking",
+      "cardinality": "[]",
+      "definition": "influencerBookings       InfluencerBooking[]"
+    },
+    {
+      "model": "Customer",
+      "field": "influencerBookingPayments",
+      "target": "InfluencerBookingPayment",
+      "cardinality": "[]",
+      "definition": "influencerBookingPayments InfluencerBookingPayment[]"
+    },
+    {
+      "model": "Customer",
+      "field": "influencerReviews",
+      "target": "InfluencerReview",
+      "cardinality": "[]",
+      "definition": "influencerReviews        InfluencerReview[]"
+    },
+    {
+      "model": "Customer",
+      "field": "aiWallet",
+      "target": "AiCreditWallet",
+      "cardinality": "?",
+      "definition": "aiWallet                 AiCreditWallet?"
+    },
+    {
+      "model": "Customer",
+      "field": "aiTransactions",
+      "target": "AiCreditTransaction",
+      "cardinality": "[]",
+      "definition": "aiTransactions           AiCreditTransaction[]"
+    },
+    {
+      "model": "Customer",
+      "field": "aiGenerations",
+      "target": "AiGeneration",
+      "cardinality": "[]",
+      "definition": "aiGenerations            AiGeneration[]"
+    },
+    {
+      "model": "Customer",
+      "field": "socialAccounts",
+      "target": "SocialAccount",
+      "cardinality": "[]",
+      "definition": "socialAccounts           SocialAccount[]"
+    },
+    {
+      "model": "Customer",
+      "field": "socialPublishes",
+      "target": "SocialPublish",
+      "cardinality": "[]",
+      "definition": "socialPublishes          SocialPublish[]"
+    },
+    {
+      "model": "Customer",
+      "field": "masterItems",
+      "target": "MasterItem",
+      "cardinality": "[]",
+      "definition": "masterItems              MasterItem[]"
+    },
+    {
+      "model": "Customer",
+      "field": "emailTemplates",
+      "target": "EmailTemplate",
+      "cardinality": "[]",
+      "definition": "emailTemplates           EmailTemplate[]"
+    },
+    {
+      "model": "Customer",
+      "field": "emailLogs",
+      "target": "EmailLog",
+      "cardinality": "[]",
+      "definition": "emailLogs                EmailLog[]"
+    },
+    {
+      "model": "Customer",
+      "field": "metaTemplates",
+      "target": "MetaTemplate",
+      "cardinality": "[]",
+      "definition": "metaTemplates            MetaTemplate[]"
+    },
+    {
+      "model": "Customer",
+      "field": "commissionConfigs",
+      "target": "CommissionConfig",
+      "cardinality": "[]",
+      "definition": "commissionConfigs        CommissionConfig[]"
+    },
+    {
+      "model": "Customer",
+      "field": "commissions",
+      "target": "Commission",
+      "cardinality": "[]",
+      "definition": "commissions              Commission[]"
+    },
+    {
+      "model": "Plan",
+      "field": "subscriptions",
+      "target": "CustomerSubscription",
+      "cardinality": "[]",
+      "definition": "subscriptions    CustomerSubscription[]"
+    },
+    {
+      "model": "Plan",
+      "field": "monthlySchedules",
+      "target": "MonthlySchedule",
+      "cardinality": "[]",
+      "definition": "monthlySchedules MonthlySchedule[]"
+    },
+    {
+      "model": "Plan",
+      "field": "commissions",
+      "target": "Commission",
+      "cardinality": "[]",
+      "definition": "commissions      Commission[]"
+    },
+    {
+      "model": "Plan",
+      "field": "couponPlans",
+      "target": "CouponPlan",
+      "cardinality": "[]",
+      "definition": "couponPlans      CouponPlan[]"
+    },
+    {
+      "model": "Plan",
+      "field": "couponRedemptions",
+      "target": "CouponRedemption",
+      "cardinality": "[]",
+      "definition": "couponRedemptions CouponRedemption[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "payments",
+      "target": "PaymentHistory",
+      "cardinality": "[]",
+      "definition": "payments           PaymentHistory[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "monthlySchedules",
+      "target": "MonthlySchedule",
+      "cardinality": "[]",
+      "definition": "monthlySchedules   MonthlySchedule[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "customPlanOrders",
+      "target": "CustomPlanOrder",
+      "cardinality": "[]",
+      "definition": "customPlanOrders   CustomPlanOrder[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "works",
+      "target": "Work",
+      "cardinality": "[]",
+      "definition": "works              Work[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "installments",
+      "target": "SubscriptionInstallment",
+      "cardinality": "[]",
+      "definition": "installments       SubscriptionInstallment[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "coupon",
+      "target": "Coupon",
+      "cardinality": "?",
+      "definition": "coupon             Coupon?                   @relation(fields: [couponId], references: [id])"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "couponRedemptions",
+      "target": "CouponRedemption",
+      "cardinality": "[]",
+      "definition": "couponRedemptions CouponRedemption[]"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CustomerSubscription",
+      "field": "plan",
+      "target": "Plan",
+      "cardinality": "required",
+      "definition": "plan               Plan                      @relation(fields: [planId], references: [id])"
+    },
+    {
+      "model": "Coupon",
+      "field": "subscriptions",
+      "target": "CustomerSubscription",
+      "cardinality": "[]",
+      "definition": "subscriptions         CustomerSubscription[]"
+    },
+    {
+      "model": "Coupon",
+      "field": "plans",
+      "target": "CouponPlan",
+      "cardinality": "[]",
+      "definition": "plans                 CouponPlan[]"
+    },
+    {
+      "model": "Coupon",
+      "field": "redemptions",
+      "target": "CouponRedemption",
+      "cardinality": "[]",
+      "definition": "redemptions           CouponRedemption[]"
+    },
+    {
+      "model": "Coupon",
+      "field": "payments",
+      "target": "PaymentHistory",
+      "cardinality": "[]",
+      "definition": "payments              PaymentHistory[]"
+    },
+    {
+      "model": "CouponPlan",
+      "field": "coupon",
+      "target": "Coupon",
+      "cardinality": "required",
+      "definition": "coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CouponPlan",
+      "field": "plan",
+      "target": "Plan",
+      "cardinality": "required",
+      "definition": "plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CouponRedemption",
+      "field": "coupon",
+      "target": "Coupon",
+      "cardinality": "required",
+      "definition": "coupon           Coupon               @relation(fields: [couponId], references: [id], onDelete: Restrict)"
+    },
+    {
+      "model": "CouponRedemption",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CouponRedemption",
+      "field": "plan",
+      "target": "Plan",
+      "cardinality": "required",
+      "definition": "plan             Plan                 @relation(fields: [planId], references: [id], onDelete: Restrict)"
+    },
+    {
+      "model": "CouponRedemption",
+      "field": "subscription",
+      "target": "CustomerSubscription",
+      "cardinality": "?",
+      "definition": "subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "CouponRedemption",
+      "field": "payment",
+      "target": "PaymentHistory",
+      "cardinality": "?",
+      "definition": "payment          PaymentHistory?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "subscription",
+      "target": "CustomerSubscription",
+      "cardinality": "?",
+      "definition": "subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "coupon",
+      "target": "Coupon",
+      "cardinality": "?",
+      "definition": "coupon         Coupon?                   @relation(fields: [couponId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "couponRedemption",
+      "target": "CouponRedemption",
+      "cardinality": "?",
+      "definition": "couponRedemption CouponRedemption?"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "installments",
+      "target": "SubscriptionInstallment",
+      "cardinality": "[]",
+      "definition": "installments   SubscriptionInstallment[]"
+    },
+    {
+      "model": "PaymentHistory",
+      "field": "commission",
+      "target": "Commission",
+      "cardinality": "?",
+      "definition": "commission     Commission?"
+    },
+    {
+      "model": "User",
+      "field": "auditLogs",
+      "target": "AuditLog",
+      "cardinality": "[]",
+      "definition": "auditLogs               AuditLog[]"
+    },
+    {
+      "model": "User",
+      "field": "assignedContacts",
+      "target": "Contact",
+      "cardinality": "[]",
+      "definition": "assignedContacts        Contact[]         @relation(\"AssignedContacts\")"
+    },
+    {
+      "model": "User",
+      "field": "dataCaptureJobs",
+      "target": "DataCaptureJob",
+      "cardinality": "[]",
+      "definition": "dataCaptureJobs         DataCaptureJob[]"
+    },
+    {
+      "model": "User",
+      "field": "assignedDeals",
+      "target": "Deal",
+      "cardinality": "[]",
+      "definition": "assignedDeals           Deal[]            @relation(\"AssignedDeals\")"
+    },
+    {
+      "model": "User",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "employee                Employee?"
+    },
+    {
+      "model": "User",
+      "field": "assignedLeads",
+      "target": "Lead",
+      "cardinality": "[]",
+      "definition": "assignedLeads           Lead[]            @relation(\"AssignedLeads\")"
+    },
+    {
+      "model": "User",
+      "field": "createdLeads",
+      "target": "Lead",
+      "cardinality": "[]",
+      "definition": "createdLeads            Lead[]            @relation(\"CreatedLeads\")"
+    },
+    {
+      "model": "User",
+      "field": "leadNotes",
+      "target": "LeadNote",
+      "cardinality": "[]",
+      "definition": "leadNotes               LeadNote[]"
+    },
+    {
+      "model": "User",
+      "field": "notifications",
+      "target": "Notification",
+      "cardinality": "[]",
+      "definition": "notifications           Notification[]"
+    },
+    {
+      "model": "User",
+      "field": "refreshTokens",
+      "target": "RefreshToken",
+      "cardinality": "[]",
+      "definition": "refreshTokens           RefreshToken[]"
+    },
+    {
+      "model": "User",
+      "field": "sessions",
+      "target": "Session",
+      "cardinality": "[]",
+      "definition": "sessions                Session[]"
+    },
+    {
+      "model": "User",
+      "field": "assignedTickets",
+      "target": "SupportTicket",
+      "cardinality": "[]",
+      "definition": "assignedTickets         SupportTicket[]   @relation(\"AssignedTickets\")"
+    },
+    {
+      "model": "User",
+      "field": "createdTickets",
+      "target": "SupportTicket",
+      "cardinality": "[]",
+      "definition": "createdTickets          SupportTicket[]   @relation(\"CreatedTickets\")"
+    },
+    {
+      "model": "User",
+      "field": "assignedTasks",
+      "target": "Task",
+      "cardinality": "[]",
+      "definition": "assignedTasks           Task[]            @relation(\"AssignedTasks\")"
+    },
+    {
+      "model": "User",
+      "field": "createdTasks",
+      "target": "Task",
+      "cardinality": "[]",
+      "definition": "createdTasks            Task[]            @relation(\"CreatedTasks\")"
+    },
+    {
+      "model": "User",
+      "field": "ticketComments",
+      "target": "TicketComment",
+      "cardinality": "[]",
+      "definition": "ticketComments          TicketComment[]"
+    },
+    {
+      "model": "User",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer                Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "User",
+      "field": "userRoles",
+      "target": "UserRole",
+      "cardinality": "[]",
+      "definition": "userRoles               UserRole[]"
+    },
+    {
+      "model": "User",
+      "field": "deviceTokens",
+      "target": "UserDeviceToken",
+      "cardinality": "[]",
+      "definition": "deviceTokens            UserDeviceToken[]"
+    },
+    {
+      "model": "User",
+      "field": "createdTrendingContents",
+      "target": "TrendingContent",
+      "cardinality": "[]",
+      "definition": "createdTrendingContents TrendingContent[] @relation(\"CreatedTrendingContents\")"
+    },
+    {
+      "model": "User",
+      "field": "createdMarketingBanners",
+      "target": "MarketingBanner",
+      "cardinality": "[]",
+      "definition": "createdMarketingBanners MarketingBanner[] @relation(\"CreatedMarketingBanners\")"
+    },
+    {
+      "model": "User",
+      "field": "createdMarketingVideos",
+      "target": "MarketingVideo",
+      "cardinality": "[]",
+      "definition": "createdMarketingVideos  MarketingVideo[]  @relation(\"CreatedMarketingVideos\")"
+    },
+    {
+      "model": "User",
+      "field": "emailLogs",
+      "target": "EmailLog",
+      "cardinality": "[]",
+      "definition": "emailLogs               EmailLog[]"
+    },
+    {
+      "model": "Role",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Role",
+      "field": "designation",
+      "target": "Designation",
+      "cardinality": "?",
+      "definition": "designation     Designation?     @relation(fields: [designationId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Role",
+      "field": "rolePermissions",
+      "target": "RolePermission",
+      "cardinality": "[]",
+      "definition": "rolePermissions RolePermission[]"
+    },
+    {
+      "model": "Role",
+      "field": "userRoles",
+      "target": "UserRole",
+      "cardinality": "[]",
+      "definition": "userRoles       UserRole[]"
+    },
+    {
+      "model": "Permission",
+      "field": "rolePermissions",
+      "target": "RolePermission",
+      "cardinality": "[]",
+      "definition": "rolePermissions RolePermission[]"
+    },
+    {
+      "model": "Permission",
+      "field": "employeeOverrides",
+      "target": "EmployeeModuleOverride",
+      "cardinality": "[]",
+      "definition": "employeeOverrides EmployeeModuleOverride[]"
+    },
+    {
+      "model": "Permission",
+      "field": "customerOverrides",
+      "target": "CustomerModuleOverride",
+      "cardinality": "[]",
+      "definition": "customerOverrides CustomerModuleOverride[]"
+    },
+    {
+      "model": "UserRole",
+      "field": "role",
+      "target": "Role",
+      "cardinality": "required",
+      "definition": "role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "UserRole",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user   User @relation(fields: [userId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "RolePermission",
+      "field": "permission",
+      "target": "Permission",
+      "cardinality": "required",
+      "definition": "permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "RolePermission",
+      "field": "role",
+      "target": "Role",
+      "cardinality": "required",
+      "definition": "role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "RefreshToken",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Session",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Lead",
+      "field": "stage",
+      "target": "LeadStage",
+      "cardinality": "?",
+      "definition": "stage                LeadStage?             @relation(fields: [stageId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Lead",
+      "field": "assignedTo",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "assignedTo           User?                  @relation(\"AssignedLeads\", fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "Lead",
+      "field": "createdBy",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "createdBy            User                   @relation(\"CreatedLeads\", fields: [createdById], references: [id])"
+    },
+    {
+      "model": "Lead",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Lead",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "employee             Employee?              @relation(\"EmployeeLeads\", fields: [employeeId], references: [id])"
+    },
+    {
+      "model": "Lead",
+      "field": "convertedCustomer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "convertedCustomer    Customer?              @relation(\"CustomerOriginLead\")"
+    },
+    {
+      "model": "Lead",
+      "field": "timeline",
+      "target": "LeadActivityTimeline",
+      "cardinality": "[]",
+      "definition": "timeline             LeadActivityTimeline[]"
+    },
+    {
+      "model": "Lead",
+      "field": "notes",
+      "target": "LeadNote",
+      "cardinality": "[]",
+      "definition": "notes                LeadNote[]"
+    },
+    {
+      "model": "Lead",
+      "field": "reminders",
+      "target": "LeadReminder",
+      "cardinality": "[]",
+      "definition": "reminders            LeadReminder[]"
+    },
+    {
+      "model": "Lead",
+      "field": "statusHistory",
+      "target": "LeadStatusHistory",
+      "cardinality": "[]",
+      "definition": "statusHistory        LeadStatusHistory[]"
+    },
+    {
+      "model": "Lead",
+      "field": "quotations",
+      "target": "Quotation",
+      "cardinality": "[]",
+      "definition": "quotations           Quotation[]"
+    },
+    {
+      "model": "Lead",
+      "field": "visits",
+      "target": "Visit",
+      "cardinality": "[]",
+      "definition": "visits               Visit[]"
+    },
+    {
+      "model": "Lead",
+      "field": "emailLogs",
+      "target": "EmailLog",
+      "cardinality": "[]",
+      "definition": "emailLogs            EmailLog[]"
+    },
+    {
+      "model": "Lead",
+      "field": "commissions",
+      "target": "Commission",
+      "cardinality": "[]",
+      "definition": "commissions          Commission[]"
+    },
+    {
+      "model": "LeadStatusHistory",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "required",
+      "definition": "lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeadNote",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "required",
+      "definition": "lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeadNote",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user      User     @relation(fields: [userId], references: [id])"
+    },
+    {
+      "model": "LeadActivityTimeline",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "required",
+      "definition": "lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeadReminder",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "required",
+      "definition": "lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeadStage",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer            Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeadStage",
+      "field": "emailTemplate",
+      "target": "EmailTemplate",
+      "cardinality": "?",
+      "definition": "emailTemplate       EmailTemplate? @relation(fields: [emailTemplateId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "LeadStage",
+      "field": "whatsappTemplate",
+      "target": "MetaTemplate",
+      "cardinality": "?",
+      "definition": "whatsappTemplate    MetaTemplate?  @relation(fields: [whatsappTemplateId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "LeadStage",
+      "field": "leads",
+      "target": "Lead",
+      "cardinality": "[]",
+      "definition": "leads               Lead[]"
+    },
+    {
+      "model": "Company",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Company",
+      "field": "contacts",
+      "target": "Contact",
+      "cardinality": "[]",
+      "definition": "contacts      Contact[]"
+    },
+    {
+      "model": "Company",
+      "field": "deals",
+      "target": "Deal",
+      "cardinality": "[]",
+      "definition": "deals         Deal[]"
+    },
+    {
+      "model": "Company",
+      "field": "visits",
+      "target": "Visit",
+      "cardinality": "[]",
+      "definition": "visits        Visit[]"
+    },
+    {
+      "model": "Contact",
+      "field": "communications",
+      "target": "CommunicationHistory",
+      "cardinality": "[]",
+      "definition": "communications  CommunicationHistory[]"
+    },
+    {
+      "model": "Contact",
+      "field": "assignedTo",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "assignedTo      User?                  @relation(\"AssignedContacts\", fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "Contact",
+      "field": "company",
+      "target": "Company",
+      "cardinality": "?",
+      "definition": "company         Company?               @relation(fields: [companyId], references: [id])"
+    },
+    {
+      "model": "Contact",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Contact",
+      "field": "deals",
+      "target": "Deal",
+      "cardinality": "[]",
+      "definition": "deals           Deal[]"
+    },
+    {
+      "model": "Contact",
+      "field": "invoices",
+      "target": "Invoice",
+      "cardinality": "[]",
+      "definition": "invoices        Invoice[]"
+    },
+    {
+      "model": "Contact",
+      "field": "quotations",
+      "target": "Quotation",
+      "cardinality": "[]",
+      "definition": "quotations      Quotation[]"
+    },
+    {
+      "model": "Contact",
+      "field": "visits",
+      "target": "Visit",
+      "cardinality": "[]",
+      "definition": "visits          Visit[]"
+    },
+    {
+      "model": "CommunicationHistory",
+      "field": "contact",
+      "target": "Contact",
+      "cardinality": "required",
+      "definition": "contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Pipeline",
+      "field": "deals",
+      "target": "Deal",
+      "cardinality": "[]",
+      "definition": "deals      Deal[]"
+    },
+    {
+      "model": "Pipeline",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Pipeline",
+      "field": "stages",
+      "target": "PipelineStage",
+      "cardinality": "[]",
+      "definition": "stages     PipelineStage[]"
+    },
+    {
+      "model": "PipelineStage",
+      "field": "deals",
+      "target": "Deal",
+      "cardinality": "[]",
+      "definition": "deals       Deal[]"
+    },
+    {
+      "model": "PipelineStage",
+      "field": "pipeline",
+      "target": "Pipeline",
+      "cardinality": "required",
+      "definition": "pipeline    Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Deal",
+      "field": "assignedTo",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "assignedTo      User?         @relation(\"AssignedDeals\", fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "Deal",
+      "field": "company",
+      "target": "Company",
+      "cardinality": "?",
+      "definition": "company         Company?      @relation(fields: [companyId], references: [id])"
+    },
+    {
+      "model": "Deal",
+      "field": "contact",
+      "target": "Contact",
+      "cardinality": "?",
+      "definition": "contact         Contact?      @relation(fields: [contactId], references: [id])"
+    },
+    {
+      "model": "Deal",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Deal",
+      "field": "pipeline",
+      "target": "Pipeline",
+      "cardinality": "required",
+      "definition": "pipeline        Pipeline      @relation(fields: [pipelineId], references: [id])"
+    },
+    {
+      "model": "Deal",
+      "field": "stage",
+      "target": "PipelineStage",
+      "cardinality": "required",
+      "definition": "stage           PipelineStage @relation(fields: [stageId], references: [id])"
+    },
+    {
+      "model": "Deal",
+      "field": "quotations",
+      "target": "Quotation",
+      "cardinality": "[]",
+      "definition": "quotations      Quotation[]"
+    },
+    {
+      "model": "Deal",
+      "field": "visits",
+      "target": "Visit",
+      "cardinality": "[]",
+      "definition": "visits          Visit[]"
+    },
+    {
+      "model": "Task",
+      "field": "assignedTo",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "assignedTo        User?         @relation(\"AssignedTasks\", fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "Task",
+      "field": "createdBy",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "createdBy         User          @relation(\"CreatedTasks\", fields: [createdById], references: [id])"
+    },
+    {
+      "model": "Task",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Task",
+      "field": "department",
+      "target": "Department",
+      "cardinality": "?",
+      "definition": "department        Department?   @relation(fields: [departmentId], references: [id])"
+    },
+    {
+      "model": "Task",
+      "field": "designation",
+      "target": "Designation",
+      "cardinality": "?",
+      "definition": "designation       Designation?  @relation(fields: [designationId], references: [id])"
+    },
+    {
+      "model": "Task",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "employee          Employee?     @relation(fields: [employeeId], references: [id])"
+    },
+    {
+      "model": "Task",
+      "field": "history",
+      "target": "TaskHistory",
+      "cardinality": "[]",
+      "definition": "history           TaskHistory[]"
+    },
+    {
+      "model": "Task",
+      "field": "proofs",
+      "target": "TaskProof",
+      "cardinality": "[]",
+      "definition": "proofs            TaskProof[]"
+    },
+    {
+      "model": "Task",
+      "field": "reviews",
+      "target": "TaskReview",
+      "cardinality": "[]",
+      "definition": "reviews           TaskReview[]"
+    },
+    {
+      "model": "TaskProof",
+      "field": "task",
+      "target": "Task",
+      "cardinality": "required",
+      "definition": "task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "TaskReview",
+      "field": "task",
+      "target": "Task",
+      "cardinality": "required",
+      "definition": "task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "TaskHistory",
+      "field": "task",
+      "target": "Task",
+      "cardinality": "required",
+      "definition": "task                 Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Product",
+      "field": "invoiceItems",
+      "target": "InvoiceItem",
+      "cardinality": "[]",
+      "definition": "invoiceItems   InvoiceItem[]"
+    },
+    {
+      "model": "Product",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Product",
+      "field": "quotationItems",
+      "target": "QuotationItem",
+      "cardinality": "[]",
+      "definition": "quotationItems QuotationItem[]"
+    },
+    {
+      "model": "Quotation",
+      "field": "invoices",
+      "target": "Invoice",
+      "cardinality": "[]",
+      "definition": "invoices    Invoice[]"
+    },
+    {
+      "model": "Quotation",
+      "field": "contact",
+      "target": "Contact",
+      "cardinality": "?",
+      "definition": "contact     Contact?        @relation(fields: [contactId], references: [id])"
+    },
+    {
+      "model": "Quotation",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Quotation",
+      "field": "deal",
+      "target": "Deal",
+      "cardinality": "?",
+      "definition": "deal        Deal?           @relation(fields: [dealId], references: [id])"
+    },
+    {
+      "model": "Quotation",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "?",
+      "definition": "lead        Lead?           @relation(fields: [leadId], references: [id])"
+    },
+    {
+      "model": "Quotation",
+      "field": "items",
+      "target": "QuotationItem",
+      "cardinality": "[]",
+      "definition": "items       QuotationItem[]"
+    },
+    {
+      "model": "QuotationItem",
+      "field": "product",
+      "target": "Product",
+      "cardinality": "required",
+      "definition": "product     Product   @relation(fields: [productId], references: [id])"
+    },
+    {
+      "model": "QuotationItem",
+      "field": "quotation",
+      "target": "Quotation",
+      "cardinality": "required",
+      "definition": "quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Invoice",
+      "field": "contact",
+      "target": "Contact",
+      "cardinality": "required",
+      "definition": "contact      Contact                   @relation(fields: [contactId], references: [id])"
+    },
+    {
+      "model": "Invoice",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Invoice",
+      "field": "quotation",
+      "target": "Quotation",
+      "cardinality": "?",
+      "definition": "quotation    Quotation?                @relation(fields: [quotationId], references: [id])"
+    },
+    {
+      "model": "Invoice",
+      "field": "items",
+      "target": "InvoiceItem",
+      "cardinality": "[]",
+      "definition": "items        InvoiceItem[]"
+    },
+    {
+      "model": "Invoice",
+      "field": "installments",
+      "target": "SubscriptionInstallment",
+      "cardinality": "[]",
+      "definition": "installments SubscriptionInstallment[]"
+    },
+    {
+      "model": "InvoiceItem",
+      "field": "invoice",
+      "target": "Invoice",
+      "cardinality": "required",
+      "definition": "invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InvoiceItem",
+      "field": "product",
+      "target": "Product",
+      "cardinality": "required",
+      "definition": "product   Product @relation(fields: [productId], references: [id])"
+    },
+    {
+      "model": "SupportTicket",
+      "field": "assignedTo",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "assignedTo   User?           @relation(\"AssignedTickets\", fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "SupportTicket",
+      "field": "createdBy",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "createdBy    User            @relation(\"CreatedTickets\", fields: [createdById], references: [id])"
+    },
+    {
+      "model": "SupportTicket",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SupportTicket",
+      "field": "comments",
+      "target": "TicketComment",
+      "cardinality": "[]",
+      "definition": "comments     TicketComment[]"
+    },
+    {
+      "model": "TicketComment",
+      "field": "ticket",
+      "target": "SupportTicket",
+      "cardinality": "required",
+      "definition": "ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "TicketComment",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user      User          @relation(fields: [userId], references: [id])"
+    },
+    {
+      "model": "Notification",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Notification",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "UserDeviceToken",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AuditLog",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AuditLog",
+      "field": "user",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "user         User?     @relation(fields: [userId], references: [id])"
+    },
+    {
+      "model": "FeatureToggle",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLocation",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLocation",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee           Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "attendances",
+      "target": "Attendance",
+      "cardinality": "[]",
+      "definition": "attendances        Attendance[]"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "attendancePolicies",
+      "target": "AttendancePolicy",
+      "cardinality": "[]",
+      "definition": "attendancePolicies AttendancePolicy[]"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "claimPolicies",
+      "target": "ClaimPolicy",
+      "cardinality": "[]",
+      "definition": "claimPolicies      ClaimPolicy[]"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "employees",
+      "target": "Employee",
+      "cardinality": "[]",
+      "definition": "employees          Employee[]"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "leavePolicies",
+      "target": "LeavePolicy",
+      "cardinality": "[]",
+      "definition": "leavePolicies      LeavePolicy[]"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "publicHolidays",
+      "target": "PublicHoliday",
+      "cardinality": "[]",
+      "definition": "publicHolidays     PublicHoliday[]"
+    },
+    {
+      "model": "BranchGeofence",
+      "field": "salaryPolicies",
+      "target": "SalaryPolicy",
+      "cardinality": "[]",
+      "definition": "salaryPolicies     SalaryPolicy[]"
+    },
+    {
+      "model": "LocationTrackingSetting",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Department",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Department",
+      "field": "designations",
+      "target": "Designation",
+      "cardinality": "[]",
+      "definition": "designations Designation[]"
+    },
+    {
+      "model": "Department",
+      "field": "employees",
+      "target": "Employee",
+      "cardinality": "[]",
+      "definition": "employees    Employee[]"
+    },
+    {
+      "model": "Department",
+      "field": "tasks",
+      "target": "Task",
+      "cardinality": "[]",
+      "definition": "tasks        Task[]"
+    },
+    {
+      "model": "Designation",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Designation",
+      "field": "department",
+      "target": "Department",
+      "cardinality": "?",
+      "definition": "department   Department? @relation(fields: [departmentId], references: [id])"
+    },
+    {
+      "model": "Designation",
+      "field": "employees",
+      "target": "Employee",
+      "cardinality": "[]",
+      "definition": "employees    Employee[]"
+    },
+    {
+      "model": "Designation",
+      "field": "mobileCustomers",
+      "target": "Customer",
+      "cardinality": "[]",
+      "definition": "mobileCustomers Customer[] @relation(\"CustomerMobileRole\")"
+    },
+    {
+      "model": "Designation",
+      "field": "tasks",
+      "target": "Task",
+      "cardinality": "[]",
+      "definition": "tasks        Task[]"
+    },
+    {
+      "model": "Designation",
+      "field": "role",
+      "target": "Role",
+      "cardinality": "?",
+      "definition": "role         Role?"
+    },
+    {
+      "model": "Employee",
+      "field": "attendances",
+      "target": "Attendance",
+      "cardinality": "[]",
+      "definition": "attendances              Attendance[]"
+    },
+    {
+      "model": "Employee",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer                 Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Employee",
+      "field": "department",
+      "target": "Department",
+      "cardinality": "?",
+      "definition": "department               Department?              @relation(fields: [departmentId], references: [id])"
+    },
+    {
+      "model": "Employee",
+      "field": "designation",
+      "target": "Designation",
+      "cardinality": "?",
+      "definition": "designation              Designation?             @relation(fields: [designationId], references: [id])"
+    },
+    {
+      "model": "Employee",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office                   BranchGeofence?          @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "Employee",
+      "field": "shift",
+      "target": "Shift",
+      "cardinality": "?",
+      "definition": "shift                    Shift?                   @relation(fields: [shiftId], references: [id])"
+    },
+    {
+      "model": "Employee",
+      "field": "user",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "user                     User?                    @relation(fields: [userId], references: [id])"
+    },
+    {
+      "model": "Employee",
+      "field": "employeeClaims",
+      "target": "EmployeeClaim",
+      "cardinality": "[]",
+      "definition": "employeeClaims           EmployeeClaim[]"
+    },
+    {
+      "model": "Employee",
+      "field": "dataCaptureSearches",
+      "target": "DataCaptureSearch",
+      "cardinality": "[]",
+      "definition": "dataCaptureSearches      DataCaptureSearch[]"
+    },
+    {
+      "model": "Employee",
+      "field": "leaveBalances",
+      "target": "EmployeeLeaveBalance",
+      "cardinality": "[]",
+      "definition": "leaveBalances            EmployeeLeaveBalance[]"
+    },
+    {
+      "model": "Employee",
+      "field": "employeeLoans",
+      "target": "EmployeeLoan",
+      "cardinality": "[]",
+      "definition": "employeeLoans            EmployeeLoan[]"
+    },
+    {
+      "model": "Employee",
+      "field": "employeeLocations",
+      "target": "EmployeeLocation",
+      "cardinality": "[]",
+      "definition": "employeeLocations        EmployeeLocation[]"
+    },
+    {
+      "model": "Employee",
+      "field": "leaveAdjustments",
+      "target": "LeaveAdjustmentHistory",
+      "cardinality": "[]",
+      "definition": "leaveAdjustments         LeaveAdjustmentHistory[]"
+    },
+    {
+      "model": "Employee",
+      "field": "leaveRequests",
+      "target": "LeaveRequest",
+      "cardinality": "[]",
+      "definition": "leaveRequests            LeaveRequest[]"
+    },
+    {
+      "model": "Employee",
+      "field": "payrollItems",
+      "target": "PayrollItem",
+      "cardinality": "[]",
+      "definition": "payrollItems             PayrollItem[]"
+    },
+    {
+      "model": "Employee",
+      "field": "remoteRequests",
+      "target": "RemoteRequest",
+      "cardinality": "[]",
+      "definition": "remoteRequests           RemoteRequest[]"
+    },
+    {
+      "model": "Employee",
+      "field": "salarySlips",
+      "target": "SalarySlip",
+      "cardinality": "[]",
+      "definition": "salarySlips              SalarySlip[]"
+    },
+    {
+      "model": "Employee",
+      "field": "salaryStructures",
+      "target": "SalaryStructure",
+      "cardinality": "[]",
+      "definition": "salaryStructures         SalaryStructure[]"
+    },
+    {
+      "model": "Employee",
+      "field": "tasks",
+      "target": "Task",
+      "cardinality": "[]",
+      "definition": "tasks                    Task[]"
+    },
+    {
+      "model": "Employee",
+      "field": "teamMembers",
+      "target": "TeamMember",
+      "cardinality": "[]",
+      "definition": "teamMembers              TeamMember[]"
+    },
+    {
+      "model": "Employee",
+      "field": "visits",
+      "target": "Visit",
+      "cardinality": "[]",
+      "definition": "visits                   Visit[]"
+    },
+    {
+      "model": "Employee",
+      "field": "works",
+      "target": "Work",
+      "cardinality": "[]",
+      "definition": "works                    Work[]                   @relation(\"AssignedEmployeeWorks\")"
+    },
+    {
+      "model": "Employee",
+      "field": "editedWorks",
+      "target": "Work",
+      "cardinality": "[]",
+      "definition": "editedWorks              Work[]                   @relation(\"AssignedEditorWorks\")"
+    },
+    {
+      "model": "Employee",
+      "field": "workTasks",
+      "target": "WorkTask",
+      "cardinality": "[]",
+      "definition": "workTasks                WorkTask[]"
+    },
+    {
+      "model": "Employee",
+      "field": "assignedMonthlySchedules",
+      "target": "MonthlySchedule",
+      "cardinality": "[]",
+      "definition": "assignedMonthlySchedules MonthlySchedule[]"
+    },
+    {
+      "model": "Employee",
+      "field": "workAccessRequests",
+      "target": "WorkAccessRequest",
+      "cardinality": "[]",
+      "definition": "workAccessRequests       WorkAccessRequest[]"
+    },
+    {
+      "model": "Employee",
+      "field": "employeeModuleOverrides",
+      "target": "EmployeeModuleOverride",
+      "cardinality": "[]",
+      "definition": "employeeModuleOverrides  EmployeeModuleOverride[]"
+    },
+    {
+      "model": "Employee",
+      "field": "ledTeams",
+      "target": "Team",
+      "cardinality": "[]",
+      "definition": "ledTeams                 Team[]                   @relation(\"TeamLeader\")"
+    },
+    {
+      "model": "Employee",
+      "field": "leadLimit",
+      "target": "EmployeeLeadLimit",
+      "cardinality": "?",
+      "definition": "leadLimit                EmployeeLeadLimit?"
+    },
+    {
+      "model": "Employee",
+      "field": "leads",
+      "target": "Lead",
+      "cardinality": "[]",
+      "definition": "leads                    Lead[]                   @relation(\"EmployeeLeads\")"
+    },
+    {
+      "model": "Employee",
+      "field": "assignedCustomers",
+      "target": "Customer",
+      "cardinality": "[]",
+      "definition": "assignedCustomers        Customer[]               @relation(\"CustomerAssignedStaff\")"
+    },
+    {
+      "model": "Employee",
+      "field": "createdCustomers",
+      "target": "Customer",
+      "cardinality": "[]",
+      "definition": "createdCustomers         Customer[]               @relation(\"CustomerCreatedStaff\")"
+    },
+    {
+      "model": "Employee",
+      "field": "commissionConfig",
+      "target": "CommissionConfig",
+      "cardinality": "?",
+      "definition": "commissionConfig         CommissionConfig?"
+    },
+    {
+      "model": "Employee",
+      "field": "commissions",
+      "target": "Commission",
+      "cardinality": "[]",
+      "definition": "commissions              Commission[]"
+    },
+    {
+      "model": "Employee",
+      "field": "commissionShares",
+      "target": "CommissionShare",
+      "cardinality": "[]",
+      "definition": "commissionShares         CommissionShare[]"
+    },
+    {
+      "model": "Attendance",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee                  Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Attendance",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office                    BranchGeofence?   @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "Attendance",
+      "field": "breaks",
+      "target": "AttendanceBreak",
+      "cardinality": "[]",
+      "definition": "breaks                    AttendanceBreak[]"
+    },
+    {
+      "model": "AttendanceBreak",
+      "field": "attendance",
+      "target": "Attendance",
+      "cardinality": "required",
+      "definition": "attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeaveType",
+      "field": "leaveBalances",
+      "target": "EmployeeLeaveBalance",
+      "cardinality": "[]",
+      "definition": "leaveBalances      EmployeeLeaveBalance[]"
+    },
+    {
+      "model": "LeaveType",
+      "field": "leaveAdjustments",
+      "target": "LeaveAdjustmentHistory",
+      "cardinality": "[]",
+      "definition": "leaveAdjustments   LeaveAdjustmentHistory[]"
+    },
+    {
+      "model": "LeaveType",
+      "field": "leaveRequests",
+      "target": "LeaveRequest",
+      "cardinality": "[]",
+      "definition": "leaveRequests      LeaveRequest[]"
+    },
+    {
+      "model": "LeaveRequest",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeaveRequest",
+      "field": "leaveType",
+      "target": "LeaveType",
+      "cardinality": "required",
+      "definition": "leaveType       LeaveType     @relation(fields: [leaveTypeId], references: [id])"
+    },
+    {
+      "model": "PublicHoliday",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PublicHoliday",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office      BranchGeofence? @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "EmployeeLeaveBalance",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer      Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLeaveBalance",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee      Employee                 @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLeaveBalance",
+      "field": "leaveType",
+      "target": "LeaveType",
+      "cardinality": "required",
+      "definition": "leaveType     LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLeaveBalance",
+      "field": "adjustments",
+      "target": "LeaveAdjustmentHistory",
+      "cardinality": "[]",
+      "definition": "adjustments   LeaveAdjustmentHistory[]"
+    },
+    {
+      "model": "LeaveAdjustmentHistory",
+      "field": "balance",
+      "target": "EmployeeLeaveBalance",
+      "cardinality": "?",
+      "definition": "balance          EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id])"
+    },
+    {
+      "model": "LeaveAdjustmentHistory",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeaveAdjustmentHistory",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee         Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeaveAdjustmentHistory",
+      "field": "leaveType",
+      "target": "LeaveType",
+      "cardinality": "required",
+      "definition": "leaveType        LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AttendancePolicy",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AttendancePolicy",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office                     BranchGeofence? @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "LeavePolicy",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer                    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "LeavePolicy",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office                      BranchGeofence? @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "SalaryPolicy",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer                  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SalaryPolicy",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office                    BranchGeofence? @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "ClaimPolicy",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "ClaimPolicy",
+      "field": "office",
+      "target": "BranchGeofence",
+      "cardinality": "?",
+      "definition": "office                     BranchGeofence? @relation(fields: [officeId], references: [id])"
+    },
+    {
+      "model": "RemoteRequest",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Shift",
+      "field": "employees",
+      "target": "Employee",
+      "cardinality": "[]",
+      "definition": "employees             Employee[]"
+    },
+    {
+      "model": "Shift",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Shift",
+      "field": "guidance",
+      "target": "ShiftGuidance",
+      "cardinality": "?",
+      "definition": "guidance              ShiftGuidance?"
+    },
+    {
+      "model": "ShiftGuidance",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "ShiftGuidance",
+      "field": "shift",
+      "target": "Shift",
+      "cardinality": "required",
+      "definition": "shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Visit",
+      "field": "company",
+      "target": "Company",
+      "cardinality": "?",
+      "definition": "company          Company?    @relation(fields: [companyId], references: [id])"
+    },
+    {
+      "model": "Visit",
+      "field": "contact",
+      "target": "Contact",
+      "cardinality": "?",
+      "definition": "contact          Contact?    @relation(fields: [contactId], references: [id])"
+    },
+    {
+      "model": "Visit",
+      "field": "deal",
+      "target": "Deal",
+      "cardinality": "?",
+      "definition": "deal             Deal?       @relation(fields: [dealId], references: [id])"
+    },
+    {
+      "model": "Visit",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Visit",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "?",
+      "definition": "lead             Lead?       @relation(fields: [leadId], references: [id])"
+    },
+    {
+      "model": "SalaryStructure",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Payroll",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Payroll",
+      "field": "items",
+      "target": "PayrollItem",
+      "cardinality": "[]",
+      "definition": "items           PayrollItem[]"
+    },
+    {
+      "model": "PayrollItem",
+      "field": "commissionShares",
+      "target": "CommissionShare",
+      "cardinality": "[]",
+      "definition": "commissionShares CommissionShare[]"
+    },
+    {
+      "model": "PayrollItem",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee         Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PayrollItem",
+      "field": "payroll",
+      "target": "Payroll",
+      "cardinality": "required",
+      "definition": "payroll          Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PayrollItem",
+      "field": "salarySlips",
+      "target": "SalarySlip",
+      "cardinality": "[]",
+      "definition": "salarySlips      SalarySlip[]"
+    },
+    {
+      "model": "SalarySlip",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SalarySlip",
+      "field": "payrollItem",
+      "target": "PayrollItem",
+      "cardinality": "required",
+      "definition": "payrollItem     PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PayrollPolicy",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Team",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Team",
+      "field": "leader",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "leader      Employee?    @relation(\"TeamLeader\", fields: [leaderId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Team",
+      "field": "members",
+      "target": "TeamMember",
+      "cardinality": "[]",
+      "definition": "members     TeamMember[]"
+    },
+    {
+      "model": "Team",
+      "field": "works",
+      "target": "Work",
+      "cardinality": "[]",
+      "definition": "works       Work[]"
+    },
+    {
+      "model": "Team",
+      "field": "assignedCustomers",
+      "target": "Customer",
+      "cardinality": "[]",
+      "definition": "assignedCustomers Customer[]   @relation(\"CustomerAssignedTeam\")"
+    },
+    {
+      "model": "TeamMember",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "TeamMember",
+      "field": "team",
+      "target": "Team",
+      "cardinality": "required",
+      "definition": "team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PlanEntitlement",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "PlanEntitlement",
+      "field": "works",
+      "target": "Work",
+      "cardinality": "[]",
+      "definition": "works        Work[]"
+    },
+    {
+      "model": "Work",
+      "field": "assignedTo",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "assignedTo     Employee?             @relation(\"AssignedEmployeeWorks\", fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "Work",
+      "field": "editor",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "editor         Employee?             @relation(\"AssignedEditorWorks\", fields: [editorId], references: [id])"
+    },
+    {
+      "model": "Work",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Work",
+      "field": "subscription",
+      "target": "CustomerSubscription",
+      "cardinality": "?",
+      "definition": "subscription   CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Work",
+      "field": "entitlement",
+      "target": "PlanEntitlement",
+      "cardinality": "?",
+      "definition": "entitlement    PlanEntitlement?      @relation(fields: [entitlementId], references: [id])"
+    },
+    {
+      "model": "Work",
+      "field": "team",
+      "target": "Team",
+      "cardinality": "?",
+      "definition": "team           Team?                 @relation(fields: [teamId], references: [id])"
+    },
+    {
+      "model": "Work",
+      "field": "tasks",
+      "target": "WorkTask",
+      "cardinality": "[]",
+      "definition": "tasks          WorkTask[]"
+    },
+    {
+      "model": "WorkTask",
+      "field": "assignedTo",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "assignedTo   Employee?  @relation(fields: [assignedToId], references: [id])"
+    },
+    {
+      "model": "WorkTask",
+      "field": "work",
+      "target": "Work",
+      "cardinality": "required",
+      "definition": "work         Work       @relation(fields: [workId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "DataCaptureJob",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "DataCaptureJob",
+      "field": "user",
+      "target": "User",
+      "cardinality": "required",
+      "definition": "user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "DataCaptureJob",
+      "field": "places",
+      "target": "DataCapturePlace",
+      "cardinality": "[]",
+      "definition": "places            DataCapturePlace[]"
+    },
+    {
+      "model": "DataCapturePlace",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "DataCapturePlace",
+      "field": "job",
+      "target": "DataCaptureJob",
+      "cardinality": "?",
+      "definition": "job              DataCaptureJob? @relation(fields: [jobId], references: [jobId], onDelete: Cascade)"
+    },
+    {
+      "model": "DataCaptureSearch",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "DataCaptureSearch",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLoan",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLoan",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee         Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeClaim",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeClaim",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SubscriptionInstallment",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer          Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SubscriptionInstallment",
+      "field": "subscription",
+      "target": "CustomerSubscription",
+      "cardinality": "required",
+      "definition": "subscription      CustomerSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SubscriptionInstallment",
+      "field": "paymentHistory",
+      "target": "PaymentHistory",
+      "cardinality": "?",
+      "definition": "paymentHistory    PaymentHistory?      @relation(fields: [paymentHistoryId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "SubscriptionInstallment",
+      "field": "invoice",
+      "target": "Invoice",
+      "cardinality": "?",
+      "definition": "invoice           Invoice?             @relation(fields: [invoiceId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MonthlySchedule",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "MonthlySchedule",
+      "field": "subscription",
+      "target": "CustomerSubscription",
+      "cardinality": "?",
+      "definition": "subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MonthlySchedule",
+      "field": "plan",
+      "target": "Plan",
+      "cardinality": "?",
+      "definition": "plan             Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MonthlySchedule",
+      "field": "assignedEmployee",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "assignedEmployee Employee?             @relation(fields: [assignedEmployeeId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "CustomPlanOrder",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CustomPlanOrder",
+      "field": "subscription",
+      "target": "CustomerSubscription",
+      "cardinality": "?",
+      "definition": "subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "TrendingContent",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "TrendingContent",
+      "field": "createdByUser",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "createdByUser User?            @relation(\"CreatedTrendingContents\", fields: [createdBy], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MarketingBanner",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "MarketingBanner",
+      "field": "createdByUser",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "createdByUser  User?     @relation(\"CreatedMarketingBanners\", fields: [createdBy], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MarketingVideo",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "MarketingVideo",
+      "field": "createdByUser",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "createdByUser      User?     @relation(\"CreatedMarketingVideos\", fields: [createdBy], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MarketingVideo",
+      "field": "views",
+      "target": "CustomerMarketingVideoView",
+      "cardinality": "[]",
+      "definition": "views              CustomerMarketingVideoView[]"
+    },
+    {
+      "model": "CustomerMarketingVideoView",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CustomerMarketingVideoView",
+      "field": "marketingVideo",
+      "target": "MarketingVideo",
+      "cardinality": "required",
+      "definition": "marketingVideo   MarketingVideo @relation(fields: [marketingVideoId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SocialMediaHandler",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "RoleWorkPermission",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "WorkAccessRequest",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "WorkAccessRequest",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee        Employee                @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeModuleOverride",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeModuleOverride",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee     Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeModuleOverride",
+      "field": "permission",
+      "target": "Permission",
+      "cardinality": "?",
+      "definition": "permission   Permission?         @relation(fields: [permissionId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CustomerModuleOverride",
+      "field": "subjectCustomer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "subjectCustomer   Customer           @relation(fields: [subjectCustomerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CustomerModuleOverride",
+      "field": "permission",
+      "target": "Permission",
+      "cardinality": "?",
+      "definition": "permission        Permission?        @relation(fields: [permissionId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "RoleLeadLimit",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLeadLimit",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmployeeLeadLimit",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerCategory",
+      "field": "influencers",
+      "target": "Influencer",
+      "cardinality": "[]",
+      "definition": "influencers Influencer[]"
+    },
+    {
+      "model": "Influencer",
+      "field": "category",
+      "target": "InfluencerCategory",
+      "cardinality": "?",
+      "definition": "category           InfluencerCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Influencer",
+      "field": "packages",
+      "target": "InfluencerPackage",
+      "cardinality": "[]",
+      "definition": "packages           InfluencerPackage[]"
+    },
+    {
+      "model": "Influencer",
+      "field": "availabilities",
+      "target": "InfluencerAvailability",
+      "cardinality": "[]",
+      "definition": "availabilities     InfluencerAvailability[]"
+    },
+    {
+      "model": "Influencer",
+      "field": "portfolios",
+      "target": "InfluencerPortfolio",
+      "cardinality": "[]",
+      "definition": "portfolios         InfluencerPortfolio[]"
+    },
+    {
+      "model": "Influencer",
+      "field": "reviews",
+      "target": "InfluencerReview",
+      "cardinality": "[]",
+      "definition": "reviews            InfluencerReview[]"
+    },
+    {
+      "model": "Influencer",
+      "field": "bookings",
+      "target": "InfluencerBooking",
+      "cardinality": "[]",
+      "definition": "bookings           InfluencerBooking[]"
+    },
+    {
+      "model": "InfluencerPackage",
+      "field": "influencer",
+      "target": "Influencer",
+      "cardinality": "required",
+      "definition": "influencer   Influencer          @relation(fields: [influencerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerPackage",
+      "field": "bookings",
+      "target": "InfluencerBooking",
+      "cardinality": "[]",
+      "definition": "bookings     InfluencerBooking[]"
+    },
+    {
+      "model": "InfluencerAvailability",
+      "field": "influencer",
+      "target": "Influencer",
+      "cardinality": "required",
+      "definition": "influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerBooking",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer           Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerBooking",
+      "field": "influencer",
+      "target": "Influencer",
+      "cardinality": "required",
+      "definition": "influencer         Influencer                 @relation(fields: [influencerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerBooking",
+      "field": "package",
+      "target": "InfluencerPackage",
+      "cardinality": "?",
+      "definition": "package            InfluencerPackage?         @relation(fields: [packageId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "InfluencerBooking",
+      "field": "payments",
+      "target": "InfluencerBookingPayment",
+      "cardinality": "[]",
+      "definition": "payments           InfluencerBookingPayment[]"
+    },
+    {
+      "model": "InfluencerBookingPayment",
+      "field": "booking",
+      "target": "InfluencerBooking",
+      "cardinality": "required",
+      "definition": "booking       InfluencerBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerBookingPayment",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerPortfolio",
+      "field": "influencer",
+      "target": "Influencer",
+      "cardinality": "required",
+      "definition": "influencer    Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerReview",
+      "field": "influencer",
+      "target": "Influencer",
+      "cardinality": "required",
+      "definition": "influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "InfluencerReview",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer     Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "AiCreditWallet",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AiCreditWallet",
+      "field": "transactions",
+      "target": "AiCreditTransaction",
+      "cardinality": "[]",
+      "definition": "transactions AiCreditTransaction[]"
+    },
+    {
+      "model": "AiCreditTransaction",
+      "field": "wallet",
+      "target": "AiCreditWallet",
+      "cardinality": "required",
+      "definition": "wallet          AiCreditWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AiCreditTransaction",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AiGeneration",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "AiGeneration",
+      "field": "assets",
+      "target": "AiGenerationAsset",
+      "cardinality": "[]",
+      "definition": "assets         AiGenerationAsset[]"
+    },
+    {
+      "model": "AiGeneration",
+      "field": "publishes",
+      "target": "SocialPublish",
+      "cardinality": "[]",
+      "definition": "publishes      SocialPublish[]"
+    },
+    {
+      "model": "AiGenerationAsset",
+      "field": "generation",
+      "target": "AiGeneration",
+      "cardinality": "required",
+      "definition": "generation   AiGeneration @relation(fields: [generationId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SocialAccount",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer              Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SocialAccount",
+      "field": "publishes",
+      "target": "SocialPublish",
+      "cardinality": "[]",
+      "definition": "publishes             SocialPublish[]"
+    },
+    {
+      "model": "SocialPublish",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SocialPublish",
+      "field": "socialAccount",
+      "target": "SocialAccount",
+      "cardinality": "required",
+      "definition": "socialAccount   SocialAccount  @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "SocialPublish",
+      "field": "generation",
+      "target": "AiGeneration",
+      "cardinality": "?",
+      "definition": "generation      AiGeneration?  @relation(fields: [generationId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MasterItem",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmailTemplate",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmailTemplate",
+      "field": "emailLogs",
+      "target": "EmailLog",
+      "cardinality": "[]",
+      "definition": "emailLogs          EmailLog[]"
+    },
+    {
+      "model": "EmailTemplate",
+      "field": "leadStages",
+      "target": "LeadStage",
+      "cardinality": "[]",
+      "definition": "leadStages         LeadStage[]"
+    },
+    {
+      "model": "EmailLog",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer          Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "EmailLog",
+      "field": "user",
+      "target": "User",
+      "cardinality": "?",
+      "definition": "user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "EmailLog",
+      "field": "template",
+      "target": "EmailTemplate",
+      "cardinality": "?",
+      "definition": "template          EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "EmailLog",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "?",
+      "definition": "lead              Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "MetaTemplate",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "?",
+      "definition": "customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "MetaTemplate",
+      "field": "leadStages",
+      "target": "LeadStage",
+      "cardinality": "[]",
+      "definition": "leadStages         LeadStage[]"
+    },
+    {
+      "model": "CommissionConfig",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "CommissionConfig",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Commission",
+      "field": "shares",
+      "target": "CommissionShare",
+      "cardinality": "[]",
+      "definition": "shares           CommissionShare[]"
+    },
+    {
+      "model": "Commission",
+      "field": "customer",
+      "target": "Customer",
+      "cardinality": "required",
+      "definition": "customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Commission",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "?",
+      "definition": "employee Employee?       @relation(fields: [employeeId], references: [id], onDelete: Cascade)"
+    },
+    {
+      "model": "Commission",
+      "field": "lead",
+      "target": "Lead",
+      "cardinality": "?",
+      "definition": "lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Commission",
+      "field": "plan",
+      "target": "Plan",
+      "cardinality": "?",
+      "definition": "plan     Plan?           @relation(fields: [planId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "Commission",
+      "field": "purchase",
+      "target": "PaymentHistory",
+      "cardinality": "?",
+      "definition": "purchase PaymentHistory? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)"
+    },
+    {
+      "model": "CommissionShare",
+      "field": "commission",
+      "target": "Commission",
+      "cardinality": "required",
+      "definition": "commission Commission @relation(fields: [commissionId], references: [id], onDelete: Restrict)"
+    },
+    {
+      "model": "CommissionShare",
+      "field": "employee",
+      "target": "Employee",
+      "cardinality": "required",
+      "definition": "employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)"
+    },
+    {
+      "model": "CommissionShare",
+      "field": "payrollItem",
+      "target": "PayrollItem",
+      "cardinality": "?",
+      "definition": "payrollItem PayrollItem? @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)"
+    }
+  ]
+}

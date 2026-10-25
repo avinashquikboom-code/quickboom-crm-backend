@@ -339,5 +339,36 @@ describe('WhatsappService', () => {
       expect(result.error).toBe('190');
       expect(result.details).toContain('WhatsApp authentication failed');
     });
+
+    it('continues to dispatch template when preflight check returns non-fatal warning', async () => {
+      // Pre-flight GET fails with non-fatal field error
+      mockedAxios.get.mockRejectedValueOnce({
+        response: {
+          status: 400,
+          data: {
+            error: {
+              code: 100,
+              message: '(#100) Tried accessing nonexisting field (whatsapp_business_account)',
+            },
+          },
+        },
+      });
+
+      // Template send POST succeeds
+      mockedAxios.post.mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [{ id: 'wamid.HBgLMTIzNDU2Nzg5MA==' }],
+        },
+      });
+
+      const result = await service.sendTemplate('9876543210', 'lead_stage_new', [
+        { type: 'text', text: 'Raj' },
+      ]);
+
+      expect(result.success).toBe(true);
+      expect(result.messageId).toBe('wamid.HBgLMTIzNDU2Nzg5MA==');
+      expect(mockedAxios.post).toHaveBeenCalled();
+    });
   });
 });

@@ -309,7 +309,7 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
 
       await notificationService.markAsRead(105, 47, 15);
       expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
-        where: { id: 105, customerId: 47, userId: 15 },
+        where: { id: 105, userId: 15 },
         data: { isRead: true },
       });
     });
@@ -357,6 +357,78 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         }),
       );
     });
+
+    it('CASE 8B: Existing customer auth account logs in -> registerDeviceToken does NOT send welcome push', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 25,
+        createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days old account
+        deletedAt: null,
+      });
+
+      mockPrisma.userDeviceToken.upsert.mockResolvedValue({
+        id: 2,
+        userId: 25,
+        token: 'existing_customer_token_123',
+        platform: 'ANDROID',
+        isActive: true,
+      });
+
+      // Even if an unread welcome exists in DB, it must NOT be delivered to an existing user
+      mockPrisma.notification.findFirst.mockImplementation((args: any) => {
+        if (args?.where?.type === 'WELCOME') {
+          return Promise.resolve({
+            id: 205,
+            customerId: 55,
+            userId: 25,
+            title: 'Welcome to QuikBoom! 🎉',
+            message: 'Your account has been created successfully. Welcome to QuikBoom!',
+            type: 'WELCOME',
+            isRead: false,
+          });
+        }
+        return Promise.resolve(null);
+      });
+
+      await notificationService.registerDeviceToken(25, {
+        token: 'existing_customer_token_123',
+        platform: 'ANDROID',
+      });
+
+      // Crucial: sendToSingleToken must NOT be called for existing customer
+      expect(mockFcmService.sendToSingleToken).not.toHaveBeenCalled();
+    });
+
+    it('CASE 8C: Existing customer profile update / session refresh -> sendCustomerWelcomeNotification skips existing account', async () => {
+      // User account was created 2 days ago
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 26,
+        customerId: 56,
+        createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        deletedAt: null,
+      });
+      mockPrisma.notification.findFirst.mockResolvedValue(null);
+
+      const result = await notificationService.sendCustomerWelcomeNotification({
+        customerId: 56,
+        userId: 26,
+      });
+
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+      expect(mockFcmService.sendMulticast).not.toHaveBeenCalled();
+      expect(result?.skippedExistingAccount).toBe(true);
+    });
+
+    it('CASE 8D: Explicit isNewAccount: false -> skips welcome notification immediately', async () => {
+      const result = await notificationService.sendCustomerWelcomeNotification({
+        customerId: 57,
+        userId: 27,
+        isNewAccount: false,
+      });
+
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+      expect(mockFcmService.sendMulticast).not.toHaveBeenCalled();
+      expect(result?.skippedExistingAccount).toBe(true);
+    });
   });
 
   describe('Plan Purchase Success Flow', () => {
@@ -396,8 +468,8 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
         data: {
           customerId: 60,
           userId: 30,
-          title: 'Plan Activated Successfully',
-          message: 'Your Basic Package has been activated successfully.',
+          title: 'Plan Purchase Successful',
+          message: 'Your Basic Package has been purchased successfully.',
           type: 'PLAN_PURCHASE_SUCCESS',
           isRead: false,
           data: {
@@ -414,8 +486,8 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
 
       expect(mockFcmService.sendMulticast).toHaveBeenCalledWith(
         ['token_customer_60'],
-        'Plan Activated Successfully',
-        'Your Basic Package has been activated successfully.',
+        'Plan Purchase Successful',
+        'Your Basic Package has been purchased successfully.',
         expect.objectContaining({
           type: 'PLAN_PURCHASE_SUCCESS',
           subscriptionId: '100',
@@ -493,8 +565,8 @@ describe('Plan Purchase & Welcome Notification End-to-End Suite', () => {
 
       expect(mockFcmService.sendMulticast).toHaveBeenCalledWith(
         ['device_1', 'device_2'],
-        'Plan Activated Successfully',
-        'Your Enterprise Plan has been activated successfully.',
+        'Plan Purchase Successful',
+        'Your Enterprise Plan has been purchased successfully.',
         expect.any(Object),
         expect.objectContaining({
           customerId: 61,

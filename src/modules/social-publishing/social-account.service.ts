@@ -49,7 +49,7 @@ export class SocialAccountService {
 
     const existing = await this.prisma.socialAccount.findFirst({
       where: {
-        customerId,
+        
         platform,
         externalAccountId: dto.externalAccountId,
         deletedAt: null,
@@ -85,7 +85,7 @@ export class SocialAccountService {
 
     return this.prisma.socialAccount.create({
       data: {
-        customerId,
+        
         platform,
         accountName: dto.accountName,
         username: dto.username,
@@ -113,7 +113,7 @@ export class SocialAccountService {
    */
   async getAccounts(customerId: number) {
     return this.prisma.socialAccount.findMany({
-      where: { customerId, deletedAt: null, isConnected: true },
+      where: {  deletedAt: null, isConnected: true },
       select: {
         id: true,
         platform: true,
@@ -133,7 +133,7 @@ export class SocialAccountService {
    */
   async disconnectAccount(customerId: number, id: number) {
     const account = await this.prisma.socialAccount.findFirst({
-      where: { id, customerId, deletedAt: null },
+      where: { id,  deletedAt: null },
     });
     if (!account) {
       throw new NotFoundException(`Social account #${id} not found`);
@@ -157,11 +157,7 @@ export class SocialAccountService {
     const [items, total] = await Promise.all([
       this.prisma.socialAccount.findMany({
         where,
-        include: {
-          customer: {
-            select: { id: true, name: true, email: true, phone: true, companyName: true },
-          },
-        },
+        
         orderBy: { id: 'desc' },
         take: query?.limit ? parseInt(query.limit, 10) : 50,
         skip: query?.offset ? parseInt(query.offset, 10) : 0,

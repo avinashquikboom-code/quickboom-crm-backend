@@ -72,9 +72,7 @@ export class SendEmailDto {
   @IsOptional()
   appointmentId?: number;
 
-  @ApiPropertyOptional({ description: 'Associated lead ID' })
-  @IsOptional()
-  leadId?: number;
+  
 
   @ApiPropertyOptional({ description: 'Associated plan ID' })
   @IsOptional()

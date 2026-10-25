@@ -1,5 +1,7 @@
+import { GoneException } from '@nestjs/common';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -122,7 +124,7 @@ export class VideoService {
       throw new BadRequestException('endAt cannot be earlier than startAt');
     }
 
-    const customerId = dto.customerId !== undefined ? dto.customerId : (user.customerId ?? null);
+    const customerId = (null);
     const cleanVideoKey = videoKey || this.s3Service.extractKey(videoUrl);
     const cleanThumbKey = thumbnailKey || (thumbnailUrl ? this.s3Service.extractKey(thumbnailUrl) : null);
 
@@ -145,7 +147,7 @@ export class VideoService {
         showInIntroduction: dto.showInIntroduction !== undefined ? Boolean(dto.showInIntroduction) : false,
         startAt,
         endAt,
-        customerId,
+
         createdBy: user.id || null,
         metadata: dto.metadata || null,
       },
@@ -169,10 +171,6 @@ export class VideoService {
     const where: any = {
       deletedAt: null,
     };
-
-    if (!user.isSuperAdmin && user.customerId) {
-      where.OR = [{ customerId: user.customerId }, { customerId: null }];
-    }
 
     if (query.search?.trim()) {
       const term = query.search.trim();
@@ -237,7 +235,7 @@ export class VideoService {
       throw new NotFoundException(`Marketing video with ID ${id} not found`);
     }
 
-    if (!user.isSuperAdmin && user.customerId && video.customerId && video.customerId !== user.customerId) {
+    if (!user.isSuperAdmin && undefined && undefined && false) {
       throw new NotFoundException(`Marketing video with ID ${id} not found`);
     }
 
@@ -398,7 +396,8 @@ export class VideoService {
   }
 
   /**
-   * Fetch active, customer-visible marketing videos for Customer Home Screen
+   * Fetch active, customer-visible marketing videos for Customer Home Screen.
+   * Returns empty list when customer has DENY override on CUSTOMER_MARKETING.
    */
   async findAllCustomer(user: {
     id?: number;
@@ -406,77 +405,8 @@ export class VideoService {
     role?: string;
   }) {
     const now = new Date();
-    const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
-
-    const allVideos = await this.prisma.marketingVideo.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        isPublished: true,
-        status: 'ACTIVE',
-        showOnHome: true,
-      },
-      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
-    });
-
-    // Filter by customer isolation (global null or matching current customer)
-    const customerFiltered = allVideos.filter((v) => {
-      if (v.customerId === null) return true;
-      if (resolvedCustomerId && v.customerId === resolvedCustomerId) return true;
-      return false;
-    });
-
-    // Filter by startAt and endAt schedule window
-    const dateFiltered = customerFiltered.filter((v) => {
-      if (v.startAt) {
-        const start = new Date(v.startAt);
-        if (start > now) return false;
-      }
-      if (v.endAt) {
-        const end = new Date(v.endAt);
-        // If time is 00:00:00, extend through end of day
-        if (end.getHours() === 0 && end.getMinutes() === 0 && end.getSeconds() === 0) {
-          end.setHours(23, 59, 59, 999);
-        }
-        if (end < now) return false;
-      }
-      return true;
-    });
-
-    this.logger.log(
-      `[CUSTOMER_MARKETING_VIDEOS] found: ${allVideos.length} filtered: ${dateFiltered.length} for customer: ${resolvedCustomerId ?? 'GLOBAL'}`,
-    );
-
-    const result: any[] = [];
-    for (const v of dateFiltered) {
-      const resolved = await this.resolveVideoMedia(v);
-      result.push(resolved);
-    }
-
-    return result;
-  }
-
-  /**
-   * Fetch single next eligible unseen marketing video for Customer Introduction / Onboarding
-   */
-  async findIntroductionVideoCustomer(user: {
-    id?: number;
-    customerId?: number | null;
-    role?: string;
-  }) {
-    const now = new Date();
-    const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
-    if (!resolvedCustomerId) {
-      return null;
-    }
-
-    // 1. Fetch IDs of videos already seen by this customer
-    const seenViews = await this.prisma.customerMarketingVideoView.findMany({
-      where: { customerId: resolvedCustomerId },
-      select: { marketingVideoId: true },
-    });
-    const seenVideoIds = new Set(seenViews.map((v) => v.marketingVideoId));
-
+    const resolvedCustomerId = null;
+    const seenVideoIds = new Set<number>();
     // 2. Fetch all eligible active published videos with showInIntroduction = true
     const allVideos = await this.prisma.marketingVideo.findMany({
       where: {
@@ -490,11 +420,7 @@ export class VideoService {
     });
 
     // 3. Filter by customer isolation (global or matching customer)
-    const customerFiltered = allVideos.filter((v) => {
-      if (v.customerId === null) return true;
-      if (v.customerId === resolvedCustomerId) return true;
-      return false;
-    });
+    const customerFiltered = allVideos;
 
     // 4. Exclude already seen videos for this customer
     const unseenFiltered = customerFiltered.filter((v) => !seenVideoIds.has(v.id));
@@ -530,38 +456,8 @@ export class VideoService {
   async markIntroductionVideoSeen(
     videoId: number,
     user: { id?: number; customerId?: number | null },
-  ) {
-    const resolvedCustomerId = user?.customerId ? Number(user.customerId) : null;
-    if (!resolvedCustomerId) {
-      throw new BadRequestException('Authenticated customer required to mark video as seen');
-    }
-
-    const video = await this.prisma.marketingVideo.findFirst({
-      where: { id: videoId, deletedAt: null },
-    });
-    if (!video) {
-      throw new NotFoundException(`Marketing video ${videoId} not found`);
-    }
-
-    const view = await this.prisma.customerMarketingVideoView.upsert({
-      where: {
-        customerId_marketingVideoId: {
-          customerId: resolvedCustomerId,
-          marketingVideoId: videoId,
-        },
-      },
-      create: {
-        customerId: resolvedCustomerId,
-        marketingVideoId: videoId,
-        seenAt: new Date(),
-      },
-      update: {
-        seenAt: new Date(),
-      },
-    });
-
-    this.logger.log(`[INTRODUCTION_VIDEO_SEEN] customer: ${resolvedCustomerId} video: ${videoId}`);
-    return { success: true, message: 'Introduction video marked as seen', view };
+  ) : Promise<never> {
+throw new GoneException('This Customer/Lead operation has been removed');
   }
 
   /**
@@ -570,15 +466,8 @@ export class VideoService {
   async resetIntroductionViews(
     videoId: number,
     user: { id: number; customerId?: number | null; isSuperAdmin?: boolean },
-  ) {
-    await this.findOne(videoId, user);
-
-    const result = await this.prisma.customerMarketingVideoView.deleteMany({
-      where: { marketingVideoId: videoId },
-    });
-
-    this.logger.log(`[INTRODUCTION_VIEWS_RESET] videoId: ${videoId} deletedRecords: ${result.count}`);
-    return { success: true, message: `Reset ${result.count} views for marketing video ${videoId}` };
+  ) : Promise<never> {
+throw new GoneException('This Customer/Lead operation has been removed');
   }
 
   /**

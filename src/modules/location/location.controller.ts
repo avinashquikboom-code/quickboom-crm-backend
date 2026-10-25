@@ -36,7 +36,7 @@ export class LocationController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const targetCustomerId = customerIdQuery || customerId || user?.customerId;
+    const targetCustomerId = customerIdQuery || customerId || undefined;
     return this.locationService.getLiveLocations(targetCustomerId);
   }
 
@@ -49,7 +49,7 @@ export class LocationController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const targetCustomerId = customerIdQuery || customerId || user?.customerId || 1;
+    const targetCustomerId = customerIdQuery || customerId || undefined || 1;
     return this.locationService.getLocationHistory(
       targetCustomerId,
       employeeId,
@@ -64,7 +64,7 @@ export class LocationController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const targetCustomerId = customerIdQuery || customerId || user?.customerId;
+    const targetCustomerId = customerIdQuery || customerId || undefined;
     return this.locationService.getBranchGeofences(targetCustomerId);
   }
 
@@ -76,7 +76,7 @@ export class LocationController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    const targetCustomerId = customerIdQuery || customerId || user?.customerId || 1;
+    const targetCustomerId = customerIdQuery || customerId || undefined || 1;
     return this.locationService.createBranchGeofence(targetCustomerId, body);
   }
 
@@ -87,7 +87,7 @@ export class LocationController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const targetCustomerId = customerId || user?.customerId;
+    const targetCustomerId = customerId || undefined;
     return this.locationService.getBranchLocation(Number(id), targetCustomerId);
   }
 
@@ -99,7 +99,7 @@ export class LocationController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
-    const targetCustomerId = customerId || user?.customerId;
+    const targetCustomerId = customerId || undefined;
     return this.locationService.updateBranchLocation(Number(id), targetCustomerId, body);
   }
 }

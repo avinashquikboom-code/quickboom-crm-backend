@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsArray, IsInt, Min, IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { VisitStatus } from '@prisma/client';
 
 export class CreateVisitDto {
@@ -18,10 +18,7 @@ export class CreateVisitDto {
   @IsOptional()
   contactId?: string;
 
-  @ApiPropertyOptional({ example: '1' })
-  @IsString()
-  @IsOptional()
-  leadId?: string;
+  
 
   @ApiPropertyOptional({ example: '1' })
   @IsString()
@@ -198,4 +195,15 @@ export class UpdateVisitDto {
   @IsNumber()
   @IsOptional()
   longitude?: number;
+}
+
+export class BulkDeleteVisitsDto {
+  @ApiProperty({ type: [Number], description: 'IDs of visits to delete (maximum 100)' })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
 }

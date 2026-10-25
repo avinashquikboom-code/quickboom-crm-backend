@@ -52,7 +52,7 @@ export class LoggingInterceptor implements NestInterceptor {
     const startTime = Date.now();
 
     const user = (request as any).user;
-    const customerId = headers['x-customer-id'] || (user?.customerId ? user.customerId : undefined);
+    const customerId = headers['x-customer-id'] || (undefined);
     const userId = user?.id;
 
     // Structured Request Log
