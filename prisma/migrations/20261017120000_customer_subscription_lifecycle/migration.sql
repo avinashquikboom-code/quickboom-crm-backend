@@ -24,19 +24,22 @@ CREATE INDEX IF NOT EXISTS "crm_leads_assignedToId_idx" ON "crm_leads"("assigned
 CREATE INDEX IF NOT EXISTS "crm_leads_createdById_idx" ON "crm_leads"("createdById");
 
 -- CreateEnum
-CREATE TYPE "CustomerLifecycleStatus" AS ENUM ('INACTIVE', 'ACTIVE');
+DO $$ BEGIN
+  CREATE TYPE "CustomerLifecycleStatus" AS ENUM ('INACTIVE', 'ACTIVE');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AlterTable
-ALTER TABLE "Plan" ADD COLUMN     "billingIntervals" TEXT[] DEFAULT ARRAY['MONTHLY', 'YEARLY']::TEXT[],
-ADD COLUMN     "isRecommended" BOOLEAN NOT NULL DEFAULT false,
-ADD COLUMN     "taxRateBps" INTEGER NOT NULL DEFAULT 1800,
-ADD COLUMN     "yearlyDiscountBps" INTEGER NOT NULL DEFAULT 2000;
+ALTER TABLE "Plan" ADD COLUMN IF NOT EXISTS "billingIntervals" TEXT[] DEFAULT ARRAY['MONTHLY', 'YEARLY']::TEXT[],
+ADD COLUMN IF NOT EXISTS "isRecommended" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "taxRateBps" INTEGER NOT NULL DEFAULT 1800,
+ADD COLUMN IF NOT EXISTS "yearlyDiscountBps" INTEGER NOT NULL DEFAULT 2000;
 
 -- Initialize the new recommendation setting without changing any existing price.
 UPDATE "Plan" SET "isRecommended" = true WHERE "code" = 'STANDARD';
 
 -- CreateTable
-CREATE TABLE "customer_accounts" (
+CREATE TABLE IF NOT EXISTS "customer_accounts" (
     "id" SERIAL NOT NULL,
     "originLeadId" INTEGER NOT NULL,
     "userId" INTEGER,
@@ -53,21 +56,7 @@ CREATE TABLE "customer_accounts" (
 );
 
 -- CreateTable
-CREATE TABLE "customer_subscriptions" (
-    "id" SERIAL NOT NULL,
-    "customerId" INTEGER NOT NULL,
-    "planId" INTEGER NOT NULL,
-    "checkoutId" TEXT NOT NULL,
-    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
-    "startDate" TIMESTAMP(3) NOT NULL,
-    "endDate" TIMESTAMP(3) NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "customer_subscriptions_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "customer_checkouts" (
+CREATE TABLE IF NOT EXISTS "customer_checkouts" (
     "id" TEXT NOT NULL,
     "customerId" INTEGER NOT NULL,
     "planId" INTEGER NOT NULL,
@@ -90,56 +79,151 @@ CREATE TABLE "customer_checkouts" (
     CONSTRAINT "customer_checkouts_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX "customer_accounts_originLeadId_key" ON "customer_accounts"("originLeadId");
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "customer_subscriptions" (
+    "id" SERIAL NOT NULL,
+    "customerId" INTEGER NOT NULL,
+    "planId" INTEGER NOT NULL,
+    "checkoutId" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "startDate" TIMESTAMP(3) NOT NULL,
+    "endDate" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "customer_subscriptions_pkey" PRIMARY KEY ("id")
+);
+
+-- Ensure status is converted to TEXT so 'PENDING_ACTIVATION' and new string states can be stored
+DO $$ BEGIN
+  ALTER TABLE "customer_subscriptions" ALTER COLUMN "status" TYPE TEXT USING "status"::TEXT;
+  ALTER TABLE "customer_subscriptions" ALTER COLUMN "status" SET DEFAULT 'ACTIVE';
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- Add checkoutId column if not present
+ALTER TABLE "customer_subscriptions" ADD COLUMN IF NOT EXISTS "checkoutId" TEXT;
+
+-- Backfill synthetic checkout records for existing subscriptions if missing
+DO $$
+DECLARE
+  rec RECORD;
+  synthetic_chk_id TEXT;
+BEGIN
+  FOR rec IN SELECT id, "customerId", "planId", "createdAt" FROM "customer_subscriptions" WHERE "checkoutId" IS NULL
+  LOOP
+    synthetic_chk_id := 'legacy_chk_' || rec.id;
+    IF EXISTS (SELECT 1 FROM "customer_accounts" WHERE id = rec."customerId") THEN
+      INSERT INTO "customer_checkouts" (
+        "id", "customerId", "planId", "idempotencyKey", "billingCycle",
+        "basePaise", "discountPaise", "taxablePaise", "gstPaise", "totalPaise",
+        "taxRateBps", "yearlyDiscountBps", "status", "createdAt", "updatedAt"
+      ) VALUES (
+        synthetic_chk_id, rec."customerId", rec."planId", 'legacy_' || rec.id, 'MONTHLY',
+        0, 0, 0, 0, 0, 1800, 2000, 'PAID', rec."createdAt", CURRENT_TIMESTAMP
+      ) ON CONFLICT DO NOTHING;
+    END IF;
+    UPDATE "customer_subscriptions" SET "checkoutId" = synthetic_chk_id WHERE id = rec.id;
+  END LOOP;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "customer_subscriptions" WHERE "checkoutId" IS NULL) THEN
+    ALTER TABLE "customer_subscriptions" ALTER COLUMN "checkoutId" SET NOT NULL;
+  END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 -- CreateIndex
-CREATE UNIQUE INDEX "customer_accounts_userId_key" ON "customer_accounts"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_accounts_originLeadId_key" ON "customer_accounts"("originLeadId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "customer_subscriptions_checkoutId_key" ON "customer_subscriptions"("checkoutId");
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_accounts_userId_key" ON "customer_accounts"("userId");
 
 -- CreateIndex
-CREATE INDEX "customer_subscriptions_customerId_status_endDate_idx" ON "customer_subscriptions"("customerId", "status", "endDate");
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_subscriptions_checkoutId_key" ON "customer_subscriptions"("checkoutId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "customer_checkouts_orderId_key" ON "customer_checkouts"("orderId");
+CREATE INDEX IF NOT EXISTS "customer_subscriptions_customerId_status_endDate_idx" ON "customer_subscriptions"("customerId", "status", "endDate");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "customer_checkouts_paymentId_key" ON "customer_checkouts"("paymentId");
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_checkouts_orderId_key" ON "customer_checkouts"("orderId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "customer_checkouts_paymentHistoryId_key" ON "customer_checkouts"("paymentHistoryId");
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_checkouts_paymentId_key" ON "customer_checkouts"("paymentId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "customer_checkouts_customerId_idempotencyKey_key" ON "customer_checkouts"("customerId", "idempotencyKey");
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_checkouts_paymentHistoryId_key" ON "customer_checkouts"("paymentHistoryId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_checkouts_customerId_idempotencyKey_key" ON "customer_checkouts"("customerId", "idempotencyKey");
 
 -- AddForeignKey
-ALTER TABLE "customer_accounts" ADD CONSTRAINT "customer_accounts_originLeadId_fkey" FOREIGN KEY ("originLeadId") REFERENCES "crm_leads"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "customer_accounts" ADD CONSTRAINT "customer_accounts_originLeadId_fkey" FOREIGN KEY ("originLeadId") REFERENCES "crm_leads"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "customer_accounts" ADD CONSTRAINT "customer_accounts_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "customer_accounts" ADD CONSTRAINT "customer_accounts_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Safely reconcile customer_subscriptions customerId foreign key
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'customer_subscriptions_customerId_fkey'
+    AND confrelid = 'customer_accounts'::regclass
+  ) THEN
+    ALTER TABLE "customer_subscriptions" DROP CONSTRAINT IF EXISTS "customer_subscriptions_customerId_fkey";
+    IF NOT EXISTS (
+      SELECT 1 FROM "customer_subscriptions" cs
+      WHERE NOT EXISTS (SELECT 1 FROM "customer_accounts" ca WHERE ca.id = cs."customerId")
+    ) THEN
+      ALTER TABLE "customer_subscriptions"
+        ADD CONSTRAINT "customer_subscriptions_customerId_fkey"
+        FOREIGN KEY ("customerId") REFERENCES "customer_accounts"("id")
+        ON DELETE RESTRICT ON UPDATE CASCADE;
+    END IF;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customer_accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_planId_fkey" FOREIGN KEY ("planId") REFERENCES "Plan"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_planId_fkey" FOREIGN KEY ("planId") REFERENCES "Plan"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_checkoutId_fkey" FOREIGN KEY ("checkoutId") REFERENCES "customer_checkouts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "customer_subscriptions" ADD CONSTRAINT "customer_subscriptions_checkoutId_fkey" FOREIGN KEY ("checkoutId") REFERENCES "customer_checkouts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "customer_checkouts" ADD CONSTRAINT "customer_checkouts_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customer_accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "customer_checkouts" ADD CONSTRAINT "customer_checkouts_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customer_accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "customer_checkouts" ADD CONSTRAINT "customer_checkouts_planId_fkey" FOREIGN KEY ("planId") REFERENCES "Plan"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
+DO $$ BEGIN
+  ALTER TABLE "customer_checkouts" ADD CONSTRAINT "customer_checkouts_planId_fkey" FOREIGN KEY ("planId") REFERENCES "Plan"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Seed missing defaults once; preserve customized existing plans.
 INSERT INTO "Plan" ("name","code","description","monthlyPrice","yearlyPrice","userLimit","storageLimit","features","isActive","isRecommended","updatedAt") VALUES ('Basic Package','BASIC','Starter Plan for emerging businesses',9999,95990.40,5,5368709120,'["4 Reels","3 Creative Posts","1 Influencer Promotion","3 Stories","Social Media Account Management","Content Writing & Captions","Trending Hashtags","Meta Ads Campaign Setup & Management","Google Ads Campaign Setup & Management","Monthly Performance Report","Ads will run only during the content execution period.","Meta & Google Ads Budget will be paid by the client."]'::jsonb,true,false,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING;
 INSERT INTO "Plan" ("name","code","description","monthlyPrice","yearlyPrice","userLimit","storageLimit","features","isActive","isRecommended","updatedAt") VALUES ('Standard Package','STANDARD','Growth Plan for expanding companies',14999,143990.40,25,26843545600,'["6 Reels","4 Creative Posts","2 Influencer Promotions","5 Stories","Social Media Account Management","Trending Hashtags","Meta Ads Campaign Setup & Management","Google Ads Campaign Setup & Management","Monthly Performance Report","Ads will run only during the content execution period.","Meta & Google Ads Budget will be paid by the client."]'::jsonb,true,true,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING;
 INSERT INTO "Plan" ("name","code","description","monthlyPrice","yearlyPrice","userLimit","storageLimit","features","isActive","isRecommended","updatedAt") VALUES ('Premium Package','PREMIUM','Scale Plan for enterprise-level growth',25999,249590.40,100,107374182400,'["2 Product Reels","8 Influencer Reels (Total 10 Reels)","8 Creative Posts","30 Stories","Complete Social Media Management","Premium Content Strategy & Caption Writing","Advanced Hashtag Research","Meta Ads Campaign Setup & Management","Google Ads Campaign Setup & Management","Detailed Monthly Analytics Report","Priority Graphic Designing","Ads will run throughout the campaign/content execution period.","Meta & Google Ads Budget will be paid by the client."]'::jsonb,true,false,CURRENT_TIMESTAMP) ON CONFLICT DO NOTHING;
 
-ALTER TABLE "Plan" ADD CONSTRAINT "Plan_billing_rates_check" CHECK ("taxRateBps" BETWEEN 0 AND 10000 AND "yearlyDiscountBps" BETWEEN 0 AND 10000);
-ALTER TABLE "customer_checkouts" ADD CONSTRAINT "customer_checkout_amounts_check" CHECK ("basePaise" >= 0 AND "discountPaise" >= 0 AND "taxablePaise" = "basePaise" - "discountPaise" AND "gstPaise" >= 0 AND "totalPaise" = "taxablePaise" + "gstPaise");
+DO $$ BEGIN
+  ALTER TABLE "Plan" ADD CONSTRAINT "Plan_billing_rates_check" CHECK ("taxRateBps" BETWEEN 0 AND 10000 AND "yearlyDiscountBps" BETWEEN 0 AND 10000);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE "customer_checkouts" ADD CONSTRAINT "customer_checkout_amounts_check" CHECK ("basePaise" >= 0 AND "discountPaise" >= 0 AND "taxablePaise" = "basePaise" - "discountPaise" AND "gstPaise" >= 0 AND "totalPaise" = "taxablePaise" + "gstPaise");
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
