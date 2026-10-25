@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsDateString, IsInt, Min, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { WorkType, WorkStatus, WorkPriority } from '@prisma/client';
@@ -69,6 +70,13 @@ export class CreateWorkDto {
   @IsString()
   @IsOptional()
   purchaseId?: string;
+
+  @ApiPropertyOptional({ description: 'Active subscription belonging to the selected customer', minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  subscriptionId?: number;
 
   
 }
