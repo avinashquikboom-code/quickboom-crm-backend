@@ -39,19 +39,13 @@ export class LeadService {
   private scope(user: any): Prisma.LeadWhereInput {
     if (isUserAdmin(user)) return {};
     if (!user?.employee?.id || user.employee.status !== 'ACTIVE') throw new ForbiddenException('Active employee profile required');
-    return {
-      OR: [
-        { createdById: Number(user.id) },
-        { assignedToId: Number(user.employee.id) },
-        { assignedToId: null },
-      ],
-    };
+    return { assignedToId: Number(user.employee.id) };
   }
 
   private assertCanRead(lead: { createdById: number; assignedToId: number | null }, user: any) {
     this.scope(user);
-    if (!isUserAdmin(user) && lead.createdById !== Number(user.id) && lead.assignedToId !== Number(user?.employee?.id) && lead.assignedToId !== null) {
-      throw new ForbiddenException('Lead must be created by, assigned to you, or unassigned');
+    if (!isUserAdmin(user) && lead.assignedToId !== Number(user.employee.id)) {
+      throw new ForbiddenException('Lead must be assigned to you');
     }
   }
 

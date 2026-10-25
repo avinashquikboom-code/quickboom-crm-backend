@@ -181,22 +181,21 @@ describe('selected Data Capture bulk import', () => {
     expect(importOne).toHaveBeenCalledTimes(5);
   });
 
-  it('keeps imported Leads visible under the shared Admin and Mobile list scope', async () => {
-    const { service, tx } = setup();
+  it('keeps unassigned Admin imports out of employee scope', async () => {
+    const { service } = setup();
     const imported = await service.importCapture(11, admin, platform);
-    const prisma = { lead: { findMany: jest.fn().mockResolvedValue([imported.lead]), count: jest.fn().mockResolvedValue(1) },
-      $transaction: jest.fn(async queries => Promise.all(queries)) };
+    const assignedToEmployee = (where: any) => where.AND.some((part: any) => part.assignedToId !== undefined);
+    const prisma = { lead: {
+      findMany: jest.fn(async ({ where }) => assignedToEmployee(where) ? [] : [imported.lead]),
+      count: jest.fn(async ({ where }) => assignedToEmployee(where) ? 0 : 1),
+    }, $transaction: jest.fn(async queries => Promise.all(queries)) };
     const list = new LeadService(prisma as any);
-    for (const user of [admin, employee]) {
-      const result = await list.findAll({ page: 1, limit: 20 }, user);
-      expect(result.data[0]).toMatchObject({ id: 31, status: 'NEW', stage: { key: 'NEW' }, assignedToId: null });
-      const where = prisma.lead.findMany.mock.calls[prisma.lead.findMany.mock.calls.length - 1][0].where;
-      expect(where).not.toHaveProperty('createdFrom');
-      expect(where.AND).toContainEqual({ deletedAt: null });
-      if (user === employee) expect(where.AND).toContainEqual({ OR: [
-        { createdById: 4 }, { assignedToId: 7 }, { assignedToId: null },
-      ] });
-    }
+    expect((await list.findAll({ page: 1, limit: 20 }, admin)).data).toHaveLength(1);
+    expect((await list.findAll({ page: 1, limit: 20 }, employee)).data).toEqual([]);
+    const where = prisma.lead.findMany.mock.calls[1][0].where;
+    expect(where.AND).toContainEqual({ assignedToId: 7 });
+    expect(where).not.toHaveProperty('source');
+    expect(where).not.toHaveProperty('createdById');
   });
 });
 
