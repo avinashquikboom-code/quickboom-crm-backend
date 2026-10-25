@@ -63,4 +63,30 @@ describe('Assigned To is the employee lead access authority', () => {
     expect(options.where.OR).toContainEqual({ companyName: { contains: 'Contract', mode: 'insensitive' } });
     expect(options).toMatchObject({ skip: 10, take: 10 });
   });
+
+  it('allows Super Admin full lead visibility across all records', async () => {
+    const { service } = fixture();
+    const superAdmin = { id: 2, accountType: 'SUPER_ADMIN' };
+    const result = await service.findAll({ page: 1, limit: 20 }, superAdmin);
+    expect(result.data).toHaveLength(1);
+    expect(await service.findOne(966, superAdmin)).toMatchObject({ id: 966 });
+  });
+
+  it('allows admin to unassign a lead which immediately hides it from previous employee', async () => {
+    const { service, prisma } = fixture();
+    await service.update(966, { assignedToId: 8 }, admin);
+    expect((await service.findAll({ page: 1, limit: 20 }, employeeB)).data).toHaveLength(1);
+    await service.update(966, { assignedToId: null }, admin);
+    expect(prisma.lead.update.mock.calls[1][0].data).toEqual({ assignedTo: { disconnect: true } });
+    expect((await service.findAll({ page: 1, limit: 20 }, employeeB)).data).toEqual([]);
+    await expect(service.findOne(966, employeeB)).rejects.toBeInstanceOf(ForbiddenException);
+    expect((await service.findAll({ page: 1, limit: 20 }, admin)).data).toHaveLength(1);
+  });
+
+  it('rejects assigning an inactive or non-existent employee', async () => {
+    const { service, prisma } = fixture();
+    const { BadRequestException } = require('@nestjs/common');
+    await expect(service.update(966, { assignedToId: 999 }, admin)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.lead.update).not.toHaveBeenCalled();
+  });
 });

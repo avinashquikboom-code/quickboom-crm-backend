@@ -71,7 +71,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
     return customer;
   }
 
-  async list(user: any, search = "") {
+  async list(user: any, search = "", status?: string) {
     // Resolve the canonical employee through the authenticated user, not a lead ID
     // or an optional employee object in the session payload.
     const employee = !isUserAdmin(user) && user.accountType !== "CUSTOMER"
@@ -81,6 +81,118 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         })
       : null;
     const activeEmployee = employee?.status === "ACTIVE" && employee.mobileLoginEnabled;
+
+    // Fetch upcoming leads (leads in FINAL_CALL stage)
+    let upcomingItems: any[] = [];
+    if (this.prisma.lead?.findMany) {
+      const leadWhere: Prisma.LeadWhereInput = {
+        status: "FINAL_CALL" as any,
+        deletedAt: null,
+      };
+
+      if (!isUserAdmin(user)) {
+        if (activeEmployee) {
+          leadWhere.AND = [
+            {
+              OR: [
+                { createdById: Number(user.id) },
+                { assignedToId: employee.id },
+              ],
+            },
+          ];
+        } else {
+          leadWhere.createdById = Number(user.id);
+        }
+      }
+
+      if (search.trim()) {
+        const searchClause: Prisma.LeadWhereInput = {
+          OR: [
+            { companyName: { contains: search.trim(), mode: "insensitive" } },
+            { firstName: { contains: search.trim(), mode: "insensitive" } },
+            { lastName: { contains: search.trim(), mode: "insensitive" } },
+            { phone: { contains: search.trim(), mode: "insensitive" } },
+          ],
+        };
+        if (leadWhere.AND) {
+          (leadWhere.AND as Prisma.LeadWhereInput[]).push(searchClause);
+        } else {
+          leadWhere.AND = [searchClause];
+        }
+      }
+
+      const upcomingLeads = await this.prisma.lead.findMany({
+        where: leadWhere,
+        include: {
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+            },
+          },
+          customer: {
+            select: {
+              id: true,
+              status: true,
+            },
+          },
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+
+      upcomingItems = upcomingLeads.map((lead) => {
+        const assignedName = lead.assignedTo
+          ? [lead.assignedTo.firstName, lead.assignedTo.lastName].filter(Boolean).join(" ")
+          : "Unassigned";
+        const contactPerson =
+          [lead.firstName, lead.lastName].filter(Boolean).join(" ") ||
+          lead.companyName;
+        const customerId = lead.customer?.id
+          ? `CUST-${String(lead.customer.id).padStart(4, "0")}`
+          : `LEAD-${String(lead.id).padStart(4, "0")}`;
+
+        return {
+          id: lead.customer?.id ?? lead.id,
+          customerId,
+          customerCode: customerId,
+          originLeadId: lead.id,
+          leadId: String(lead.id),
+          name: lead.companyName,
+          companyName: lead.companyName,
+          businessName: lead.companyName,
+          customerName: contactPerson,
+          contactPerson,
+          email: lead.email,
+          phone: lead.phone,
+          address: lead.address,
+          city: lead.city,
+          state: lead.state,
+          pincode: lead.pincode,
+          source: lead.source,
+          status: "UPCOMING" as const,
+          customerStatus: "UPCOMING" as const,
+          leadStatus: lead.status,
+          leadStageName: "Final Call",
+          leadStageColor: "#EA580C",
+          assignedToId: lead.assignedToId,
+          assignedEmployee: assignedName,
+          assignedEmployeeCode: lead.assignedTo?.employeeCode,
+          hasUpcomingCall: true,
+          upcomingCallType: "Final Call",
+          upcomingCallDate: lead.updatedAt
+            ? lead.updatedAt.toISOString()
+            : lead.createdAt.toISOString(),
+          upcomingCallTime: "11:00 AM",
+          planName: null,
+          subscriptionStatus: "NO_PLAN",
+          createdAt: lead.createdAt.toISOString(),
+          updatedAt: lead.updatedAt.toISOString(),
+        };
+      });
+    }
+
     const where: Prisma.CustomerWhereInput = {
       deletedAt: null,
       lead: { deletedAt: null },
@@ -126,20 +238,50 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       where,
       orderBy: { id: "desc" },
     });
-    const data = [];
+    const customerDetails = [];
     for (const customer of customers)
-      data.push(await this.detail(user, customer.id, true));
+      customerDetails.push(await this.detail(user, customer.id, true));
+
+    const upcomingLeadIds = new Set(upcomingItems.map((u) => u.originLeadId).filter(Boolean));
+    const activeList = customerDetails.filter((c) => c.status === "ACTIVE");
+    const inactiveList = customerDetails.filter(
+      (c) =>
+        c.status === "INACTIVE" &&
+        !upcomingLeadIds.has(c.originLeadId) &&
+        c.leadStatus !== "FINAL_CALL",
+    );
+    const pendingList = customerDetails.filter(
+      (c) => c.subscriptionStatus === "PENDING_ACTIVATION" && c.status !== "ACTIVE",
+    );
+    const upcomingList = upcomingItems;
+
+    const counts = {
+      all: activeList.length + upcomingList.length + inactiveList.length,
+      active: activeList.length,
+      upcoming: upcomingList.length,
+      inactive: inactiveList.length,
+      pendingActivation: pendingList.length,
+    };
+
+    const normalizedStatus = status?.trim().toUpperCase();
+    let data: any[];
+    if (normalizedStatus === "UPCOMING") {
+      data = upcomingList;
+    } else if (normalizedStatus === "INACTIVE") {
+      data = inactiveList;
+    } else if (normalizedStatus === "ACTIVE") {
+      data = activeList;
+    } else if (normalizedStatus === "PENDING_ACTIVATION") {
+      data = pendingList;
+    } else {
+      // "ALL" or undefined
+      data = [...upcomingList, ...inactiveList, ...activeList];
+    }
+
     return {
       data,
       total: data.length,
-      counts: {
-        all: data.length,
-        active: data.filter((c) => c.status === "ACTIVE").length,
-        pendingActivation: data.filter(
-          (c) => c.subscriptionStatus === "PENDING_ACTIVATION",
-        ).length,
-        inactive: data.filter((c) => c.status === "INACTIVE").length,
-      },
+      counts,
     };
   }
 
@@ -152,12 +294,27 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
       const customer = await recalculateCustomer(tx, id);
       if (customer.deletedAt)
         throw new NotFoundException("Customer account not found");
+      let originatingLead: any = null;
       if (tx.lead?.findUnique && customer.originLeadId) {
-        const lead = await tx.lead.findUnique({
+        originatingLead = await tx.lead.findUnique({
           where: { id: customer.originLeadId },
-          select: { deletedAt: true },
+          select: {
+            deletedAt: true,
+            status: true,
+            phone: true,
+            email: true,
+            assignedToId: true,
+            assignedTo: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                employeeCode: true,
+              },
+            },
+          },
         });
-        if (lead?.deletedAt)
+        if (originatingLead?.deletedAt)
           throw new NotFoundException("Customer account not found");
       }
       const subscriptions = await tx.customerSubscription.findMany({
@@ -191,11 +348,16 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
           ? "PENDING_ACTIVATION"
           : "INACTIVE";
 
+      const assignedEmployee = originatingLead?.assignedTo
+        ? [originatingLead.assignedTo.firstName, originatingLead.assignedTo.lastName].filter(Boolean).join(" ")
+        : "Unassigned";
+
       return {
         ...customer,
         // The list and details API share the persisted customer primary key.
         // Display codes never act as identifiers or encode an originating lead.
         id: customer.id,
+        customerId: `CUST-${String(customer.id).padStart(4, '0')}`,
         customerCode: `CUST-${String(customer.id).padStart(4, '0')}`,
         assignedTeam: (customer as any).assignedTeamId
           ? await tx.team.findUnique({ where: { id: (customer as any).assignedTeamId },
@@ -210,6 +372,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         customerStatus: customer.status,
         name: customer.companyName,
         originLeadId: customer.originLeadId,
+        leadId: customer.originLeadId ? String(customer.originLeadId) : '',
         subscriptionStatus: subStatus,
         hasUpcomingCall: false,
         planName: currentSub?.plan.name,
@@ -217,6 +380,13 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
         subscriptionEndDate: currentSub?.endDate,
         activationDate: currentSub?.activationDate || currentSub?.startDate,
         purchaseDate: latestPurchase?.createdAt ?? null,
+        assignedToId: originatingLead?.assignedToId ?? null,
+        assignedEmployee,
+        assignedEmployeeCode: originatingLead?.assignedTo?.employeeCode,
+        leadStatus: originatingLead?.status ?? null,
+        leadStageName: originatingLead?.status === "WON" ? "Won" : (originatingLead?.status || null),
+        phone: customer.phone || originatingLead?.phone || null,
+        email: customer.email || originatingLead?.email || null,
         subscriptions,
       };
     });
@@ -308,6 +478,7 @@ export class CustomerService implements OnModuleInit, OnModuleDestroy {
 
   // Called only by customer-locked writers; calendar reads never generate work.
   private async ensurePurchasedSchedules(tx: Prisma.TransactionClient, customerId: number) {
+    if (typeof (tx as any)?.customer?.findFirst !== 'function') return;
     const customer = await tx.customer.findFirst({
       where: { id: customerId, deletedAt: null, lead: { deletedAt: null },
         assignedTeam: { isActive: true } },

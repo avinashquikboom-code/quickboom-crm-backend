@@ -66,8 +66,9 @@ export class CustomerController {
   @Get('customers') list(
     @CurrentUser() user: any,
     @Query('search') search?: string,
+    @Query('status') status?: string,
   ) {
-    return this.customers.list(user, search);
+    return this.customers.list(user, search, status);
   }
   @Get('customers/me') me(@CurrentUser() user: any) {
     return this.customers

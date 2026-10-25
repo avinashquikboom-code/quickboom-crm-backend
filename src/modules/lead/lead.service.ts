@@ -181,6 +181,7 @@ export class LeadService {
               firstName: true,
               lastName: true,
               employeeCode: true,
+              email: true,
             },
           },
         },
@@ -188,7 +189,7 @@ export class LeadService {
       this.prisma.lead.count({ where }),
     ]);
     const data = rawList.map((lead) => this.mapLeadWithStage(lead));
-    this.logger.debug(`[LEAD_LIST_DEBUG] ${JSON.stringify({ userId: user.id, employeeId: user.employee?.id, page, limit, filtered: Boolean(query.search || query.status || query.source || query.createdFrom), total, returnedIds: data.map((lead) => lead.id) })}`);
+    this.logger.debug(`[LEAD_LIST_DEBUG] ${JSON.stringify({ userId: user.id, employeeId: user.employee?.id, page, limit, filtered: Boolean(query.search || query.status || query.source || query.createdFrom), total, returnedIds: data.map((lead) => lead.id), records: data.map((lead) => ({ id: lead.id, assignedToId: lead.assignedToId, status: lead.status, stageId: lead.stageId })) })}`);
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const pagination = { page, limit, total, totalPages };
     return { data, items: data, total, page, limit, totalPages, pagination, meta: pagination };
@@ -204,6 +205,7 @@ export class LeadService {
             firstName: true,
             lastName: true,
             employeeCode: true,
+            email: true,
           },
         },
         dataCaptureRecords: {
@@ -358,6 +360,7 @@ export class LeadService {
               firstName: true,
               lastName: true,
               employeeCode: true,
+              email: true,
             },
           },
         },
@@ -525,13 +528,18 @@ export class LeadService {
 
       // Determine assignment
       let assignedToId: number | null = null;
-      const explicitEmpId = Number(dto?.assignedToId || dto?.employeeId);
+      const requestedEmployee = dto?.assignedToId ?? dto?.employeeId;
+      const explicitEmpId = Number(requestedEmployee);
+      if (requestedEmployee != null && (!Number.isSafeInteger(explicitEmpId) || explicitEmpId < 1)) {
+        throw new BadRequestException('A valid employee ID is required for assignment');
+      }
       if (!isUserAdmin(user) && explicitEmpId > 0 && explicitEmpId !== Number(user?.employee?.id)) {
         throw new ForbiddenException('Cannot assign a Lead to another employee');
       }
       if (!isNaN(explicitEmpId) && explicitEmpId > 0) {
         const emp = await tx.employee.findFirst({ where: { id: explicitEmpId, status: 'ACTIVE' }, select: { id: true } });
-        if (emp) assignedToId = emp.id;
+        if (!emp) throw new BadRequestException('Active assigned employee not found');
+        assignedToId = emp.id;
       } else if (!isUserAdmin(user) && user?.employee?.id) {
         assignedToId = Number(user.employee.id);
       }

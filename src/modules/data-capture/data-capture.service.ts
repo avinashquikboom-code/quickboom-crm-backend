@@ -550,6 +550,8 @@ try {
     let tProcessTotal = 0;
     let allPlaces: CapturedPlace[] = [];
     let googleApiRequests = 0;
+    let foundResults = 0;
+    let captureStatus = 'COMPLETED';
     let nextPageToken: string | undefined = undefined;
 
     if (mapsConfig.isEnabled && apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE') {
@@ -593,6 +595,7 @@ try {
 
           const tPStart = Date.now();
           const rawPlaces: any[] = response.data?.places || [];
+          foundResults += rawPlaces.length;
           nextPageToken = response.data?.nextPageToken;
 
           for (const p of rawPlaces) {
@@ -650,7 +653,16 @@ try {
           `[Google Places API] Live search failed for "${textQuery}": ${err.message}`,
         );
 
+        if (allPlaces.length === 0) {
+          await this.prisma.dataCaptureJob.create({ data: {
+            jobId, userId: effectiveUserId, keyword, location,
+            requestedResults: maxAllowed, capturedResults: 0,
+            googleApiRequests, foundResults, captureStatus: 'FAILED',
+            createdFrom: resolveCreatedFrom(req, user || userOrUserId, dto.createdFrom),
+          } });
+        }
         if (allPlaces.length > 0) {
+          captureStatus = 'PARTIALLY_COMPLETED';
           this.logger.log(`[Google Places API] Returning ${allPlaces.length} places captured before error`);
         } else if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
           throw new HttpException(
@@ -728,6 +740,8 @@ try {
         location,
         requestedResults: maxAllowed,
         capturedResults: allPlaces.length,
+        captureStatus,
+        foundResults,
         googleApiRequests,
         places: {
           create: placesToCreate,
@@ -1689,6 +1703,38 @@ try {
       affectedCount,
       message: `Bulk action "${dto.action}" completed successfully on ${affectedCount} records.`,
     };
+  }
+
+  async getCaptureHistory(user: any, query: { page?: number; limit?: number; search?: string; from?: string; to?: string }) {
+    const userId = Number(user?.id);
+    if (!Number.isSafeInteger(userId) || userId < 1) throw new UnauthorizedException('Authentication required');
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const where: any = { userId };
+    if (query.search?.trim()) {
+      where.OR = ['keyword', 'location'].map(field => ({ [field]: { contains: query.search.trim(), mode: 'insensitive' } }));
+    }
+    if (query.from || query.to) {
+      where.createdAt = {
+        ...(query.from ? { gte: new Date(query.from) } : {}),
+        ...(query.to ? { lt: new Date(query.to) } : {}),
+      };
+    }
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.dataCaptureJob.findMany({ where, skip: (page - 1) * limit, take: limit,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { jobId: true, keyword: true, location: true, createdAt: true,
+          requestedResults: true, capturedResults: true, foundResults: true, captureStatus: true },
+      }),
+      this.prisma.dataCaptureJob.count({ where }),
+    ]);
+    return { data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } };
+  }
+
+  async getCaptureHistoryRecords(user: any, jobId: string, query: DataCaptureQueryDto) {
+    const job = await this.prisma.dataCaptureJob.findFirst({ where: { jobId, userId: Number(user?.id) }, select: { jobId: true } });
+    if (!job) throw new NotFoundException('Capture session not found');
+    return this.listPlaces(undefined, { ...query, jobId }, user);
   }
 
   /**

@@ -1,5 +1,6 @@
 import {
   IsString,
+  IsDateString,
   IsNotEmpty,
   IsOptional,
   IsNumber,
@@ -409,4 +410,12 @@ export class ImportCaptureLeadsDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   ids: number[];
+}
+
+export class CaptureHistoryQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number = 1;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number = 20;
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsDateString() from?: string;
+  @IsOptional() @IsDateString() to?: string;
 }

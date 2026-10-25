@@ -22,7 +22,12 @@ export class CreateLeadDto {
   @IsOptional() @IsString() source?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(CrmLeadStatus) status?: CrmLeadStatus;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) assignedToId?: number;
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null && value !== undefined && value !== '')
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignedToId?: number | null;
   @IsOptional() @IsEnum(RecordCreatedFrom) createdFrom?: RecordCreatedFrom;
 }
 
@@ -63,7 +68,12 @@ export class UpdateLeadDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @Type(() => Number) @IsInt() stageId?: number;
   @IsOptional() @IsString() stage?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) assignedToId?: number;
+  @IsOptional()
+  @ValidateIf((_object, value) => value !== null && value !== undefined && value !== '')
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  assignedToId?: number | null;
 }
 
 export class BulkDeleteLeadsDto {

@@ -31,6 +31,10 @@ export class LeadController {
   updateStage(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLeadStageDto, @CurrentUser() user: any) {
     return this.leads.updateStage(id, dto, user);
   }
+  @Patch(':id/assign')
+  assign(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLeadDto, @CurrentUser() user: any) {
+    return this.leads.update(id, dto, user);
+  }
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLeadDto, @CurrentUser() user: any) {
     return this.leads.update(id, dto, user);

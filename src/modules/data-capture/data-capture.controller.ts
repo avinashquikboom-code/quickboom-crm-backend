@@ -28,6 +28,7 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataCaptureService } from './data-capture.service';
 import {
+  CaptureHistoryQueryDto,
   ImportCaptureLeadsDto,
   ExtractPlacesDto,
   CreateDataCaptureDto,
@@ -309,6 +310,18 @@ export class DataCaptureController {
    * GET /api/v1/data-capture/:id
    * Retrieves single Data Capture place
    */
+  @Get('history')
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  history(@CurrentUser() user: any, @Query() query: CaptureHistoryQueryDto) {
+    return this.dataCaptureService.getCaptureHistory(user, query);
+  }
+
+  @Get('history/:jobId/records')
+  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  historyRecords(@CurrentUser() user: any, @Param('jobId') jobId: string, @Query() query: DataCaptureQueryDto) {
+    return this.dataCaptureService.getCaptureHistoryRecords(user, jobId, query);
+  }
+
   @Get(':id')
   @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single Data Capture record' })

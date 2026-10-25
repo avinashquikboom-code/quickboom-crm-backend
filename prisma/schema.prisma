@@ -1437,6 +1437,8 @@ model DataCaptureJob {
   requestedResults  Int                @default(20)
   capturedResults   Int                @default(0)
   googleApiRequests Int                @default(1)
+  captureStatus     String?
+  foundResults      Int?
   createdFrom       RecordCreatedFrom?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
