@@ -63,57 +63,6 @@ describe('DataCaptureService', () => {
     prisma = module.get<PrismaService>(PrismaService);
   });
 
-  describe('saved record CRUD integration', () => {
-    const record = { id: 42, customerId: 7, businessName: 'Saved business',
-      source: 'MANUAL', status: 'CAPTURED', isImported: false,
-      createdAt: new Date(), updatedAt: new Date(), photos: [] };
-
-    it('rejects manual creation without a resolved tenant before writing', async () => {
-      await expect(service.createPlace(undefined, 9, { businessName: 'Business' }))
-        .rejects.toThrow('Select a tenant');
-      expect(mockPrisma.dataCapturePlace.create).not.toHaveBeenCalled();
-    });
-
-    it('creates a manual record using the authenticated tenant and returns its mapped fields', async () => {
-      mockPrisma.dataCapturePlace.create.mockResolvedValue(record);
-      const result = await service.createPlace(7, 9, { businessName: ' Saved business ', phone: '123' });
-      expect(mockPrisma.dataCapturePlace.create).toHaveBeenCalledWith({ data: expect.objectContaining({
-        customerId: 7, businessName: 'Saved business', phone: '123', source: 'MANUAL', status: 'CAPTURED',
-      }) });
-      expect(result).toEqual(expect.objectContaining({ id: 42, businessName: 'Saved business' }));
-    });
-
-    it('updates only supplied fields after a tenant-scoped lookup', async () => {
-      mockPrisma.dataCapturePlace.findFirst.mockResolvedValue(record);
-      mockPrisma.dataCapturePlace.update.mockResolvedValue({ ...record, notes: 'Reviewed' });
-      await service.updatePlace(7, 42, { notes: 'Reviewed' });
-      expect(mockPrisma.dataCapturePlace.findFirst).toHaveBeenCalledWith({
-        where: { id: 42, customerId: 7, deletedAt: null },
-      });
-      expect(mockPrisma.dataCapturePlace.update).toHaveBeenCalledWith({
-        where: { id: 42 }, data: expect.objectContaining({ notes: 'Reviewed', businessName: undefined, phone: undefined }),
-      });
-    });
-
-    it('soft deletes after checking tenant ownership', async () => {
-      mockPrisma.dataCapturePlace.findFirst.mockResolvedValue(record);
-      mockPrisma.dataCapturePlace.update.mockResolvedValue(record);
-      await service.deletePlace(7, 42);
-      expect(mockPrisma.dataCapturePlace.findFirst).toHaveBeenCalledWith({
-        where: { id: 42, customerId: 7, deletedAt: null },
-      });
-      expect(mockPrisma.dataCapturePlace.update).toHaveBeenCalledWith({
-        where: { id: 42 }, data: { deletedAt: expect.any(Date) },
-      });
-    });
-
-    it('does not update a record absent from the authenticated tenant', async () => {
-      mockPrisma.dataCapturePlace.findFirst.mockResolvedValue(null);
-      await expect(service.updatePlace(8, 42, { notes: 'Other tenant' })).rejects.toThrow('not found');
-      expect(mockPrisma.dataCapturePlace.update).not.toHaveBeenCalled();
-    });
-  });
-
   describe('listPlaces with status=ALL and source=ALL (Requirements 8, 9, 17, 25)', () => {
     it('omits customerId from where clause when customerId is undefined (Super Admin context) and filters out ALL', async () => {
       mockPrisma.dataCapturePlace.count.mockResolvedValue(2);

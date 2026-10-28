@@ -33,7 +33,15 @@ export class LeaveService {
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-return undefined;
+    if (customerId !== undefined && customerId !== null) {
+      const num = Number(customerId);
+      if (!isNaN(num) && num > 0) return num;
+    }
+    const firstCust = await this.prisma.customer.findFirst({
+      where: { isActive: true },
+      orderBy: { id: 'asc' },
+    });
+    return firstCust ? firstCust.id : 1;
   }
 
   // ==========================================
@@ -59,7 +67,7 @@ return undefined;
     todayEnd.setHours(23, 59, 59, 999);
 
     const whereEmp: any = {
-      
+      customerId: numCustomerId,
       status: 'ACTIVE',
     };
 
@@ -210,7 +218,7 @@ return undefined;
   async getLeaveTypes(customerId: number | string | undefined) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     let leaveTypes = await this.prisma.leaveType.findMany({
-      where: {  isActive: true },
+      where: { customerId: numCustomerId, isActive: true },
       orderBy: { id: 'asc' },
     });
 
@@ -224,10 +232,10 @@ return undefined;
 
       for (const dt of defaultTypes) {
         await this.prisma.leaveType.upsert({
-          where: { code: dt.code },
+          where: { customerId_code: { customerId: numCustomerId, code: dt.code } },
           update: {},
           create: {
-            
+            customerId: numCustomerId,
             name: dt.name,
             code: dt.code,
             daysAllowedPerYear: dt.daysAllowedPerYear,
@@ -236,7 +244,7 @@ return undefined;
       }
 
       leaveTypes = await this.prisma.leaveType.findMany({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
         orderBy: { id: 'asc' },
       });
     }
@@ -263,7 +271,7 @@ return undefined;
     const code = (dto.code || dto.name.substring(0, 4)).trim().toUpperCase();
     const existing = await this.prisma.leaveType.findFirst({
       where: {
-        
+        customerId: numCustomerId,
         OR: [
           { code },
           { name: { equals: dto.name.trim(), mode: 'insensitive' as Prisma.QueryMode } },
@@ -276,7 +284,7 @@ return undefined;
 
     return this.prisma.leaveType.create({
       data: {
-        
+        customerId: numCustomerId,
         name: dto.name.trim(),
         code,
         daysAllowedPerYear: dto.daysAllowedPerYear !== undefined ? Number(dto.daysAllowedPerYear) : 12,
@@ -293,7 +301,7 @@ return undefined;
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const existing = await this.prisma.leaveType.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
     });
     if (!existing) {
       throw new NotFoundException(`Leave type #${id} not found`);
@@ -315,7 +323,7 @@ return undefined;
   async deleteLeaveType(id: number, customerId: number | string | undefined) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const existing = await this.prisma.leaveType.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
     });
     if (!existing) {
       throw new NotFoundException(`Leave type #${id} not found`);
@@ -357,14 +365,14 @@ return undefined;
     const skip = (page - 1) * limit;
 
     const where: any = {
-      
+      customerId: numCustomerId,
     };
 
     // If caller is an Employee (mobile app), scope strictly to their own employee record
     const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE');
     if (isEmpUser) {
       const emp = user.employee || (await this.prisma.employee.findFirst({
-        where: { userId: user.id },
+        where: { userId: user.id, customerId: numCustomerId },
       }));
       if (emp) {
         where.employeeId = emp.id;
@@ -416,7 +424,7 @@ return undefined;
 
     const formatted = items.map((l) => ({
       id: l.id,
-      
+      customerId: l.customerId,
       employeeId: l.employeeId,
       employeeCode: l.employee?.employeeCode || `EMP-${l.employeeId}`,
       employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}`.trim() : 'Employee',
@@ -478,7 +486,7 @@ return undefined;
   async getLeaveRequestById(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const leave = await this.prisma.leaveRequest.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
       include: {
         employee: {
           include: {
@@ -497,7 +505,7 @@ return undefined;
 
     return {
       id: leave.id,
-      
+      customerId: leave.customerId,
       employeeId: leave.employeeId,
       employeeCode: leave.employee?.employeeCode || `EMP-${leave.employeeId}`,
       employeeName: leave.employee
@@ -541,7 +549,7 @@ return undefined;
 
     if (isEmpUser) {
       const selfEmp = user.employee || (await this.prisma.employee.findFirst({
-        where: { userId: user.id },
+        where: { userId: user.id, customerId: numCustomerId },
       }));
       if (!selfEmp) {
         throw new ForbiddenException('Authenticated employee profile not found');
@@ -556,7 +564,7 @@ return undefined;
           employeeId = user.employee.id;
         } else if (user?.id) {
           const emp = await this.prisma.employee.findFirst({
-            where: { userId: user.id },
+            where: { userId: user.id, customerId: numCustomerId },
           });
           if (emp) {
             employeeId = emp.id;
@@ -570,7 +578,7 @@ return undefined;
     }
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId },
+      where: { id: employeeId, customerId: numCustomerId },
     });
     if (!employee) {
       throw new NotFoundException(`Employee #${employeeId} not found`);
@@ -581,7 +589,7 @@ return undefined;
     let leaveType: any = null;
     if (leaveTypeId) {
       leaveType = await this.prisma.leaveType.findFirst({
-        where: { id: Number(leaveTypeId) },
+        where: { id: Number(leaveTypeId), customerId: numCustomerId },
       });
       if (!leaveType) {
         throw new NotFoundException(`Leave type #${leaveTypeId} not found`);
@@ -589,12 +597,12 @@ return undefined;
     } else {
       const typeName = dto.leaveTypeName || 'Casual Leave';
       leaveType = await this.prisma.leaveType.findFirst({
-        where: {  name: { equals: typeName, mode: 'insensitive' } },
+        where: { customerId: numCustomerId, name: { equals: typeName, mode: 'insensitive' } },
       });
       if (!leaveType) {
         leaveType = await this.prisma.leaveType.create({
           data: {
-            
+            customerId: numCustomerId,
             name: typeName,
             code: typeName.substring(0, 3).toUpperCase(),
             daysAllowedPerYear: 12,
@@ -652,7 +660,7 @@ return undefined;
     // 6. Create leave application with status = PENDING (DO NOT DEDUCT BALANCE)
     const created = await this.prisma.leaveRequest.create({
       data: {
-        
+        customerId: numCustomerId,
         employeeId,
         leaveTypeId: leaveType.id,
         fromDate,
@@ -681,7 +689,7 @@ return undefined;
           title: `New Leave Request: ${empName}`,
           body: `${empName} applied for ${created.days} day(s) of ${leaveTypeName} (${dateText}).`,
           type: 'LEAVE',
-          
+          customerId: numCustomerId,
           data: {
             type: 'LEAVE',
             leaveId: String(created.id),
@@ -719,7 +727,7 @@ return undefined;
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Fetch leave application inside transaction
       const leave = await tx.leaveRequest.findFirst({
-        where: { id },
+        where: { id, customerId: numCustomerId },
         include: { employee: true, leaveType: true },
       });
 
@@ -768,7 +776,7 @@ return undefined;
       if (!balance) {
         balance = await tx.employeeLeaveBalance.create({
           data: {
-            
+            customerId: numCustomerId,
             employeeId: leave.employeeId,
             leaveTypeId: leave.leaveTypeId,
             year: currentYear,
@@ -862,7 +870,7 @@ return undefined;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const leave = await tx.leaveRequest.findFirst({
-        where: { id },
+        where: { id, customerId: numCustomerId },
         include: { employee: true },
       });
 
@@ -918,7 +926,7 @@ return undefined;
 
     return this.prisma.$transaction(async (tx) => {
       const leave = await tx.leaveRequest.findFirst({
-        where: { id },
+        where: { id, customerId: numCustomerId },
         include: { employee: true, leaveType: true },
       });
 
@@ -991,7 +999,7 @@ return undefined;
 
     // 1. Fetch all configured active leave types for this customer
     let leaveTypes = await this.prisma.leaveType.findMany({
-      where: {  isActive: true },
+      where: { customerId: numCustomerId, isActive: true },
       orderBy: { id: 'asc' },
     });
 
@@ -1006,10 +1014,10 @@ return undefined;
 
       for (const dt of defaultTypes) {
         await this.prisma.leaveType.upsert({
-          where: { code: dt.code },
+          where: { customerId_code: { customerId: numCustomerId, code: dt.code } },
           update: {},
           create: {
-            
+            customerId: numCustomerId,
             name: dt.name,
             code: dt.code,
             daysAllowedPerYear: dt.daysAllowedPerYear,
@@ -1018,7 +1026,7 @@ return undefined;
       }
 
       leaveTypes = await this.prisma.leaveType.findMany({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
         orderBy: { id: 'asc' },
       });
     }
@@ -1027,7 +1035,7 @@ return undefined;
     const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE');
     if (isEmpUser) {
       const emp = user.employee || (await this.prisma.employee.findFirst({
-        where: { userId: user.id },
+        where: { userId: user.id, customerId: numCustomerId },
       }));
 
       if (emp) {
@@ -1059,7 +1067,7 @@ return undefined;
 
     // 3. Admin: Fetch all employees matching filter
     const whereEmp: any = {
-      
+      customerId: numCustomerId,
       status: 'ACTIVE',
     };
 
@@ -1207,7 +1215,7 @@ return undefined;
     const currentYear = new Date().getFullYear();
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId },
+      where: { id: employeeId, customerId: numCustomerId },
       include: {
         department: true,
         designation: true,
@@ -1240,7 +1248,7 @@ return undefined;
     }
 
     const leaveTypes = await this.prisma.leaveType.findMany({
-      where: {  isActive: true },
+      where: { customerId: numCustomerId, isActive: true },
       orderBy: { id: 'asc' },
     });
 
@@ -1340,7 +1348,7 @@ return undefined;
     const currentYear = new Date().getFullYear();
 
     const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId },
+      where: { id: employeeId, customerId: numCustomerId },
       include: {
         leaveRequests: {
           where: {
@@ -1360,7 +1368,7 @@ return undefined;
     }
 
     const leaveType = await this.prisma.leaveType.findFirst({
-      where: { id: dto.leaveTypeId },
+      where: { id: dto.leaveTypeId, customerId: numCustomerId },
     });
 
     if (!leaveType) {
@@ -1418,7 +1426,7 @@ return undefined;
       } else {
         updatedBalance = await tx.employeeLeaveBalance.create({
           data: {
-            
+            customerId: numCustomerId,
             employeeId,
             leaveTypeId: dto.leaveTypeId,
             year: currentYear,
@@ -1436,7 +1444,7 @@ return undefined;
 
       const history = await tx.leaveAdjustmentHistory.create({
         data: {
-          
+          customerId: numCustomerId,
           employeeId,
           leaveTypeId: dto.leaveTypeId,
           balanceId: updatedBalance.id,
@@ -1472,7 +1480,7 @@ return undefined;
     },
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = {  };
+    const where: any = { customerId: numCustomerId };
 
     if (query?.isActive !== undefined) {
       where.isActive = query.isActive;
@@ -1528,7 +1536,7 @@ return undefined;
   async getPublicHolidayById(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const holiday = await this.prisma.publicHoliday.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
       include: { office: true },
     });
 
@@ -1564,7 +1572,7 @@ return undefined;
 
     const existing = await this.prisma.publicHoliday.findFirst({
       where: {
-        
+        customerId: numCustomerId,
         date: { gte: dayStart, lte: dayEnd },
         officeId: dto.officeId ? Number(dto.officeId) : null,
       },
@@ -1579,7 +1587,7 @@ return undefined;
     let officeId: number | null = null;
     if (dto.officeId) {
       const office = await this.prisma.branchGeofence.findFirst({
-        where: { id: Number(dto.officeId) },
+        where: { id: Number(dto.officeId), customerId: numCustomerId },
       });
       if (!office) {
         throw new BadRequestException(`Office #${dto.officeId} not found`);
@@ -1589,7 +1597,7 @@ return undefined;
 
     return this.prisma.publicHoliday.create({
       data: {
-        
+        customerId: numCustomerId,
         name: trimmedName,
         date: holidayDate,
         description: dto.description?.trim() || null,
@@ -1610,7 +1618,7 @@ return undefined;
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const holiday = await this.prisma.publicHoliday.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
     });
 
     if (!holiday) {
@@ -1625,7 +1633,7 @@ return undefined;
     if (dto.officeId !== undefined) {
       if (dto.officeId) {
         const office = await this.prisma.branchGeofence.findFirst({
-          where: { id: Number(dto.officeId) },
+          where: { id: Number(dto.officeId), customerId: numCustomerId },
         });
         if (!office) throw new BadRequestException(`Office #${dto.officeId} not found`);
         data.officeId = office.id;
@@ -1644,7 +1652,7 @@ return undefined;
   async deletePublicHoliday(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const holiday = await this.prisma.publicHoliday.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
     });
 
     if (!holiday) {
@@ -1669,19 +1677,19 @@ return undefined;
 
     const [attendance, leave, salary, claim] = await Promise.all([
       this.prisma.attendancePolicy.findFirst({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.leavePolicy.findFirst({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.salaryPolicy.findFirst({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.claimPolicy.findFirst({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
         orderBy: { updatedAt: 'desc' },
       }),
     ]);
@@ -1788,207 +1796,18 @@ return undefined;
     };
   }
 
-  async getAttendancePolicy(customerId?: number | string, officeId?: number) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = {  isActive: true };
-    if (officeId) {
-      where.officeId = Number(officeId);
-    }
-    const policy = await this.prisma.attendancePolicy.findFirst({
-      where,
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    const defaultPolicy = {
-      name: 'Standard Attendance Policy',
-      officeStartTime: '09:30',
-      officeEndTime: '18:30',
-      workingDaysPerWeek: 5,
-      workingHoursPerDay: 8.0,
-      punchInRequired: true,
-      earlyPunchInAllowed: true,
-      multiplePunchInAllowed: false,
-      gracePeriodMinutes: 15,
-      lateArrivalThresholdMins: 30,
-      lateRuleAction: 'MARK_LATE',
-      punchOutRequired: true,
-      minWorkingHours: 8.0,
-      earlyCheckoutGraceMinutes: 15,
-      earlyCheckoutThresholdMins: 30,
-      earlyCheckoutAction: 'MARK_EARLY',
-      autoPunchOut: false,
-      fullDayAbsenceDeductionPct: 100.0,
-      halfDayDeductionPct: 50.0,
-      lateArrivalDeductionPct: 25.0,
-      earlyCheckoutDeductionPct: 25.0,
-      breakExcessDeductionPct: 100.0,
-      minWorkingHoursForHalfDay: 4.0,
-      overtimeEligible: true,
-      breakAllowed: true,
-      breakRequired: false,
-      maxBreakDurationMins: 60,
-      minBreakDurationMins: 15,
-      maxBreaksPerDay: 2,
-      breakGracePeriodMins: 5,
-      breakType: 'UNPAID',
-      breakExcessAction: 'DEDUCT_EXCESS',
-      allowBreakExtension: false,
-      officeAttendanceRequired: true,
-      gpsRequired: true,
-      allowOutsideCheckIn: false,
-      allowOutsideCheckOut: false,
-      isActive: true,
-      updatedByName: 'Default System Policy',
-    };
-
-    const finalPolicy = policy || defaultPolicy;
-    return {
-      success: true,
-      data: finalPolicy,
-      ...finalPolicy,
-    };
-  }
-
-  async getLeavePolicy(customerId?: number | string, officeId?: number) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = {  isActive: true };
-    if (officeId) {
-      where.officeId = Number(officeId);
-    }
-    const policy = await this.prisma.leavePolicy.findFirst({
-      where,
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    const defaultPolicy = {
-      name: 'Standard Leave Policy',
-      allowHalfDay: true,
-      allowBackdatedLeave: false,
-      maxBackdatedDays: 3,
-      allowFutureLeave: true,
-      maxFutureDays: 90,
-      allowProbationLeave: false,
-      includeHolidaysInLeave: false,
-      includeWeekendsInLeave: false,
-      minNoticePeriodDays: 2,
-      maxConsecutiveDays: 10,
-      requiresManagerApproval: true,
-      requiresHrApproval: true,
-      requiresAttachmentAboveDays: 3,
-      isActive: true,
-      updatedByName: 'Default System Policy',
-    };
-
-    const finalPolicy = policy || defaultPolicy;
-    return {
-      success: true,
-      data: finalPolicy,
-      ...finalPolicy,
-    };
-  }
-
-  async getSalaryPolicy(customerId?: number | string, officeId?: number) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = {  isActive: true };
-    if (officeId) {
-      where.officeId = Number(officeId);
-    }
-    const policy = await this.prisma.salaryPolicy.findFirst({
-      where,
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    const defaultPolicy = {
-      name: 'Standard Salary Policy',
-      salaryCycle: 'MONTHLY',
-      payrollCycleStartDay: 1,
-      workingDaysPerMonth: 30,
-      fullDayDeductionPct: 100.0,
-      halfDayDeductionPct: 50.0,
-      lateArrivalDeductionPct: 25.0,
-      earlyCheckoutDeductionPct: 25.0,
-      overtimeEnabled: true,
-      overtimeMultiplier: 1.5,
-      overtimeCalculationMethod: 'HOURLY_BASE',
-      commissionEnabled: false,
-      commissionPercentage: 0.0,
-      pfPercent: 12.0,
-      esiPercent: 0.75,
-      isActive: true,
-      updatedByName: 'Default System Policy',
-    };
-
-    const finalPolicy = policy || defaultPolicy;
-    return {
-      success: true,
-      data: finalPolicy,
-      ...finalPolicy,
-    };
-  }
-
-  async getClaimPolicy(customerId?: number | string, officeId?: number) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = {  isActive: true };
-    if (officeId) {
-      where.officeId = Number(officeId);
-    }
-    const policy = await this.prisma.claimPolicy.findFirst({
-      where,
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    const defaultPolicy = {
-      name: 'Standard Claim Policy',
-      claimsEnabled: true,
-      maxClaimAmountPerReceipt: 25000.0,
-      monthlyClaimLimit: 100000.0,
-      annualClaimLimit: 500000.0,
-      receiptRequired: true,
-      receiptRequiredAboveAmount: 500.0,
-      approvalRequired: true,
-      autoApprovalThreshold: 0.0,
-      allowedCategories: [
-        'TRAVEL',
-        'FOOD',
-        'FUEL',
-        'ACCOMMODATION',
-        'MEDICAL',
-        'COMMUNICATION',
-        'OFFICE_SUPPLIES',
-        'OTHER',
-      ],
-      isActive: true,
-      updatedByName: 'Default System Policy',
-    };
-
-    const finalPolicy = policy || defaultPolicy;
-    return {
-      success: true,
-      data: finalPolicy,
-      ...finalPolicy,
-    };
-  }
-
   async upsertAttendancePolicy(user: any, customerId: number | string | undefined, dto: UpsertAttendancePolicyDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const updatedByName = user?.firstName
       ? `${user.firstName} ${user.lastName || ''}`.trim()
       : 'HR Administrator';
 
-    let existing: any = null;
-    if (dto.id && Number(dto.id) > 0) {
-      existing = await this.prisma.attendancePolicy.findUnique({
-        where: { id: Number(dto.id) },
-      });
-    }
-    if (!existing) {
-      existing = await this.prisma.attendancePolicy.findFirst({
-        where: {  officeId: dto.officeId ? Number(dto.officeId) : null },
-      });
-    }
+    const existing = await this.prisma.attendancePolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
 
     const data: any = {
-      
+      customerId: numCustomerId,
       officeId: dto.officeId ? Number(dto.officeId) : null,
       name: dto.name?.trim() || 'Standard Attendance Policy',
       officeStartTime: dto.officeStartTime?.trim() || '09:30',
@@ -2053,20 +1872,12 @@ return undefined;
       ? `${user.firstName} ${user.lastName || ''}`.trim()
       : 'HR Administrator';
 
-    let existing: any = null;
-    if (dto.id && Number(dto.id) > 0) {
-      existing = await this.prisma.leavePolicy.findUnique({
-        where: { id: Number(dto.id) },
-      });
-    }
-    if (!existing) {
-      existing = await this.prisma.leavePolicy.findFirst({
-        where: {  officeId: dto.officeId ? Number(dto.officeId) : null },
-      });
-    }
+    const existing = await this.prisma.leavePolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
 
     const data: any = {
-      
+      customerId: numCustomerId,
       officeId: dto.officeId ? Number(dto.officeId) : null,
       name: dto.name?.trim() || 'Standard Leave Policy',
       allowHalfDay: dto.allowHalfDay ?? true,
@@ -2108,20 +1919,12 @@ return undefined;
       ? `${user.firstName} ${user.lastName || ''}`.trim()
       : 'HR Administrator';
 
-    let existing: any = null;
-    if (dto.id && Number(dto.id) > 0) {
-      existing = await this.prisma.salaryPolicy.findUnique({
-        where: { id: Number(dto.id) },
-      });
-    }
-    if (!existing) {
-      existing = await this.prisma.salaryPolicy.findFirst({
-        where: {  officeId: dto.officeId ? Number(dto.officeId) : null },
-      });
-    }
+    const existing = await this.prisma.salaryPolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
 
     const data: any = {
-      
+      customerId: numCustomerId,
       officeId: dto.officeId ? Number(dto.officeId) : null,
       name: dto.name?.trim() || 'Standard Salary Policy',
       salaryCycle: dto.salaryCycle?.trim() || 'MONTHLY',
@@ -2165,20 +1968,12 @@ return undefined;
       ? `${user.firstName} ${user.lastName || ''}`.trim()
       : 'HR Administrator';
 
-    let existing: any = null;
-    if (dto.id && Number(dto.id) > 0) {
-      existing = await this.prisma.claimPolicy.findUnique({
-        where: { id: Number(dto.id) },
-      });
-    }
-    if (!existing) {
-      existing = await this.prisma.claimPolicy.findFirst({
-        where: {  officeId: dto.officeId ? Number(dto.officeId) : null },
-      });
-    }
+    const existing = await this.prisma.claimPolicy.findFirst({
+      where: { customerId: numCustomerId, officeId: dto.officeId ? Number(dto.officeId) : null },
+    });
 
     const data: any = {
-      
+      customerId: numCustomerId,
       officeId: dto.officeId ? Number(dto.officeId) : null,
       name: dto.name?.trim() || 'Standard Claim Policy',
       claimsEnabled: dto.claimsEnabled ?? true,

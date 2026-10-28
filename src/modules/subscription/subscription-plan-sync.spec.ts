@@ -103,7 +103,6 @@ describe('Subscription Plan Deletion & Sync Specification', () => {
               findUnique: jest.fn().mockResolvedValue({ id: 1, name: 'Test Customer', email: 'test@example.com' }),
             },
             customerSubscription: {
-              findUnique: jest.fn().mockResolvedValue(null),
               findMany: jest.fn().mockResolvedValue([]),
               findFirst: jest.fn().mockResolvedValue(null),
               create: jest.fn().mockResolvedValue({ id: 101, planId: 10, status: 'ACTIVE' }),
@@ -260,49 +259,4 @@ describe('Subscription Plan Deletion & Sync Specification', () => {
       expect(order.totalAmountRupees).toBe(11800);
     });
   });
-
-  describe('4. Direct Plan Operations & Modifications', () => {
-    it('rejects upgrading to a deleted plan with BadRequestException', async () => {
-      jest.spyOn(prisma.customerSubscription, 'findUnique').mockResolvedValueOnce({
-        id: 100,
-        customerId: 1,
-        planId: 10,
-        status: 'ACTIVE',
-        billingCycle: 'MONTHLY',
-        plan: mockActivePlan,
-      } as any);
-
-      await expect(
-        subscriptionService.changeCustomerPlan(100, {
-          newPlanId: 20, // mockDeletedPlan
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('rejects upgrading to an inactive plan with BadRequestException', async () => {
-      jest.spyOn(prisma.customerSubscription, 'findUnique').mockResolvedValueOnce({
-        id: 100,
-        customerId: 1,
-        planId: 10,
-        status: 'ACTIVE',
-        billingCycle: 'MONTHLY',
-        plan: mockActivePlan,
-      } as any);
-
-      await expect(
-        subscriptionService.changeCustomerPlan(100, {
-          newPlanId: 30, // mockInactivePlan
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('rejects activating a deleted plan directly with BadRequestException', async () => {
-      await expect(
-        subscriptionService.createOrActivateCustomerSubscription(1, {
-          planId: 20, // mockDeletedPlan
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
 });
-

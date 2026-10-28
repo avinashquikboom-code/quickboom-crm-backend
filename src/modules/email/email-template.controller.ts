@@ -45,7 +45,7 @@ export class EmailTemplateController {
     @Query('isActive') isActive?: string,
     @Query('search') search?: string,
   ) {
-    return this.emailTemplateService.findAll(undefined, { category, isActive, search });
+    return this.emailTemplateService.findAll(user?.customerId, { category, isActive, search });
   }
 
   @Get('events')
@@ -60,7 +60,7 @@ export class EmailTemplateController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.findOne(id, undefined);
+    return this.emailTemplateService.findOne(id, user?.customerId);
   }
 
   @Post()
@@ -69,7 +69,7 @@ export class EmailTemplateController {
     @Body() dto: CreateEmailTemplateDto,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.create(dto, undefined);
+    return this.emailTemplateService.create(dto, user?.customerId);
   }
 
   @Put(':id')
@@ -79,7 +79,7 @@ export class EmailTemplateController {
     @Body() dto: UpdateEmailTemplateDto,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.update(id, dto, undefined);
+    return this.emailTemplateService.update(id, dto, user?.customerId);
   }
 
   @Patch(':id/status')
@@ -89,7 +89,7 @@ export class EmailTemplateController {
     @Body('isActive') isActive: boolean,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.setActive(id, isActive, undefined);
+    return this.emailTemplateService.setActive(id, isActive, user?.customerId);
   }
 
   @Patch(':id/toggle')
@@ -98,7 +98,7 @@ export class EmailTemplateController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.toggleActive(id, undefined);
+    return this.emailTemplateService.toggleActive(id, user?.customerId);
   }
 
   @Post(':id/duplicate')
@@ -107,7 +107,7 @@ export class EmailTemplateController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.duplicate(id, undefined);
+    return this.emailTemplateService.duplicate(id, user?.customerId);
   }
 
   @Delete(':id')
@@ -116,7 +116,7 @@ export class EmailTemplateController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.remove(id, undefined);
+    return this.emailTemplateService.remove(id, user?.customerId);
   }
 
   @Post('preview')
@@ -132,7 +132,7 @@ export class EmailTemplateController {
     @Body('variables') variables: Record<string, any>,
     @CurrentUser() user: any,
   ) {
-    return this.emailTemplateService.previewById(id, undefined, variables);
+    return this.emailTemplateService.previewById(id, user?.customerId, variables);
   }
 
   @Post('test-send')
@@ -146,11 +146,11 @@ export class EmailTemplateController {
 
     if (!subject || !body) {
       if (dto.templateId) {
-        const tpl = await this.emailTemplateService.findOne(Number(dto.templateId), undefined);
+        const tpl = await this.emailTemplateService.findOne(Number(dto.templateId), user?.customerId);
         subject = subject || tpl.subject;
         body = body || tpl.body;
       } else if (dto.templateKey) {
-        const tpl = await this.emailTemplateService.findByKey(dto.templateKey, undefined);
+        const tpl = await this.emailTemplateService.findByKey(dto.templateKey, user?.customerId);
         if (tpl) {
           subject = subject || tpl.subject;
           body = body || tpl.body;

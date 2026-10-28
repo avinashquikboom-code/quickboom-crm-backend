@@ -10,13 +10,15 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Never let two deploys run at once; cancel an in-flight one on a newer push.
-  group: deploy-production
-  cancel-in-progress: true
+  # Never let two deploys run at once. A newer push waits for the running one
+  # instead of cancelling it: cancelling mid-deploy could leave the API container stopped.
+  # Own group name on purpose: the older copy of this file on main uses "deploy-production"
+  # with cancel-in-progress: true, so a push to main must not share a group with a deploy.
+  group: deploy-production-api
+  cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-south-1
-  # Must match API_ECR_REPOSITORY in deploy/docker/config.sh on the server.
+  # Must match the backend image name in config.sh on the server (BACKEND_IMAGE).
   ECR_REPOSITORY: qcrm-admin-backend
   # Server folder with the deploy scripts (symlink to /var/www/qbapp/deploy; see /var/www/qbapp/README.md).
   DEPLOY_DIR: /var/www/qbapp.online

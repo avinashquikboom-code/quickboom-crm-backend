@@ -1,4 +1,3 @@
-import { CustomerModule } from '../customer/customer.module';
 import { Module } from '@nestjs/common';
 import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
@@ -9,10 +8,9 @@ import { NotificationModule } from '../notification/notification.module';
 import { InvoiceModule } from '../invoice/invoice.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { CommissionModule } from '../commission/commission.module';
-import { CouponModule } from '../subscription/coupon.module';
 
 @Module({
-  imports: [CustomerModule, PrismaModule, ScheduleModule, WorkModule, NotificationModule, InvoiceModule, WhatsappModule, CommissionModule, CouponModule],
+  imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, InvoiceModule, WhatsappModule, CommissionModule],
   controllers: [PaymentController],
   providers: [PaymentService],
   exports: [PaymentService],

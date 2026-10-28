@@ -36,40 +36,18 @@ export class TransformInterceptor<T>
       map((data) => {
         // If data contains pagination or meta or custom data object
         if (data && typeof data === 'object' && 'data' in data) {
-          const pagination = data.pagination ?? (data.meta ? {
-            page: data.meta.page ?? data.page,
-            limit: data.meta.limit ?? data.meta.pageSize ?? data.limit,
-            total: data.meta.total ?? data.total,
-            totalPages: data.meta.totalPages ?? data.totalPages,
-          } : (data.total !== undefined ? {
-            page: data.page,
-            limit: data.limit,
-            total: data.total,
-            totalPages: data.totalPages,
-          } : undefined));
-          const meta = data.meta ?? pagination;
-
           return {
             statusCode: response.statusCode,
             success: typeof data.success === 'boolean' ? data.success : true,
             message: data.message || 'Operation completed successfully',
             data: data.data,
-            items: data.items ?? (Array.isArray(data.data) ? data.data : undefined),
             counts: data.counts,
             summary: data.summary,
             balances: data.balances,
-            pagination,
-            meta,
-            page: data.page ?? pagination?.page,
-            limit: data.limit ?? pagination?.limit,
-            total: data.total ?? pagination?.total,
-            totalPages: data.totalPages ?? pagination?.totalPages,
-            // Preserve sibling subscription fields. Wrapping `{ data }` must not
-            // drop upcomingPlan / currentPlan or Flutter cannot see a purchased plan
-            // whose startDate is still in the future.
-            upcomingPlan: data.upcomingPlan,
-            currentPlan: data.currentPlan,
-            effectivePlan: data.effectivePlan,
+            pagination: data.pagination,
+            total: data.total ?? data.pagination?.total,
+            totalPages: data.totalPages ?? data.pagination?.totalPages,
+            meta: data.meta,
           };
         }
 

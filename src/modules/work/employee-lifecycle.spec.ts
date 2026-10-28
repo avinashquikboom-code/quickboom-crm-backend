@@ -3,7 +3,6 @@ import { WorkService } from './work.service';
 import { EmployeeService } from '../employee/employee.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
-import { PlanScheduleGateway } from './plan-schedule.gateway';
 import { WorkStatus, WorkType } from '@prisma/client';
 
 describe('Customer Booking -> Employee Assignment -> Calendar Visibility Lifecycle', () => {
@@ -94,7 +93,6 @@ describe('Customer Booking -> Employee Assignment -> Calendar Visibility Lifecyc
         EmployeeService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: PlanAccessService, useValue: {} },
-        { provide: PlanScheduleGateway, useValue: { server: { to: () => ({ emit: () => {} }) } } },
       ],
     }).compile();
 

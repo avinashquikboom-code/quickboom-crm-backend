@@ -109,10 +109,6 @@ export class CreateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  salaryStructure?: any;
-
-  @ApiPropertyOptional()
-  @IsOptional()
   emergencyContact?: any;
 
   @ApiPropertyOptional()
@@ -242,10 +238,6 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   bankDetails?: any;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  salaryStructure?: any;
 
   @ApiPropertyOptional()
   @IsOptional()

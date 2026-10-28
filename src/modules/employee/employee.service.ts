@@ -7,20 +7,18 @@ import {
   Logger,
   Inject,
   forwardRef,
-  Optional,
 } from '@nestjs/common';
-import { teamMemberEligibility } from '../team/team-member-eligibility.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
-import { Prisma, AttendanceStatus } from '@prisma/client';
+import { RoleType, Prisma, AccessOverrideType, AttendanceStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
 import {
   getBusinessDate,
   getBusinessDayRange,
   formatTimeInTimezone,
   formatDurationHoursMinutes,
 } from '../../common/utils/timezone.util';
-import { isUserAdmin } from '../../common/utils/account.util';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
 
 export interface FindAllEmployeesParams {
@@ -38,7 +36,6 @@ export interface FindAllEmployeesParams {
   limit?: number;
   excludeAdmins?: boolean;
   bpoOnly?: boolean;
-  eligibleForTeamId?: number;
 }
 
 export interface EmployeeFindOneParams {
@@ -48,7 +45,7 @@ export interface EmployeeFindOneParams {
 }
 
 export interface CreateEmployeeParams {
-  customerId?: number | string;
+  customerId: number | string;
   dto: CreateEmployeeDto;
   isSuperAdmin?: boolean;
   bypassUserLimit?: boolean;
@@ -61,8 +58,6 @@ export interface UpdateEmployeeParams {
   dto: UpdateEmployeeDto;
 }
 
-import { PayrollService } from '../payroll/payroll.service';
-
 import { PlanAccessService } from '../subscription/plan-access.service';
 
 @Injectable()
@@ -71,13 +66,9 @@ export class EmployeeService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @Optional()
     private readonly planAccessService?: PlanAccessService,
-    @Optional()
     @Inject(forwardRef(() => PlanScheduleGateway))
     private readonly planScheduleGateway?: PlanScheduleGateway,
-    @Optional()
-    private readonly payrollService?: PayrollService,
   ) {}
 
   async findAll(params: FindAllEmployeesParams) {
@@ -98,7 +89,15 @@ export class EmployeeService {
     const skip = (page - 1) * limit;
     const where: any = {};
 
-
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) {
+        throw new BadRequestException('Invalid customerId provided');
+      }
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for employee access');
+    }
 
     if (status && status !== 'ALL') {
       where.status = status;
@@ -111,7 +110,23 @@ export class EmployeeService {
       where.NOT = [
         {
           user: {
-            email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] },
+            OR: [
+              {
+                userRoles: {
+                  some: {
+                    role: {
+                      OR: [
+                        { type: RoleType.SUPER_ADMIN },
+                        { type: RoleType.CUSTOMER_ADMIN },
+                        { type: RoleType.TENANT_ADMIN },
+                        { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'System Admin'] } },
+                      ],
+                    },
+                  },
+                },
+              },
+              { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
+            ],
           },
         },
         {
@@ -137,18 +152,6 @@ export class EmployeeService {
           { office: { name: { equals: branch, mode: 'insensitive' as Prisma.QueryMode } } },
         ],
       });
-    }
-
-    if (params.eligibleForTeamId !== undefined) {
-      if (!Number.isSafeInteger(params.eligibleForTeamId) || params.eligibleForTeamId < 1) {
-        throw new BadRequestException('Invalid team ID');
-      }
-      const team = await this.prisma.team.findFirst({
-        where: { id: params.eligibleForTeamId, isActive: true },
-        select: { id: true, name: true, description: true },
-      });
-      if (!team) throw new NotFoundException('Active team not found');
-      andConditions.push(teamMemberEligibility(team));
     }
 
     const isBpoRequested = params.bpoOnly === true || (department && department.toUpperCase() === 'BPO');
@@ -216,7 +219,6 @@ export class EmployeeService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
           department: true,
           designation: true,
           office: true,
@@ -294,7 +296,7 @@ export class EmployeeService {
 
       return {
         id: e.id,
-
+        customerId: e.customerId,
         userId: e.userId,
         employeeId: e.employeeCode,
         employeeCode: e.employeeCode,
@@ -308,7 +310,6 @@ export class EmployeeService {
         address: e.address || null,
         documents: e.documents || null,
         bankDetails: e.bankDetails || null,
-        salaryStructure: e.salaryStructures?.[0] || null,
         emergencyContact: e.emergencyContact || null,
         managerId: e.managerId || null,
         employmentType: e.employmentType || 'FULL_TIME',
@@ -425,7 +426,14 @@ export class EmployeeService {
     const isNumeric = !isNaN(numId) && String(numId) === idStr && numId > 0;
 
     let numCustomerId: number | undefined;
-
+    if (customerId !== undefined && customerId !== null) {
+      numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) {
+        throw new BadRequestException('Invalid customerId provided');
+      }
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for employee access');
+    }
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -433,7 +441,7 @@ export class EmployeeService {
     todayEnd.setHours(23, 59, 59, 999);
 
     const where: Prisma.EmployeeWhereInput = {
-      ...(numCustomerId ? {  } : {}),
+      ...(numCustomerId ? { customerId: numCustomerId } : {}),
       OR: [
         ...(isNumeric ? [{ id: numId }] : []),
         { employeeCode: { equals: idStr, mode: 'insensitive' as Prisma.QueryMode } },
@@ -463,11 +471,6 @@ export class EmployeeService {
           include: { leaveType: true },
         },
         works: { take: 10, orderBy: { scheduledDate: 'desc' } },
-        salaryStructures: {
-          where: { status: 'ACTIVE' },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
       },
     });
 
@@ -533,7 +536,7 @@ export class EmployeeService {
 
     return {
       id: employee.id,
-
+      customerId: employee.customerId,
       userId: employee.userId,
       employeeId: employee.employeeCode,
       employeeCode: employee.employeeCode,
@@ -621,16 +624,17 @@ export class EmployeeService {
         };
       }),
       works: employee.works || [],
-      bankDetails: employee.bankDetails,
-      documents: employee.documents,
-      emergencyContact: employee.emergencyContact,
-      salaryStructure: employee.salaryStructures?.[0] || null,
     };
   }
 
   async getOffices(customerId?: number | string, isSuperAdmin = false) {
     const whereCust: any = {};
-
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        whereCust.customerId = numCustomerId;
+      }
+    }
 
     const branches = await this.prisma.branchGeofence.findMany({
       where: { ...whereCust, isActive: true },
@@ -676,7 +680,7 @@ export class EmployeeService {
 
     const openRecords = await this.prisma.attendance.findMany({
       where: {
-        ...(customerId ? {  } : {}),
+        ...(customerId ? { customerId } : {}),
         punchIn: { not: null },
         punchOut: null,
         OR: [
@@ -697,7 +701,7 @@ export class EmployeeService {
         const [year, month, day] = dateStr.split('-').map(Number);
 
         const policy = await this.prisma.attendancePolicy.findFirst({
-          where: {  isActive: true },
+          where: { customerId: att.customerId, isActive: true },
           orderBy: { officeId: 'desc' },
         });
 
@@ -767,7 +771,16 @@ export class EmployeeService {
       NOT: [
         {
           user: {
-            email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] },
+            userRoles: {
+              some: {
+                role: {
+                  OR: [
+                    { type: RoleType.SUPER_ADMIN },
+                    { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin', 'ADMIN', 'Admin'] } },
+                  ],
+                },
+              },
+            },
           },
         },
         {
@@ -780,10 +793,17 @@ export class EmployeeService {
       ],
     };
     const whereCust: any = {};
-
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      whereEmp.customerId = numCustomerId;
+      whereCust.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for live attendance access');
+    }
 
     // Run auto check-out for any open attendances
-    await this.autoCheckOutOpenAttendances(undefined);
+    await this.autoCheckOutOpenAttendances(whereCust.customerId);
 
     // Fetch active canonical branches for the customer to normalize offices
     const activeBranches = await this.prisma.branchGeofence.findMany({
@@ -979,7 +999,7 @@ export class EmployeeService {
 
       return {
         id: emp.id,
-
+        customerId: emp.customerId,
         employeeCode: emp.employeeCode,
         name: `${emp.firstName} ${emp.lastName}`,
         role: emp.designation?.name || 'Staff',
@@ -1044,13 +1064,19 @@ export class EmployeeService {
     txClient?: any,
   ): Promise<{ nextEmployeeId: string; prefix: string }> {
     const client = txClient || this.prisma;
+    let numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      const defaultCust = await client.customer.findFirst({ select: { id: true } });
+      numCustomerId = defaultCust?.id || 1;
+    }
+
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     const cleanPrefix = (prefix || defaultPrefix).toUpperCase().replace(/-+$/, '');
 
     // Query existing employee codes for this customer that match the prefix
     const existingEmployees = await client.employee.findMany({
       where: {
-
+        customerId: numCustomerId,
         employeeCode: {
           startsWith: cleanPrefix,
         },
@@ -1064,7 +1090,7 @@ export class EmployeeService {
       try {
         auditLogs = await this.prisma.auditLog.findMany({
           where: {
-
+            customerId: numCustomerId,
             module: 'EMPLOYEE',
           },
           select: { details: true },
@@ -1121,15 +1147,49 @@ export class EmployeeService {
    * Auto-heals root customer (ID: 1) if inactive or deleted, or falls back to first active customer.
    */
   async resolveDefaultCustomerId(): Promise<number> {
-return undefined;
+    const rootCustomer = await this.prisma.customer.findUnique({
+      where: { id: 1 },
+    });
+    if (rootCustomer) {
+      if (!rootCustomer.isActive || rootCustomer.deletedAt) {
+        await this.prisma.customer.update({
+          where: { id: 1 },
+          data: { isActive: true, deletedAt: null },
+        });
+      }
+      return rootCustomer.id;
+    }
+
+    const firstActive = await this.prisma.customer.findFirst({
+      where: { deletedAt: null, isActive: true },
+      orderBy: { id: 'asc' },
+    });
+    if (firstActive) {
+      return firstActive.id;
+    }
+
+    const defaultOrg = await this.prisma.customer.create({
+      data: {
+        name: 'QuikBoom Enterprise',
+        companyName: 'QuikBoom Enterprise Workspace',
+        email: 'admin@quickboom.com',
+        isActive: true,
+        customerType: 'ENTERPRISE',
+      },
+    });
+    return defaultOrg.id;
   }
 
   async create(params: CreateEmployeeParams) {
     const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
+    if (isNaN(numCustomerId) || numCustomerId <= 0) {
+      throw new BadRequestException('Valid customerId is required');
+    }
 
-
-
+    if (this.planAccessService && !params.bypassUserLimit) {
+      await this.planAccessService.checkUserLimit(numCustomerId);
+    }
 
     // Execute complete creation inside a single atomic database transaction
     return this.prisma.$transaction(async (tx) => {
@@ -1149,23 +1209,23 @@ return undefined;
       if (dto.departmentId) {
         const numDeptId = Number(dto.departmentId);
         department = await tx.department.findFirst({
-          where: { id: numDeptId },
+          where: { id: numDeptId, customerId: numCustomerId },
         });
         if (!department && dto.departmentName) {
           department = await tx.department.findFirst({
-            where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: { customerId: numCustomerId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!department) {
           const crossDept = await tx.department.findFirst({ where: { id: numDeptId } });
           if (crossDept) {
             let localDept = await tx.department.findFirst({
-              where: {  name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: { customerId: numCustomerId, name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDept) {
               localDept = await tx.department.create({
                 data: {
-
+                  customerId: numCustomerId,
                   name: crossDept.name,
                   code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
                   isActive: crossDept.isActive,
@@ -1184,12 +1244,12 @@ return undefined;
         }
       } else if (dto.departmentName) {
         department = await tx.department.findFirst({
-          where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: { customerId: numCustomerId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!department) {
           department = await tx.department.create({
             data: {
-
+              customerId: numCustomerId,
               name: dto.departmentName,
               code: (dto.departmentName || 'DEPT').substring(0, 5).toUpperCase(),
               isActive: true,
@@ -1198,13 +1258,13 @@ return undefined;
         }
       } else {
         department = await tx.department.findFirst({
-          where: {  isActive: true },
+          where: { customerId: numCustomerId, isActive: true },
           orderBy: { id: 'asc' },
         });
         if (!department) {
           department = await tx.department.create({
             data: {
-
+              customerId: numCustomerId,
               name: 'General',
               code: 'GEN',
               isActive: true,
@@ -1226,23 +1286,23 @@ return undefined;
       if (dto.designationId) {
         const numDesigId = Number(dto.designationId);
         designation = await tx.designation.findFirst({
-          where: { id: numDesigId },
+          where: { id: numDesigId, customerId: numCustomerId },
         });
         if (!designation && dto.designationName) {
           designation = await tx.designation.findFirst({
-            where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: { customerId: numCustomerId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!designation) {
           const crossDesig = await tx.designation.findFirst({ where: { id: numDesigId } });
           if (crossDesig) {
             let localDesig = await tx.designation.findFirst({
-              where: {  name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: { customerId: numCustomerId, name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDesig) {
               localDesig = await tx.designation.create({
                 data: {
-
+                  customerId: numCustomerId,
                   name: crossDesig.name,
                   code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
                   departmentId: department?.id || null,
@@ -1258,12 +1318,12 @@ return undefined;
         }
       } else if (dto.designationName) {
         designation = await tx.designation.findFirst({
-          where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: { customerId: numCustomerId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!designation) {
           designation = await tx.designation.create({
             data: {
-
+              customerId: numCustomerId,
               name: dto.designationName,
               code: `${(dto.designationName || 'STF').substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
@@ -1273,13 +1333,13 @@ return undefined;
         }
       } else {
         designation = await tx.designation.findFirst({
-          where: {  isActive: true },
+          where: { customerId: numCustomerId, isActive: true },
           orderBy: { id: 'asc' },
         });
         if (!designation) {
           designation = await tx.designation.create({
             data: {
-
+              customerId: numCustomerId,
               name: 'Staff',
               code: `STF-${Date.now().toString().slice(-4)}`,
               departmentId: department?.id || null,
@@ -1325,7 +1385,7 @@ return undefined;
 
         user = await tx.user.create({
           data: {
-
+            customerId: numCustomerId,
             email: normalizedEmail,
             phone: cleanPhone,
             firstName: dto.firstName,
@@ -1358,8 +1418,16 @@ return undefined;
           deletedAt: null,
           ...(hasExplicitPassword || !user.passwordHash ? { passwordHash } : {}),
         };
-
-
+        if (user.customerId !== null && user.customerId !== numCustomerId) {
+          throw new ConflictException({
+            success: false,
+            message: 'A user account with this email already belongs to another organization.',
+            error: 'USER_BELONGS_TO_ANOTHER_TENANT',
+          });
+        }
+        if (user.customerId === null) {
+          updateUserData.customerId = numCustomerId;
+        }
 
         user = await tx.user.update({
           where: { id: user.id },
@@ -1376,16 +1444,16 @@ return undefined;
         where: {
           OR: [
             { userId: user.id },
-            { email: normalizedEmail },
+            { email: normalizedEmail, customerId: numCustomerId },
           ],
         },
-        select: { id: true, employeeCode: true },
+        select: { id: true, employeeCode: true, customerId: true },
       });
 
       if (!existingEmployeeForUser && tx.employee.findUnique) {
         existingEmployeeForUser = await tx.employee.findUnique({
           where: { userId: user.id } as any,
-          select: { id: true, employeeCode: true },
+          select: { id: true, employeeCode: true, customerId: true },
         });
       }
 
@@ -1398,6 +1466,46 @@ return undefined;
         });
       }
 
+      // Assign functional designation-specific role if one exists, otherwise default to TELECALLER
+      const targetRoleName =
+        designation?.name && designation.name.toUpperCase() !== 'STAFF'
+          ? designation.name.trim()
+          : 'TELECALLER';
+
+      let assignedRole = await tx.role.findFirst({
+        where: {
+          OR: [
+            { customerId: numCustomerId, name: { equals: targetRoleName, mode: 'insensitive' } },
+            { customerId: null, name: { equals: targetRoleName, mode: 'insensitive' } },
+          ],
+          deletedAt: null,
+          name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+        },
+      });
+
+      if (!assignedRole) {
+        assignedRole = await tx.role.findFirst({
+          where: {
+            OR: [
+              { customerId: numCustomerId, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+              { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+            ],
+            deletedAt: null,
+          },
+        });
+      }
+
+      if (assignedRole) {
+        const existingUr = await tx.userRole.findFirst({
+          where: { userId: user.id, roleId: assignedRole.id },
+        });
+        if (!existingUr) {
+          await tx.userRole.create({
+            data: { userId: user.id, roleId: assignedRole.id },
+          });
+        }
+      }
+
       // Office / Branch resolution with geo-fence linkage
       let officeId: number | null = null;
       let branchName = dto.branch || dto.officeName || 'Head Office';
@@ -1405,18 +1513,18 @@ return undefined;
       if (dto.officeId) {
         const numOfficeId = Number(dto.officeId);
         let office = await tx.branchGeofence.findFirst({
-          where: { id: numOfficeId },
+          where: { id: numOfficeId, customerId: numCustomerId },
         });
         if (!office) {
           const crossOffice = await tx.branchGeofence.findFirst({ where: { id: numOfficeId } });
           if (crossOffice) {
             let localOffice = await tx.branchGeofence.findFirst({
-              where: {  name: { equals: crossOffice.name, mode: 'insensitive' } },
+              where: { customerId: numCustomerId, name: { equals: crossOffice.name, mode: 'insensitive' } },
             });
             if (!localOffice) {
               localOffice = await tx.branchGeofence.create({
                 data: {
-
+                  customerId: numCustomerId,
                   name: crossOffice.name,
                   city: crossOffice.city || 'Mumbai',
                   latitude: crossOffice.latitude || 19.076,
@@ -1441,7 +1549,7 @@ return undefined;
         const targetName = (dto.branch || dto.officeName || '').trim();
         const office = await tx.branchGeofence.findFirst({
           where: {
-
+            customerId: numCustomerId,
             name: { equals: targetName, mode: 'insensitive' },
           },
         });
@@ -1453,7 +1561,7 @@ return undefined;
 
       if (!officeId) {
         const defaultOffice = await tx.branchGeofence.findFirst({
-          where: {  isActive: true },
+          where: { customerId: numCustomerId, isActive: true },
           orderBy: { id: 'asc' },
         });
         if (defaultOffice) {
@@ -1462,7 +1570,7 @@ return undefined;
         } else {
           const createdDefault = await tx.branchGeofence.create({
             data: {
-
+              customerId: numCustomerId,
               name: 'Head Office',
               city: 'Mumbai',
               latitude: 19.0760,
@@ -1481,18 +1589,18 @@ return undefined;
       if (dto.shiftId) {
         const numShiftId = Number(dto.shiftId);
         let shift = await tx.shift.findFirst({
-          where: { id: numShiftId },
+          where: { id: numShiftId, customerId: numCustomerId },
         });
         if (!shift) {
           const crossShift = await tx.shift.findFirst({ where: { id: numShiftId } });
           if (crossShift) {
             let localShift = await tx.shift.findFirst({
-              where: {  name: { equals: crossShift.name, mode: 'insensitive' } },
+              where: { customerId: numCustomerId, name: { equals: crossShift.name, mode: 'insensitive' } },
             });
             if (!localShift) {
               localShift = await tx.shift.create({
                 data: {
-
+                  customerId: numCustomerId,
                   name: crossShift.name,
                   code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
                   startTime: crossShift.startTime,
@@ -1515,7 +1623,7 @@ return undefined;
       }
 
       const empData: any = {
-
+        customerId: numCustomerId,
         userId: user.id,
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -1566,7 +1674,7 @@ return undefined;
         if (this.prisma?.auditLog) {
           this.prisma.auditLog.create({
             data: {
-
+              customerId: numCustomerId,
               userId: user.id,
               action: 'EMPLOYEE_CREATED',
               module: 'EMPLOYEE',
@@ -1577,22 +1685,6 @@ return undefined;
               },
             },
           }).catch(() => null);
-        }
-
-        // Persist compensation through the same transactional salary flow as payroll edits.
-        let bank: any = dto.bankDetails;
-        if (typeof bank === 'string') {
-          try { bank = JSON.parse(bank); } catch { bank = {}; }
-        }
-        const structure = dto.salaryStructure || bank?.salaryStructure || {};
-        const basicSalary = structure.basicSalary ?? bank?.basicSalary ?? bank?.monthlySalary ?? bank?.salary;
-        if (basicSalary !== undefined && basicSalary !== null && basicSalary !== '') {
-          const compensation: any = { ...bank, ...structure, basicSalary, employeeId: createdEmployee.id };
-          compensation.pf ??= Math.round(Number(basicSalary) * 0.12);
-          compensation.esi ??= Math.round(Number(basicSalary) * 0.0075);
-          compensation.professionalTax ??= 200;
-          const saved = await this.payrollService!.saveSalaryStructure(numCustomerId, compensation, tx);
-          createdEmployee.bankDetails = { ...(bank || createdEmployee.bankDetails as any || {}), ...saved, monthlySalary: saved.grossSalary, salaryStructure: saved };
         }
 
         return createdEmployee;
@@ -1614,13 +1706,13 @@ return undefined;
 
   async update(params: UpdateEmployeeParams) {
     const { id, customerId, isSuperAdmin, dto } = params;
-    await this.findOne({ id,  isSuperAdmin });
+    await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(id);
 
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.employee.findUnique({ where: { id: numId } });
-      const targetCustId = (customerId ? Number(customerId) : 1);
+      const targetCustId = existing?.customerId || (customerId ? Number(customerId) : 1);
 
       const updateData: any = {};
       // ── NOTE: userId is intentionally EXCLUDED from updateData. ──
@@ -1715,8 +1807,8 @@ return undefined;
             }
           }
 
-          {
-
+          if (userRecord.customerId !== null) {
+            userUpdate.customerId = targetCustId;
           }
 
           if (Object.keys(userUpdate).length > 0) {
@@ -1751,7 +1843,7 @@ return undefined;
 
             user = await tx.user.create({
               data: {
-
+                customerId: targetCustId,
                 email: normalizedEmail,
                 phone: cleanPhone,
                 firstName: dto.firstName || existing?.firstName || 'Employee',
@@ -1778,7 +1870,7 @@ return undefined;
             await tx.user.update({
               where: { id: user.id },
               data: {
-
+                customerId: user.customerId !== null ? targetCustId : null,
                 isActive: (dto.status || existing?.status || 'ACTIVE') === 'ACTIVE',
                 deletedAt: null,
                 phone: cleanPhone || user.phone,
@@ -1788,29 +1880,51 @@ return undefined;
           }
 
           updateData.userId = user.id;
+
+          // Assign functional role matching designation or default to TELECALLER
+          const targetRole = await tx.role.findFirst({
+            where: {
+              OR: [
+                { customerId: targetCustId, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+                { customerId: null, name: { equals: 'TELECALLER', mode: 'insensitive' } },
+              ],
+              deletedAt: null,
+              name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+            },
+          });
+          if (targetRole) {
+            const hasUserRole = await tx.userRole.findFirst({
+              where: { userId: user.id, roleId: targetRole.id },
+            });
+            if (!hasUserRole) {
+              await tx.userRole.create({
+                data: { userId: user.id, roleId: targetRole.id },
+              });
+            }
+          }
         }
       }
 
       if (dto.departmentId !== undefined && dto.departmentId !== null && String(dto.departmentId).trim() !== '') {
         const numDeptId = Number(dto.departmentId);
         let dept = await tx.department.findFirst({
-          where: { id: numDeptId },
+          where: { id: numDeptId, customerId: targetCustId },
         });
         if (!dept && dto.departmentName) {
           dept = await tx.department.findFirst({
-            where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: { customerId: targetCustId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!dept) {
           const crossDept = await tx.department.findFirst({ where: { id: numDeptId } });
           if (crossDept) {
             let localDept = await tx.department.findFirst({
-              where: {  name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: { customerId: targetCustId, name: { equals: crossDept.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDept) {
               localDept = await tx.department.create({
                 data: {
-
+                  customerId: targetCustId,
                   name: crossDept.name,
                   code: crossDept.code || crossDept.name.substring(0, 5).toUpperCase(),
                   isActive: crossDept.isActive,
@@ -1837,12 +1951,12 @@ return undefined;
         updateData.departmentId = dept.id;
       } else if (dto.departmentName) {
         let dept = await tx.department.findFirst({
-          where: {  name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: { customerId: targetCustId, name: { equals: dto.departmentName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!dept) {
           dept = await tx.department.create({
             data: {
-
+              customerId: targetCustId,
               name: dto.departmentName,
               code: dto.departmentName.substring(0, 5).toUpperCase(),
               isActive: true,
@@ -1862,23 +1976,23 @@ return undefined;
       if (dto.designationId !== undefined && dto.designationId !== null && String(dto.designationId).trim() !== '') {
         const numDesigId = Number(dto.designationId);
         let desig = await tx.designation.findFirst({
-          where: { id: numDesigId },
+          where: { id: numDesigId, customerId: targetCustId },
         });
         if (!desig && dto.designationName) {
           desig = await tx.designation.findFirst({
-            where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+            where: { customerId: targetCustId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
           });
         }
         if (!desig) {
           const crossDesig = await tx.designation.findFirst({ where: { id: numDesigId } });
           if (crossDesig) {
             let localDesig = await tx.designation.findFirst({
-              where: {  name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
+              where: { customerId: targetCustId, name: { equals: crossDesig.name, mode: 'insensitive' as Prisma.QueryMode } },
             });
             if (!localDesig) {
               localDesig = await tx.designation.create({
                 data: {
-
+                  customerId: targetCustId,
                   name: crossDesig.name,
                   code: `${crossDesig.code || 'DES'}-${Date.now().toString().slice(-4)}`,
                   departmentId: updateData.departmentId || existing?.departmentId || null,
@@ -1902,12 +2016,12 @@ return undefined;
         updateData.designationId = desig.id;
       } else if (dto.designationName) {
         let desig = await tx.designation.findFirst({
-          where: {  name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
+          where: { customerId: targetCustId, name: { equals: dto.designationName, mode: 'insensitive' as Prisma.QueryMode } },
         });
         if (!desig) {
           desig = await tx.designation.create({
             data: {
-
+              customerId: targetCustId,
               name: dto.designationName,
               code: `${dto.designationName.substring(0, 4).toUpperCase()}-${Date.now().toString().slice(-4)}`,
               departmentId: updateData.departmentId || existing?.departmentId || null,
@@ -1928,18 +2042,18 @@ return undefined;
       if (dto.officeId !== undefined && dto.officeId !== null && String(dto.officeId).trim() !== '') {
         const numOfficeId = Number(dto.officeId);
         let office = await tx.branchGeofence.findFirst({
-          where: { id: numOfficeId },
+          where: { id: numOfficeId, customerId: targetCustId },
         });
         if (!office) {
           const crossOffice = await tx.branchGeofence.findFirst({ where: { id: numOfficeId } });
           if (crossOffice) {
             let localOffice = await tx.branchGeofence.findFirst({
-              where: {  name: { equals: crossOffice.name, mode: 'insensitive' } },
+              where: { customerId: targetCustId, name: { equals: crossOffice.name, mode: 'insensitive' } },
             });
             if (!localOffice) {
               localOffice = await tx.branchGeofence.create({
                 data: {
-
+                  customerId: targetCustId,
                   name: crossOffice.name,
                   city: crossOffice.city || 'Mumbai',
                   latitude: crossOffice.latitude || 19.076,
@@ -1964,7 +2078,7 @@ return undefined;
         const officeNameTarget = (dto.officeName || dto.branch || '').trim();
         const office = await tx.branchGeofence.findFirst({
           where: {
-
+            customerId: targetCustId,
             name: { equals: officeNameTarget, mode: 'insensitive' },
           },
         });
@@ -1980,18 +2094,18 @@ return undefined;
         } else {
           const numShiftId = Number(dto.shiftId);
           let shift = await tx.shift.findFirst({
-            where: { id: numShiftId },
+            where: { id: numShiftId, customerId: targetCustId },
           });
           if (!shift) {
             const crossShift = await tx.shift.findFirst({ where: { id: numShiftId } });
             if (crossShift) {
               let localShift = await tx.shift.findFirst({
-                where: {  name: { equals: crossShift.name, mode: 'insensitive' } },
+                where: { customerId: targetCustId, name: { equals: crossShift.name, mode: 'insensitive' } },
               });
               if (!localShift) {
                 localShift = await tx.shift.create({
                   data: {
-
+                    customerId: targetCustId,
                     name: crossShift.name,
                     code: `${crossShift.code || 'SH'}-${Date.now().toString().slice(-4)}`,
                     startTime: crossShift.startTime,
@@ -2025,17 +2139,51 @@ return undefined;
         },
       });
 
-      // Persist compensation through the same transactional salary flow as payroll edits.
-      let bank: any = dto.bankDetails;
-      if (typeof bank === 'string') {
-        try { bank = JSON.parse(bank); } catch { bank = {}; }
-      }
-      const structure = dto.salaryStructure || bank?.salaryStructure || {};
-      const basicSalary = structure.basicSalary ?? bank?.basicSalary ?? bank?.monthlySalary ?? bank?.salary;
-      if (basicSalary !== undefined && basicSalary !== null && basicSalary !== '') {
-        const compensation: any = { ...bank, ...structure, basicSalary, employeeId: updatedEmployee.id };
-        const saved = await this.payrollService!.saveSalaryStructure(targetCustId, compensation, tx);
-        updatedEmployee.bankDetails = { ...(bank || updatedEmployee.bankDetails as any || {}), ...saved, monthlySalary: saved.grossSalary, salaryStructure: saved };
+      // Synchronize UserRole with updated Designation
+      if (updatedEmployee.userId && updatedEmployee.designation?.name) {
+        const desigName = updatedEmployee.designation.name.trim();
+        let targetRole = await tx.role.findFirst({
+          where: {
+            OR: [
+              { customerId: targetCustId, name: { equals: desigName, mode: 'insensitive' } },
+              { customerId: null, name: { equals: desigName, mode: 'insensitive' } },
+            ],
+            deletedAt: null,
+            name: { notIn: ['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'] },
+          },
+        });
+        if (!targetRole) {
+          targetRole = await tx.role.create({
+            data: {
+              name: desigName,
+              description: `${desigName} role`,
+              type: RoleType.CUSTOM,
+              customerId: targetCustId,
+            },
+          });
+        }
+        // Remove existing functional roles and assign targetRole
+        const existingRoles = await tx.userRole.findMany({
+          where: { userId: updatedEmployee.userId },
+          include: { role: true },
+        });
+        for (const ur of existingRoles) {
+          if (
+            ur.role.name !== 'SUPER_ADMIN' &&
+            ur.role.name !== 'COMPANY_ADMIN' &&
+            ur.roleId !== targetRole.id
+          ) {
+            await tx.userRole.delete({
+              where: { userId_roleId: { userId: updatedEmployee.userId, roleId: ur.roleId } },
+            });
+          }
+        }
+        const hasRole = existingRoles.some((ur) => ur.roleId === targetRole.id);
+        if (!hasRole) {
+          await tx.userRole.create({
+            data: { userId: updatedEmployee.userId, roleId: targetRole.id },
+          });
+        }
       }
 
       return updatedEmployee;
@@ -2044,11 +2192,11 @@ return undefined;
 
   async remove(params: EmployeeFindOneParams & { hardDelete?: boolean }) {
     const { id, customerId, isSuperAdmin } = params;
-    const existing = await this.findOne({ id,  isSuperAdmin });
+    const existing = await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(existing.id);
     const userId = existing?.userId ? Number(existing.userId) : null;
-    const empCustomerId = Number(undefined);
+    const empCustomerId = Number(existing.customerId);
 
     // ── PERMANENT HARD-DELETE ──────────────────────────────────────────
     return this.prisma.$transaction(async (tx) => {
@@ -2100,7 +2248,12 @@ return undefined;
       if (tx.workAccessRequest?.deleteMany) {
         await tx.workAccessRequest.deleteMany({ where: { employeeId: numId } });
       }
-
+      if (tx.employeeModuleOverride?.deleteMany) {
+        await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } });
+      }
+      if (tx.employeeLeadLimit?.deleteMany) {
+        await tx.employeeLeadLimit.deleteMany({ where: { employeeId: numId } });
+      }
       if (tx.locationTrackingSetting?.deleteMany) {
         await tx.locationTrackingSetting.deleteMany({ where: { employeeId: numId } });
       }
@@ -2122,8 +2275,18 @@ return undefined;
           data: { headId: null },
         });
       }
-
-
+      if (tx.customer?.updateMany) {
+        await tx.customer.updateMany({
+          where: { assignedEmployeeId: numId },
+          data: { assignedEmployeeId: null },
+        });
+      }
+      if (tx.lead?.updateMany) {
+        await tx.lead.updateMany({
+          where: { employeeId: numId },
+          data: { employeeId: null },
+        });
+      }
 
       if (tx.visit?.deleteMany) {
         await tx.visit.deleteMany({ where: { employeeId: numId } });
@@ -2190,7 +2353,7 @@ return undefined;
       if (tx.auditLog?.create) {
         await tx.auditLog.create({
           data: {
-
+            customerId: empCustomerId,
             userId: userId,
             action: 'EMPLOYEE_DELETED',
             module: 'EMPLOYEE',
@@ -2215,8 +2378,9 @@ return undefined;
           where: {
             id: userId,
             OR: [
-              { email: { in: ['admin@quickboom.com', 'admin@quikboom.com'] } },
-
+              { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
+              { assignedLeads: { some: {} } },
+              { createdLeads: { some: {} } },
               { assignedDeals: { some: {} } },
               { assignedContacts: { some: {} } },
               { assignedTickets: { some: {} } },
@@ -2238,6 +2402,9 @@ return undefined;
           if (tx.notification?.deleteMany) {
             await tx.notification.deleteMany({ where: { userId } });
           }
+          if (tx.userRole?.deleteMany) {
+            await tx.userRole.deleteMany({ where: { userId } });
+          }
           await tx.user.delete({ where: { id: userId } });
         } else {
           // Shared / Admin user -> permanently deactivate and mark deletedAt
@@ -2258,7 +2425,13 @@ return undefined;
 
   async getLeaves(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
-
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for leaves access');
+    }
 
     const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
@@ -2283,7 +2456,7 @@ return undefined;
 
     return leaves.map((l) => ({
       id: String(l.id),
-
+      customerId: l.customerId,
       employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Employee',
       employeeId: l.employee?.employeeCode || 'EMP-001',
       leaveType: l.leaveType?.name || 'Casual Leave',
@@ -2298,7 +2471,13 @@ return undefined;
 
   async getRemoteRequests(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};
-
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for remote requests access');
+    }
 
     const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
@@ -2323,7 +2502,7 @@ return undefined;
 
     return requests.map((r) => ({
       id: String(r.id),
-
+      customerId: r.customerId,
       employeeName: r.employee ? `${r.employee.firstName} ${r.employee.lastName || ''}`.trim() : 'Employee',
       employeeId: r.employee?.employeeCode || 'EMP-001',
       requestType: 'WORK_FROM_HOME',
@@ -2350,11 +2529,16 @@ return undefined;
     const limit = Math.min(Math.max(Number(options?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const andConditions: any[] = [];
+    const where: any = {};
+    if (customerId !== undefined && customerId !== null) {
+      const numCustomerId = Number(customerId);
+      if (isNaN(numCustomerId)) throw new BadRequestException('Invalid customerId');
+      where.customerId = numCustomerId;
+    } else if (!isSuperAdmin) {
+      throw new ForbiddenException('customerId is required for attendance access');
+    }
 
-
-
-    const isEmpUser = user && !isUserAdmin(user) && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE' || user.employee != null);
     if (isEmpUser) {
       const emp = user.employee || (await this.prisma.employee.findFirst({
         where: {
@@ -2365,79 +2549,58 @@ return undefined;
         },
       }));
       if (emp) {
-        andConditions.push({ employeeId: emp.id });
+        where.employeeId = emp.id;
       }
     }
 
     if (options?.date) {
       const { start, end } = getBusinessDayRange(options.date);
-      andConditions.push({ date: { gte: start, lte: end } });
+      where.date = { gte: start, lte: end };
     }
 
     if (options?.branch && options.branch !== 'ALL') {
-      const targetCustomerFilter = {};
       const activeBranches = await this.prisma.branchGeofence.findMany({
-        where: { ...targetCustomerFilter, isActive: true },
+        where: { ...(where.customerId ? { customerId: where.customerId } : {}), isActive: true },
         select: { id: true, name: true },
       });
       const matchedBranch = activeBranches.find(
         (b) => b.name.toLowerCase() === options.branch!.toLowerCase() || String(b.id) === options.branch,
       );
       if (matchedBranch) {
-        andConditions.push({
+        where.employee = {
+          ...(where.employee || {}),
           OR: [
             { officeId: matchedBranch.id },
-            { office: { name: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } } },
-            { locationIn: { contains: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
-            {
-              employee: {
-                OR: [
-                  { officeId: matchedBranch.id },
-                  { branch: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
-                  { branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
-                ],
-              },
-            },
+            { branch: { equals: matchedBranch.name, mode: 'insensitive' as Prisma.QueryMode } },
+            { branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
           ],
-        });
+        };
       } else {
-        andConditions.push({
-          OR: [
-            { office: { name: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode } } },
-            { locationIn: { contains: options.branch, mode: 'insensitive' as Prisma.QueryMode } },
-            {
-              employee: {
-                branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode },
-              },
-            },
-          ],
-        });
+        where.employee = {
+          ...(where.employee || {}),
+          branch: { equals: options.branch, mode: 'insensitive' as Prisma.QueryMode },
+        };
       }
     }
 
     if (options?.search) {
-      andConditions.push({
-        employee: {
-          OR: [
-            { firstName: { contains: options.search, mode: 'insensitive' } },
-            { lastName: { contains: options.search, mode: 'insensitive' } },
-            { employeeCode: { contains: options.search, mode: 'insensitive' } },
-          ],
-        },
-      });
+      where.employee = {
+        ...(where.employee || {}),
+        OR: [
+          { firstName: { contains: options.search, mode: 'insensitive' } },
+          { lastName: { contains: options.search, mode: 'insensitive' } },
+          { employeeCode: { contains: options.search, mode: 'insensitive' } },
+        ],
+      };
     }
 
-    const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
-
     // Auto-checkout any open attendances before listing
-    const customerFilter = undefined;
-    await this.autoCheckOutOpenAttendances(customerFilter);
+    await this.autoCheckOutOpenAttendances(where.customerId);
 
     const [rawRecords, total] = await Promise.all([
       this.prisma.attendance.findMany({
         where,
         include: {
-          office: true,
           employee: { include: { office: true } },
           breaks: { orderBy: { breakStart: 'asc' } },
         },
@@ -2555,11 +2718,11 @@ return undefined;
 
       return {
         id: String(a.id),
-
+        customerId: a.customerId,
         employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}`.trim() : 'Employee',
         employeeId: a.employee?.employeeCode || `EMP-${a.employeeId}`,
-        branch: (a as any).office?.name || a.employee?.office?.name || a.employee?.branch || 'Head Office',
-        office: (a as any).office?.name || a.employee?.office?.name || a.employee?.branch || 'Head Office',
+        branch: a.employee?.office?.name || a.employee?.branch || 'Head Office',
+        office: a.employee?.office?.name || a.employee?.branch || 'Head Office',
         attendanceDate: a.date ? getBusinessDate(a.date) : '—',
         date: a.date ? getBusinessDate(a.date) : '—',
         punchInAt: punchInIso,
@@ -2625,13 +2788,22 @@ return undefined;
         ],
       },
       include: {
-        salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
         department: true,
         designation: true,
         office: true,
         shift: true,
         user: { select: { avatar: true } },
-
+        customer: {
+          select: {
+            id: true,
+            companyName: true,
+            name: true,
+            email: true,
+            phone: true,
+            city: true,
+            state: true,
+          },
+        },
       },
     });
 
@@ -2639,15 +2811,14 @@ return undefined;
       const numCustomerId = Number(customerId);
       if (!isNaN(numCustomerId)) {
         employee = await this.prisma.employee.findFirst({
-          where: {  status: 'ACTIVE' },
+          where: { customerId: numCustomerId, status: 'ACTIVE' },
           include: {
-        salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 },
             department: true,
             designation: true,
             office: true,
             shift: true,
             user: { select: { avatar: true } },
-
+            customer: true,
           },
         });
       }
@@ -2670,7 +2841,7 @@ return undefined;
 
     return {
       id: employee.id,
-
+      customerId: employee.customerId,
       employeeCode: employee.employeeCode,
       firstName: employee.firstName,
       lastName: employee.lastName,
@@ -2695,10 +2866,704 @@ return undefined;
       address: employee.address || '',
       emergencyContact: employee.emergencyContact || '',
       bankDetails: employee.bankDetails || {},
-      salaryStructure: employee.salaryStructures?.[0] || null,
       documents: employee.documents || [],
       status: employee.status || 'ACTIVE',
-      organization: 'QuikBoom Enterprise',
+      organization: employee.customer?.companyName || employee.customer?.name || 'QuikBoom Enterprise',
+    };
+  }
+
+  async getEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+        user: {
+          include: {
+            userRoles: {
+              include: {
+                role: {
+                  include: {
+                    rolePermissions: {
+                      include: {
+                        permission: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        employeeModuleOverrides: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    // 1. Derive canonical role name strictly from Employee's configured Designation
+    const desigName = employee.designation?.name?.trim() || employee.user?.designation?.trim();
+    const userRoleNames = (employee.user?.userRoles?.map((ur) => ur.role.name) || []).filter(
+      (r) => !['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'].includes(r),
+    );
+    const roleName = desigName || userRoleNames[0] || 'TELECALLER';
+
+    // 2. Query matching Role from DB for this customer/global to load role defaults
+    const rolePermissionsSet = new Set<string>();
+    let hasDbPermissions = false;
+
+    // First check if a Role is directly linked to this employee's Designation
+    let effectiveDesigId = employee.designationId;
+    if (!effectiveDesigId && desigName) {
+      try {
+        const matchedDesig = await this.prisma.designation.findFirst({
+          where: {
+            customerId: employee.customerId,
+            name: { equals: desigName, mode: 'insensitive' },
+            isActive: true,
+          },
+        });
+        if (matchedDesig) effectiveDesigId = matchedDesig.id;
+      } catch (_) {}
+    }
+
+    if (effectiveDesigId) {
+      const linkedRole = await this.prisma.role.findFirst({
+        where: { designationId: effectiveDesigId },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+      });
+
+      if (linkedRole && linkedRole.rolePermissions && linkedRole.rolePermissions.length > 0) {
+        hasDbPermissions = true;
+        linkedRole.rolePermissions.forEach((rp) => {
+          if (rp.permission) {
+            rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+          }
+        });
+      }
+    }
+
+    // Look for Role in DB matching roleName or designation if not yet resolved
+    if (!hasDbPermissions) {
+      const matchingRoles = await this.prisma.role.findMany({
+        where: {
+          OR: [
+            { customerId: employee.customerId, name: { equals: roleName, mode: 'insensitive' } },
+            { customerId: null, name: { equals: roleName, mode: 'insensitive' } },
+          ],
+          deletedAt: null,
+          name: { notIn: ['CUSTOMER'] },
+        },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+        orderBy: { customerId: 'desc' }, // prioritize tenant-specific role
+      });
+
+      if (matchingRoles.length > 0) {
+        for (const r of matchingRoles) {
+          if (r.rolePermissions && r.rolePermissions.length > 0) {
+            hasDbPermissions = true;
+            r.rolePermissions.forEach((rp) => {
+              if (rp.permission) {
+                rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+              }
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // Also check employee.user.userRoles if not matched
+    if (!hasDbPermissions && employee.user?.userRoles) {
+      for (const ur of employee.user.userRoles) {
+        if (ur.role?.rolePermissions && ur.role.rolePermissions.length > 0) {
+          hasDbPermissions = true;
+          ur.role.rolePermissions.forEach((rp) => {
+            if (rp.permission) {
+              rolePermissionsSet.add(`${rp.permission.module.toUpperCase()}:${rp.permission.action.toUpperCase()}`);
+            }
+          });
+        }
+      }
+    }
+
+    // Fallback to static defaults if rolePermissionsSet is still empty
+    if (rolePermissionsSet.size === 0) {
+      const upper = roleName.toUpperCase().replace(/\s+/g, '_');
+      let matchedKey: string | null = null;
+      if (ROLE_PERMISSION_DEFAULTS[upper]) {
+        matchedKey = upper;
+      } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
+        matchedKey = 'VISITOR';
+      } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
+        matchedKey = 'TELECALLER';
+      } else if (upper.includes('DESIGNER')) {
+        matchedKey = 'DESIGNER';
+      } else if (upper.includes('EDITOR')) {
+        matchedKey = 'EDITOR';
+      } else if (upper.includes('SOCIAL') || upper.includes('SSM')) {
+        matchedKey = 'SOCIAL_MEDIA_MANAGER';
+      } else if (upper.includes('PHOTO') || upper.includes('SHOOT')) {
+        matchedKey = 'PHOTOGRAPHER';
+      } else if (upper.includes('SALES')) {
+        matchedKey = 'SALES_EXECUTIVE';
+      } else if (upper.includes('HR')) {
+        matchedKey = 'HR';
+      } else if (upper.includes('MANAGER')) {
+        matchedKey = 'MANAGER';
+      } else if (upper.includes('EMPLOYEE')) {
+        matchedKey = 'EMPLOYEE';
+      } else {
+        matchedKey = 'TELECALLER';
+      }
+
+      if (matchedKey && ROLE_PERMISSION_DEFAULTS[matchedKey]) {
+        ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
+          rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`);
+        });
+      }
+    }
+
+    const desigUpper = (employee.designation?.name || roleName || '').toUpperCase();
+    const isVisitorDesignation = Boolean(
+      desigUpper && (
+        desigUpper.includes('VISITOR') ||
+        desigUpper === 'VISIT' ||
+        desigUpper.includes('FIELD VISIT') ||
+        desigUpper.includes('FIELD OFFICER')
+      )
+    );
+
+    if (isVisitorDesignation) {
+      // Visitors only view, start (check-in), and complete assigned visits.
+      // They intentionally do NOT have VISITS:CREATE or LEADS:SCHEDULE_VISIT.
+      rolePermissionsSet.add('VISITS:VIEW');
+      rolePermissionsSet.add('VISITS:START');
+      rolePermissionsSet.add('VISITS:COMPLETE');
+    } else {
+      // For CRM / calling / sales designations (BPO, Telecaller, Sales Executive, etc.),
+      // ensure baseline role defaults (e.g. VISITS:CREATE) are populated if not explicitly denied
+      const isCrmDesignation = Boolean(
+        (desigUpper && (
+          desigUpper.includes('BPO') ||
+          desigUpper.includes('TELE') ||
+          desigUpper.includes('SALES') ||
+          desigUpper.includes('CALL') ||
+          desigUpper.includes('MANAGER') ||
+          desigUpper.includes('FIELD') ||
+          desigUpper.includes('CRM') ||
+          desigUpper.includes('LEAD') ||
+          desigUpper.includes('EXECUTIVE') ||
+          desigUpper.includes('BD') ||
+          desigUpper.includes('OFFICER') ||
+          desigUpper.includes('AGENT') ||
+          desigUpper.includes('COORDINATOR') ||
+          desigUpper.includes('MARKETING') ||
+          desigUpper.includes('CONSULTANT')
+        )) ||
+        employee.designation?.crmMobileAccess === true ||
+        rolePermissionsSet.has('LEADS:VIEW') ||
+        rolePermissionsSet.has('LEADS:CREATE') ||
+        rolePermissionsSet.has('LEADS:CHANGE_STAGE') ||
+        rolePermissionsSet.has('LEADS:SCHEDULE_VISIT') ||
+        rolePermissionsSet.has('LEADS:CALL')
+      );
+
+      if (isCrmDesignation) {
+        rolePermissionsSet.add('VISITS:CREATE');
+        rolePermissionsSet.add('VISITS:VIEW');
+        rolePermissionsSet.add('LEADS:SCHEDULE_VISIT');
+      }
+    }
+
+    // Build lookup for existing individual employee overrides
+    const overrideMap = new Map<string, string>();
+    (employee.employeeModuleOverrides || []).forEach((ov) => {
+      overrideMap.set(ov.moduleKey.toUpperCase(), String(ov.override).toUpperCase());
+      overrideMap.set(ov.moduleKey.toLowerCase(), String(ov.override).toUpperCase());
+    });
+
+    // Standard mobile modules definition
+    const MODULE_METADATA: Array<{ key: string; label: string; category: string; description: string }> = [
+      { key: 'DASHBOARD', label: 'Dashboard', category: 'SYSTEM', description: 'Main home view & overview metrics' },
+      { key: 'CALENDAR', label: 'Calendar', category: 'CALENDAR', description: 'Personal & team schedule, shoots, visits' },
+      { key: 'MY_WORK', label: 'My Work', category: 'WORKSPACE', description: 'SSM assigned tasks and creative deliverables' },
+      { key: 'LEADS', label: 'Leads', category: 'CRM', description: 'Inbound inquiries and lead management pipeline' },
+      { key: 'CUSTOMERS', label: 'Customers', category: 'CRM', description: 'Customer directory and client accounts' },
+      { key: 'DATA_CAPTURE', label: 'Data Capture', category: 'CRM', description: 'Google Places extraction and prospect capture' },
+      { key: 'FOLLOW_UP', label: 'Follow Ups', category: 'CRM', description: 'Scheduled client and prospect calls' },
+      { key: 'VISITS', label: 'Field Visits', category: 'CRM', description: 'Client physical visits and check-ins' },
+      { key: 'PROPOSALS', label: 'Proposals', category: 'CRM', description: 'Commercial quotes and contract proposals' },
+      { key: 'PACKAGES', label: 'Packages', category: 'CRM', description: 'Service catalog packages and pricing' },
+      { key: 'PAYMENTS', label: 'Payments', category: 'CRM', description: 'Customer transaction records and receipts' },
+      { key: 'WORK_EXECUTION', label: 'Work Execution', category: 'WORKSPACE', description: 'Daily production tasks & shoot delivery' },
+      { key: 'CREATIVE_WORK', label: 'Creative Work', category: 'CREATIVE', description: 'Graphics, video edits, reels & campaigns' },
+      { key: 'ATTENDANCE', label: 'Attendance', category: 'HRM', description: 'Daily check-in / check-out and shifts' },
+      { key: 'LEAVE', label: 'Leave', category: 'HRM', description: 'Leave requests and balance tracking' },
+      { key: 'REMOTE_WORK', label: 'Remote Work', category: 'HRM', description: 'Work from home / remote status' },
+      { key: 'TASKS', label: 'Tasks', category: 'WORKSPACE', description: 'General company & project to-dos' },
+      { key: 'SALARY', label: 'Salary & Payslips', category: 'HRM', description: 'Monthly payroll records and compensation' },
+      { key: 'NOTIFICATIONS', label: 'Notifications', category: 'SYSTEM', description: 'Push notifications & activity inbox' },
+      { key: 'PROFILE', label: 'Profile', category: 'SYSTEM', description: 'Employee personal profile details' },
+      { key: 'SETTINGS', label: 'Settings', category: 'SYSTEM', description: 'App preferences and account settings' },
+    ];
+
+    const modules = MODULE_METADATA.map((meta) => {
+      // Role default status
+      const roleDefault =
+        rolePermissionsSet.has(`${meta.key}:VIEW`) ||
+        Array.from(rolePermissionsSet).some((k) => k.startsWith(`${meta.key}:`));
+
+      const rawOverride = overrideMap.get(meta.key) || overrideMap.get(meta.key.toLowerCase()) || 'DEFAULT';
+      let override: 'INHERIT' | 'ALLOW' | 'DENY' = 'INHERIT';
+      if (rawOverride === 'ALLOW') override = 'ALLOW';
+      else if (rawOverride === 'DENY') override = 'DENY';
+
+      let effective = roleDefault;
+      if (override === 'ALLOW') effective = true;
+      else if (override === 'DENY') effective = false;
+
+      return {
+        moduleKey: meta.key,
+        label: meta.label,
+        category: meta.category,
+        description: meta.description,
+        roleDefault,
+        override,
+        effective,
+      };
+    });
+
+    const granularPermissions = STANDARD_PERMISSIONS.map((perm) => {
+      const permKey = `${perm.module.toUpperCase()}:${perm.action.toUpperCase()}`;
+      const roleDefault = rolePermissionsSet.has(permKey);
+
+      const rawOverride =
+        overrideMap.get(perm.key.toLowerCase()) ||
+        overrideMap.get(permKey) ||
+        overrideMap.get(perm.module.toUpperCase()) ||
+        'DEFAULT';
+
+      let override: 'INHERIT' | 'ALLOW' | 'DENY' = 'INHERIT';
+      if (rawOverride === 'ALLOW') override = 'ALLOW';
+      else if (rawOverride === 'DENY') override = 'DENY';
+
+      let effective = roleDefault;
+      if (override === 'ALLOW') effective = true;
+      else if (override === 'DENY') effective = false;
+
+      return {
+        key: perm.key,
+        module: perm.module,
+        action: perm.action,
+        label: perm.label,
+        description: perm.description,
+        category: perm.category,
+        roleDefault,
+        override,
+        effective,
+      };
+    });
+
+    const effectivePermissionsCount = modules.filter((m) => m.effective).length;
+    const effectiveKeys = granularPermissions.filter((p) => p.effective).map((p) => p.key);
+
+    this.logger.log(
+      `[RBAC BACKEND DEBUG] employeeId=${employee.id} employeeCode=${employee.employeeCode} userId=${employee.userId} companyId=${employee.customerId} tenantId=${employee.customerId} designationId=${employee.designationId} designationName="${employee.designation?.name || ''}" designationPermissionCount=${rolePermissionsSet.size} employeeOverrideCount=${(employee.employeeModuleOverrides || []).length} effectivePermissionCount=${effectivePermissionsCount} effectivePermissionKeys=${effectiveKeys.join(',')}`,
+    );
+
+    const customPermissionsEnabled = (employee.employeeModuleOverrides || []).some(
+      (ov) => ov.override === 'ALLOW' || ov.override === 'DENY',
+    );
+
+    const isCrmEligible = employee.designation?.crmMobileAccess !== undefined && employee.designation?.crmMobileAccess !== null
+      ? Boolean(employee.designation.crmMobileAccess)
+      : (
+          (employee.designation?.name || '').toUpperCase().includes('TELE') ||
+          (employee.designation?.name || '').toUpperCase().includes('BPO')
+        );
+
+    return {
+      employeeId: employee.id,
+      employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+      designationName: employee.designation?.name || roleName,
+      roleName,
+      roles: [roleName],
+      customPermissionsEnabled,
+      isCrmEligible,
+      crmMobileAccess: isCrmEligible,
+      effectivePermissionsCount,
+      modules,
+      granularPermissions,
+    };
+  }
+
+  async updateEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+    actorUser?: any;
+    overrides: Array<{ moduleKey: string; override: 'INHERIT' | 'ALLOW' | 'DENY' | 'DEFAULT' }>;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    const customerId = employee.customerId;
+
+    for (const item of params.overrides) {
+      const modKey = (item.moduleKey || '').trim();
+      if (!modKey) continue;
+      const ovType = String(item.override).toUpperCase();
+
+      if (ovType === 'INHERIT' || ovType === 'DEFAULT') {
+        await this.prisma.employeeModuleOverride.deleteMany({
+          where: {
+            customerId,
+            employeeId: empId,
+            moduleKey: modKey,
+          },
+        });
+      } else if (ovType === 'ALLOW' || ovType === 'DENY') {
+        const overrideVal: AccessOverrideType = ovType === 'ALLOW' ? AccessOverrideType.ALLOW : AccessOverrideType.DENY;
+        await this.prisma.employeeModuleOverride.upsert({
+          where: {
+            customerId_employeeId_moduleKey: {
+              customerId,
+              employeeId: empId,
+              moduleKey: modKey,
+            },
+          },
+          create: {
+            customerId,
+            employeeId: empId,
+            moduleKey: modKey,
+            override: overrideVal,
+          },
+          update: {
+            override: overrideVal,
+          },
+        });
+      }
+    }
+
+    // Write Audit Log
+    if (this.prisma?.auditLog?.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: employee.customerId,
+          userId: params.actorUser?.id || params.actorUser?.userId || null,
+          userName: params.actorUser?.name || `${params.actorUser?.firstName || ''} ${params.actorUser?.lastName || ''}`.trim() || 'Admin',
+          userRole: params.actorUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'UPDATE_EMPLOYEE_PERMISSIONS',
+          module: 'ROLES_PERMISSIONS',
+          description: `Updated module permissions for employee ${employee.firstName} ${employee.lastName}`,
+          status: 'SUCCESS',
+          details: {
+            employeeId: empId,
+            overridesCount: params.overrides.length,
+          },
+        },
+      }).catch((err) => this.logger.warn(`Failed writing audit log for permission update: ${err}`));
+    }
+
+    // Update permissionsUpdatedAt timestamp on employee & emit real-time WebSocket notification
+    await this.prisma.employee.update({
+      where: { id: empId },
+      data: { permissionsUpdatedAt: new Date() },
+    }).catch(() => null);
+
+    if (this.planScheduleGateway) {
+      this.planScheduleGateway.notifyEmployeePermissionsUpdated(empId, employee.designationId);
+    }
+
+    return this.getEmployeePermissions({
+      employeeId: empId,
+      customerId: params.customerId,
+      isSuperAdmin: params.isSuperAdmin,
+    });
+  }
+
+  async resetEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+    actorUser?: any;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    const deleted = await this.prisma.employeeModuleOverride.deleteMany({
+      where: {
+        customerId: employee.customerId,
+        employeeId: empId,
+      },
+    });
+
+    if (this.prisma?.auditLog?.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: employee.customerId,
+          userId: params.actorUser?.id || params.actorUser?.userId || null,
+          userName: params.actorUser?.name || `${params.actorUser?.firstName || ''} ${params.actorUser?.lastName || ''}`.trim() || 'Admin',
+          userRole: params.actorUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'RESET_EMPLOYEE_PERMISSIONS',
+          module: 'ROLES_PERMISSIONS',
+          description: `Reset custom permission overrides for employee ${employee.firstName} ${employee.lastName} to ${employee.designation?.name || 'role defaults'}`,
+          status: 'SUCCESS',
+          details: {
+            employeeId: empId,
+            overridesRemoved: deleted.count,
+          },
+        },
+      }).catch((err) => this.logger.warn(`Failed writing audit log for permission reset: ${err}`));
+    }
+
+    // Update permissionsUpdatedAt timestamp on employee & emit real-time WebSocket notification
+    await this.prisma.employee.update({
+      where: { id: empId },
+      data: { permissionsUpdatedAt: new Date() },
+    }).catch(() => null);
+
+    if (this.planScheduleGateway) {
+      this.planScheduleGateway.notifyEmployeePermissionsUpdated(empId, employee.designationId);
+    }
+
+    return this.getEmployeePermissions({
+      employeeId: empId,
+      customerId: params.customerId,
+      isSuperAdmin: params.isSuperAdmin,
+    });
+  }
+
+  async restrictAllEmployeePermissions(params: {
+    employeeId: number | string;
+    customerId?: number | string;
+    isSuperAdmin?: boolean;
+    actorUser?: any;
+  }) {
+    const empId = Number(params.employeeId);
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: empId },
+      include: {
+        designation: true,
+      },
+    });
+
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${empId} not found`);
+    }
+
+    if (!params.isSuperAdmin && params.customerId && employee.customerId !== Number(params.customerId)) {
+      throw new ForbiddenException('Access denied to employee in another organization');
+    }
+
+    const standardModules = [
+      'DASHBOARD',
+      'CALENDAR',
+      'MY_WORK',
+      'LEADS',
+      'CUSTOMERS',
+      'DATA_CAPTURE',
+      'FOLLOW_UP',
+      'VISITS',
+      'PROPOSALS',
+      'PACKAGES',
+      'PAYMENTS',
+      'WORK_EXECUTION',
+      'CREATIVE_WORK',
+      'ATTENDANCE',
+      'LEAVE',
+      'REMOTE_WORK',
+      'TASKS',
+      'SALARY',
+      'NOTIFICATIONS',
+      'PROFILE',
+      'SETTINGS',
+    ];
+
+    for (const modKey of standardModules) {
+      await this.prisma.employeeModuleOverride.upsert({
+        where: {
+          customerId_employeeId_moduleKey: {
+            customerId: employee.customerId,
+            employeeId: empId,
+            moduleKey: modKey,
+          },
+        },
+        create: {
+          customerId: employee.customerId,
+          employeeId: empId,
+          moduleKey: modKey,
+          override: AccessOverrideType.DENY,
+        },
+        update: {
+          override: AccessOverrideType.DENY,
+        },
+      });
+    }
+
+    if (this.prisma?.auditLog?.create) {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: employee.customerId,
+          userId: params.actorUser?.id || params.actorUser?.userId || null,
+          userName: params.actorUser?.name || `${params.actorUser?.firstName || ''} ${params.actorUser?.lastName || ''}`.trim() || 'Admin',
+          userRole: params.actorUser?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'RESTRICT_ALL_EMPLOYEE_PERMISSIONS',
+          module: 'ROLES_PERMISSIONS',
+          description: `Restricted all mobile module access to DENY for employee ${employee.firstName} ${employee.lastName}`,
+          status: 'SUCCESS',
+          details: {
+            employeeId: empId,
+            restrictedModulesCount: standardModules.length,
+          },
+        },
+      }).catch((err) => this.logger.warn(`Failed writing audit log for restrict-all: ${err}`));
+    }
+
+    // Update permissionsUpdatedAt timestamp on employee & emit real-time WebSocket notification
+    await this.prisma.employee.update({
+      where: { id: empId },
+      data: { permissionsUpdatedAt: new Date() },
+    }).catch(() => null);
+
+    if (this.planScheduleGateway) {
+      this.planScheduleGateway.notifyEmployeePermissionsUpdated(empId, employee.designationId);
+    }
+
+    return this.getEmployeePermissions({
+      employeeId: empId,
+      customerId: params.customerId,
+      isSuperAdmin: params.isSuperAdmin,
+    });
+  }
+
+  /**
+   * Get current authenticated employee effective permissions.
+   * Calculates Role Defaults + Employee Overrides = Final Effective Permissions.
+   */
+  async getMyEffectivePermissions(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: Number(userId) },
+      include: {
+        employee: {
+          include: {
+            designation: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.employee) {
+      return {
+        success: true,
+        employeeId: null,
+        designationId: null,
+        role: 'CUSTOMER',
+        permissionsUpdatedAt: new Date().toISOString(),
+        effectivePermissions: [],
+        modules: {},
+      };
+    }
+
+    const empPerms = await this.getEmployeePermissions({
+      employeeId: user.employee.id,
+      customerId: user.employee.customerId,
+      isSuperAdmin: false,
+    });
+
+    const effectivePermissions: string[] = [];
+    const modulesMap: Record<string, boolean> = {};
+
+    for (const m of empPerms.modules) {
+      modulesMap[m.moduleKey.toLowerCase()] = m.effective;
+      if (m.effective) {
+        effectivePermissions.push(`employee.${m.moduleKey.toLowerCase()}.view`);
+        effectivePermissions.push(`${m.moduleKey.toUpperCase()}:VIEW`);
+      }
+    }
+
+    for (const p of empPerms.granularPermissions) {
+      if (p.effective) {
+        if (!effectivePermissions.includes(p.key)) {
+          effectivePermissions.push(p.key);
+        }
+        const stdKey = `${p.module.toUpperCase()}:${p.action.toUpperCase()}`;
+        if (!effectivePermissions.includes(stdKey)) {
+          effectivePermissions.push(stdKey);
+        }
+      }
+    }
+
+    const isCrmEligible = user.employee.designation?.crmMobileAccess !== undefined && user.employee.designation?.crmMobileAccess !== null
+      ? Boolean(user.employee.designation.crmMobileAccess)
+      : (
+          (user.employee.designation?.name || '').toUpperCase().includes('TELE') ||
+          (user.employee.designation?.name || '').toUpperCase().includes('BPO')
+        );
+
+    return {
+      success: true,
+      employeeId: user.employee.id,
+      designationId: user.employee.designationId,
+      role: user.employee.designation?.name || empPerms.roleName,
+      permissionsUpdatedAt: user.employee.permissionsUpdatedAt,
+      customPermissionsEnabled: Boolean(empPerms.customPermissionsEnabled),
+      isCrmEligible,
+      crmMobileAccess: isCrmEligible,
+      effectivePermissions,
+      modules: modulesMap,
     };
   }
 }

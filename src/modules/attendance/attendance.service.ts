@@ -45,11 +45,11 @@ export class AttendanceService {
       throw new ForbiddenException('Authenticated user context required');
     }
 
-    const targetCustomerId = (customerId ? Number(customerId) : undefined);
+    const targetCustomerId = user?.customerId || (customerId ? Number(customerId) : undefined);
 
     let employee = await this.prisma.employee.findFirst({
       where: {
-        ...(targetCustomerId ? {  } : {}),
+        ...(targetCustomerId ? { customerId: targetCustomerId } : {}),
         OR: [
           { userId: user.id },
           { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
@@ -97,11 +97,11 @@ export class AttendanceService {
     let selectedOffice: any = null;
 
     // 1. Direct active office linked to employee
-    if (employee.office && employee.office.isActive && true) {
+    if (employee.office && employee.office.isActive && employee.office.customerId === employee.customerId) {
       selectedOffice = employee.office;
     } else if (employee.officeId) {
       const office = await this.prisma.branchGeofence.findFirst({
-        where: { id: employee.officeId,  isActive: true },
+        where: { id: employee.officeId, customerId: employee.customerId, isActive: true },
       });
       if (office) {
         selectedOffice = office;
@@ -112,7 +112,7 @@ export class AttendanceService {
     if (!selectedOffice && employee.branch) {
       const office = await this.prisma.branchGeofence.findFirst({
         where: {
-          
+          customerId: employee.customerId,
           name: { equals: employee.branch.trim(), mode: 'insensitive' },
           isActive: true,
         },
@@ -123,7 +123,7 @@ export class AttendanceService {
     // 3. Customer default active office
     if (!selectedOffice) {
       const defaultOffice = await this.prisma.branchGeofence.findFirst({
-        where: {  isActive: true },
+        where: { customerId: employee.customerId, isActive: true },
         orderBy: { id: 'asc' },
       });
       if (defaultOffice) selectedOffice = defaultOffice;
@@ -132,7 +132,7 @@ export class AttendanceService {
     // 4. Any office for customer (if inactive)
     if (!selectedOffice) {
       const anyOffice = await this.prisma.branchGeofence.findFirst({
-        where: {  },
+        where: { customerId: employee.customerId },
         orderBy: { id: 'asc' },
       });
       if (anyOffice) selectedOffice = anyOffice;
@@ -196,7 +196,7 @@ export class AttendanceService {
   private async getActiveAttendancePolicy(customerId: number, officeId?: number) {
     const policy = await this.prisma.attendancePolicy.findFirst({
       where: {
-        
+        customerId,
         isActive: true,
         ...(officeId ? { OR: [{ officeId }, { officeId: null }] } : {}),
       },
@@ -261,7 +261,7 @@ export class AttendanceService {
     const punchInDate = new Date(attendance.punchIn);
     const now = new Date();
 
-    const activePolicy = policy || (await this.getActiveAttendancePolicy(undefined, attendance.officeId));
+    const activePolicy = policy || (await this.getActiveAttendancePolicy(attendance.customerId, attendance.officeId));
 
     let activeShift = shift;
     if (!activeShift && attendance.employeeId) {
@@ -396,7 +396,7 @@ wasLate: ${wasPunchInLate}`);
 
     const openAttendances = await this.prisma.attendance.findMany({
       where: {
-        ...({}),
+        ...(options?.customerId ? { customerId: options.customerId } : {}),
         ...(options?.employeeId ? { employeeId: options.employeeId } : {}),
         punchIn: { not: null },
         punchOut: null,
@@ -431,7 +431,7 @@ wasLate: ${wasPunchInLate}`);
   async checkIn(user: any, customerId: number | string | undefined, dto: PunchAttendanceDto) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
-    const policy = await this.getActiveAttendancePolicy(undefined, office.id);
+    const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
 
     // Gracefully handle previous day's or expired open punch records via Auto Check-out
     await this.processAutoCheckOuts({ employeeId: employee.id });
@@ -604,7 +604,7 @@ isRemoteActive: ${isRemoteActive}`);
       } else {
         attendance = await tx.attendance.create({
           data: {
-            
+            customerId: employee.customerId,
             employeeId: employee.id,
             date: todayStart,
             punchIn: now,
@@ -674,7 +674,7 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
   async checkOut(user: any, customerId: number | string | undefined, dto: PunchAttendanceDto) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
-    const policy = await this.getActiveAttendancePolicy(undefined, office.id);
+    const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
 
     const now = new Date();
     const { dateStr, start: todayStart, end: todayEnd } = getBusinessDayRange(now);
@@ -941,7 +941,7 @@ result: SUCCESS`);
     const skip = (page - 1) * limit;
 
     const whereClause: any = {
-      
+      customerId: employee.customerId,
       employeeId: employee.id,
     };
 
@@ -1019,7 +1019,7 @@ result: SUCCESS`);
   async startBreak(user: any, customerId: number | string | undefined, dto?: any) {
     const employee = await this.getAuthenticatedEmployee(user, customerId);
     const office = await this.resolveOfficeForEmployee(employee);
-    const policy = await this.getActiveAttendancePolicy(undefined, office.id);
+    const policy = await this.getActiveAttendancePolicy(employee.customerId, office.id);
 
     if (!policy.breakAllowed) {
       throw new BadRequestException('Employee breaks are disabled according to the active attendance policy.');
@@ -1168,14 +1168,14 @@ result: SUCCESS`);
     let assignedShift = employee.shift;
     if (!assignedShift) {
       assignedShift = await this.prisma.shift.findFirst({
-        where: {  status: 'ACTIVE' },
+        where: { customerId: employee.customerId, status: 'ACTIVE' },
         orderBy: { id: 'asc' },
       });
     }
 
     const isPunchedIn = Boolean(todayAtt && todayAtt.punchIn && !todayAtt.punchOut);
     const activeBreak = todayAtt?.breaks?.find((b: any) => !b.breakEnd);
-    const policy = await this.getActiveAttendancePolicy(undefined, office?.id);
+    const policy = await this.getActiveAttendancePolicy(employee.customerId, office?.id);
 
     const totalBreakMinutes =
       todayAtt?.breaks
@@ -1294,7 +1294,31 @@ result: SUCCESS`);
   }
 
   public async resolveCustomerId(user: any, customerId?: number | string): Promise<number> {
-return undefined;
+    const isSuperAdmin =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.role === 'Super Admin' ||
+      (Array.isArray(user?.roles) && user.roles.some((r: string) => r.toUpperCase() === 'SUPER_ADMIN'));
+
+    if (customerId !== undefined && customerId !== null) {
+      const num = Number(customerId);
+      if (!isNaN(num) && num > 0) return num;
+    }
+
+    if (user?.customerId !== undefined && user?.customerId !== null) {
+      const num = Number(user.customerId);
+      if (!isNaN(num) && num > 0) return num;
+    }
+
+    if (isSuperAdmin) {
+      const firstCustomer = await this.prisma.customer.findFirst({
+        where: { isActive: true },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (firstCustomer) return firstCustomer.id;
+    }
+
+    throw new ForbiddenException('A valid organization or customer context is required.');
   }
 
   private parseTimeStrToDate(timeStr: string | null | undefined, baseDate: Date): Date | null {
@@ -1314,13 +1338,13 @@ return undefined;
 
   async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string) {
     const customerId = await this.resolveCustomerId(user, customerIdParam);
-    await this.processAutoCheckOuts({  });
+    await this.processAutoCheckOuts({ customerId });
     const { start: startOfDay, end: endOfDay } = getBusinessDayRange(dateParam);
 
     const [activeEmployees, offices, attendances, locations] = await Promise.all([
       this.prisma.employee.findMany({
         where: {
-          
+          customerId,
           status: 'ACTIVE',
         },
         include: {
@@ -1333,14 +1357,14 @@ return undefined;
       }),
       this.prisma.branchGeofence.findMany({
         where: {
-          
+          customerId,
           isActive: true,
         },
         orderBy: { id: 'asc' },
       }),
       this.prisma.attendance.findMany({
         where: {
-          
+          customerId,
           date: { gte: startOfDay, lte: endOfDay },
         },
         include: {
@@ -1352,7 +1376,7 @@ return undefined;
       }),
       this.prisma.employeeLocation.findMany({
         where: {
-          
+          customerId,
           timestamp: { gte: startOfDay, lte: endOfDay },
         },
         orderBy: { timestamp: 'desc' },

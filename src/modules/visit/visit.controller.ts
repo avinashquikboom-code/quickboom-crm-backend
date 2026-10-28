@@ -8,29 +8,27 @@ import {
   Post,
   Query,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
-import { BulkDeleteVisitsDto, CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
+import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Client Visits')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('visits')
 export class VisitController {
   constructor(private readonly visitService: VisitService) {}
 
   @Get('metrics')
-  @WorkspaceAction({ module: 'VISITS', action: 'VIEW' })
+  @RequirePermissions({ module: 'VISITS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get summary metrics for client visits' })
   async getMetrics(
     @CurrentCustomer() customerId: number | string | undefined,
@@ -40,7 +38,7 @@ export class VisitController {
   }
 
   @Get()
-  @WorkspaceAction({ module: 'VISITS', action: 'VIEW' })
+  @RequirePermissions({ module: 'VISITS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get all client visits' })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'page', required: false })
@@ -71,7 +69,7 @@ export class VisitController {
   }
 
   @Get(':id')
-  @WorkspaceAction({ module: 'VISITS', action: 'VIEW' })
+  @RequirePermissions({ module: 'VISITS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get single client visit with CRM relations' })
   async findOne(
     @Param('id') id: string,
@@ -81,7 +79,7 @@ export class VisitController {
   }
 
   @Post()
-  @WorkspaceAction({ module: 'VISITS', action: 'CREATE' })
+  @RequirePermissions({ module: 'VISITS', action: 'CREATE' })
   @ApiOperation({ summary: 'Create / schedule client visit' })
   async create(
     @Body() dto: CreateVisitDto,
@@ -91,7 +89,7 @@ export class VisitController {
   }
 
   @Patch(':id')
-  @WorkspaceAction({ module: 'VISITS', action: 'EDIT' })
+  @RequirePermissions({ module: 'VISITS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update visit details or completion status' })
   async update(
     @Param('id') id: string,
@@ -101,20 +99,8 @@ export class VisitController {
     return this.visitService.update(customerId, id, dto);
   }
 
-  @Post('bulk-delete')
-  @WorkspaceAction({ module: 'VISITS', action: 'DELETE' })
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
-  @ApiOperation({ summary: 'Delete selected visits' })
-  async bulkDelete(
-    @Body() dto: BulkDeleteVisitsDto,
-    @CurrentUser() user: any,
-    @CurrentCustomer() customerId: number | string | undefined,
-  ) {
-    return this.visitService.bulkRemove(customerId, dto.ids, user);
-  }
-
   @Delete(':id')
-  @WorkspaceAction({ module: 'VISITS', action: 'DELETE' })
+  @RequirePermissions({ module: 'VISITS', action: 'DELETE' })
   @ApiOperation({ summary: 'Cancel client visit' })
   async remove(
     @Param('id') id: string,

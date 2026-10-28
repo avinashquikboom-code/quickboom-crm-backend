@@ -1031,7 +1031,7 @@ export class EmailTemplateService {
       const existing = await this.prisma.emailTemplate.findFirst({
         where: {
           key: item.key,
-
+          customerId: numCustomerId,
           deletedAt: null,
         },
       });
@@ -1039,7 +1039,7 @@ export class EmailTemplateService {
       if (!existing) {
         await this.prisma.emailTemplate.create({
           data: {
-
+            customerId: numCustomerId,
             key: item.key,
             name: item.name,
             subject: item.subject,
@@ -1067,8 +1067,8 @@ export class EmailTemplateService {
     const where: any = {
       deletedAt: null,
       OR: [
-
-
+        { customerId: numCustomerId },
+        { customerId: null },
       ],
     };
 
@@ -1105,7 +1105,7 @@ export class EmailTemplateService {
     // Deduplicate: customer-specific overrides take precedence over global templates
     const map = new Map<string, any>();
     for (const t of templates) {
-      if (!map.has(t.key) || (false)) {
+      if (!map.has(t.key) || (t.customerId === numCustomerId && map.get(t.key)?.customerId === null)) {
         map.set(t.key, this.formatTemplate(t));
       }
     }
@@ -1125,8 +1125,8 @@ export class EmailTemplateService {
         id: numId,
         deletedAt: null,
         OR: [
-
-
+          { customerId: numCustomerId },
+          { customerId: null },
         ],
       },
     });
@@ -1152,7 +1152,7 @@ export class EmailTemplateService {
       const custom = await this.prisma.emailTemplate.findFirst({
         where: {
           key: upperKey,
-
+          customerId: numCustomerId,
           isActive: true,
           deletedAt: null,
         },
@@ -1164,7 +1164,7 @@ export class EmailTemplateService {
     const globalTpl = await this.prisma.emailTemplate.findFirst({
       where: {
         key: upperKey,
-
+        customerId: null,
         isActive: true,
         deletedAt: null,
       },
@@ -1176,7 +1176,7 @@ export class EmailTemplateService {
     if (fallbackDef) {
       return this.formatTemplate({
         id: 0,
-
+        customerId: null,
         key: fallbackDef.key,
         name: fallbackDef.name,
         subject: fallbackDef.subject,
@@ -1212,7 +1212,7 @@ export class EmailTemplateService {
     const existing = await this.prisma.emailTemplate.findFirst({
       where: {
         key: cleanKey,
-
+        customerId: numCustomerId,
         deletedAt: null,
       },
     });
@@ -1235,7 +1235,7 @@ export class EmailTemplateService {
 
     const created = await this.prisma.emailTemplate.create({
       data: {
-
+        customerId: numCustomerId,
         name: rawName.trim(),
         key: cleanKey,
         subject: dto.subject.trim(),
@@ -1289,7 +1289,7 @@ export class EmailTemplateService {
       const dup = await this.prisma.emailTemplate.findFirst({
         where: {
           key: cleanKey,
-
+          customerId: template.customerId,
           deletedAt: null,
           id: { not: template.id },
         },
@@ -1345,7 +1345,7 @@ export class EmailTemplateService {
       await this.prisma.emailTemplate.findFirst({
         where: {
           key: candidateKey,
-
+          customerId: numCustomerId,
           deletedAt: null,
         },
       })
@@ -1355,7 +1355,7 @@ export class EmailTemplateService {
 
     const duplicated = await this.prisma.emailTemplate.create({
       data: {
-
+        customerId: numCustomerId,
         name: `${template.name} (Copy)`,
         key: candidateKey,
         subject: template.subject,
@@ -1419,7 +1419,7 @@ export class EmailTemplateService {
       leadPhone: '+91 98765 43210',
       leadCity: 'Pune',
       leadValue: '1,50,000',
-
+      leadNotes: 'Interested in QUIKBOOM Digital Marketing services.',
       customerName: 'Mr. Raj Sharma',
       contactEmail: 'sales@quikboom.com',
       supportPhone: '+91 8000 123 456',

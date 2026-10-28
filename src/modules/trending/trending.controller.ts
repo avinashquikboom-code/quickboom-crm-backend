@@ -29,9 +29,9 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TrendingCategory } from '@prisma/client';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Trending Content')
 @ApiBearerAuth()
@@ -169,6 +169,29 @@ export class TrendingController {
     this.checkCompanyAdminAccess(user);
     const isSuperAdmin = isUserSuperAdmin(user);
     return this.trendingService.setFeatured(customerId, id, dto.isFeatured, isSuperAdmin);
+  }
+
+  // ── Customer Endpoint ───────────────────────────────────────────────────────
+
+  @Get(['customer/trending', 'customer/marketing/trending'])
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_TRENDING', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get active published trending content for customer' })
+  @ApiQuery({ name: 'category', enum: TrendingCategory, required: false })
+  @ApiQuery({ name: 'platform', type: String, required: false })
+  @ApiQuery({ name: 'sort', type: String, required: false })
+  @ApiQuery({ name: 'search', type: String, required: false })
+  @ApiQuery({ name: 'isFeatured', type: Boolean, required: false })
+  async findAllCustomer(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Query('category') category?: TrendingCategory,
+    @Query('platform') platform?: string,
+    @Query('sort') sort?: string,
+    @Query('search') search?: string,
+    @Query('isFeatured') isFeatured?: string,
+  ) {
+    return this.trendingService.findAllCustomer(customerId, category, user, platform, sort, search, isFeatured);
   }
 
   @Get('trending')

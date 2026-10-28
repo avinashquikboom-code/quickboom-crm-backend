@@ -1,4 +1,3 @@
-import { PayrollModule } from '../payroll/payroll.module';
 import { Module } from '@nestjs/common';
 import { EmployeeController } from './employee.controller';
 import { EmployeeService } from './employee.service';
@@ -7,7 +6,7 @@ import { SubscriptionModule } from '../subscription/subscription.module';
 import { WorkModule } from '../work/work.module';
 
 @Module({
-  imports: [PrismaModule, SubscriptionModule, WorkModule, PayrollModule],
+  imports: [PrismaModule, SubscriptionModule, WorkModule],
   controllers: [EmployeeController],
   providers: [EmployeeService],
   exports: [EmployeeService],

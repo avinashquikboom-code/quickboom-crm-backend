@@ -30,7 +30,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Marketing Banners')
 @Controller()
@@ -77,7 +77,9 @@ export class BannerController {
       customerId ??
       headerCustomerId ??
       req?.headers?.['x-customer-id'] ??
-      (user?.role === 'CUSTOMER' ? (user?.id) : undefined);
+      req?.customerId ??
+      user?.customerId ??
+      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
 
     if (typeof rawCustId === 'number' && !isNaN(rawCustId)) {
       parsedCustomerId = rawCustId;
@@ -90,7 +92,7 @@ export class BannerController {
 
     return {
       id: user?.id ?? 0,
-      
+      customerId: isSuperAdmin ? (headerCustomerId || req?.query?.customerId ? parsedCustomerId : null) : parsedCustomerId,
       role: user?.role,
       isSuperAdmin,
     };
@@ -211,5 +213,21 @@ export class BannerController {
     this.checkCompanyAdminAccess(user);
     const context = this.resolveCustomerContext(customerId, user);
     return this.bannerService.setStatus(id, dto.isActive, context);
+  }
+
+  // ── Customer Endpoints ──────────────────────────────────────────────────────
+
+  @Get(['customer/marketing/banners', 'marketing/banners', 'customer/banners'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiOperation({ summary: 'Get active, published home banners for Customer Home Screen' })
+  async getCustomerBanners(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @CurrentCustomer() customerId?: string,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const context = this.resolveCustomerContext(customerId, user, headerCustomerId, req);
+    return this.bannerService.findAllCustomer(context);
   }
 }

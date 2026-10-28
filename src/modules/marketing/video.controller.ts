@@ -28,11 +28,9 @@ import {
 } from './dto/video.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Marketing Videos')
 @Controller()
@@ -79,7 +77,9 @@ export class VideoController {
       customerId ??
       headerCustomerId ??
       req?.headers?.['x-customer-id'] ??
-      (user?.role === 'CUSTOMER' ? (user?.id) : undefined);
+      req?.customerId ??
+      user?.customerId ??
+      (user?.role === 'CUSTOMER' ? (user?.customerId || user?.id) : undefined);
 
     if (typeof rawCustId === 'number' && !isNaN(rawCustId)) {
       parsedCustomerId = rawCustId;
@@ -92,7 +92,7 @@ export class VideoController {
 
     return {
       id: user?.id ?? 0,
-      
+      customerId: isSuperAdmin ? (headerCustomerId || req?.query?.customerId ? parsedCustomerId : null) : parsedCustomerId,
       role: user?.role,
       isSuperAdmin,
     };
@@ -251,5 +251,50 @@ export class VideoController {
     this.checkCompanyAdminAccess(user);
     const context = this.resolveCustomerContext(customerId, user);
     return this.videoService.getPlaybackUrl(id, context);
+  }
+
+  // ── Customer Endpoints ──────────────────────────────────────────────────────
+
+  @Get(['customer/marketing/videos', 'marketing/videos'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiOperation({ summary: 'Get active, customer-visible marketing videos for Customer Home Screen' })
+  async getCustomerVideos(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @CurrentCustomer() customerId?: string,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const context = this.resolveCustomerContext(customerId, user, headerCustomerId, req);
+    return this.videoService.findAllCustomer(context);
+  }
+
+  @Get(['customer/marketing/introduction-video', 'marketing/introduction-video'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiOperation({ summary: 'Get next eligible unseen marketing video for Customer Introduction / Onboarding' })
+  async getCustomerIntroductionVideo(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @CurrentCustomer() customerId?: string,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const context = this.resolveCustomerContext(customerId, user, headerCustomerId, req);
+    return this.videoService.findIntroductionVideoCustomer(context);
+  }
+
+  @Post(['customer/marketing/introduction-video/:id/seen', 'marketing/introduction-video/:id/seen'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiOperation({ summary: 'Mark an introduction marketing video as seen/skipped for authenticated customer' })
+  async markIntroductionVideoSeen(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentCustomer() customerId?: string,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const context = this.resolveCustomerContext(customerId, user, headerCustomerId, req);
+    return this.videoService.markIntroductionVideoSeen(id, context);
   }
 }

@@ -32,7 +32,10 @@ export class CreateDealDto {
   @IsOptional()
   companyId?: string;
 
-  
+  @ApiPropertyOptional({ example: '1' })
+  @IsString()
+  @IsOptional()
+  leadId?: string;
 
   @ApiPropertyOptional({ example: '1' })
   @IsString()

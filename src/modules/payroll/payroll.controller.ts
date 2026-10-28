@@ -1,18 +1,17 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Res, ParseIntPipe } from '@nestjs/common';
-import { Response } from 'express';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayrollService } from './payroll.service';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('HRM - Payroll')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('admin/payroll')
 export class PayrollController {
   constructor(private readonly payrollService: PayrollService) {}
@@ -25,7 +24,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; month: number; year: number; departmentId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.calculatePayroll(customerId, body.month, body.year, body.departmentId);
   }
 
@@ -37,7 +36,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; month: number; year: number; departmentId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.previewPayroll(customerId, body.month, body.year, body.departmentId);
   }
 
@@ -49,7 +48,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; payrollId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.approvePayroll(customerId, body?.payrollId);
   }
 
@@ -61,26 +60,12 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; payrollId?: string | number; month?: number; year?: number; employeeId?: number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.generatePayroll(customerId, body?.payrollId, {
       month: body?.month ? Number(body.month) : undefined,
       year: body?.year ? Number(body.year) : undefined,
       employeeId: body?.employeeId ? Number(body.employeeId) : undefined,
     });
-  }
-
-  @Post('items/:itemId/pay')
-  @WorkspaceAction({ module: 'SALARY', action: 'MANAGE' })
-  @ApiOperation({ summary: 'Mark one employee payroll as paid and send the salary slip' })
-  async payItem(
-    @CurrentUser() user: any,
-    @CurrentCustomer() currentCustomer: any,
-    @Param('itemId', ParseIntPipe) itemId: number,
-    @Body() body: { customerId?: string | number },
-  ) {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
-    return this.payrollService.payPayrollItem(customerId, itemId, user);
   }
 
   @Post('disburse')
@@ -91,7 +76,7 @@ export class PayrollController {
     @Body() body: { customerId?: string | number; payrollId?: string | number }
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.disbursePayroll(customerId, body?.payrollId);
   }
 
@@ -107,7 +92,7 @@ export class PayrollController {
     @Query('year') year?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.getPayrolls(customerId, {
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
@@ -117,7 +102,7 @@ export class PayrollController {
   }
 
   @Get('slips')
-  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slips list' })
   async findSlips(
     @CurrentUser() user: any,
@@ -130,7 +115,7 @@ export class PayrollController {
     @Query('year') year?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.getSalarySlips(customerId, {
       user,
       page: page ? parseInt(page, 10) : 1,
@@ -142,7 +127,7 @@ export class PayrollController {
   }
 
   @Get('slips/:id')
-  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slip by ID' })
   async findSlipById(
     @CurrentUser() user: any,
@@ -151,38 +136,26 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.getSalarySlipById(customerId, id);
   }
 
   @Get('slips/:id/download')
-  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
-  @ApiOperation({ summary: 'Download salary slip PDF' })
+  @ApiOperation({ summary: 'Download salary slip PDF metadata' })
   async downloadSlip(
     @CurrentUser() user: any,
     @Param('id') id: string,
-    @Res() res: Response,
     @CurrentCustomer() currentCustomer?: any,
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
-    return this.payrollService.downloadSalarySlipPdf(customerId, id, res, user);
-  }
-
-  @Get('slips/:id/pdf')
-  @WorkspaceAction({ module: 'SALARY', action: 'VIEW' })
-  @ApiOperation({ summary: 'Download salary slip PDF' })
-  async downloadSlipPdf(
-    @CurrentUser() user: any,
-    @Param('id') id: string,
-    @Res() res: Response,
-    @CurrentCustomer() currentCustomer?: any,
-    @Query('customerId') customerIdQuery?: string
-  ) {
-    const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
-    return this.payrollService.downloadSalarySlipPdf(customerId, id, res, user);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const slip = await this.payrollService.getSalarySlipById(customerId, id);
+    return {
+      message: 'Download salary slip PDF',
+      slip,
+      downloadUrl: `/downloads/slips/${id}.pdf`,
+    };
   }
 
   @Get('history')
@@ -193,7 +166,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.getPayrollHistory(customerId);
   }
 
@@ -202,16 +175,14 @@ export class PayrollController {
   async getStructures(
     @CurrentUser() user: any,
     @CurrentCustomer() currentCustomer?: any,
-    @Query('customerId') customerIdQuery?: string,
-    @Query('employeeId') employeeIdQuery?: string
+    @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
-    return this.payrollService.getSalaryStructures(customerId, employeeIdQuery);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.getSalaryStructures(customerId);
   }
 
   @Post('structures')
-  @WorkspaceAction({ module: 'PAYROLL', action: 'MANAGE' })
   @ApiOperation({ summary: 'Save or update employee salary structure' })
   async saveStructure(
     @CurrentUser() user: any,
@@ -219,7 +190,7 @@ export class PayrollController {
     @Body() body: any
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.saveSalaryStructure(customerId, body);
   }
 
@@ -232,7 +203,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.deleteSalaryStructure(customerId, id);
   }
 
@@ -244,7 +215,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.getPayrollPolicy(customerId);
   }
 
@@ -256,7 +227,7 @@ export class PayrollController {
     @Body() body: any
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.savePayrollPolicy(customerId, body);
   }
 
@@ -269,7 +240,7 @@ export class PayrollController {
     @Query('customerId') customerIdQuery?: string
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (currentCustomer);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.getPayrollById(customerId, id);
   }
 }

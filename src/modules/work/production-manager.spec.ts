@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
-import { WorkAssignmentService } from './work-assignment.service';
+import { WorkPermissionService } from './work-permission.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus } from '@prisma/client';
 
 describe('Production Manager Functionality & Cross-Role Visibility', () => {
   let workService: WorkService;
-  let workPermissionService: WorkAssignmentService;
+  let workPermissionService: WorkPermissionService;
   let prisma: any;
 
   const mockTenantCustomerId = 1;
@@ -41,9 +41,9 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
       providers: [
         WorkService,
         {
-          provide: WorkAssignmentService,
+          provide: WorkPermissionService,
           useValue: {
-            getEmployeeActivityTypes: jest.fn(),
+            getAllowedActivityTypesForEmployee: jest.fn(),
           },
         },
         {
@@ -54,7 +54,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
     }).compile();
 
     workService = module.get<WorkService>(WorkService);
-    workPermissionService = module.get<WorkAssignmentService>(WorkAssignmentService);
+    workPermissionService = module.get<WorkPermissionService>(WorkPermissionService);
   });
 
   describe('1. Production Manager vs Normal Employee Scoping', () => {
@@ -68,7 +68,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
         role: 'Production Manager',
         allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT', 'REEL_POST']),
         isFullAccess: true,
@@ -114,19 +114,15 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
 
       prisma.work.findMany.mockResolvedValue(mockWorks);
 
-      const result = await workService.getEmployeeCalendar(50, { month: 9, year: 2026 });
+      const result = await workService.getEmployeeCalendar(50, {});
 
       expect(prisma.work.findMany).toHaveBeenCalled();
       const queryWhere = prisma.work.findMany.mock.calls[0][0].where;
 
       // Notice: For Production Manager, where should NOT restrict to assignedToId == 50!
       expect(queryWhere.OR).toBeUndefined();
-      expect(result.map((w) => w.assignedEmployees)).toEqual([['Employee A'], ['Employee B'], ['Employee A']]);
-      for (const w of result) {
-        for (const field of ['assignedToId', 'assignedEmployee', 'assignedToName']) {
-          expect(w).toHaveProperty(field);
-        }
-      }
+      expect(result.length).toBe(3);
+      expect(result.map((w) => w.assignedEmployee)).toEqual(['Employee A', 'Employee B', 'Employee A']);
     });
 
     it('strictly restricts Normal Employee to only their assigned work', async () => {
@@ -139,7 +135,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
         role: 'Video Editor',
         allowedTypes: new Set(['REEL_EDIT', 'VIDEO_EDITING']),
         isFullAccess: false,
@@ -173,7 +169,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
         role: 'Production Manager',
         allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT']),
         isFullAccess: true,
@@ -197,53 +193,6 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
     });
   });
 
-  describe('Production filter options', () => {
-    it('returns only employees and teams belonging to the Production Team', async () => {
-      jest.spyOn(workService, 'getEmployeeCalendar').mockResolvedValue([
-        {
-          customerId: 10,
-          customerName: 'Test Customer',
-          assignedTeam: 'Production Team',
-          assignedToId: 20,
-          assignedEmployee: 'Bhavesh Gandhi',
-          editorId: 21,
-          editorName: 'BPO Editor',
-          teamId: 30,
-        },
-      ] as any);
-      prisma.employee.findUnique.mockResolvedValue({
-        id: 50,
-        customerId: mockTenantCustomerId,
-      });
-      prisma.employee.findMany.mockResolvedValue([
-        { id: 40, firstName: 'Production', lastName: 'Employee' },
-      ]);
-      prisma.team.findMany.mockResolvedValue([
-        { id: 30, name: 'Production Team' },
-      ]);
-      prisma.customer.findMany.mockResolvedValue([]);
-
-      const result = await workService.getProductionFilterOptions(50);
-
-      expect(result.employees).toEqual([
-        { id: 40, name: 'Production Employee' },
-      ]);
-      expect(result.teams).toEqual([
-        { id: 30, name: 'Production Team' },
-      ]);
-      expect(prisma.employee.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            OR: [
-              { teamMembers: { some: { team: expect.objectContaining({ customerId: mockTenantCustomerId }) } } },
-              { ledTeams: { some: expect.objectContaining({ customerId: mockTenantCustomerId }) } },
-            ],
-          }),
-        }),
-      );
-    });
-  });
-
   describe('3. Production Metrics Calculation', () => {
     it('accurately derives total, pending, inProgress, completed, blocked, today, and overdue metrics', async () => {
       const now = new Date();
@@ -259,7 +208,7 @@ describe('Production Manager Functionality & Cross-Role Visibility', () => {
         customerId: mockTenantCustomerId,
       });
 
-      jest.spyOn(workPermissionService, 'getEmployeeActivityTypes').mockResolvedValue({
+      jest.spyOn(workPermissionService, 'getAllowedActivityTypesForEmployee').mockResolvedValue({
         role: 'Production Manager',
         allowedTypes: new Set(['REEL_SHOOT', 'REEL_EDIT']),
         isFullAccess: true,

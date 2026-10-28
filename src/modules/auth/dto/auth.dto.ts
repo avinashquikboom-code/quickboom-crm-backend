@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'admin@quikboom.com' })
@@ -16,6 +16,59 @@ export class LoginDto {
   @IsOptional()
   @IsString()
   appType?: string;
+}
+
+export class RegisterCustomerDto {
+  @ApiPropertyOptional({ example: 'Acme Corporation' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @ApiPropertyOptional({ example: 'John Doe' })
+  @IsString()
+  @IsOptional()
+  fullName?: string;
+
+  @ApiPropertyOptional({ example: 'John' })
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: 'Doe' })
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @ApiProperty({ example: 'john@acme.com' })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email address is required' })
+  email: string;
+
+  @ApiPropertyOptional({ example: '+919876543210' })
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'Password123!' })
+  @IsString()
+  @IsOptional()
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
+  password?: string;
+
+  @ApiPropertyOptional({ example: 'fcm_token_xyz', description: 'Optional FCM device token registered at sign-up' })
+  @IsString()
+  @IsOptional()
+  fcmToken?: string;
+
+  @ApiPropertyOptional({ example: 'ANDROID', enum: ['ANDROID', 'IOS', 'WEB'] })
+  @IsString()
+  @IsOptional()
+  platform?: string;
 }
 
 export class RegisterEmployeeDto {
@@ -54,10 +107,10 @@ export class RegisterEmployeeDto {
   @IsNotEmpty({ message: 'Email address is required' })
   email: string;
 
-  @ApiPropertyOptional({ example: '123456' })
+  @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @IsOptional()
-  password?: string;
+  @MinLength(6, { message: 'Password must be at least 6 characters' })
+  password: string;
 
   @ApiPropertyOptional({ example: 'Password123!' })
   @IsString()
@@ -115,18 +168,6 @@ export class ResetPasswordDto {
   newPassword: string;
 }
 
-export class ChangeCustomerPasswordDto {
-  @ApiProperty({ example: '123456' })
-  @IsString()
-  @IsNotEmpty()
-  currentPassword: string;
-
-  @ApiProperty({ example: 'NewPassword123!' })
-  @IsString()
-  @MinLength(6)
-  newPassword: string;
-}
-
 export class SendEmailOtpDto {
   @ApiProperty({ example: 'admin@quickboom.com', description: 'Registered account email address' })
   @IsEmail({}, { message: 'Please provide a valid email address' })
@@ -144,11 +185,6 @@ export class VerifyOtpDto {
   @IsOptional()
   @IsString()
   mobile?: string;
-
-  @ApiPropertyOptional({ example: 'EMP-004', description: 'Registered employee ID or code' })
-  @IsOptional()
-  @IsString()
-  employeeId?: string;
 
   @ApiProperty({ example: '123456', description: '6-digit OTP verification code' })
   @IsString()
@@ -172,14 +208,6 @@ export class SendOtpDto {
   @IsOptional()
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email?: string;
-
-  @ApiPropertyOptional({
-    example: 'EMP-004',
-    description: 'Registered employee ID or code',
-  })
-  @IsOptional()
-  @IsString()
-  employeeId?: string;
 }
 
 export class VerifyMobileOtpDto {
@@ -198,45 +226,4 @@ export class VerifyMobileOtpDto {
   @IsString()
   @IsNotEmpty()
   otp: string;
-}
-
-export class RegisterCustomerDto {
-  @ApiProperty()
-  @IsString()
-  @Matches(/\S/, { message: 'Business name is required' })
-  @MaxLength(200)
-  companyName: string;
-
-  @ApiProperty()
-  @IsString()
-  @Matches(/\S/, { message: 'Full name is required' })
-  @MaxLength(200)
-  fullName: string;
-
-  @ApiProperty()
-  @IsEmail()
-  @MaxLength(254)
-  email: string;
-
-  @ApiPropertyOptional({ description: '10 digit Indian mobile number, optionally prefixed by +91' })
-  @IsOptional()
-  @IsString()
-  @Matches(/^(?:\+?91)?[6-9]\d{9}$/, { message: 'Enter a valid Indian mobile number' })
-  mobile?: string;
-
-  @ApiPropertyOptional({ description: 'Phone number alias for mobile' })
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  city?: string;
-
-  @ApiProperty()
-  @IsString()
-  @MinLength(6)
-  @MaxLength(72)
-  password: string;
 }

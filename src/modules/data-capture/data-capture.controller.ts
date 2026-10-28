@@ -1,5 +1,3 @@
-import { LeadService } from '../lead/lead.service';
-import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import {
   Controller,
   Post,
@@ -8,7 +6,6 @@ import {
   Delete,
   Body,
   Param,
-  ParseIntPipe,
   Query,
   UseGuards,
   ValidationPipe,
@@ -22,36 +19,36 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataCaptureService } from './data-capture.service';
 import {
-  CaptureHistoryQueryDto,
-  ImportCaptureLeadsDto,
   ExtractPlacesDto,
+  ImportToLeadsDto,
   CreateDataCaptureDto,
   UpdateDataCaptureDto,
   DataCaptureQueryDto,
   RejectDataCaptureDto,
   BulkActionDto,
+  CreateLeadFromPlaceDto,
 } from './dto/data-capture.dto';
 
-@ApiTags('Data Capture (Google Places Extraction)')
+@ApiTags('Data Capture (Google Places & Leads Extraction)')
 @ApiBearerAuth()
 @Controller('data-capture')
-@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class DataCaptureController {
-  constructor(private readonly dataCaptureService: DataCaptureService, private readonly leads: LeadService) {}
+  constructor(private readonly dataCaptureService: DataCaptureService) {}
 
   /**
    * GET /api/v1/data-capture
    * List captured places with pagination, search, status, and source filters
    */
   @Get()
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'List captured places with pagination and filtering' })
   async listPlaces(
     @CurrentCustomer() customerId: string,
@@ -66,7 +63,7 @@ export class DataCaptureController {
    * Retrieves extraction quota and Google Places API consumption metrics
    */
   @Get('usage')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get customer extraction usage and remaining quota' })
   async getUsageSummary(
     @CurrentCustomer() customerId: string,
@@ -76,7 +73,7 @@ export class DataCaptureController {
   }
 
   @Post('usage')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Alias for get usage summary (POST)' })
   async postUsageSummary(
     @CurrentCustomer() customerId: string,
@@ -90,7 +87,7 @@ export class DataCaptureController {
    * Searches & captures verified business records via Google Places API (New) - Text Search
    */
   @Post('extract')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
   @ApiOperation({ summary: 'Extract places from Google Places API' })
   async extractPlaces(
     @CurrentCustomer() customerId: string,
@@ -102,11 +99,59 @@ export class DataCaptureController {
   }
 
   /**
+   * POST /api/v1/data-capture/import-to-leads
+   * Batch imports captured prospects into CRM Leads with duplicate detection
+   */
+  @Post('import-to-leads')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @ApiOperation({ summary: 'Import captured places into CRM Leads in batch' })
+  async importToLeads(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() dto: ImportToLeadsDto,
+    @Req() req: any,
+  ) {
+    return this.dataCaptureService.importToLeads(customerId, user, dto, req);
+  }
+
+  /**
+   * GET /api/v1/data-capture/jobs & /api/v1/data-capture/history
+   * Retrieves past extraction jobs for the customer
+   */
+  @Get('jobs')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get extraction job history' })
+  async getCustomerJobs(@CurrentCustomer() customerId: string) {
+    return this.dataCaptureService.getCustomerJobs(customerId);
+  }
+
+  @Get('history')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Alias for extraction job history' })
+  async getCustomerHistory(@CurrentCustomer() customerId: string) {
+    return this.dataCaptureService.getCustomerJobs(customerId);
+  }
+
+  /**
+   * GET /api/v1/data-capture/jobs/:id
+   * Retrieves single extraction job details and captured places
+   */
+  @Get('jobs/:id')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get single extraction job details' })
+  async getJobById(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    return this.dataCaptureService.getJobById(customerId, id);
+  }
+
+  /**
    * POST /api/v1/data-capture/bulk
-   * Executes bulk action (validate, reject, delete, mark duplicate)
+   * Executes bulk action (validate, reject, delete, mark duplicate, import)
    */
   @Post('bulk')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Execute bulk operations on Data Capture records' })
   async handleBulkAction(
     @CurrentCustomer() customerId: string,
@@ -139,7 +184,7 @@ export class DataCaptureController {
    * Manually create a Data Capture record
    */
   @Post()
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
   @ApiOperation({ summary: 'Manually create a new Data Capture record' })
   async createPlace(
     @CurrentCustomer() customerId: string,
@@ -150,56 +195,21 @@ export class DataCaptureController {
     return this.dataCaptureService.createPlace(customerId, userId, dto, req);
   }
 
-  @Post([':id/create-lead', ':id/import-lead'])
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
-  @ApiOperation({ summary: 'Atomically convert a validated Data Capture record into a Lead' })
-  async importLead(
-    @Param('id', ParseIntPipe) id: number,
+  /**
+   * POST /api/v1/data-capture/:id/create-lead
+   * Direct 1-click lead conversion from captured record with duplicate checking
+   */
+  @Post(':id/create-lead')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @ApiOperation({ summary: 'Convert single captured record to CRM Lead' })
+  async createLeadFromPlace(
+    @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
-    @Req() req: any,
-    @Body() body?: any,
+    @Param('id') id: string,
+    @Body() dto?: CreateLeadFromPlaceDto,
+    @Req() req?: any,
   ) {
-    const result = await this.leads.importCapture(id, user, resolveCreatedFrom(req, user), body);
-    const record = await this.dataCaptureService.getPlaceById(undefined, id);
-    const stage = result.lead.stage;
-    const leadWithStage = result.lead;
-    return {
-      success: true,
-      message: result.alreadyImported ? 'Lead already exists in CRM' : 'Lead imported successfully',
-      data: {
-        lead: leadWithStage,
-        record,
-        capture: record,
-        leadId: result.lead.id,
-        status: result.lead.status,
-        stage,
-        stageId: stage.id,
-        alreadyImported: result.alreadyImported,
-        isDuplicate: result.alreadyImported,
-      },
-      lead: leadWithStage,
-      record,
-      capture: record,
-      leadId: result.lead.id,
-      status: result.lead.status,
-      stage,
-      stageId: stage.id,
-      alreadyImported: result.alreadyImported,
-      isDuplicate: result.alreadyImported,
-    };
-  }
-
-  @Post(['import-leads', 'import-to-leads'])
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
-  @ApiOperation({ summary: 'Batch convert validated Data Capture records into Leads' })
-  async importToLeads(@CurrentUser() user: any, @Req() req: any, @Body() body: any) {
-    if (body?.ids !== undefined) {
-      const dto = await new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true })
-        .transform(body, { type: 'body', metatype: ImportCaptureLeadsDto });
-      const result = await this.leads.importSelectedCaptures(dto.ids, user, resolveCreatedFrom(req, user));
-      return { success: true, data: result };
-    }
-    return this.leads.importMultipleCaptures(body, user, resolveCreatedFrom(req, user));
+    return this.dataCaptureService.createLeadFromPlace(customerId, user, id, dto?.captureRequestId, dto, req);
   }
 
   /**
@@ -207,7 +217,7 @@ export class DataCaptureController {
    * Mark record as VALIDATED
    */
   @Post(':id/validate')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Mark captured record as VALIDATED' })
   async validatePlace(
     @CurrentCustomer() customerId: string,
@@ -221,7 +231,7 @@ export class DataCaptureController {
    * Mark record as REJECTED
    */
   @Post(':id/reject')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Mark captured record as REJECTED with optional reason' })
   async rejectPlace(
     @CurrentCustomer() customerId: string,
@@ -236,7 +246,7 @@ export class DataCaptureController {
    * Check duplicate matches for record
    */
   @Post(':id/duplicate-check')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Scan CRM database for possible duplicates' })
   async checkDuplicates(
     @CurrentCustomer() customerId: string,
@@ -246,11 +256,30 @@ export class DataCaptureController {
   }
 
   /**
+   * POST /api/v1/data-capture/:id/import
+   * Alias for job places import
+   */
+  @Post(':id/import')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @ApiOperation({ summary: 'Import job places into CRM Leads' })
+  async importJobToLeads(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser('id') userId: string,
+    @Param('id') jobId: string,
+    @Body() dto: { placeIds?: string[] },
+  ) {
+    return this.dataCaptureService.importToLeads(customerId, userId, {
+      jobId,
+      placeIds: dto?.placeIds,
+    });
+  }
+
+  /**
    * PATCH /api/v1/data-capture/:id
    * Update Data Capture record fields
    */
   @Patch(':id')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
   @ApiOperation({ summary: 'Update Data Capture record details' })
   async updatePlace(
     @CurrentCustomer() customerId: string,
@@ -265,7 +294,7 @@ export class DataCaptureController {
    * Soft delete Data Capture record
    */
   @Delete(':id')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'DELETE' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete Data Capture record' })
   async deletePlace(
     @CurrentCustomer() customerId: string,
@@ -308,27 +337,18 @@ export class DataCaptureController {
 
   /**
    * GET /api/v1/data-capture/:id
-   * Retrieves single Data Capture place
+   * Retrieves single Data Capture place (or extraction job if ID starts with job-)
    */
-  @Get('history')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  history(@CurrentUser() user: any, @Query() query: CaptureHistoryQueryDto) {
-    return this.dataCaptureService.getCaptureHistory(user, query);
-  }
-
-  @Get('history/:jobId/records')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  historyRecords(@CurrentUser() user: any, @Param('jobId') jobId: string, @Query() query: DataCaptureQueryDto) {
-    return this.dataCaptureService.getCaptureHistoryRecords(user, jobId, query);
-  }
-
   @Get(':id')
-  @WorkspaceAction({ module: 'DATA_CAPTURE', action: 'VIEW' })
-  @ApiOperation({ summary: 'Get single Data Capture record' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get single Data Capture record or job details' })
   async getPlaceOrJobById(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
   ) {
+    if (id.startsWith('job-')) {
+      return this.dataCaptureService.getJobById(customerId, id);
+    }
     return this.dataCaptureService.getPlaceById(customerId, id);
   }
 }

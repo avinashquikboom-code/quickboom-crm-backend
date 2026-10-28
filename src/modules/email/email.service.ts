@@ -150,7 +150,9 @@ export class EmailService {
       throw new BadRequestException('Email body cannot be empty');
     }
 
-    const customerId = dto.recordType?.toLowerCase() === 'customer' && dto.recordId
+    const customerId = user?.customerId
+      ? Number(user.customerId)
+      : dto.recordType?.toLowerCase() === 'customer' && dto.recordId
       ? Number(dto.recordId)
       : null;
     const userId = user?.id ? Number(user.id) : null;
@@ -159,9 +161,33 @@ export class EmailService {
     let publicLogoUrl = DEFAULT_PUBLIC_LOGO_URL;
     let primaryColor = process.env.PRIMARY_COLOR || DEFAULT_PRIMARY_COLOR;
 
+    if (customerId && this.prisma?.customer?.findUnique) {
+      const cust = await this.prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { logo: true },
+      }).catch(() => null);
+      if (cust?.logo) {
+        publicLogoUrl = resolvePublicLogoUrl(cust.logo);
+      }
+    } else if (this.prisma?.customer?.findFirst) {
+      const custWithLogo = await this.prisma.customer.findFirst({
+        where: { logo: { not: null } },
+        select: { logo: true },
+      }).catch(() => null);
+      if (custWithLogo?.logo) {
+        publicLogoUrl = resolvePublicLogoUrl(custWithLogo.logo);
+      }
+    }
 
-
-    
+    if (dto.recordType === 'lead' && dto.recordId && this.prisma?.lead?.findUnique) {
+      const leadRec = await this.prisma.lead.findUnique({
+        where: { id: Number(dto.recordId) },
+        include: { stage: true },
+      }).catch(() => null);
+      if (leadRec?.stage?.color) {
+        primaryColor = leadRec.stage.color;
+      }
+    }
 
     // Ensure email content is rich HTML with the company header and public HTTPS logo
     if (!htmlContent && (dto.body || textContent)) {
@@ -302,7 +328,7 @@ export class EmailService {
       // 6. Audit log
       await this.prisma.auditLog.create({
         data: {
-          
+          customerId,
           userId,
           action: 'EMAIL_SENT',
           module: 'EMAIL',
@@ -328,10 +354,14 @@ export class EmailService {
       if (this.prisma.emailLog && !dto.skipEmailLog) {
         await this.prisma.emailLog.create({
           data: {
-            
+            customerId,
             userId,
             templateId: dto.templateId ? Number(dto.templateId) : null,
-            
+            leadId: dto.leadId
+              ? Number(dto.leadId)
+              : dto.recordType?.toLowerCase() === 'lead' && dto.recordId
+              ? Number(dto.recordId)
+              : null,
             appointmentId: dto.appointmentId ? Number(dto.appointmentId) : null,
             planId: dto.planId ? Number(dto.planId) : null,
             channel: dto.channel || 'EMAIL',
@@ -381,10 +411,14 @@ export class EmailService {
       if (this.prisma.emailLog && !dto.skipEmailLog) {
         await this.prisma.emailLog.create({
           data: {
-            
+            customerId,
             userId,
             templateId: dto.templateId ? Number(dto.templateId) : null,
-            
+            leadId: dto.leadId
+              ? Number(dto.leadId)
+              : dto.recordType?.toLowerCase() === 'lead' && dto.recordId
+              ? Number(dto.recordId)
+              : null,
             appointmentId: dto.appointmentId ? Number(dto.appointmentId) : null,
             planId: dto.planId ? Number(dto.planId) : null,
             channel: dto.channel || 'EMAIL',
@@ -419,7 +453,7 @@ export class EmailService {
     options?: Partial<SendEmailDto>,
     user?: any,
   ) {
-    const customerId = null;
+    const customerId = user?.customerId ? Number(user.customerId) : null;
     const template = await this.emailTemplateService.findByKey(key, customerId);
 
     let subject: string;

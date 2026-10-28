@@ -1,8 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException, Logger, Optional } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
-import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { EmailService } from '../email/email.service';
 import { EmailTemplateService, renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -22,13 +22,32 @@ export class VisitService {
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-return undefined;
+    if (typeof customerId === 'number' && !isNaN(customerId)) {
+      return customerId;
+    }
+    if (typeof customerId === 'string' && customerId.trim()) {
+      const parsed = parseInt(customerId, 10);
+      if (!isNaN(parsed)) return parsed;
+
+      const foundCustomer = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { domain: { equals: customerId.trim(), mode: 'insensitive' } },
+            { name: { equals: customerId.trim(), mode: 'insensitive' } },
+          ],
+          deletedAt: null,
+        },
+      });
+      if (foundCustomer) return foundCustomer.id;
+    }
+
+    return undefined;
   }
 
   async getMetrics(customerId: number | string | undefined, user?: any) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const hasExplicitCustomer = false;
+    const hasExplicitCustomer = numCustomerId !== undefined && numCustomerId > 0;
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -38,13 +57,15 @@ return undefined;
     const baseWhere: any = {};
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-
+        baseWhere.customerId = numCustomerId;
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(undefined));
-
-
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(user?.customerId));
+      if (!effectiveCustomerId || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      baseWhere.customerId = effectiveCustomerId;
     }
 
     const [todayVisits, upcoming, completed, cancelled] = await Promise.all([
@@ -95,19 +116,21 @@ return undefined;
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const hasExplicitCustomer = false;
+    const hasExplicitCustomer = numCustomerId !== undefined && numCustomerId > 0;
     const skip = (page - 1) * limit;
     const where: any = {};
 
     if (isSuperAdmin) {
       if (hasExplicitCustomer) {
-
+        where.customerId = numCustomerId;
       }
       // else: SUPER_ADMIN — no customerId filter, full platform view
     } else {
-      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(undefined));
-
-
+      const effectiveCustomerId = hasExplicitCustomer ? numCustomerId : (await this.resolveCustomerId(user?.customerId));
+      if (!effectiveCustomerId || effectiveCustomerId <= 0) {
+        throw new UnauthorizedException('User is not associated with any customer account');
+      }
+      where.customerId = effectiveCustomerId;
     }
 
     if (status && (status as any) !== 'ALL') where.status = status;
@@ -134,7 +157,7 @@ return undefined;
           company: { select: { id: true, name: true, city: true } },
           contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
           deal: { select: { id: true, title: true, amount: true } },
-
+          lead: { select: { id: true, title: true } },
         },
       }),
       this.prisma.visit.count({ where }),
@@ -217,7 +240,9 @@ return undefined;
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
     const where: any = { id: numId };
-
+    if (numCustomerId !== undefined && numCustomerId > 0) {
+      where.customerId = numCustomerId;
+    }
 
     const visit = await this.prisma.visit.findFirst({
       where,
@@ -226,7 +251,7 @@ return undefined;
         company: true,
         contact: true,
         deal: true,
-
+        lead: true,
       },
     });
 
@@ -278,16 +303,24 @@ return undefined;
 
     // Fallback employee if not specified
     let employeeId = dto.employeeId ? Number(dto.employeeId) : undefined;
-
+    if (!employeeId && dto.leadId) {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: Number(dto.leadId) },
+        select: { employeeId: true },
+      });
+      if (lead?.employeeId) {
+        employeeId = Number(lead.employeeId);
+      }
+    }
     if (!employeeId) {
-      const emp = await this.prisma.employee.findFirst({ where: {  } });
+      const emp = await this.prisma.employee.findFirst({ where: { customerId: numCustomerId } });
       employeeId = emp?.id;
     }
 
     if (!employeeId) {
       const emp = await this.prisma.employee.create({
         data: {
-
+          customerId: numCustomerId,
           employeeCode: `EMP-${Date.now().toString().slice(-4)}`,
           firstName: 'CRM',
           lastName: 'Executive',
@@ -299,12 +332,12 @@ return undefined;
 
     const visit = await this.prisma.visit.create({
       data: {
-
+        customerId: numCustomerId,
         employeeId: employeeId,
         companyId: dto.companyId ? Number(dto.companyId) : undefined,
         contactId: dto.contactId ? Number(dto.contactId) : undefined,
         dealId: dto.dealId ? Number(dto.dealId) : undefined,
-
+        leadId: dto.leadId ? Number(dto.leadId) : undefined,
         customerName: dto.customerName,
         purpose: dto.purpose,
         visitType: dto.visitType || 'CLIENT_MEETING',
@@ -331,29 +364,59 @@ return undefined;
       },
     });
 
-    // 2. VISIT SCHEDULED -> VISITOR NOTIFICATION
-    if (this.notificationService && visit.employeeId) {
-      const customerLabel = visit.customerName || (visit.contact ? `${visit.contact.firstName || ''} ${visit.contact.lastName || ''}`.trim() : null);
-      this.notificationService
-        .sendVisitScheduledNotification({
-
-          visitId: visit.id,
-          employeeId: visit.employeeId,
-          customerName: customerLabel,
-          purpose: visit.purpose,
-          date: visit.date,
-          time: visit.time,
-          location: visit.location,
-          notes: visit.notes,
-
-        })
-        .catch((err: any) => {
-          this.logger.warn(`Failed to dispatch VISIT_SCHEDULED notification: ${err?.message}`);
-        });
-    }
-
     // If linked to a lead, sync the lead stage to VISIT_SCHEDULED and assign employee
+    if (dto.leadId) {
+      try {
+        const numLeadId = Number(dto.leadId);
+        const visitScheduledStage = await this.prisma.leadStage.findFirst({
+          where: {
+            AND: [
+              {
+                OR: [
+                  { key: 'VISIT_SCHEDULED' },
+                  { key: 'VISIT' },
+                  { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                ],
+              },
+              {
+                OR: [
+                  ...(numCustomerId && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+                  { customerId: null },
+                ],
+              },
+            ],
+            deletedAt: null,
+          },
+          orderBy: { customerId: 'desc' },
+        });
 
+        const currentLead = await this.prisma.lead.findUnique({
+          where: { id: numLeadId },
+          select: { employeeId: true },
+        });
+        const leadEmpId = currentLead?.employeeId || dto.scheduledById || employeeId;
+
+        await this.prisma.lead.update({
+          where: { id: numLeadId },
+          data: {
+            status: 'VISIT_SCHEDULED',
+            ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
+            ...(leadEmpId ? { employeeId: Number(leadEmpId) } : {}),
+          },
+        });
+
+        await this.prisma.leadActivityTimeline.create({
+          data: {
+            leadId: numLeadId,
+            action: 'VISIT_SCHEDULED',
+            description: `Field Visit Scheduled for ${dto.date ? String(dto.date).split('T')[0] : 'today'} at ${dto.time || '10:00 AM'} - ${dto.purpose || 'Client Visit'}`,
+            metadata: { visitId: visit.id, employeeId, location: dto.location },
+          },
+        }).catch(() => {});
+      } catch (leadSyncErr: any) {
+        this.logger.warn(`Could not sync lead stage on visit create: ${leadSyncErr?.message}`);
+      }
+    }
 
     // Dispatch Calendar Appointment Email & WhatsApp with PDF (non-blocking)
     try {
@@ -372,9 +435,16 @@ return undefined;
     if (!visit) return;
 
     try {
-      const customerId = undefined;
+      const customerId = visit.customerId;
       let customer: any = null;
-
+      if (customerId) {
+        customer = await this.prisma.customer.findUnique({
+          where: { id: customerId },
+          include: {
+            users: { where: { deletedAt: null }, select: { email: true, phone: true }, take: 1 },
+          },
+        });
+      }
 
       const clientName =
         visit.customerName ||
@@ -465,7 +535,7 @@ return undefined;
         try {
           await this.whatsappService.sendCalendarScheduledMessage({
             to: clientPhone,
-
+            customerId,
             customerName: clientName,
             eventTitle,
             date: visitDate,
@@ -555,20 +625,27 @@ return undefined;
       numCustomerId &&
       numCustomerId > 0
     ) {
-      const leadId = undefined;
+      const leadId = (updated as any).leadId ?? existingVisit?.leadId;
       let leadName: string | null = null;
-
+      if (leadId) {
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: Number(leadId), deletedAt: null },
+          select: { firstName: true, lastName: true, companyName: true, title: true },
+        });
+        if (lead) {
+          const fullName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+          leadName = fullName || lead.companyName || lead.title || null;
+        }
+      }
       try {
         await this.notificationService.sendVisitCompletedNotification({
-
+          customerId: numCustomerId,
           visitId: numId,
-
+          leadId: leadId ? Number(leadId) : null,
           visitorName: finalVisitedByName || updated.employee
             ? `${updated.employee?.firstName || ''} ${updated.employee?.lastName || ''}`.trim()
             : null,
           leadName,
-          purpose: updated.purpose || existingVisit?.purpose || null,
-          completedAt: new Date(),
         });
       } catch (notifErr: any) {
         this.logger.warn(`[FCM] Visit completed push skipped: ${notifErr?.message}`);
@@ -592,24 +669,6 @@ return undefined;
           }
         : null,
     };
-  }
-
-  async bulkRemove(customerId: number | string | undefined, ids: number[], user: any) {
-    if (!isUserAdmin(user)) throw new ForbiddenException('Administrator account required');
-    if (!Array.isArray(ids) || !ids.length || ids.length > 100 ||
-        new Set(ids).size !== ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 1)) {
-      throw new BadRequestException('Provide 1–100 unique valid visit IDs');
-    }
-    // Same single-organization scope as the existing remove/findOne endpoints.
-    await this.resolveCustomerId(customerId);
-    return this.prisma.$transaction(async tx => {
-      const rows = await tx.visit.findMany({ where: { id: { in: ids } }, select: { id: true } });
-      if (rows.length !== ids.length) throw new NotFoundException('Some visits no longer exist. Refresh and select again.');
-      const result = await tx.visit.deleteMany({ where: { id: { in: ids } } });
-      if (result.count !== ids.length) throw new BadRequestException('Visit records changed. Refresh and retry.');
-      // Only Visit rows are deleted; related CRM records are not deleted.
-      return { deletedCount: result.count, ids: rows.map(row => row.id) };
-    });
   }
 
   async remove(customerId: number | string | undefined, id: number | string) {

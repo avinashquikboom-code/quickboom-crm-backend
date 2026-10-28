@@ -72,7 +72,10 @@ export class CreateSocialMediaHandlerDto {
   @IsNumber()
   durationDays?: number;
 
-  
+  @ApiPropertyOptional({ example: 1, description: 'Explicit customer ID when created by Admin/Super Admin' })
+  @IsOptional()
+  @IsNumber()
+  customerId?: number;
 }
 
 export class UpdateSocialMediaHandlerDto extends PartialType(CreateSocialMediaHandlerDto) {}
@@ -93,7 +96,9 @@ export class QuerySocialMediaHandlerDto {
   @IsString()
   status?: string;
 
-  
+  @ApiPropertyOptional({ description: 'Filter by customer ID (Admin only)' })
+  @IsOptional()
+  customerId?: number | string;
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

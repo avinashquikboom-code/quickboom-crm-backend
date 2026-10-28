@@ -106,5 +106,7 @@ export class TeamQueryDto {
   @IsOptional()
   status?: 'ACTIVE' | 'INACTIVE' | 'ALL' = 'ALL';
 
-  
+  @ApiPropertyOptional({ description: 'Customer ID override (SUPER_ADMIN only)' })
+  @IsOptional()
+  customerId?: string | number;
 }

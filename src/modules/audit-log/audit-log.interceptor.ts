@@ -74,7 +74,7 @@ export class AuditLogInterceptor implements NestInterceptor {
       const cleanUrl = (url || '').split('?')[0];
 
       // Resolve user role
-      let userRole = user?.accountType || null;
+      let userRole = user?.role || user?.userRoles?.[0]?.role?.name || null;
       if (userRole) {
         userRole = String(userRole).toUpperCase().replace(/\s+/g, '_');
       } else if (cleanUrl.includes('/customer/')) {
@@ -116,7 +116,7 @@ export class AuditLogInterceptor implements NestInterceptor {
         userName = `${userRole} User`;
       }
 
-      const customerId = (headers?.['x-customer-id'] ? Number(headers['x-customer-id']) : null);
+      const customerId = user?.customerId ? Number(user.customerId) : (headers?.['x-customer-id'] ? Number(headers['x-customer-id']) : null);
 
       // Resolve module
       const moduleName = this.resolveModule(cleanUrl);
@@ -142,7 +142,7 @@ export class AuditLogInterceptor implements NestInterceptor {
       setImmediate(() => {
         this.auditLogService.create({
           userId,
-          
+          customerId,
           userName,
           userRole,
           source,

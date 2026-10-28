@@ -26,9 +26,9 @@ import {
   AdminAdjustCreditsDto,
 } from './dto/ai-studio.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { AccountGuard } from '../../common/guards/account.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserAdmin, isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserAdmin, isUserAdminOrStaff, isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('AI Studio')
 @Controller()
@@ -45,12 +45,142 @@ export class AiStudioController {
   }
 
   // =========================================================================
+  // PUBLIC / CUSTOMER BROWSING & CONFIG APIS
+  // =========================================================================
+
+  @Get(['ai/services', 'customer/ai/services'])
+  @ApiOperation({ summary: 'Get active AI service configurations and credit pricing' })
+  async getServices() {
+    const data = await this.aiCreditService.getServiceConfigs();
+    return { statusCode: 200, success: true, data };
+  }
+
+  // =========================================================================
+  // CUSTOMER WALLET & CREDITS APIS (ISOLATED)
+  // =========================================================================
+
+  @Get(['ai/wallet', 'customer/ai/wallet'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get current customer AI credit wallet balance' })
+  async getWallet(@Req() req: any) {
+    const customerId = await this.resolveCustomerId(req);
+    const data = await this.aiCreditService.getOrCreateWallet(customerId);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get(['ai/wallet/transactions', 'customer/ai/wallet/transactions'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get credit transaction history for logged-in customer' })
+  async getTransactions(@Req() req: any) {
+    const customerId = await this.resolveCustomerId(req);
+    const data = await this.aiCreditService.getTransactions(customerId);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post(['ai/wallet/purchase', 'customer/ai/wallet/purchase', 'customer/ai/credits/order', 'ai/credits/order'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Initialize Razorpay order for purchasing AI credits' })
+  async purchaseCredits(@Req() req: any, @Body() dto: PurchaseCreditsDto) {
+    const customerId = await this.resolveCustomerId(req);
+    const result = await this.aiCreditService.createPurchaseOrder(customerId, dto);
+    return { statusCode: 201, success: true, ...result };
+  }
+
+  @Post(['ai/wallet/verify', 'customer/ai/wallet/verify', 'customer/ai/credits/verify', 'ai/credits/verify'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Verify payment and credit AI wallet' })
+  async verifyCredits(@Req() req: any, @Body() dto: VerifyCreditPurchaseDto) {
+    const customerId = await this.resolveCustomerId(req);
+    const result = await this.aiCreditService.verifyPurchase(customerId, dto);
+    return { statusCode: 200, success: true, ...result };
+  }
+
+  // =========================================================================
+  // CUSTOMER AI CONTENT GENERATION APIS (ISOLATED)
+  // =========================================================================
+
+  @Post(['ai/generate', 'customer/ai/generate'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Generate AI social post, poster, video, caption or hashtags' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @UseInterceptors(FileInterceptor('image'))
+  async generateContent(
+    @Req() req: any,
+    @Body() dto: GenerateContentDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    const customerId = await this.resolveCustomerId(req);
+    const productPrompt = (dto.product || dto.prompt || '').trim();
+    this.logger.log(
+      `[AI_REQUEST] Customer #${customerId} initiated generation: type="${dto.type}", inputPrompt="${productPrompt}"`,
+    );
+    this.logger.log(
+      `[AI_DTO] Validated DTO: type="${dto.type}", product="${dto.product || ''}", prompt="${dto.prompt || ''}", objective="${dto.objective || ''}", platform="${dto.platform || 'INSTAGRAM'}"`,
+    );
+    const result = await this.aiGenerationService.generate(customerId, dto, file);
+    this.logger.log(
+      `[AI_RESPONSE] Generation #${result.generation.id} (${result.generation.generationId}) ready for Customer #${customerId}: status="${result.generation.status}", mediaUrl="${result.generation.mediaUrl || 'none'}", creditsSpent=${result.creditsSpent}`,
+    );
+    return {
+      statusCode: 201,
+      success: true,
+      message: 'AI Content generated successfully',
+      data: result.generation,
+      ...result,
+    };
+  }
+
+  @Get(['ai/generations', 'customer/ai/generations'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get generation history for current customer' })
+  async getMyGenerations(@Req() req: any, @Query('type') type?: string) {
+    const customerId = await this.resolveCustomerId(req);
+    const data = await this.aiGenerationService.getMyGenerations(customerId, type);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Get(['ai/generations/:id', 'customer/ai/generations/:id'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get single generation details or poll async render status' })
+  async getGenerationStatus(@Req() req: any, @Param('id') id: string) {
+    const customerId = await this.resolveCustomerId(req);
+    const data = await this.aiGenerationService.getJobStatus(customerId, id);
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Patch(['ai/generations/:id', 'customer/ai/generations/:id'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Save edited caption or hashtags for a generation' })
+  async updateGeneration(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: UpdateGenerationDto,
+  ) {
+    const customerId = await this.resolveCustomerId(req);
+    const data = await this.aiGenerationService.updateGeneration(customerId, id, dto);
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Generation updated successfully',
+      data,
+    };
+  }
+
+  // =========================================================================
   // ADMIN PANEL APIS
   // =========================================================================
 
   @Get('admin/ai/services')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, AccountGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Get all AI service configurations (Admin)' })
   async getAdminServices() {
     const data = await this.aiCreditService.getServiceConfigs();
@@ -59,7 +189,7 @@ export class AiStudioController {
 
   @Patch('admin/ai/services/:code')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, AccountGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Update credit cost, price or status for an AI service (Admin)' })
   async updateServiceConfig(
     @Param('code') code: string,
@@ -76,7 +206,7 @@ export class AiStudioController {
 
   @Get('admin/ai/generations')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, AccountGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'List all customer generations with filters and pagination (Admin)' })
   async getAllGenerationsAdmin(@Query() query: any) {
     const data = await this.aiGenerationService.getAllGenerationsAdmin(query);
@@ -85,10 +215,57 @@ export class AiStudioController {
 
   @Get('admin/ai/transactions')
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, AccountGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Audit ledger of all customer credit transactions (Admin)' })
   async getAllTransactionsAdmin(@Query() query: any) {
     const data = await this.aiCreditService.getAllTransactionsAdmin(query);
     return { statusCode: 200, success: true, data };
+  }
+
+  @Get(['admin/customers/:customerId/ai-credits', 'customers/:customerId/ai-credits'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get customer AI credits wallet and history (Admin)' })
+  async getCustomerAiCredits(
+    @Param('customerId') customerId: string,
+    @CurrentUser() user: any,
+  ) {
+    if (!isUserAdmin(user) && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only authorized Admin or Super Admin can view customer AI credits');
+    }
+    const data = await this.aiCreditService.getCustomerWalletAdmin(parseInt(customerId, 10));
+    return { statusCode: 200, success: true, data };
+  }
+
+  @Post(['admin/customers/:customerId/ai-credits/add', 'customers/:customerId/ai-credits/add'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Manually add AI credits to customer wallet (Admin)' })
+  async addCreditsAdmin(
+    @Param('customerId') customerId: string,
+    @Body() dto: AdminAdjustCreditsDto,
+    @CurrentUser() user: any,
+  ) {
+    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only authorized Admin or Super Admin can add AI credits');
+    }
+    const data = await this.aiCreditService.addCreditsAdmin(parseInt(customerId, 10), dto, user);
+    return { statusCode: 200, success: true, message: data.message, data };
+  }
+
+  @Post(['admin/customers/:customerId/ai-credits/reduce', 'customers/:customerId/ai-credits/reduce'])
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Manually reduce AI credits from customer wallet (Admin)' })
+  async reduceCreditsAdmin(
+    @Param('customerId') customerId: string,
+    @Body() dto: AdminAdjustCreditsDto,
+    @CurrentUser() user: any,
+  ) {
+    if (!isUserAdminOrStaff(user) && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only authorized Admin or Super Admin can reduce AI credits');
+    }
+    const data = await this.aiCreditService.reduceCreditsAdmin(parseInt(customerId, 10), dto, user);
+    return { statusCode: 200, success: true, message: data.message, data };
   }
 }

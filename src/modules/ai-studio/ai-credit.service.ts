@@ -33,8 +33,63 @@ export class AiCreditService {
    * NEVER falls back to user.id as customerId.
    */
   async resolveCustomerId(user: any, headers?: Record<string, any>): Promise<number> {
-if (!user?.id) throw new ForbiddenException('Authentication required');
-return undefined; // Shared organization wallet; legacy tenant headers are ignored.
+    const rawHeader = headers?.['x-customer-id'] || headers?.['customer-id'];
+    const headerId = rawHeader ? parseInt(String(rawHeader), 10) : null;
+
+    if (headerId && !isNaN(headerId) && headerId > 0) {
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: headerId },
+        select: { id: true },
+      });
+      if (customer) {
+        return customer.id;
+      }
+    }
+
+    const candidateId =
+      user?.customerId ??
+      user?.customer?.id ??
+      user?.employee?.customerId;
+
+    if (candidateId) {
+      const parsed = parseInt(String(candidateId), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+
+    if (user?.id) {
+      const linkedCustomer = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { users: { some: { id: user.id } } },
+            { employees: { some: { userId: user.id } } },
+            ...(user.email ? [{ email: user.email }] : []),
+          ],
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      if (linkedCustomer) {
+        return linkedCustomer.id;
+      }
+    }
+
+    const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.roles?.includes('SUPER_ADMIN');
+    const isAdmin = isSuperAdmin || user?.role === 'ADMIN' || user?.roles?.includes('ADMIN') || user?.role === 'TENANT_ADMIN';
+    if (isAdmin) {
+      const firstCustomer = await this.prisma.customer.findFirst({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      });
+      if (firstCustomer) {
+        return firstCustomer.id;
+      }
+    }
+
+    throw new ForbiddenException('Valid customer authentication session is required');
   }
 
   /**
@@ -42,13 +97,13 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
    */
   async getOrCreateWallet(customerId: number) {
     let wallet = await this.prisma.aiCreditWallet.findUnique({
-      where: { singletonKey: "GLOBAL" },
+      where: { customerId },
     });
 
     if (!wallet) {
       wallet = await this.prisma.aiCreditWallet.create({
         data: {
-          
+          customerId,
           balance: 20, // 20 welcome credits for new customers
           totalEarned: 20,
           totalSpent: 0,
@@ -58,7 +113,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       await this.prisma.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          
+          customerId,
           amount: 20,
           balanceAfter: 20,
           type: 'GRANT',
@@ -86,7 +141,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
    */
   async getTransactions(customerId: number) {
     return this.prisma.aiCreditTransaction.findMany({
-      where: {  },
+      where: { customerId },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
@@ -134,7 +189,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
    * Deducts credits atomically and idempotently ONLY after generation completes successfully.
    */
   async deductCreditsOnSuccess(params: {
-    customerId?: number;
+    customerId: number;
     serviceCode: string;
     generationDbId: number;
     generationCode: string;
@@ -146,7 +201,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       // 1. Idempotency check: Has this generation already had credits deducted?
       const existingTx = await tx.aiCreditTransaction.findFirst({
         where: {
-          
+          customerId,
           generationId: generationDbId,
           type: { in: ['CONSUMED', 'USAGE'] },
         },
@@ -156,7 +211,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
         this.logger.warn(
           `[AI_CREDIT_IDEMPOTENT] Generation #${generationDbId} (${generationCode}) already deducted credits. Skipping duplicate deduction.`,
         );
-        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { singletonKey: "GLOBAL" } });
+        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
         return {
           creditsSpent: Math.abs(existingTx.amount),
           newBalance: currentWallet?.balance ?? existingTx.balanceAfter,
@@ -169,7 +224,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
         where: { id: generationDbId },
       });
       if (existingGen && existingGen.creditsSpent > 0) {
-        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { singletonKey: "GLOBAL" } });
+        const currentWallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
         return {
           creditsSpent: existingGen.creditsSpent,
           newBalance: currentWallet?.balance ?? 0,
@@ -185,11 +240,11 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       }
 
       // 3. Get customer wallet and verify balance inside the atomic transaction
-      let wallet = await tx.aiCreditWallet.findUnique({ where: { singletonKey: "GLOBAL" } });
+      let wallet = await tx.aiCreditWallet.findUnique({ where: { customerId } });
       if (!wallet) {
         wallet = await tx.aiCreditWallet.create({
           data: {
-            
+            customerId,
             balance: 20,
             totalEarned: 20,
             totalSpent: 0,
@@ -219,7 +274,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       const creditTx = await tx.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          
+          customerId,
           amount: -cost,
           balanceAfter,
           type: 'CONSUMED',
@@ -281,7 +336,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
     await this.prisma.aiCreditTransaction.create({
       data: {
         walletId: wallet.id,
-        
+        customerId,
         amount: -requiredCredits,
         balanceAfter: newBalance,
         type: 'CONSUMED',
@@ -316,7 +371,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
     await this.prisma.aiCreditTransaction.create({
       data: {
         walletId: wallet.id,
-        
+        customerId,
         amount,
         balanceAfter: newBalance,
         type: 'REFUND',
@@ -362,7 +417,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
           currency: 'INR',
           receipt,
           notes: {
-            
+            customerId: String(customerId),
             creditsCount: String(dto.creditsCount),
             type: 'AI_CREDITS_PURCHASE',
           },
@@ -427,7 +482,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
     const tx = await this.prisma.aiCreditTransaction.create({
       data: {
         walletId: wallet.id,
-        
+        customerId,
         amount: dto.creditsCount,
         balanceAfter: newBalance,
         type: 'PURCHASE',
@@ -495,7 +550,11 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
     const [items, total] = await Promise.all([
       this.prisma.aiCreditTransaction.findMany({
         where,
-        
+        include: {
+          customer: {
+            select: { id: true, name: true, email: true, phone: true, companyName: true },
+          },
+        },
         orderBy: { id: 'desc' },
         take: query?.limit ? parseInt(query.limit, 10) : 50,
         skip: query?.offset ? parseInt(query.offset, 10) : 0,
@@ -510,11 +569,17 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
    * Retrieves customer wallet and ledger transactions for Admin inspection
    */
   async getCustomerWalletAdmin(customerId: number) {
-    
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true, name: true, email: true, phone: true, companyName: true },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
 
     const wallet = await this.getOrCreateWallet(customerId);
     const rawTransactions = await this.prisma.aiCreditTransaction.findMany({
-      where: {  },
+      where: { customerId },
       orderBy: { id: 'desc' },
       take: 100,
     });
@@ -540,7 +605,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       return {
         id: tx.id,
         walletId: tx.walletId,
-        
+        customerId: tx.customerId,
         amount: tx.amount,
         balanceBefore,
         balanceAfter: tx.balanceAfter,
@@ -555,7 +620,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
     });
 
     return {
-      
+      customer,
       wallet,
       balance: wallet.balance,
       transactions,
@@ -575,20 +640,25 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       throw new BadRequestException('Reason is required for manual credit adjustment');
     }
 
-    
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
 
     const adminId = adminUser?.id ?? adminUser?.userId ?? null;
     const adminName = adminUser?.name || adminUser?.email || `Admin #${adminId || 'System'}`;
 
     return this.prisma.$transaction(async (tx) => {
       let wallet = await tx.aiCreditWallet.findUnique({
-        where: { singletonKey: "GLOBAL" },
+        where: { customerId },
       });
 
       if (!wallet) {
         wallet = await tx.aiCreditWallet.create({
           data: {
-            
+            customerId,
             balance: 20,
             totalEarned: 20,
             totalSpent: 0,
@@ -619,7 +689,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       const transaction = await tx.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          
+          customerId,
           amount,
           balanceAfter,
           type: 'CREDIT_GRANT',
@@ -642,7 +712,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
         transaction: {
           id: transaction.id,
           walletId: transaction.walletId,
-          
+          customerId: transaction.customerId,
           amount: transaction.amount,
           balanceBefore,
           balanceAfter,
@@ -668,20 +738,25 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       throw new BadRequestException('Reason is required for manual credit adjustment');
     }
 
-    
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      throw new NotFoundException(`Customer #${customerId} not found`);
+    }
 
     const adminId = adminUser?.id ?? adminUser?.userId ?? null;
     const adminName = adminUser?.name || adminUser?.email || `Admin #${adminId || 'System'}`;
 
     return this.prisma.$transaction(async (tx) => {
       let wallet = await tx.aiCreditWallet.findUnique({
-        where: { singletonKey: "GLOBAL" },
+        where: { customerId },
       });
 
       if (!wallet) {
         wallet = await tx.aiCreditWallet.create({
           data: {
-            
+            customerId,
             balance: 20,
             totalEarned: 20,
             totalSpent: 0,
@@ -719,7 +794,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
       const transaction = await tx.aiCreditTransaction.create({
         data: {
           walletId: wallet.id,
-          
+          customerId,
           amount: -amount,
           balanceAfter,
           type: 'ADMIN_ADJUSTMENT',
@@ -742,7 +817,7 @@ return undefined; // Shared organization wallet; legacy tenant headers are ignor
         transaction: {
           id: transaction.id,
           walletId: transaction.walletId,
-          
+          customerId: transaction.customerId,
           amount: transaction.amount,
           balanceBefore,
           balanceAfter,

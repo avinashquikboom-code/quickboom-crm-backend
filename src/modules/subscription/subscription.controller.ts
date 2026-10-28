@@ -1,5 +1,3 @@
-import { PlanAdminGuard } from './plan-admin.guard';
-import { GoneException } from '@nestjs/common';
 import {
   Controller,
   Get,
@@ -12,15 +10,10 @@ import {
   UseGuards,
   Query,
   Req,
-  Res,
   Headers,
   ForbiddenException,
-  NotFoundException,
-  BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { generateAgreementPdfBuffer } from '../../common/utils/agreement-pdf.util';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { SubscriptionService } from './subscription.service';
 import { PlanAccessService } from './plan-access.service';
@@ -28,12 +21,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
+import { RoleType } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
-import { PrismaService } from '../../prisma/prisma.service';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Subscriptions & Plans')
 @Controller()
@@ -44,7 +37,6 @@ export class SubscriptionController {
     private readonly subscriptionService: SubscriptionService,
     private readonly planAccessService: PlanAccessService,
     private readonly installmentService: InstallmentService,
-    private readonly prisma: PrismaService,
   ) {}
 
   // ==========================================
@@ -52,6 +44,7 @@ export class SubscriptionController {
   // ==========================================
 
   @Get('subscriptions/installments')
+  @Get('customer/installments')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer installment schedule and outstanding balance' })
@@ -60,9 +53,30 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const rawCustId =
+      customerIdStr ??
+      req?.customerId ??
+      user?.customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'];
+
+    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
+    if (!customerId || isNaN(customerId)) {
+      return {
+        success: false,
+        message: 'No customer organization associated with current user',
+      };
+    }
+    const summary = await this.installmentService.getCustomerInstallmentSummary(customerId);
+    return {
+      success: true,
+      data: summary,
+    };
+  }
 
   @Post('subscriptions/installments/:id/pay')
+  @Post('customer/installments/:id/pay')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Pay or renew an installment for authenticated customer' })
@@ -70,9 +84,62 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Param('id') id: string,
     @Body() dto: { paymentMethod?: string; transactionId?: string; orderId?: string },
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.payInstallment(customerId, id, {
+      paymentMethod: dto.paymentMethod,
+      transactionId: dto.transactionId,
+      orderId: dto.orderId,
+    });
+  }
+
+  @Get('admin/customers/:customerId/installments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get installment breakdown for specific customer (Admin)' })
+  async getAdminCustomerInstallments(
+    @CurrentUser() user: any,
+    @Param('customerId') custId: string,
+  ) {
+    if (!isUserSuperAdmin(user) && user?.customerId !== Number(custId)) {
+      throw new ForbiddenException('Admin permissions required');
+    }
+    const summary = await this.installmentService.getCustomerInstallmentSummary(custId);
+    return {
+      success: true,
+      data: summary,
+    };
+  }
+
+  @Post('admin/customers/:customerId/installments/:id/pay')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Record manual installment payment for customer (Admin)' })
+  async recordAdminInstallmentPayment(
+    @CurrentUser() user: any,
+    @Param('customerId') custId: string,
+    @Param('id') id: string,
+    @Body() dto: { paymentMethod?: string; transactionId?: string; orderId?: string; notes?: string },
+  ) {
+    if (!isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Super Admin permissions required');
+    }
+    return this.installmentService.payInstallment(custId, id, {
+      paymentMethod: dto.paymentMethod || 'CASH',
+      transactionId: dto.transactionId,
+      orderId: dto.orderId,
+      paidByAdmin: true,
+      notes: dto.notes || 'Admin manual payment confirmation',
+    });
+  }
 
   @Get('subscriptions/current')
+  @Get('customer/subscriptions/current')
+  @Get('customer/subscription/current')
+  @Get('customer/subscription/status')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current customer subscription and installment status' })
@@ -81,9 +148,27 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const rawCustId =
+      customerIdStr ??
+      req?.customerId ??
+      user?.customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'];
+
+    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
+    if (!customerId || isNaN(customerId)) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    const res = await this.installmentService.getCurrentSubscription(customerId);
+    this.logger.log(
+      `[GET_CURRENT_SUBSCRIPTION] user=${user?.id || 'N/A'} customerId=${customerId} status=${res?.subscription?.status || res?.data?.status || 'NO_SUB'}`,
+    );
+    return res;
+  }
 
   @Get('subscriptions/renewal-status')
+  @Get('customer/subscriptions/renewal-status')
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get installment renewal status' })
@@ -92,9 +177,23 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Req() req: any,
     @Headers('x-customer-id') headerCustomerId?: string,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const rawCustId =
+      customerIdStr ??
+      req?.customerId ??
+      user?.customerId ??
+      headerCustomerId ??
+      req?.headers?.['x-customer-id'];
+
+    const customerId = rawCustId ? Number(String(rawCustId).replace(/[^0-9]/g, '')) : null;
+    if (!customerId || isNaN(customerId)) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.getRenewalStatus(customerId);
+  }
 
   @Post('subscriptions/:subscriptionId/renew')
+  @Post('customer/subscriptions/:subscriptionId/renew')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Pay or renew existing installment' })
@@ -102,12 +201,19 @@ export class SubscriptionController {
     @CurrentUser() user: any,
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: { installmentId: number | string; paymentMethod?: string },
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    return this.installmentService.renewExistingInstallment(customerId, subscriptionId, dto);
+  }
 
   @Post('subscriptions/new-plan')
+  @Post('customer/subscriptions/new-plan')
   @Post('subscriptions/start-new-plan')
-  @UseGuards(JwtAuthGuard, WorkspaceAccessGuard)
-  @WorkspaceAction({ module: 'CUSTOMER_PLANS', action: 'CREATE' })
+  @Post('customer/start-new-plan')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Start a completely new plan (full price) when prior renewal has failed' })
   async startNewPlanCustomer(
@@ -121,7 +227,58 @@ export class SubscriptionController {
       transactionId?: string;
       orderNumber?: string;
     },
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const customerId = user?.customerId;
+    if (!customerId) {
+      throw new ForbiddenException('No customer organization associated with current user');
+    }
+    const result = await this.installmentService.startNewPlan(customerId, {
+      ...dto,
+      planId: dto.planId ? Number(dto.planId) : undefined,
+    });
+
+    return {
+      success: true,
+      message: 'New plan created successfully.',
+      data: {
+        subscriptionId: String(result.newSubscriptionId),
+        planId: String(result.summary.planId),
+        planName: result.summary.planName,
+        planValue: result.summary.originalPlanValue,
+        status: result.summary.planStatus,
+        startDate: new Date().toISOString(),
+        expiryDate: result.summary.nextDueDate
+          ? new Date(result.summary.nextDueDate).toISOString()
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    };
+  }
+
+  @Post('admin/customers/:customerId/start-new-plan')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Start a completely new plan for customer (Admin)' })
+  async startNewPlanAdmin(
+    @CurrentUser() user: any,
+    @Param('customerId') custId: string,
+    @Body() dto: {
+      planId?: number;
+      billingCycle?: string;
+      customPrice?: number;
+      totalInstallments?: number;
+      paymentMethod?: string;
+      transactionId?: string;
+      orderNumber?: string;
+    },
+  ) {
+    if (!isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Super Admin permissions required');
+    }
+    return this.installmentService.startNewPlan(custId, {
+      ...dto,
+      paymentMethod: dto.paymentMethod || 'CASH',
+    });
+  }
 
   @Post('admin/installments/evaluate')
   @UseGuards(JwtAuthGuard)
@@ -139,51 +296,127 @@ export class SubscriptionController {
   // ==========================================
 
   @Get('plans')
+  @Get('customer/plans')
   @ApiOperation({ summary: 'Get all active subscription plans (Customer & Public)' })
   async getPlans() {
     return this.subscriptionService.getPlans(false);
   }
 
   @Get('plans/:id')
+  @Get('customer/plans/:id')
   @ApiOperation({ summary: 'Get single plan details (Customer & Public)' })
   async getPlanById(@Param('id') id: string) {
     return this.subscriptionService.getPlanById(id);
   }
 
   @Get('subscriptions/effective-plan')
-  @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
-  @WorkspaceAction({ module: 'CUSTOMER_PLANS', action: 'VIEW' })
+  @Get('customer/subscription')
+  @Get('customer/usage')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get active effective plan and usage for authenticated customer' })
   async getEffectivePlan(
     @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const customerId = customerIdStr || req?.customerId || user?.customerId;
+    if (!customerId) {
+      return {
+        success: true,
+        data: null,
+        message: 'No customer organization associated with current user',
+      };
+    }
+    try {
+      const plan = await this.planAccessService.getEffectivePlan(customerId);
+      const upcomingPlan = plan?.upcomingPlan || null;
+      const isCurrentActive = Boolean(plan && plan.isActive && plan.status === 'ACTIVE' && !plan.isExpired && plan.subscriptionId);
+
+      const currentPlanData = isCurrentActive
+        ? {
+            id: String(plan.subscriptionId || plan.planId),
+            subscriptionId: plan.subscriptionId ? String(plan.subscriptionId) : null,
+            planId: String(plan.planId),
+            name: plan.planName,
+            planName: plan.planName,
+            code: plan.planCode,
+            planCode: plan.planCode,
+            status: plan.status || (plan.isActive ? 'ACTIVE' : 'INACTIVE'),
+            customerId: String(plan.customerId || customerId),
+            workspaceId: String(plan.customerId || customerId),
+            billingCycle: plan.billingCycle || 'MONTHLY',
+            price: plan.price,
+            startDate: plan.startDate,
+            endDate: plan.endDate,
+            expiryDate: plan.endDate,
+            purchaseDate: plan.startDate,
+            isActive: plan.isActive,
+            isExpired: plan.isExpired,
+            remainingDays: Math.max(0, Math.ceil((new Date(plan.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
+            usedDays: Math.max(0, Math.floor((Date.now() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
+            totalDays: Math.max(1, Math.round((new Date(plan.endDate).getTime() - new Date(plan.startDate).getTime()) / (1000 * 60 * 60 * 24))),
+            features: Array.isArray(plan.features) ? plan.features : [],
+            quotas: {
+              userLimit: plan.userLimit,
+              leadLimit: plan.leadLimit,
+              storageLimitBytes: Number(plan.storageLimitBytes),
+              scheduleLimit: plan.scheduleLimit,
+              usedSchedules: plan.usedSchedules,
+              remainingSchedules: plan.remainingSchedules,
+            },
+            services: plan.services || [],
+            usage: {
+              currentUsers: plan.usage?.currentUsers || 0,
+              currentLeads: plan.usage?.currentLeads || 0,
+              currentStorageBytes: Number(plan.usage?.currentStorageBytes || 0),
+              scheduledWorks: plan.usage?.scheduledWorks || 0,
+            },
+          }
+        : null;
+
+      this.logger.log(
+        `[EFFECTIVE_PLAN_API] AUTH_USER_ID: ${user?.id || customerId} | CUSTOMER_ID: ${customerId} | WORKSPACE_ID: ${customerId} | PLAN_ID: ${currentPlanData?.planId || 'NONE'} | SUBSCRIPTION_ID: ${currentPlanData?.subscriptionId || 'NONE'} | SUBSCRIPTION_STATUS: ${currentPlanData?.status || 'NONE'} | START_DATE: ${currentPlanData?.startDate || 'NONE'} | END_DATE: ${currentPlanData?.endDate || 'NONE'}`,
+      );
+
+      return {
+        success: true,
+        data: currentPlanData,
+        currentPlan: currentPlanData,
+        subscription: currentPlanData,
+        upcomingPlan,
+        effectivePlan: currentPlanData,
+        message: currentPlanData
+          ? undefined
+          : upcomingPlan
+          ? 'Upcoming plan scheduled'
+          : 'No active subscription found',
+      };
+    } catch (err: any) {
+      return {
+        success: true,
+        data: null,
+        effectivePlan: null,
+        message: err?.message || 'No active subscription found',
+      };
+    }
+  }
 
   @Get('subscriptions/orders')
-  @UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
-  @WorkspaceAction({ module: 'CUSTOMER_ORDERS', action: 'VIEW' })
+  @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+  @RequirePermissions({ module: 'CUSTOMER_ORDERS', action: 'VIEW' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get purchase and order history for authenticated customer' })
   async getCustomerOrders(
     @CurrentCustomer() customerIdStr: string,
     @CurrentUser() user: any,
     @Req() req: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
-
-  @Get('subscriptions/orders/:paymentId/agreement/download')
-  @UseGuards(JwtAuthGuard, CustomerGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Download Service Agreement PDF for a paid order' })
-  async downloadOrderAgreement(
-    @Param('paymentId') paymentId: string,
-    @CurrentCustomer() customerIdStr: string,
-    @CurrentUser() user: any,
-    @Req() req: any,
-    @Res() res: Response,
-  ) : Promise<never> {
-throw new GoneException('Customer subscriptions and Lead functionality have been removed');
+  ) {
+    const customerId = customerIdStr || req?.customerId || user?.customerId;
+    if (!customerId) {
+      return { success: true, data: [] };
+    }
+    return this.subscriptionService.getCustomerOrders(customerId);
   }
 
   // ==========================================
@@ -191,7 +424,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   // ==========================================
 
   @Get('admin/plans')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all subscription plans including inactive (Admin)' })
   async getAdminPlans() {
@@ -199,7 +432,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Get('admin/subscription-plans')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all subscription plans for Admin (Alias)' })
   async getAdminSubscriptionPlans() {
@@ -207,7 +440,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Get('admin/plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get plan by ID (Admin)' })
   async getAdminPlanById(@Param('id') id: string) {
@@ -215,7 +448,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Get('admin/subscription-plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get plan by ID (Admin Alias)' })
   async getAdminSubscriptionPlanById(@Param('id') id: string) {
@@ -223,7 +456,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Post('admin/plans')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan (Admin)' })
   async createPlanAdmin(@Body() dto: any) {
@@ -231,7 +464,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Post('admin/subscription-plans')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan (Admin Alias)' })
   async createSubscriptionPlanAdmin(@Body() dto: any) {
@@ -240,7 +473,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('admin/plans/:id')
   @Patch('admin/plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan (Admin)' })
   async updatePlanAdmin(@Param('id') id: string, @Body() dto: any) {
@@ -249,7 +482,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('admin/subscription-plans/:id')
   @Patch('admin/subscription-plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan (Admin Alias)' })
   async updateSubscriptionPlanAdmin(@Param('id') id: string, @Body() dto: any) {
@@ -258,7 +491,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Patch('admin/plans/:id/status')
   @Patch('admin/subscription-plans/:id/status')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Toggle plan active status (Admin)' })
   async updatePlanStatusAdmin(@Param('id') id: string, @Body() body: { isActive: boolean }) {
@@ -266,7 +499,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Delete('admin/plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan (Admin)' })
   async deletePlanAdmin(@Param('id') id: string) {
@@ -274,7 +507,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Delete('admin/subscription-plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan (Admin Alias)' })
   async deleteSubscriptionPlanAdmin(@Param('id') id: string) {
@@ -284,7 +517,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   // Feature endpoints
   @Get('admin/plans/:id/features')
   @Get('admin/subscription-plans/:id/features')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get features for a plan (Admin)' })
   async getPlanFeatures(@Param('id') id: string) {
@@ -293,7 +526,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Post('admin/plans/:id/features')
   @Post('admin/subscription-plans/:id/features')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Add feature to plan (Admin)' })
   async addPlanFeature(@Param('id') id: string, @Body() body: { feature: string }) {
@@ -302,7 +535,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('admin/plans/:id/features/:featureId')
   @Put('admin/subscription-plans/:id/features/:featureId')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update feature in plan (Admin)' })
   async updatePlanFeature(
@@ -315,7 +548,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Delete('admin/plans/:id/features/:featureId')
   @Delete('admin/subscription-plans/:id/features/:featureId')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete feature from plan (Admin)' })
   async deletePlanFeature(
@@ -326,7 +559,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Post('plans')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create new subscription plan' })
   async createPlan(@Body() dto: any) {
@@ -335,7 +568,7 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
 
   @Put('plans/:id')
   @Patch('plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update existing subscription plan' })
   async updatePlan(@Param('id') id: string, @Body() dto: any) {
@@ -343,11 +576,92 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   }
 
   @Delete('plans/:id')
-  @UseGuards(JwtAuthGuard, PlanAdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate subscription plan' })
   async deletePlan(@Param('id') id: string) {
     return this.subscriptionService.deletePlan(id);
+  }
+
+  @Get('admin/customers/:id/subscription')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get customer subscription and effective limits (Admin)' })
+  async getCustomerSubscriptionAdmin(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.planAccessService.getEffectivePlan(id);
+  }
+
+  @Patch('admin/customers/:id/subscription')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Customize customer subscription limits, price, features (Admin)' })
+  async updateCustomerSubscriptionAdmin(
+    @Param('id') id: string,
+    @Body() dto: {
+      planId?: number;
+      customUserLimit?: number;
+      customLeadLimit?: number;
+      customStorageLimit?: number | bigint;
+      customFeatures?: any;
+      customPrice?: number;
+      status?: any;
+      startDate?: string;
+      endDate?: string;
+    },
+    @CurrentUser() user: any,
+  ) {
+    const isSuperAdmin = Boolean(user?.roles?.includes(RoleType.SUPER_ADMIN));
+    if (!isSuperAdmin) {
+      throw new ForbiddenException('Only Super Admins can customize customer plan limits');
+    }
+
+    const numCustomerId = Number(id);
+
+    let sub = await this.subscriptionService['prisma'].customerSubscription.findFirst({
+      where: { customerId: numCustomerId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!sub) {
+      const defaultPlan = await this.subscriptionService['prisma'].plan.findFirst({
+        where: { deletedAt: null, isActive: true },
+      });
+
+      sub = await this.subscriptionService['prisma'].customerSubscription.create({
+        data: {
+          customerId: numCustomerId,
+          planId: dto.planId || defaultPlan?.id || 1,
+          status: dto.status || 'ACTIVE',
+          startDate: dto.startDate ? new Date(dto.startDate) : new Date(),
+          endDate: dto.endDate ? new Date(dto.endDate) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+          customUserLimit: dto.customUserLimit,
+          customLeadLimit: dto.customLeadLimit,
+          customStorageLimit: dto.customStorageLimit ? BigInt(dto.customStorageLimit) : null,
+          customFeatures: dto.customFeatures,
+          customPrice: dto.customPrice,
+        },
+      });
+    } else {
+      sub = await this.subscriptionService['prisma'].customerSubscription.update({
+        where: { id: sub.id },
+        data: {
+          ...(dto.planId ? { planId: dto.planId } : {}),
+          ...(dto.status ? { status: dto.status } : {}),
+          ...(dto.startDate ? { startDate: new Date(dto.startDate) } : {}),
+          ...(dto.endDate ? { endDate: new Date(dto.endDate) } : {}),
+          customUserLimit: dto.customUserLimit !== undefined ? dto.customUserLimit : sub.customUserLimit,
+          customLeadLimit: dto.customLeadLimit !== undefined ? dto.customLeadLimit : sub.customLeadLimit,
+          customStorageLimit: dto.customStorageLimit !== undefined ? (dto.customStorageLimit ? BigInt(dto.customStorageLimit) : null) : sub.customStorageLimit,
+          customFeatures: dto.customFeatures !== undefined ? dto.customFeatures : sub.customFeatures,
+          customPrice: dto.customPrice !== undefined ? dto.customPrice : sub.customPrice,
+        },
+      });
+    }
+
+    return this.planAccessService.getEffectivePlan(numCustomerId);
   }
 
   @Get('admin/subscriptions')
@@ -363,28 +677,85 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Query('status') status?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.getAllSubscriptions({
+      search,
+      status,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+  }
 
   @Get('admin/subscriptions/expiring')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get subscriptions expiring soon (Admin)' })
   @ApiQuery({ name: 'days', required: false, description: 'Default is 10 days' })
-  async getExpiringSubscriptions(@Query('days') days?: string) { throw new GoneException('Customer subscriptions have been removed'); }
+  async getExpiringSubscriptions(@Query('days') days?: string) {
+    const numDays = days ? parseInt(days, 10) : 10;
+    return this.subscriptionService.getExpiringSubscriptions(numDays);
+  }
 
   @Get('admin/subscriptions/expired')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get expired subscriptions (Admin)' })
-  async getExpiredSubscriptions() { throw new GoneException('Customer subscriptions have been removed'); }
+  async getExpiredSubscriptions() {
+    return this.subscriptionService.getExpiredSubscriptions();
+  }
 
   @Post('admin/subscriptions/check-expiry')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Run idempotent daily plan expiry check & notification dispatcher (Admin / Cron)' })
-  async runExpiryCheck(@CurrentUser() user: any) {
-    if (!isUserSuperAdmin(user)) throw new ForbiddenException('Administrator required');
+  async runExpiryCheck() {
     return this.subscriptionService.runDailyExpiryCheck();
+  }
+
+  // ==========================================
+  // Customer Subscription Lifecycle (Admin)
+  // ==========================================
+
+  @Get('admin/customers/:customerId/subscriptions')
+  @Get('admin/customers/:customerId/subscriptions/history')
+  @Get('customers/:customerId/subscriptions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all customer subscriptions (current & history) for Admin' })
+  async getAdminCustomerSubscriptions(@Param('customerId') customerId: string) {
+    return this.subscriptionService.getAdminCustomerSubscriptions(customerId);
+  }
+
+  @Get('admin/customers/:customerId/subscriptions/current')
+  @Get('customers/:customerId/subscriptions/current')
+  @Get('admin/customers/:customerId/subscription')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get current customer subscription for Admin' })
+  async getAdminCustomerCurrentSubscription(@Param('customerId') customerId: string) {
+    const res = await this.subscriptionService.getAdminCustomerSubscriptions(customerId);
+    return {
+      success: true,
+      data: res.currentSubscription,
+    };
+  }
+
+  @Post('admin/customers/:customerId/subscriptions')
+  @Post('admin/customers/:customerId/subscription')
+  @Post('customers/:customerId/subscriptions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Manually create/activate a plan subscription for a customer (Admin)' })
+  async createAdminCustomerSubscription(
+    @Param('customerId') customerId: string,
+    @Body() dto: any,
+    @CurrentUser() user: any,
+  ) {
+    return this.subscriptionService.createOrActivateCustomerSubscription(
+      customerId,
+      dto,
+      user?.id,
+    );
   }
 
   @Post('admin/subscriptions/:subscriptionId/activate')
@@ -401,7 +772,10 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   async activateSubscription(
     @Param() params: any,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const subscriptionId = params.subscriptionId || params.id;
+    return this.subscriptionService.activateCustomerSubscription(subscriptionId, user?.id);
+  }
 
   @Post('admin/subscriptions/:subscriptionId/deactivate')
   @Patch('admin/subscriptions/:subscriptionId/deactivate')
@@ -417,7 +791,10 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   async deactivateSubscription(
     @Param() params: any,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    const subscriptionId = params.subscriptionId || params.id;
+    return this.subscriptionService.deactivateCustomerSubscription(subscriptionId, user?.id);
+  }
 
   @Post('admin/subscriptions/:subscriptionId/change-plan')
   @Patch('admin/subscriptions/:subscriptionId/change-plan')
@@ -429,7 +806,9 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: any,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.changeCustomerPlan(subscriptionId, dto, user?.id);
+  }
 
   @Post('admin/subscriptions/:subscriptionId/renew')
   @Patch('admin/subscriptions/:subscriptionId/renew')
@@ -441,7 +820,9 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Param('subscriptionId') subscriptionId: string,
     @Body() dto: any,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.renewCustomerSubscription(subscriptionId, dto, user?.id);
+  }
 
   @Post([
     'admin/subscriptions/bulk-delete',
@@ -456,7 +837,17 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Body() dto: { ids?: (number | string)[]; subscriptionIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    let ids = dto?.ids || dto?.subscriptionIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteCustomerSubscriptions(ids as any, user);
+  }
 
   @Delete([
     'admin/subscriptions/bulk',
@@ -471,7 +862,17 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Body() dto: { ids?: (number | string)[]; subscriptionIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    let ids = dto?.ids || dto?.subscriptionIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteCustomerSubscriptions(ids as any, user);
+  }
 
   @Delete(['admin/subscriptions/:subscriptionId', 'subscriptions/:subscriptionId'])
   @UseGuards(JwtAuthGuard)
@@ -480,7 +881,9 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   async deleteSubscription(
     @Param('subscriptionId') subscriptionId: string,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.deleteCustomerSubscription(subscriptionId, user);
+  }
 
   // ==========================================
   // Offline Payment Requests (Admin)
@@ -499,7 +902,14 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.getAdminOfflinePaymentRequests({
+      status,
+      search,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+  }
 
   @Post([
     'admin/subscriptions/offline-requests/:id/approve',
@@ -512,7 +922,9 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   async approveOfflinePaymentRequest(
     @Param('id') id: string,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.approveOfflinePaymentRequest(id, user?.id);
+  }
 
   @Post([
     'admin/subscriptions/offline-requests/:id/reject',
@@ -526,7 +938,9 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Param('id') id: string,
     @Body() dto: { reason?: string },
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.rejectOfflinePaymentRequest(id, user?.id, dto?.reason);
+  }
 
   @Post([
     'admin/subscriptions/offline-requests/bulk-delete',
@@ -543,7 +957,17 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Body() dto: { ids?: (number | string)[]; requestIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    let ids = dto?.ids || dto?.requestIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(ids || [], user);
+  }
 
   @Delete([
     'admin/subscriptions/offline-requests/bulk',
@@ -560,7 +984,17 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
     @Body() dto: { ids?: (number | string)[]; requestIds?: (number | string)[] },
     @Query('ids') queryIds: string | string[],
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    let ids = dto?.ids || dto?.requestIds;
+    if ((!ids || !Array.isArray(ids) || ids.length === 0) && queryIds) {
+      if (Array.isArray(queryIds)) {
+        ids = queryIds;
+      } else if (typeof queryIds === 'string') {
+        ids = queryIds.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+    return this.subscriptionService.bulkDeleteOfflinePaymentRequests(ids || [], user);
+  }
 
   @Delete([
     'admin/subscriptions/offline-requests/:id',
@@ -573,7 +1007,9 @@ throw new GoneException('Customer subscriptions and Lead functionality have been
   async deleteOfflinePaymentRequest(
     @Param('id') id: string,
     @CurrentUser() user: any,
-  ) { throw new GoneException('Customer subscriptions have been removed'); }
+  ) {
+    return this.subscriptionService.deleteOfflinePaymentRequest(id, user);
+  }
 }
 
 

@@ -1,42 +1,20 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, Optional } from '@nestjs/common';
-import { Response } from 'express';
-import { Prisma } from '@prisma/client';
-import { isUserAdmin } from '../../common/utils/account.util';
-import * as path from 'path';
-import * as fs from 'fs';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { commissionForPayroll, settleCommissionShares } from '../commission/commission-payroll.util';
-import { NotificationService } from '../notification/notification.service';
-import { EmployeeCommunicationService } from '../notification/employee-communication.service';
-import PDFDocument = require('pdfkit');
-import {
-  buildPayrollAttendanceSummary,
-  buildSalaryBreakdown,
-  calculateOvertimeMinutes,
-  formatOvertimeMinutes,
-  drawAttendanceSummarySection,
-  drawSalaryBreakdownSection,
-} from './salary-slip-summary';
-import {
-  businessDayKey,
-  classifyPayrollDays,
-  isScheduledWeeklyOff,
-  isBpoPayrollEmployee,
-  prorateFixedDivisor,
-} from './payroll-attendance';
 
 @Injectable()
 export class PayrollService {
-  private readonly logger = new Logger(PayrollService.name);
-
-  constructor(
-    private readonly prisma: PrismaService,
-    @Optional() private readonly notificationService?: NotificationService,
-    @Optional() private readonly employeeCommunication?: EmployeeCommunicationService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-return undefined;
+    const parsed = Number(customerId);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+    const defaultCust = await this.prisma.customer.findFirst({
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    return defaultCust ? defaultCust.id : 1;
   }
 
   private async autoCheckOutOpenAttendances(customerId: number, periodEnd: Date) {
@@ -46,7 +24,7 @@ return undefined;
 
     const openRecords = await this.prisma.attendance.findMany({
       where: {
-
+        customerId,
         punchIn: { not: null },
         punchOut: null,
         OR: [
@@ -68,7 +46,7 @@ return undefined;
         const day = punchInDate.getDate();
 
         const policy = await this.prisma.attendancePolicy.findFirst({
-          where: {  isActive: true },
+          where: { customerId: att.customerId, isActive: true },
           orderBy: { officeId: 'desc' },
         });
 
@@ -131,358 +109,34 @@ return undefined;
    * taking into account company AttendancePolicy or employee Shift working days.
    */
   calculateWorkingDays(year: number, month: number, workingDaysPerWeek = 5, shiftDays?: string[]): number {
-    return this.eachUtcDay(year, month).filter((day) => !isScheduledWeeklyOff(day, shiftDays, workingDaysPerWeek)).length;
-  }
+    const daysInMonth = new Date(year, month, 0).getDate();
+    let workingDays = 0;
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  private utcDayKey(value: Date): string {
-    const date = new Date(value);
-    return date.toISOString().slice(0, 10);
-  }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month - 1, day);
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 
-  private eachUtcDay(year: number, month: number): Date[] {
-    const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    return Array.from({ length: days }, (_, index) => new Date(Date.UTC(year, month - 1, index + 1)));
-  }
-
-  private isWeeklyOff(date: Date, shiftDays?: string[], workingDaysPerWeek = 5): boolean {
-    return isScheduledWeeklyOff(date, shiftDays, workingDaysPerWeek);
-  }
-
-  private roundMoney(value: number): number {
-    return Math.round((Number(value) || 0) * 100) / 100;
-  }
-
-  private async writePayrollAudit(input: {
-    customerId?: number;
-    user?: any;
-    action: string;
-    description: string;
-    entityId: string;
-    details?: Record<string, unknown>;
-  }) {
-    try {
-      await this.prisma.auditLog.create({
-        data: {
-
-          userId: input.user?.id ? Number(input.user.id) : undefined,
-          userName: input.user?.name || input.user?.email || undefined,
-          userRole: input.user?.role || undefined,
-          action: input.action,
-          module: 'Payroll',
-          description: input.description,
-          entityType: 'PayrollItem',
-          entityId: input.entityId,
-          status: 'SUCCESS',
-          details: input.details as any,
-        },
-      });
-    } catch (err: any) {
-      this.logger.warn(`Payroll audit skipped: ${err?.message}`);
+      if (shiftDays && Array.isArray(shiftDays) && shiftDays.length > 0) {
+        const dayName = dayNames[dayOfWeek];
+        if (shiftDays.some((sd) => sd.toLowerCase() === dayName.toLowerCase())) {
+          workingDays++;
+        }
+      } else if (workingDaysPerWeek === 6) {
+        // Mon-Sat
+        if (dayOfWeek >= 1 && dayOfWeek <= 6) {
+          workingDays++;
+        }
+      } else if (workingDaysPerWeek === 7) {
+        workingDays++;
+      } else {
+        // Default 5-day work week: Monday to Friday
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+          workingDays++;
+        }
+      }
     }
-  }
-
-  private async buildEmployeePayroll(tx: any, input: {
-    customerId?: number;
-    employee: any;
-    year: number;
-    month: number;
-    periodEnd: Date;
-    salaryDays: number;
-    workingDaysPerWeek: number;
-    holidays: Array<{ date: Date; officeId: number | null; name: string }>;
-    halfDayDeductionPct?: number;
-    absenceDeductionPct?: number;
-    standardDailyMinutes?: number;
-    overtimeEligible?: boolean;
-    overtimeMultiplier?: number;
-  }) {
-    const structure = input.employee.salaryStructures?.[0];
-    const basic = structure ? Number(structure.basicSalary) || 0 : 0;
-    const hra = structure ? Number(structure.hra) || 0 : 0;
-    const allowances = structure ? Number(structure.allowances) || 0 : 0;
-    const specialAllowance = structure ? Number(structure.specialAllowance) || 0 : 0;
-    const bonus = structure ? Number(structure.bonus) || 0 : 0;
-    const overtime = structure ? Number(structure.overtime) || 0 : 0;
-    const otherEarnings = structure ? Number(structure.otherEarnings) || 0 : 0;
-    const bpoEligible = isBpoPayrollEmployee(input.employee);
-    const commission = structure && bpoEligible ? Number(structure.commission) || 0 : 0;
-
-    const days = this.eachUtcDay(input.year, input.month);
-    const dayMs = 24 * 60 * 60 * 1000;
-    // Attendance and leave dates are IST-midnight stamps, so widen by a day and key by business date.
-    const queryStart = new Date(days[0].getTime() - dayMs);
-    const queryEnd = new Date(input.periodEnd.getTime() + dayMs);
-    const joining = input.employee.joiningDate ? businessDayKey(input.employee.joiningDate) : null;
-    const attendances = await tx.attendance.findMany({
-      where: {
-
-        employeeId: input.employee.id,
-        date: { gte: queryStart, lte: queryEnd },
-      },
-    });
-    const leaves = await tx.leaveRequest.findMany({
-      where: {
-
-        employeeId: input.employee.id,
-        status: 'APPROVED',
-        fromDate: { lte: queryEnd },
-        toDate: { gte: queryStart },
-      },
-      include: { leaveType: true },
-    });
-    const remoteRequests = tx.remoteRequest?.findMany
-      ? await tx.remoteRequest.findMany({
-          where: {
-
-            employeeId: input.employee.id,
-            fromDate: { lte: queryEnd },
-            toDate: { gte: queryStart },
-          },
-        })
-      : [];
-    const holidayKeys = new Set<string>();
-    for (const holiday of input.holidays) {
-      if (holiday.officeId && input.employee.officeId && holiday.officeId !== input.employee.officeId) continue;
-      if (holiday.officeId && !input.employee.officeId) continue;
-      holidayKeys.add(businessDayKey(holiday.date));
-    }
-
-    const officePolicy = input.employee.officeId
-      ? await tx.attendancePolicy.findFirst({
-          where: {  officeId: input.employee.officeId, isActive: true },
-          orderBy: { id: 'desc' },
-        })
-      : null;
-    const counts = classifyPayrollDays({
-      days,
-      joiningKey: joining,
-      isWeeklyOff: (day) => this.isWeeklyOff(day, input.employee.shift?.workingDays, officePolicy?.workingDaysPerWeek ?? input.workingDaysPerWeek),
-      attendances,
-      leaves,
-      holidayKeys,
-      remoteRequests,
-      halfDayDeductionPct: input.halfDayDeductionPct ?? 50,
-      absenceDeductionPct: input.absenceDeductionPct ?? 100,
-    });
-    const {
-      presentDays,
-      halfDays,
-      absentDays,
-      missingPunchDays,
-      paidLeaveDays,
-      unpaidLeaveDays,
-      holidayDays,
-      weeklyOffDays,
-      extraWorkingDays,
-      extraWorkingDates,
-      wfhDays,
-      lopDays,
-      scheduledWorkingDays,
-      attendanceByDay,
-    } = counts;
-    const halfPaidLeave = 0;
-
-    const monthlyEarnings = basic + hra + allowances + specialAllowance + bonus + overtime + otherEarnings;
-    const proration = prorateFixedDivisor({
-      divisor: input.salaryDays,
-      calendarDays: days.length,
-      employedDays: counts.employedDays,
-      lopDays,
-    });
-    const salaryDays = proration.divisor;
-    const payableDays = this.roundMoney(proration.payableUnits);
-    const factor = proration.factor;
-    const paidBasic = this.roundMoney(basic * factor);
-    const paidHra = this.roundMoney(hra * factor);
-    const paidAllowances = this.roundMoney(allowances * factor);
-    const paidSpecial = this.roundMoney(specialAllowance * factor);
-    const paidBonus = this.roundMoney(bonus * factor);
-    const paidOvertime = this.roundMoney(overtime * factor);
-    const paidOther = this.roundMoney(otherEarnings * factor);
-    const paidCommission = this.roundMoney(commission * factor);
-
-    // Extra working compensation on weekly offs & holidays
-    const dailyRate = salaryDays > 0 ? (basic / salaryDays) : 0;
-    const overtimeEligible = input.overtimeEligible ?? true;
-    const overtimeMultiplier = input.overtimeMultiplier || 1.5;
-    const extraWorkingPay = (extraWorkingDays > 0 && overtimeEligible)
-      ? this.roundMoney(dailyRate * overtimeMultiplier * extraWorkingDays)
-      : 0;
-
-    // Informational only: earnings above are already prorated, so this is never added to deductions.
-    const lopDeduction = this.roundMoney(((monthlyEarnings + commission) * (proration.baseUnits - proration.payableUnits)) / salaryDays);
-
-    const claims = await tx.employeeClaim.findMany({
-      where: {
-
-        employeeId: input.employee.id,
-        status: 'APPROVED',
-        paymentStatus: { in: ['UNPAID', 'PENDING'] },
-        claimDate: { lte: input.periodEnd },
-      },
-    });
-    const reimbursement = this.roundMoney(claims.reduce((sum: number, claim: any) => sum + Number(claim.approvedAmount ?? claim.amount ?? 0), 0));
-
-    const loans = await tx.employeeLoan.findMany({
-      where: {
-
-        employeeId: input.employee.id,
-        status: { in: ['ACTIVE', 'APPROVED'] },
-        remainingBalance: { gt: 0 },
-      },
-    });
-    let loanDeduction = 0;
-    let advanceDeduction = 0;
-    const loanLines: any[] = [];
-    for (const loan of loans) {
-      if (loan.startDate && new Date(loan.startDate) > input.periodEnd) continue;
-      const emi = Number(loan.monthlyEmi) > 0
-        ? Number(loan.monthlyEmi)
-        : Number(loan.approvedAmount || loan.loanAmount) / (Number(loan.termMonths) || 12);
-      const current = this.roundMoney(Math.min(emi, Number(loan.remainingBalance) || emi));
-      const isAdvance = /advance/i.test(`${loan.reason || ''} ${loan.notes || ''}`);
-      if (isAdvance) advanceDeduction += current;
-      else loanDeduction += current;
-      loanLines.push({
-        loanId: loan.id,
-        kind: isAdvance ? 'ADVANCE' : 'LOAN',
-        amount: Number(loan.approvedAmount || loan.loanAmount),
-        emi: this.roundMoney(emi),
-        recoveredBefore: this.roundMoney(Number(loan.approvedAmount || loan.loanAmount) - Number(loan.remainingBalance || 0)),
-        current,
-        remainingAfter: this.roundMoney(Math.max(0, Number(loan.remainingBalance || 0) - current)),
-      });
-    }
-
-    const pf = structure ? Number(structure.pf) || 0 : 0;
-    const esi = structure ? Number(structure.esi) || 0 : 0;
-    const professionalTax = structure ? Number(structure.professionalTax) || 0 : 0;
-    const tds = structure ? Number(structure.tds) || 0 : 0;
-    const otherDeductions = structure ? Number(structure.otherDeductions) || 0 : 0;
-    const gross = this.roundMoney(paidBasic + paidHra + paidAllowances + paidSpecial + paidBonus + paidCommission + paidOvertime + extraWorkingPay + paidOther + reimbursement);
-    const deductions = this.roundMoney(pf + esi + professionalTax + tds + otherDeductions + loanDeduction + advanceDeduction);
-    const netBeforeFloor = this.roundMoney(gross - deductions);
-    const blocked = netBeforeFloor < 0;
-    const workingDays = scheduledWorkingDays;
-    const periodStartKey = this.utcDayKey(days[0]);
-    const standardDailyMinutes = input.standardDailyMinutes ?? 8 * 60;
-    const overtimeMinutes = calculateOvertimeMinutes(attendanceByDay.values(), {
-      standardDailyMinutes,
-      eligible: overtimeEligible,
-      employmentStartKey: joining,
-    });
-    const monthlySalary = this.roundMoney(monthlyEarnings + commission);
-    const attendanceSalary = this.roundMoney(paidBasic + paidHra + paidAllowances + paidSpecial + paidBonus + paidOther + paidCommission);
-    const attendanceSummary = {
-      periodStart: periodStartKey,
-      periodEnd: this.utcDayKey(days[days.length - 1]),
-      calendarDays: days.length,
-      employmentStartDate: joining && joining > periodStartKey ? joining : null,
-      workingDays: scheduledWorkingDays,
-      presentDays,
-      absentDays,
-      halfDays,
-      paidLeaveDays: paidLeaveDays + halfPaidLeave * 0.5,
-      unpaidLeaveDays,
-      weeklyOffDays,
-      holidayDays,
-      extraWorkingDays,
-      extraWorkingDates,
-      payableDays,
-      extraWorkingPay,
-      missingPunchDays,
-      overtimeMinutes,
-      overtimeLabel: formatOvertimeMinutes(overtimeMinutes),
-      overtimeRule: { standardDailyMinutes, eligible: overtimeEligible },
-    };
-
-    return {
-      basicSalary: paidBasic,
-      hra: paidHra,
-      allowances: paidAllowances,
-      specialAllowance: paidSpecial,
-      bonus: paidBonus,
-      commission: paidCommission,
-      overtime: paidOvertime,
-      otherEarnings: paidOther,
-      reimbursement,
-      pf,
-      esi,
-      professionalTax,
-      tds,
-      otherDeductions,
-      loanDeduction: this.roundMoney(loanDeduction),
-      advanceDeduction: this.roundMoney(advanceDeduction),
-      grossSalary: gross,
-      totalDeductions: deductions,
-      netSalary: blocked ? 0 : netBeforeFloor,
-      workingDays: Math.max(0, Math.round(workingDays)),
-      presentDays,
-      absentDays,
-      halfDays,
-      paidLeaveDays: paidLeaveDays + halfPaidLeave * 0.5,
-      unpaidLeaveDays,
-      wfhDays,
-      payableDays,
-      holidayDays,
-      weeklyOffDays,
-      lopDays,
-      lopDeduction,
-      status: 'CALCULATED',
-      calculationSnapshot: {
-        salaryDays,
-        monthlySalary,
-        attendanceSalary,
-        extraWorkingPay,
-        extraWorkingDays,
-        extraWorkingDates,
-        presentDays,
-        halfDays,
-        absentDays,
-        missingPunchDays,
-        paidLeaveDays,
-        halfPaidLeave,
-        unpaidLeaveDays,
-        holidayDays,
-        weeklyOffDays,
-        payableDays,
-        lopDays,
-        attendanceSummary,
-        salaryBasis: {
-          method: 'FIXED_DIVISOR',
-          divisor: salaryDays,
-          employedDays: counts.employedDays,
-          baseDays: proration.baseUnits,
-          payableDays,
-          halfDayDeductionPct: input.halfDayDeductionPct ?? 50,
-          absenceDeductionPct: input.absenceDeductionPct ?? 100,
-        },
-        bpoCommissionEligible: bpoEligible,
-        structureCommission: paidCommission,
-        reimbursement,
-        expenses: claims.map((claim: any) => ({
-          id: claim.id,
-          title: claim.description,
-          category: claim.category,
-          amount: Number(claim.approvedAmount ?? claim.amount ?? 0),
-          approvedAt: claim.reviewedAt,
-        })),
-        loans: loanLines,
-        gross,
-        lopDeduction,
-        pf,
-        esi,
-        professionalTax,
-        tds,
-        advanceDeduction: this.roundMoney(advanceDeduction),
-        loanDeduction: this.roundMoney(loanDeduction),
-        otherDeductions,
-        totalDeductions: deductions,
-        netSalary: blocked ? netBeforeFloor : netBeforeFloor,
-        blocked,
-        blockReason: blocked ? 'Payroll deductions exceed payable salary. Please review deductions.' : null,
-      },
-    };
+    return workingDays;
   }
 
   private formatSalarySlip(slip: any) {
@@ -526,70 +180,6 @@ return undefined;
     const formattedDate = slip.generatedAt
       ? slip.generatedAt.toISOString().split('T')[0]
       : (month && year ? `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}` : new Date().toISOString().split('T')[0]);
-    const basicSalary = pi?.basicSalary ?? slip.basicSalary ?? slip.grossSalary;
-    const hra = pi?.hra ?? slip.hra ?? 0;
-    const specialAllowance = pi?.specialAllowance ?? slip.specialAllowance ?? 0;
-    const baseAllowances = pi?.allowances ?? slip.allowances ?? 0;
-    const allowances = baseAllowances + specialAllowance;
-    const bonus = pi?.bonus ?? slip.bonus ?? 0;
-    const commission = pi?.commission ?? slip.commission ?? 0;
-    const overtime = pi?.overtime ?? slip.overtime ?? 0;
-    const otherEarnings = pi?.otherEarnings ?? slip.otherEarnings ?? 0;
-    const advanceDeduction = pi?.advanceDeduction ?? slip.advanceDeduction ?? 0;
-    const reimbursement = pi?.reimbursement ?? slip.reimbursement ?? 0;
-    const pf = pi?.pf ?? slip.pf ?? 0;
-    const esi = pi?.esi ?? slip.esi ?? 0;
-    const professionalTax = pi?.professionalTax ?? slip.professionalTax ?? 0;
-    const tds = pi?.tds ?? slip.tds ?? 0;
-    const otherDeductions = pi?.otherDeductions ?? slip.otherDeductions ?? 0;
-    const loanDeduction = pi?.loanDeduction ?? slip.loanDeduction ?? 0;
-    const unpaidLeaveDeduction = pi?.unpaidLeaveDeduction ?? slip.unpaidLeaveDeduction ?? 0;
-    const totalDeductions = slip.totalDeductions ?? (pf + esi + professionalTax + tds + otherDeductions + loanDeduction + unpaidLeaveDeduction);
-    const grossSalary = slip.grossSalary ?? (basicSalary + hra + allowances);
-    const netSalary = slip.netSalary ?? Math.max(0, grossSalary - totalDeductions);
-    const attendanceSummary = buildPayrollAttendanceSummary(pi, { year, month });
-    const extraWorkingPay = pi?.calculationSnapshot?.extraWorkingPay ?? 0;
-    const monthlySalaryRecorded = pi?.calculationSnapshot?.monthlySalary != null;
-    const monthlySalary = pi?.calculationSnapshot?.monthlySalary ?? (basicSalary + hra + allowances);
-    const salaryDataWarnings: string[] = [];
-    const snapshot = pi?.calculationSnapshot;
-    if (snapshot?.gross != null && Number(snapshot.gross) !== Number(grossSalary)) {
-      salaryDataWarnings.push('Stored salary-slip gross differs from its calculation snapshot. Payroll correction review is required.');
-    }
-    if (snapshot?.netSalary != null && Number(snapshot.netSalary) !== Number(netSalary)) {
-      salaryDataWarnings.push('Stored net salary differs from its calculation snapshot. Payroll correction review is required.');
-    }
-    if (snapshot?.monthlySalary === 0 && Number(snapshot?.attendanceSalary) > 0) {
-      salaryDataWarnings.push('The calculation snapshot records zero configured salary with positive attendance salary. Payroll correction review is required.');
-    }
-    const attendanceSalary = pi?.calculationSnapshot?.attendanceSalary ?? (grossSalary - reimbursement);
-    const salaryBreakdown = buildSalaryBreakdown({
-      basicSalary,
-      hra,
-      allowances: baseAllowances,
-      specialAllowance,
-      bonus,
-      overtime,
-      extraWorkingPay,
-      commission,
-      isBpo: isBpoPayrollEmployee(slip.employee || pi?.employee || {}),
-      otherEarnings,
-      reimbursement,
-      pf,
-      esi,
-      professionalTax,
-      tds,
-      otherDeductions,
-      loanDeduction,
-      advanceDeduction,
-      lopDeduction: pi?.lopDeduction ?? unpaidLeaveDeduction,
-      grossSalary,
-      totalDeductions,
-      netSalary,
-      monthlySalary,
-      monthlySalaryRecorded,
-      attendanceSalary,
-    });
 
     return {
       ...slip,
@@ -598,83 +188,28 @@ return undefined;
       monthName,
       payPeriod,
       date: formattedDate,
-      attendanceSummary,
-      salaryBreakdown,
-      salaryDataWarnings,
-      calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
-      workingDays: attendanceSummary?.workingDays ?? pi?.workingDays ?? 0,
-      presentDays: attendanceSummary?.presentDays ?? pi?.presentDays ?? 0,
-      absentDays: attendanceSummary?.absentDays ?? pi?.absentDays ?? 0,
-      halfDays: attendanceSummary?.halfDays ?? pi?.halfDays ?? 0,
-      paidLeaveDays: attendanceSummary?.paidLeaveDays ?? pi?.paidLeaveDays ?? 0,
-      unpaidLeaveDays: attendanceSummary?.unpaidLeaveDays ?? pi?.unpaidLeaveDays ?? 0,
+      workingDays: pi?.workingDays ?? 0,
+      presentDays: pi?.presentDays ?? 0,
+      absentDays: pi?.absentDays ?? 0,
+      halfDays: pi?.halfDays ?? 0,
+      paidLeaveDays: pi?.paidLeaveDays ?? 0,
+      unpaidLeaveDays: pi?.unpaidLeaveDays ?? 0,
       wfhDays: pi?.wfhDays ?? 0,
-      weeklyOffDays: attendanceSummary?.weeklyOffDays ?? pi?.weeklyOffDays ?? 0,
-      holidayDays: attendanceSummary?.holidayDays ?? pi?.holidayDays ?? 0,
-      extraWorkingDays: attendanceSummary?.extraWorkingDays ?? pi?.calculationSnapshot?.extraWorkingDays ?? 0,
-      extraWorkingDates: attendanceSummary?.extraWorkingDates ?? pi?.calculationSnapshot?.extraWorkingDates ?? [],
-      payableDays: attendanceSummary?.payableDays ?? pi?.payableDays ?? 0,
-      extraWorkingPay,
-      monthlySalary,
-      attendanceSalary,
-      overtimeHours: attendanceSummary?.overtimeLabel ?? '0h 00m',
-      overtimeMinutes: attendanceSummary?.overtimeMinutes ?? 0,
-      basicSalary,
-      hra,
-      allowances,
-      specialAllowance,
-      bonus,
-      commission,
-      overtime,
-      reimbursement,
-      pf,
-      esi,
-      professionalTax,
-      tds,
-      otherDeductions,
-      loanDeduction,
-      unpaidLeaveDeduction,
-      grossSalary,
-      totalDeductions,
-      netSalary,
-      payrollItem: {
-        ...(pi || {}),
-        calendarDays: attendanceSummary?.calendarDays ?? daysInMonth,
-        workingDays: attendanceSummary?.workingDays ?? pi?.workingDays ?? 0,
-        presentDays: attendanceSummary?.presentDays ?? pi?.presentDays ?? 0,
-        absentDays: attendanceSummary?.absentDays ?? pi?.absentDays ?? 0,
-        halfDays: attendanceSummary?.halfDays ?? pi?.halfDays ?? 0,
-        paidLeaveDays: attendanceSummary?.paidLeaveDays ?? pi?.paidLeaveDays ?? 0,
-        unpaidLeaveDays: attendanceSummary?.unpaidLeaveDays ?? pi?.unpaidLeaveDays ?? 0,
-        weeklyOffDays: attendanceSummary?.weeklyOffDays ?? pi?.weeklyOffDays ?? 0,
-        holidayDays: attendanceSummary?.holidayDays ?? pi?.holidayDays ?? 0,
-        extraWorkingDays: attendanceSummary?.extraWorkingDays ?? pi?.calculationSnapshot?.extraWorkingDays ?? 0,
-        extraWorkingDates: attendanceSummary?.extraWorkingDates ?? pi?.calculationSnapshot?.extraWorkingDates ?? [],
-        payableDays: attendanceSummary?.payableDays ?? pi?.payableDays ?? 0,
-        extraWorkingPay,
-        monthlySalary,
-        attendanceSalary,
-        overtimeHours: attendanceSummary?.overtimeLabel ?? '0h 00m',
-        overtimeMinutes: attendanceSummary?.overtimeMinutes ?? 0,
-        basicSalary,
-        hra,
-        allowances,
-        specialAllowance,
-        bonus,
-        commission,
-        overtime,
-        reimbursement,
-        pf,
-        esi,
-        professionalTax,
-        tds,
-        otherDeductions,
-        loanDeduction,
-        unpaidLeaveDeduction,
-        grossSalary,
-        totalDeductions,
-        netSalary,
-      },
+      basicSalary: pi?.basicSalary ?? slip.grossSalary,
+      hra: pi?.hra ?? 0,
+      allowances: (pi?.allowances ?? 0) + (pi?.specialAllowance ?? 0),
+      specialAllowance: pi?.specialAllowance ?? 0,
+      bonus: pi?.bonus ?? 0,
+      commission: pi?.commission ?? 0,
+      overtime: pi?.overtime ?? 0,
+      reimbursement: pi?.reimbursement ?? 0,
+      pf: pi?.pf ?? 0,
+      esi: pi?.esi ?? 0,
+      professionalTax: pi?.professionalTax ?? 0,
+      tds: pi?.tds ?? 0,
+      otherDeductions: pi?.otherDeductions ?? 0,
+      loanDeduction: pi?.loanDeduction ?? 0,
+      unpaidLeaveDeduction: pi?.unpaidLeaveDeduction ?? 0,
     };
   }
 
@@ -692,20 +227,18 @@ return undefined;
 
     // 1. Fetch Policy for Customer
     const [payrollPolicy, salaryPolicy, attendancePolicy] = await Promise.all([
-      this.prisma.payrollPolicy.findUnique({ where: { singletonKey: "GLOBAL" } }),
-      this.prisma.salaryPolicy.findFirst({ where: {  isActive: true } }),
-      this.prisma.attendancePolicy.findFirst({ where: {  officeId: null, isActive: true } }),
+      this.prisma.payrollPolicy.findUnique({ where: { customerId: numCustomerId } }),
+      this.prisma.salaryPolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
+      this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
     ]);
 
-    const salaryDays = payrollPolicy?.workingDaysPerMonth || salaryPolicy?.workingDaysPerMonth || daysInMonth;
-    const halfDayDeductionPct = salaryPolicy?.halfDayDeductionPct ?? attendancePolicy?.halfDayDeductionPct ?? 50;
-    const absenceDeductionPct = salaryPolicy?.fullDayDeductionPct ?? attendancePolicy?.fullDayAbsenceDeductionPct ?? 100;
-    const workingDaysPerWeek = attendancePolicy?.workingDaysPerWeek || 5;
-    const standardDailyMinutes = Math.round((attendancePolicy?.workingHoursPerDay || 8) * 60);
-    const overtimeEligible = attendancePolicy?.overtimeEligible ?? true;
+    const pfPctConfig = payrollPolicy?.pfPercent ?? salaryPolicy?.pfPercent ?? 12.0;
+    const esiPctConfig = payrollPolicy?.esiPercent ?? salaryPolicy?.esiPercent ?? 0.75;
+    const commissionEnabled = salaryPolicy?.commissionEnabled ?? false;
+    const commissionPctConfig = salaryPolicy?.commissionPercentage ?? 0.0;
 
     // 2. Fetch active employees
-    const whereClause: any = {  status: 'ACTIVE' };
+    const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
     if (numDeptId) {
       whereClause.departmentId = numDeptId;
     }
@@ -731,13 +264,13 @@ return undefined;
     return this.prisma.$transaction(async (tx) => {
       // 3. Fetch or create Payroll record (Idempotent)
       let payroll = await tx.payroll.findFirst({
-        where: {  month, year, departmentId: numDeptId || null },
+        where: { customerId: numCustomerId, month, year, departmentId: numDeptId || null },
       });
 
       if (!payroll) {
         payroll = await tx.payroll.create({
           data: {
-
+            customerId: numCustomerId,
             month,
             year,
             departmentId: numDeptId || null,
@@ -745,96 +278,236 @@ return undefined;
           },
         });
       }
-      if (['PAID', 'APPROVED', 'GENERATED'].includes(payroll.status)) {
-        throw new BadRequestException('This payroll is finalized and cannot be recalculated.');
-      }
-
-      const holidays = await tx.publicHoliday.findMany({
-        where: {
-
-          isActive: true,
-          date: {
-            gte: new Date(periodStart.getTime() - 24 * 60 * 60 * 1000),
-            lte: new Date(periodEnd.getTime() + 24 * 60 * 60 * 1000),
-          },
-        },
-      });
-      const lockedItems = await tx.payrollItem.findMany({
-        where: { payrollId: payroll.id, status: 'PAID' },
-      });
-      const lockedEmployeeIds = new Set(lockedItems.map((item: any) => item.employeeId));
 
       let totalGross = 0;
       let totalDeductions = 0;
       let totalNet = 0;
       const itemsData: any[] = [];
-      const shareClaims = new Map<number, number[]>();
-
-      for (const locked of lockedItems) {
-        totalGross += Number(locked.grossSalary) || 0;
-        totalDeductions += Number(locked.totalDeductions) || 0;
-        totalNet += Number(locked.netSalary) || 0;
-      }
 
       for (const emp of employees) {
-        if (lockedEmployeeIds.has(emp.id)) continue;
-        const computed = await this.buildEmployeePayroll(tx, {
+        const structure = emp.salaryStructures[0];
+        const basic = structure ? structure.basicSalary : 35000;
+        const hra = structure ? structure.hra : Math.round(basic * 0.4);
+        const allowances = structure ? structure.allowances : 5000;
+        const specialAllowance = structure ? structure.specialAllowance : 5000;
+        const bonus = structure ? structure.bonus : 0;
+        const overtime = structure ? structure.overtime : 0;
+        const otherEarnings = structure ? structure.otherEarnings : 0;
 
-          employee: emp,
+        // ── Commission Integration ──
+        let commission = structure ? structure.commission : 0;
+        if (commission === 0 && commissionEnabled && commissionPctConfig > 0) {
+          commission = Math.round((basic * commissionPctConfig) / 100);
+        }
+
+        // ── Dynamic Working Days Calculation ──
+        const workingDaysConfig = this.calculateWorkingDays(
           year,
           month,
-          periodEnd,
-          salaryDays,
-          workingDaysPerWeek,
-          holidays,
-          halfDayDeductionPct,
-          absenceDeductionPct,
-          standardDailyMinutes,
-          overtimeEligible,
-          overtimeMultiplier: salaryPolicy?.overtimeMultiplier || 1.5,
+          attendancePolicy?.workingDaysPerWeek || 5,
+          emp.shift?.workingDays,
+        );
+
+        // ── Attendance Integration ──
+        const attendances = await tx.attendance.findMany({
+          where: {
+            customerId: numCustomerId,
+            employeeId: emp.id,
+            date: {
+              gte: periodStart,
+              lte: periodEnd,
+            },
+          },
         });
-        const split = await commissionForPayroll(tx, numCustomerId, emp.id, periodStart, periodEnd, payroll.id, computed.commission);
-        if (split.shares.length) {
-          computed.commission = this.roundMoney(computed.commission + split.amount);
-          computed.grossSalary = this.roundMoney(computed.grossSalary + split.amount);
-          const net = this.roundMoney(computed.grossSalary - computed.totalDeductions);
-          computed.netSalary = Math.max(0, net);
-          Object.assign(computed.calculationSnapshot, {
-            blocked: net < 0,
-            blockReason: net < 0 ? 'Payroll deductions exceed payable salary. Please review deductions.' : null,
-            saleCommissionAmount: split.amount,
-            saleCommissionShareIds: split.shares.map(s => s.id),
-          });
+
+        const presentCount = attendances.filter(
+          (a) => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'REMOTE',
+        ).length;
+        const halfDayCount = attendances.filter((a) => a.status === 'HALF_DAY').length;
+        const wfhCount = attendances.filter(
+          (a) => a.workMode === 'WFH' || a.workMode === 'REMOTE',
+        ).length;
+
+        // Actual present days (integer aligned to DB schema)
+        const presentDays = Math.min(
+          workingDaysConfig,
+          Math.round(presentCount + halfDayCount * 0.5),
+        );
+
+        // ── Leave Integration ──
+        const approvedLeaves = await tx.leaveRequest.findMany({
+          where: {
+            customerId: numCustomerId,
+            employeeId: emp.id,
+            status: 'APPROVED',
+            fromDate: { lte: periodEnd },
+            toDate: { gte: periodStart },
+          },
+          include: {
+            leaveType: true,
+          },
+        });
+
+        let rawPaidLeaveDays = 0;
+        let rawUnpaidLeaveDays = 0;
+
+        for (const lr of approvedLeaves) {
+          const code = lr.leaveType?.code?.toUpperCase() || '';
+          const name = lr.leaveType?.name?.toLowerCase() || '';
+          const isUnpaid =
+            code === 'UL' ||
+            code === 'LOP' ||
+            name.includes('unpaid') ||
+            name.includes('loss of pay') ||
+            name.includes('lop');
+
+          const lFrom = new Date(Math.max(new Date(lr.fromDate).getTime(), periodStart.getTime()));
+          const lTo = new Date(Math.min(new Date(lr.toDate).getTime(), periodEnd.getTime()));
+          let daysInPeriod = 0;
+          if (lFrom <= lTo) {
+            const totalLeaveDays = lr.days || 1;
+            const diffDays = Math.round((lTo.getTime() - lFrom.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            daysInPeriod = Math.min(totalLeaveDays, Math.max(1, diffDays));
+          } else {
+            daysInPeriod = lr.days || 1;
+          }
+
+          if (isUnpaid) {
+            rawUnpaidLeaveDays += daysInPeriod;
+          } else {
+            rawPaidLeaveDays += daysInPeriod;
+          }
         }
-        shareClaims.set(emp.id, split.shares.map(s => s.id));
-        totalGross += computed.grossSalary;
-        totalDeductions += computed.totalDeductions;
-        totalNet += computed.netSalary;
+
+        const paidLeaveDays = Math.min(workingDaysConfig - presentDays, Math.round(rawPaidLeaveDays));
+        const unpaidLeaveDays = Math.min(
+          Math.max(0, workingDaysConfig - presentDays - paidLeaveDays),
+          Math.round(rawUnpaidLeaveDays),
+        );
+
+        // Reconcile Absent Days
+        // Approved paid leaves are NOT absent. Working days = present + absent + paid leave + unpaid leave
+        const absentDays = Math.max(
+          0,
+          workingDaysConfig - presentDays - paidLeaveDays - unpaidLeaveDays,
+        );
+
+        // Unpaid leave deduction (Loss of Pay)
+        const perDayRate = basic / workingDaysConfig;
+        const unpaidLeaveDeduction = Math.round(unpaidLeaveDays * perDayRate);
+
+        // ── Approved Expense Reimbursement Integration ──
+        const approvedClaims = await tx.employeeClaim.findMany({
+          where: {
+            customerId: numCustomerId,
+            employeeId: emp.id,
+            status: 'APPROVED',
+            paymentStatus: { in: ['UNPAID', 'PENDING'] },
+            claimDate: { lte: periodEnd },
+          },
+        });
+        const reimbursement = approvedClaims.reduce(
+          (sum, c) => sum + (c.approvedAmount ?? c.amount ?? 0),
+          0,
+        );
+
+        // ── Approved Loan Deduction Integration ──
+        const activeLoans = await tx.employeeLoan.findMany({
+          where: {
+            customerId: numCustomerId,
+            employeeId: emp.id,
+            status: { in: ['ACTIVE', 'APPROVED'] },
+            remainingBalance: { gt: 0 },
+          },
+        });
+        let loanDeduction = 0;
+        for (const loan of activeLoans) {
+          if (loan.startDate && loan.startDate > periodEnd) {
+            continue; // Loan starts in future
+          }
+          const emi =
+            loan.monthlyEmi > 0
+              ? loan.monthlyEmi
+              : (loan.approvedAmount || loan.loanAmount) / (loan.termMonths || 12);
+          const deductionAmount = Math.min(emi, loan.remainingBalance || emi);
+          loanDeduction += Math.round(deductionAmount);
+        }
+
+        // ── Statutory Deductions ──
+        const pf = structure ? structure.pf : Math.round(basic * (pfPctConfig / 100));
+        const esi = structure ? structure.esi : Math.round(basic * (esiPctConfig / 100));
+        const profTax = structure ? structure.professionalTax : 200;
+        const tds = structure ? structure.tds : 0;
+        const otherDeductions = structure ? structure.otherDeductions : 0;
+
+        // ── Final Calculation ──
+        const gross =
+          basic +
+          hra +
+          allowances +
+          specialAllowance +
+          bonus +
+          commission +
+          overtime +
+          otherEarnings +
+          reimbursement;
+
+        const deductions =
+          pf +
+          esi +
+          profTax +
+          tds +
+          otherDeductions +
+          loanDeduction +
+          unpaidLeaveDeduction;
+
+        const net = Math.max(0, gross - deductions);
+
+        totalGross += gross;
+        totalDeductions += deductions;
+        totalNet += net;
+
         itemsData.push({
           payrollId: payroll.id,
-
+          customerId: numCustomerId,
           employeeId: emp.id,
-          ...computed,
-          paidLeaveDays: Math.round(computed.paidLeaveDays),
-          unpaidLeaveDays: Math.round(computed.unpaidLeaveDays),
+          basicSalary: basic,
+          hra,
+          allowances,
+          specialAllowance,
+          bonus,
+          commission,
+          overtime,
+          otherEarnings,
+          reimbursement,
+          pf,
+          esi,
+          professionalTax: profTax,
+          tds,
+          otherDeductions,
+          loanDeduction,
+          grossSalary: gross,
+          totalDeductions: deductions,
+          netSalary: net,
+          workingDays: workingDaysConfig,
+          presentDays,
+          absentDays,
+          halfDays: halfDayCount,
+          paidLeaveDays,
+          unpaidLeaveDays,
+          wfhDays: wfhCount,
+          status: 'CALCULATED',
         });
       }
 
-      // Release only this unfinalized payroll's reservations before replacing items.
-      await tx.commissionShare.updateMany({ where: { status: 'APPROVED', payrollItem: { payrollId: payroll.id, status: { not: 'PAID' } } }, data: { payrollItemId: null } });
+      // Recreate items idempotently
       await tx.payrollItem.deleteMany({
-        where: { payrollId: payroll.id, status: { not: 'PAID' } },
+        where: { payrollId: payroll.id },
       });
 
       await tx.payrollItem.createMany({
         data: itemsData,
       });
-      for (const item of await tx.payrollItem.findMany({ where: { payrollId: payroll.id, status: { not: 'PAID' } } })) {
-        const ids = shareClaims.get(item.employeeId) || [];
-        if (!ids.length) continue;
-        const claim = await tx.commissionShare.updateMany({ where: { id: { in: ids }, status: 'APPROVED', payrollItemId: null }, data: { payrollItemId: item.id } });
-        if (claim.count !== ids.length) throw new BadRequestException('Commission already reserved by another payroll; retry calculation');
-      }
 
       const updatedPayroll = await tx.payroll.update({
         where: { id: payroll.id },
@@ -861,13 +534,13 @@ return undefined;
       });
 
       return updatedPayroll;
-    }, { isolationLevel: 'Serializable' });
+    });
   }
 
   async previewPayroll(customerId: number | string | undefined, month: number, year: number, departmentId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numDeptId = departmentId && !isNaN(Number(departmentId)) ? Number(departmentId) : undefined;
-    const whereClause: any = {  status: 'ACTIVE' };
+    const whereClause: any = { customerId: numCustomerId, status: 'ACTIVE' };
     if (numDeptId) {
       whereClause.departmentId = numDeptId;
     }
@@ -877,7 +550,6 @@ return undefined;
       include: {
         salaryStructures: {
           where: { status: 'ACTIVE' },
-          orderBy: { createdAt: 'desc' },
           take: 1,
         },
         department: true,
@@ -890,10 +562,10 @@ return undefined;
 
     const list = employees.map((e) => {
       const st = e.salaryStructures[0];
-      const basic = st?.basicSalary || 0;
-      const gross = st?.grossSalary ?? basic;
-      const ded = st?.totalDeductions || 0;
-      const net = st?.netSalary ?? Math.max(0, gross - ded);
+      const basic = st?.basicSalary || 35000;
+      const gross = st?.grossSalary || basic * 1.5;
+      const ded = st?.totalDeductions || basic * 0.15;
+      const net = st?.netSalary || gross - ded;
 
       estGross += gross;
       estDeductions += ded;
@@ -927,11 +599,11 @@ return undefined;
     let payroll: any;
     if (!isNaN(numPayrollId) && numPayrollId > 0) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { id: numPayrollId },
+        where: { id: numPayrollId, customerId: numCustomerId },
       });
     } else {
       payroll = await this.prisma.payroll.findFirst({
-        where: {  },
+        where: { customerId: numCustomerId },
         orderBy: { createdAt: 'desc' },
       });
     }
@@ -942,10 +614,6 @@ return undefined;
       payroll = await this.calculatePayroll(numCustomerId, currentMonth, currentYear);
     }
 
-    if (payroll.status === 'DRAFT') throw new BadRequestException('Please recalculate draft payroll before approval.');
-    if (['PAID', 'GENERATED', 'APPROVED'].includes(payroll.status)) {
-      return { success: true, message: 'Payroll is already finalized', data: payroll };
-    }
     const updated = await this.prisma.payroll.update({
       where: { id: payroll.id },
       data: {
@@ -979,12 +647,12 @@ return undefined;
     let payroll: any;
     if (!isNaN(numPayrollId) && numPayrollId > 0) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { id: numPayrollId },
+        where: { id: numPayrollId, customerId: numCustomerId },
         include: { items: true },
       });
     } else if (options?.month && options?.year) {
       payroll = await this.prisma.payroll.findFirst({
-        where: {  month: options.month, year: options.year },
+        where: { customerId: numCustomerId, month: options.month, year: options.year },
         include: { items: true },
       });
       if (!payroll) {
@@ -996,7 +664,7 @@ return undefined;
       }
     } else {
       payroll = await this.prisma.payroll.findFirst({
-        where: {  },
+        where: { customerId: numCustomerId },
         orderBy: { createdAt: 'desc' },
         include: { items: true },
       });
@@ -1004,10 +672,6 @@ return undefined;
 
     if (!payroll) {
       throw new NotFoundException('Payroll record not found. Please calculate payroll first.');
-    }
-    if (payroll.status === 'DRAFT') throw new BadRequestException('Please recalculate draft payroll before generating slips.');
-    if (payroll.status === 'PAID') {
-      return { success: true, alreadyPaid: true, message: 'Paid payroll is preserved; use existing salary slips', data: payroll };
     }
 
     const FULL_MONTH_NAMES = [
@@ -1033,18 +697,18 @@ return undefined;
       ? payroll.items.filter((it: any) => it.employeeId === Number(options.employeeId))
       : payroll.items;
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       for (const item of targetItems) {
         const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.toString().padStart(4, '0')}`;
 
         const existing = await tx.salarySlip.findFirst({
-          where: { payrollItemId: item.id },
+          where: { payrollItemId: item.id, customerId: numCustomerId },
         });
 
         if (!existing) {
           await tx.salarySlip.create({
             data: {
-
+              customerId: numCustomerId,
               payrollItemId: item.id,
               employeeId: item.employeeId,
               slipNumber: slipNum,
@@ -1092,29 +756,6 @@ return undefined;
         data: updated,
       };
     });
-
-    // 8. SALARY GENERATED -> EMPLOYEE NOTIFICATION
-    if (this.notificationService && result?.data?.items) {
-      for (const item of result.data.items) {
-        if (item.employeeId) {
-          const slip = item.salarySlips?.[0];
-          this.notificationService
-            .sendSalaryGeneratedNotification({
-
-              employeeId: item.employeeId,
-              payPeriod,
-              month: payroll.month,
-              year: payroll.year,
-              slipId: slip?.id,
-            })
-            .catch((err: any) => {
-              this.logger.warn(`Failed to dispatch SALARY_GENERATED notification: ${err?.message}`);
-            });
-        }
-      }
-    }
-
-    return result;
   }
 
   async disbursePayroll(customerId: number | string | undefined, payrollId?: number | string) {
@@ -1124,12 +765,12 @@ return undefined;
     let payroll: any;
     if (!isNaN(numPayrollId) && numPayrollId > 0) {
       payroll = await this.prisma.payroll.findFirst({
-        where: { id: numPayrollId },
+        where: { id: numPayrollId, customerId: numCustomerId },
         include: { items: true },
       });
     } else {
       payroll = await this.prisma.payroll.findFirst({
-        where: {  },
+        where: { customerId: numCustomerId },
         orderBy: { createdAt: 'desc' },
         include: { items: true },
       });
@@ -1138,33 +779,17 @@ return undefined;
     if (!payroll) {
       throw new NotFoundException('No payroll batch found to disburse. Please calculate and approve payroll first.');
     }
-    if (payroll.status === 'DRAFT') throw new BadRequestException('Please recalculate draft payroll before payment.');
-    if (payroll.status === 'PAID') {
-      return {
-        success: true,
-        alreadyPaid: true,
-        message: `Payroll batch #${payroll.id} is already paid`,
-        data: payroll,
-      };
-    }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const periodEnd = new Date(payroll.year, payroll.month, 0, 23, 59, 59, 999);
 
       // Process each payroll item to settle claims and loans
-      const paidItemIds: number[] = [];
       for (const item of payroll.items) {
-        if (item.status === 'PAID') continue;
-        const snapshot = item.calculationSnapshot as any;
-        if (snapshot?.blocked) {
-          throw new BadRequestException(snapshot.blockReason || 'Payroll deductions exceed payable salary. Please review deductions.');
-        }
-        paidItemIds.push(item.id);
         // Settle approved claims that were reimbursed
         if (item.reimbursement && item.reimbursement > 0) {
           await tx.employeeClaim.updateMany({
             where: {
-
+              customerId: numCustomerId,
               employeeId: item.employeeId,
               status: 'APPROVED',
               paymentStatus: { in: ['UNPAID', 'PENDING'] },
@@ -1182,7 +807,7 @@ return undefined;
         if (item.loanDeduction && item.loanDeduction > 0) {
           const activeLoans = await tx.employeeLoan.findMany({
             where: {
-
+              customerId: numCustomerId,
               employeeId: item.employeeId,
               status: { in: ['ACTIVE', 'APPROVED'] },
               remainingBalance: { gt: 0 },
@@ -1207,17 +832,12 @@ return undefined;
           }
         }
 
-        await tx.payrollItem.update({
-          where: { id: item.id },
-          data: { status: 'PAID', paidAt: new Date() },
-        });
-        await settleCommissionShares(tx, item.id);
+        // Mark salary slip status as PAID
         await tx.salarySlip.updateMany({
           where: { payrollItemId: item.id },
           data: { status: 'PAID' },
         });
       }
-      (payroll as any).paidItemIds = paidItemIds;
 
       const updated = await tx.payroll.update({
         where: { id: payroll.id },
@@ -1238,152 +858,8 @@ return undefined;
         success: true,
         message: `Payroll batch #${payroll.id} disbursed successfully. Reimbursed expenses and loan installments marked as settled.`,
         data: updated,
-        paidItemIds,
       };
     });
-    await this.deliverSalarySlips(numCustomerId, result.paidItemIds || [], undefined);
-    return result;
-  }
-
-  async payPayrollItem(customerId: number | string | undefined, itemId: number | string, user?: any) {
-    const numCustomerId = await this.resolveCustomerId(customerId);
-    const item = await this.prisma.payrollItem.findFirst({
-      where: { id: Number(itemId) },
-      include: { payroll: true, employee: true, salarySlips: true },
-    });
-    if (!item) throw new NotFoundException(`Payroll item #${itemId} not found`);
-    if (item.status === 'PAID') {
-      throw new ConflictException(`Payroll item #${item.id} is already paid`);
-    }
-    const snapshot = item.calculationSnapshot as any;
-    if (snapshot?.blocked || Number(item.netSalary) < 0) {
-      throw new BadRequestException(snapshot?.blockReason || 'Payroll deductions exceed payable salary. Please review deductions.');
-    }
-    const payroll = item.payroll;
-    if (payroll.status === 'DRAFT') throw new BadRequestException('Please recalculate draft payroll before payment.');
-    const ineligible = ['CANCELLED', 'FAILED'];
-    if (ineligible.includes(String(item.status)) || ineligible.includes(String(payroll?.status))) {
-      throw new BadRequestException(
-        `Payroll item #${item.id} cannot be paid while its status is ${ineligible.includes(String(item.status)) ? item.status : `batch ${payroll.status}`}`,
-      );
-    }
-    const periodEnd = new Date(payroll.year, payroll.month, 0, 23, 59, 59, 999);
-    const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const payPeriod = `${monthNames[payroll.month]} ${payroll.year}`;
-
-    await this.prisma.$transaction(async (tx) => {
-      // Compare-and-set claim: a concurrent request blocks on this row and then matches 0 rows,
-      // so claims, loans and commission shares are settled at most once.
-      const claimed = await tx.payrollItem.updateMany({
-        where: { id: item.id,  status: item.status },
-        data: { status: 'PAID', paidAt: new Date() },
-      });
-      if (claimed.count !== 1) {
-        throw new ConflictException(`Payroll item #${item.id} was already paid or changed by another request`);
-      }
-      if (item.reimbursement > 0) {
-        await tx.employeeClaim.updateMany({
-          where: {
-
-            employeeId: item.employeeId,
-            status: 'APPROVED',
-            paymentStatus: { in: ['UNPAID', 'PENDING'] },
-            claimDate: { lte: periodEnd },
-          },
-          data: { paymentStatus: 'PAID', status: 'PAID', paidAt: new Date() },
-        });
-      }
-      if (item.loanDeduction > 0 || item.advanceDeduction > 0) {
-        let pending = Number(item.loanDeduction || 0) + Number(item.advanceDeduction || 0);
-        const loans = await tx.employeeLoan.findMany({
-          where: {  employeeId: item.employeeId, status: { in: ['ACTIVE', 'APPROVED'] }, remainingBalance: { gt: 0 } },
-        });
-        for (const loan of loans) {
-          if (pending <= 0) break;
-          const deduct = Math.min(pending, Number(loan.remainingBalance) || 0);
-          const nextBalance = Math.max(0, Number(loan.remainingBalance || 0) - deduct);
-          pending -= deduct;
-          await tx.employeeLoan.update({
-            where: { id: loan.id },
-            data: { remainingBalance: nextBalance, status: nextBalance <= 0 ? 'PAID' : loan.status },
-          });
-        }
-      }
-      const slipNum = `SLIP-${payroll.year}${String(payroll.month).padStart(2, '0')}-${String(item.employeeId).padStart(4, '0')}`;
-      const existing = await tx.salarySlip.findFirst({ where: { payrollItemId: item.id } });
-      if (!existing) {
-        await tx.salarySlip.create({
-          data: {
-
-            payrollItemId: item.id,
-            employeeId: item.employeeId,
-            slipNumber: slipNum,
-            payPeriod,
-            grossSalary: item.grossSalary,
-            totalDeductions: item.totalDeductions,
-            netSalary: item.netSalary,
-            status: 'PAID',
-          },
-        });
-      } else {
-        await tx.salarySlip.update({ where: { id: existing.id }, data: { status: 'PAID', payPeriod, grossSalary: item.grossSalary, totalDeductions: item.totalDeductions, netSalary: item.netSalary } });
-      }
-      await settleCommissionShares(tx, item.id);
-      const unpaid = await tx.payrollItem.count({ where: { payrollId: payroll.id, status: { not: 'PAID' } } });
-      await tx.payroll.update({
-        where: { id: payroll.id },
-        data: unpaid === 0 ? { status: 'PAID', disbursedAt: new Date() } : { status: payroll.status },
-      });
-    });
-
-    await this.deliverSalarySlips(numCustomerId, [item.id], user);
-    await this.writePayrollAudit({
-
-      user,
-      action: 'PAY',
-      description: `Payroll marked paid for employee ${item.employeeId} ${payPeriod}`,
-      entityId: String(item.id),
-      details: { month: payroll.month, year: payroll.year, netSalary: item.netSalary },
-    });
-    const fresh = await this.prisma.payrollItem.findFirst({
-      where: { id: item.id },
-      include: { employee: { include: { department: true, designation: true } }, salarySlips: true, payroll: true },
-    });
-    return { success: true, message: 'Payroll marked as paid', data: fresh };
-  }
-
-  private async deliverSalarySlips(customerId: number, itemIds: number[], user?: any) {
-    if (!itemIds.length || !this.employeeCommunication) return;
-    const slips = await this.prisma.salarySlip.findMany({
-      where: {  payrollItemId: { in: itemIds } },
-    });
-    for (const slip of slips) {
-      let emailStatus = 'EMAIL_PENDING';
-      let whatsappStatus = 'WHATSAPP_PENDING';
-      try {
-        const result: any = await this.employeeCommunication.notifySalarySlip({ slipId: slip.id });
-        emailStatus = result?.email?.status === 'FAILED' ? 'EMAIL_FAILED' : result?.email?.skipped && result?.email?.status !== 'SENT' && !result?.email?.success ? 'EMAIL_FAILED' : 'EMAIL_SENT';
-        if (result?.email?.status === 'FAILED') emailStatus = 'EMAIL_FAILED';
-        else if (result?.email?.success || result?.email?.status === 'SENT' || result?.email?.skipped) emailStatus = 'EMAIL_SENT';
-        if (result?.whatsapp?.status === 'FAILED' || result?.whatsapp?.success === false) whatsappStatus = 'WHATSAPP_FAILED';
-        else if (result?.whatsapp?.success || result?.whatsapp?.status === 'SENT' || result?.whatsapp?.skipped) whatsappStatus = 'WHATSAPP_SENT';
-      } catch (err: any) {
-        emailStatus = 'EMAIL_FAILED';
-        whatsappStatus = 'WHATSAPP_FAILED';
-        this.logger.warn(`Salary slip delivery failed for slip ${slip.id}: ${err?.message}`);
-      }
-      await this.prisma.payrollItem.update({
-        where: { id: slip.payrollItemId },
-        data: { emailStatus, whatsappStatus },
-      });
-      await this.writePayrollAudit({
-
-        user,
-        action: 'DELIVER',
-        description: `Salary slip delivery ${emailStatus} ${whatsappStatus}`,
-        entityId: String(slip.payrollItemId),
-      });
-    }
   }
 
   async getPayrolls(
@@ -1395,7 +871,7 @@ return undefined;
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = {  };
+    const where: any = { customerId: numCustomerId };
     if (query?.month) where.month = Number(query.month);
     if (query?.year) where.year = Number(query.year);
     if (query?.status && query.status !== 'ALL') where.status = query.status;
@@ -1447,7 +923,7 @@ return undefined;
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
     return this.prisma.payroll.findFirst({
-      where: { id: numId },
+      where: { id: numId, customerId: numCustomerId },
       include: {
         items: {
           include: {
@@ -1473,40 +949,19 @@ return undefined;
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const skip = (page - 1) * limit;
 
-    const where: any = {  };
-    let currentEmployee: any = null;
+    const where: any = { customerId: numCustomerId };
 
-    if (query?.user) {
-      {
-        currentEmployee = await this.prisma.employee.findFirst({
-          where: {
-
-            OR: [
-              { userId: query.user.id },
-              { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
-            ],
-          },
-          include: {
-            salaryStructures: {
-              where: { status: 'ACTIVE' },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
-            department: true,
-            designation: true,
-          },
-        });
-      }
-
-      const isSuperOrAdmin =
-        String(query.user.role).toUpperCase() === 'SUPER_ADMIN' ||
-        String(query.user.role).toUpperCase() === 'COMPANY_ADMIN' ||
-        String(query.user.roleType).toUpperCase() === 'SUPER_ADMIN' ||
-        String(query.user.roleType).toUpperCase() === 'CUSTOMER_ADMIN' ||
-        String(query.user.roleType).toUpperCase() === 'TENANT_ADMIN';
-
-      if (!isSuperOrAdmin && currentEmployee) {
-        where.employeeId = currentEmployee.id;
+    if (query?.user && (query.user.role === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          OR: [
+            { userId: query.user.id },
+            { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (emp) {
+        where.employeeId = emp.id;
       }
     }
 
@@ -1541,11 +996,6 @@ return undefined;
             include: {
               department: true,
               designation: true,
-              salaryStructures: {
-                where: { status: 'ACTIVE' },
-                orderBy: { createdAt: 'desc' },
-                take: 1,
-              },
             },
           },
           payrollItem: {
@@ -1558,151 +1008,22 @@ return undefined;
       this.prisma.salarySlip.count({ where }),
     ]);
 
-    let items = rawItems.map((slip) => this.formatSalarySlip(slip));
-
-    // If an employee queries their slips and no slips exist yet, synthesize an active salary slip
-    // from their active salary structure or bankDetails so Mobile immediately reflects their latest salary!
-    if (where.employeeId && currentEmployee) {
-      const activeStructure = currentEmployee.salaryStructures?.[0];
-      let basic = activeStructure ? activeStructure.basicSalary : 0;
-      if (!activeStructure && currentEmployee.bankDetails) {
-        const b = typeof currentEmployee.bankDetails === 'string'
-          ? JSON.parse(currentEmployee.bankDetails)
-          : currentEmployee.bankDetails;
-        basic = Number(b?.basicSalary || b?.monthlySalary || 0);
-      }
-
-      if (basic > 0) {
-        const hra = activeStructure?.hra !== undefined ? activeStructure.hra : Math.round(basic * 0.4);
-        const allowances = activeStructure?.allowances !== undefined ? activeStructure.allowances : Math.round(basic * 0.1);
-        const specialAllowance = activeStructure?.specialAllowance !== undefined ? activeStructure.specialAllowance : 0;
-        const pf = activeStructure?.pf !== undefined ? activeStructure.pf : Math.round(basic * 0.12);
-        const esi = activeStructure?.esi !== undefined ? activeStructure.esi : Math.round(basic * 0.0075);
-        const professionalTax = activeStructure?.professionalTax !== undefined ? activeStructure.professionalTax : 200;
-        const tds = activeStructure?.tds !== undefined ? activeStructure.tds : 0;
-        const grossSalary = activeStructure?.grossSalary !== undefined ? activeStructure.grossSalary : (basic + hra + allowances + specialAllowance);
-        const totalDeductions = activeStructure?.totalDeductions !== undefined ? activeStructure.totalDeductions : (pf + esi + professionalTax + tds);
-        const netSalary = activeStructure?.netSalary !== undefined ? activeStructure.netSalary : Math.max(0, grossSalary - totalDeductions);
-
-        const now = new Date();
-        const curMonth = now.getMonth() + 1;
-        const curYear = now.getFullYear();
-        const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-        const monthName = FULL_MONTH_NAMES[curMonth] || `Month ${curMonth}`;
-
-        const currentPayPeriod = `${monthName} ${curYear}`;
-        const existingCurrentIndex = items.findIndex((it: any) => it.payPeriod === currentPayPeriod || (it.month === curMonth && it.year === curYear));
-
-        if (existingCurrentIndex < 0 && page === 1 && !query?.month && !query?.year && !query?.search) {
-          items.unshift({
-            id: `active-${currentEmployee.id}`,
-            slipNumber: `SALARY-${curYear}${String(curMonth).padStart(2, '0')}-${currentEmployee.id}`,
-            payPeriod: currentPayPeriod,
-            month: curMonth,
-            year: curYear,
-            monthName,
-            date: now.toISOString().split('T')[0],
-            grossSalary,
-            totalDeductions,
-            netSalary,
-            basicSalary: basic,
-            hra,
-            allowances,
-            specialAllowance,
-            bonus: activeStructure?.bonus ?? 0,
-            commission: activeStructure?.commission ?? 0,
-            overtime: activeStructure?.overtime ?? 0,
-            otherEarnings: activeStructure?.otherEarnings ?? 0,
-            otherDeductions: activeStructure?.otherDeductions ?? 0,
-            pf,
-            esi,
-            professionalTax,
-            tds,
-            status: 'ACTIVE',
-            attendanceSummary: buildPayrollAttendanceSummary({
-              workingDays: new Date(curYear, curMonth, 0).getDate(),
-              presentDays: new Date(curYear, curMonth, 0).getDate(),
-              absentDays: 0,
-              halfDays: 0,
-              paidLeaveDays: 0,
-              unpaidLeaveDays: 0,
-              weeklyOffDays: 0,
-              holidayDays: 0,
-            }, { year: curYear, month: curMonth }),
-            workingDays: new Date(curYear, curMonth, 0).getDate(),
-            presentDays: new Date(curYear, curMonth, 0).getDate(),
-            absentDays: 0,
-            halfDays: 0,
-            paidLeaveDays: 0,
-            unpaidLeaveDays: 0,
-            weeklyOffDays: 0,
-            holidayDays: 0,
-            overtimeHours: '0h 00m',
-            salaryBreakdown: buildSalaryBreakdown({
-              basicSalary: basic,
-              hra,
-              allowances,
-              specialAllowance,
-              bonus: activeStructure?.bonus ?? 0,
-              commission: activeStructure?.commission ?? 0,
-              overtime: activeStructure?.overtime ?? 0,
-              otherEarnings: activeStructure?.otherEarnings ?? 0,
-              otherDeductions: activeStructure?.otherDeductions ?? 0,
-              pf,
-              esi,
-              professionalTax,
-              tds,
-              grossSalary,
-              totalDeductions,
-              netSalary,
-            }),
-            employee: {
-              id: currentEmployee.id,
-              firstName: currentEmployee.firstName,
-              lastName: currentEmployee.lastName,
-              employeeCode: currentEmployee.employeeCode,
-              department: currentEmployee.department,
-              designation: currentEmployee.designation,
-            },
-            payrollItem: {
-              basicSalary: basic,
-              hra,
-              allowances,
-              specialAllowance,
-              bonus: activeStructure?.bonus ?? 0,
-              commission: activeStructure?.commission ?? 0,
-              overtime: activeStructure?.overtime ?? 0,
-              otherEarnings: activeStructure?.otherEarnings ?? 0,
-              otherDeductions: activeStructure?.otherDeductions ?? 0,
-              pf,
-              esi,
-              professionalTax,
-              tds,
-              grossSalary,
-              totalDeductions,
-              netSalary,
-            },
-          });
-        }
-      }
-    }
-
-    const totalPages = Math.ceil((total || (items.length ? 1 : 0)) / limit) || 1;
+    const items = rawItems.map((slip) => this.formatSalarySlip(slip));
+    const totalPages = Math.ceil(total / limit) || 1;
 
     return {
       data: items,
       items,
-      slips: items,
       pagination: {
         page,
         pageSize: limit,
-        total: total || items.length,
+        total,
         totalPages,
       },
       meta: {
         page,
         limit,
-        total: total || items.length,
+        total,
         totalPages,
       },
     };
@@ -1711,452 +1032,29 @@ return undefined;
   async getSalarySlipById(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
-    let slip: any = null;
-
-    if (!isNaN(numId) && numId > 0) {
-      slip = await this.prisma.salarySlip.findFirst({
-        where: { id: numId },
-        include: {
-          employee: {
-            include: {
-              department: true,
-              designation: true,
-            },
-          },
-          payrollItem: {
-            include: {
-              payroll: true,
-            },
-          },
-        },
-      });
-    }
-
-    if (!slip && !isNaN(numId) && numId > 0) {
-      slip = await this.prisma.salarySlip.findFirst({
-        where: { payrollItemId: numId },
-        include: {
-          employee: {
-            include: {
-              department: true,
-              designation: true,
-            },
-          },
-          payrollItem: {
-            include: {
-              payroll: true,
-            },
-          },
-        },
-      });
-    }
-
-    if (!slip && !isNaN(numId) && numId > 0 && true) {
-      slip = await this.prisma.salarySlip.findFirst({
-        where: { id: numId },
-        include: {
-          employee: {
-            include: {
-              department: true,
-              designation: true,
-            },
-          },
-          payrollItem: {
-            include: {
-              payroll: true,
-            },
-          },
-        },
-      });
-    }
-
-    if (!slip && typeof id === 'string' && id.trim()) {
-      slip = await this.prisma.salarySlip.findFirst({
-        where: { slipNumber: id.trim() },
-        include: {
-          employee: {
-            include: {
-              department: true,
-              designation: true,
-            },
-          },
-          payrollItem: {
-            include: {
-              payroll: true,
-            },
-          },
-        },
-      });
-    }
-
-    if (!slip && typeof id === 'string' && id.trim() && true) {
-      slip = await this.prisma.salarySlip.findFirst({
-        where: { slipNumber: id.trim() },
-        include: {
-          employee: {
-            include: {
-              department: true,
-              designation: true,
-            },
-          },
-          payrollItem: {
-            include: {
-              payroll: true,
-            },
-          },
-        },
-      });
-    }
-
-    if (!slip && !isNaN(numId) && numId > 0 && this.prisma.payrollItem?.findFirst) {
-      const pi = await this.prisma.payrollItem.findFirst({
-        where: {
-          id: numId,
-
-        },
-        include: {
-          payroll: true,
-          employee: {
-            include: {
-              department: true,
-              designation: true,
-            },
-          },
-        },
-      });
-      if (pi) {
-        const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-        slip = {
-          id: pi.id,
-
-          payrollItemId: pi.id,
-          employeeId: pi.employeeId,
-          slipNumber: `SLIP-${pi.payroll?.year || 2026}${String(pi.payroll?.month || 1).padStart(2, '0')}-${String(pi.employeeId).padStart(4, '0')}`,
-          payPeriod: pi.payroll ? `${FULL_MONTH_NAMES[pi.payroll.month]} ${pi.payroll.year}` : 'Current Period',
-          grossSalary: pi.grossSalary,
-          totalDeductions: pi.totalDeductions,
-          netSalary: pi.netSalary,
-          status: pi.status || 'CALCULATED',
-          employee: pi.employee,
-          payrollItem: pi,
-        };
-      }
-    }
-
-    if (!slip && String(id).startsWith('active-')) {
-      const empId = Number(String(id).replace('active-', ''));
-      if (!isNaN(empId) && empId > 0) {
-        const emp = await this.prisma.employee.findFirst({
-          where: { id: empId },
+    const slip = await this.prisma.salarySlip.findFirst({
+      where: { id: numId, customerId: numCustomerId },
+      include: {
+        employee: {
           include: {
             department: true,
             designation: true,
-            salaryStructures: {
-              where: { status: 'ACTIVE' },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
           },
-        });
-        if (emp) {
-          const activeStructure = emp.salaryStructures?.[0];
-          let basic = activeStructure ? activeStructure.basicSalary : 0;
-          if (!activeStructure && emp.bankDetails) {
-            const b = typeof emp.bankDetails === 'string'
-              ? JSON.parse(emp.bankDetails)
-              : emp.bankDetails;
-            basic = Number(b?.basicSalary || b?.monthlySalary || 0);
-          }
-          const hra = activeStructure?.hra !== undefined ? activeStructure.hra : Math.round(basic * 0.4);
-          const allowances = activeStructure?.allowances !== undefined ? activeStructure.allowances : Math.round(basic * 0.1);
-          const specialAllowance = activeStructure?.specialAllowance !== undefined ? activeStructure.specialAllowance : 0;
-          const pf = activeStructure?.pf !== undefined ? activeStructure.pf : Math.round(basic * 0.12);
-          const esi = activeStructure?.esi !== undefined ? activeStructure.esi : Math.round(basic * 0.0075);
-          const professionalTax = activeStructure?.professionalTax !== undefined ? activeStructure.professionalTax : 200;
-          const tds = activeStructure?.tds !== undefined ? activeStructure.tds : 0;
-          const grossSalary = activeStructure?.grossSalary ?? (basic + hra + allowances + specialAllowance);
-          const totalDeductions = activeStructure?.totalDeductions ?? (pf + esi + professionalTax + tds);
-          const netSalary = Math.max(0, grossSalary - totalDeductions);
-          const now = new Date();
-          const curMonth = now.getMonth() + 1;
-          const curYear = now.getFullYear();
-          const FULL_MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-          return {
-            id: `active-${emp.id}`,
-            slipNumber: `SALARY-${curYear}${String(curMonth).padStart(2, '0')}-${emp.id}`,
-            payPeriod: `${FULL_MONTH_NAMES[curMonth]} ${curYear}`,
-            month: curMonth,
-            year: curYear,
-            monthName: FULL_MONTH_NAMES[curMonth],
-            date: now.toISOString().split('T')[0],
-            grossSalary,
-            totalDeductions,
-            netSalary,
-            basicSalary: basic,
-            hra,
-            allowances,
-            specialAllowance,
-            bonus: activeStructure?.bonus ?? 0,
-            commission: activeStructure?.commission ?? 0,
-            overtime: activeStructure?.overtime ?? 0,
-            otherEarnings: activeStructure?.otherEarnings ?? 0,
-            otherDeductions: activeStructure?.otherDeductions ?? 0,
-            pf,
-            esi,
-            professionalTax,
-            tds,
-            status: 'ACTIVE',
-            attendanceSummary: null,
-            salaryBreakdown: buildSalaryBreakdown({
-              basicSalary: basic,
-              hra,
-              allowances,
-              specialAllowance,
-              bonus: activeStructure?.bonus ?? 0,
-              commission: activeStructure?.commission ?? 0,
-              overtime: activeStructure?.overtime ?? 0,
-              otherEarnings: activeStructure?.otherEarnings ?? 0,
-              otherDeductions: activeStructure?.otherDeductions ?? 0,
-              pf,
-              esi,
-              professionalTax,
-              tds,
-              grossSalary,
-              totalDeductions,
-              netSalary,
-            }),
-            employee: emp,
-          };
-        }
-      }
-    }
-
-    return this.formatSalarySlip(slip);
-  }
-
-  private resolveFontPaths(): { regular: string; bold: string } | null {
-    const candidateDirs = [
-      path.join(__dirname, '../../assets/fonts'),
-      path.join(__dirname, '../assets/fonts'),
-      path.join(process.cwd(), 'src/assets/fonts'),
-      path.join(process.cwd(), 'dist/src/assets/fonts'),
-      path.join(process.cwd(), 'dist/assets/fonts'),
-      path.join(process.cwd(), 'assets/fonts'),
-    ];
-
-    for (const dir of candidateDirs) {
-      const regular = path.join(dir, 'Roboto-Regular.ttf');
-      const bold = path.join(dir, 'Roboto-Bold.ttf');
-      if (fs.existsSync(regular) && fs.existsSync(bold)) {
-        return { regular, bold };
-      }
-    }
-    return null;
-  }
-
-  async generateSalarySlipPdfBuffer(slip: any): Promise<Buffer> {
-    return new Promise<Buffer>((resolve, reject) => {
-      try {
-        const doc = new PDFDocument({ margin: 36, size: 'A4' });
-        const chunks: Buffer[] = [];
-        doc.on('data', (chunk) => chunks.push(chunk));
-        doc.on('end', () => resolve(Buffer.concat(chunks)));
-        doc.on('error', reject);
-
-        const fontPaths = this.resolveFontPaths();
-        let regularFont = 'Helvetica';
-        let boldFont = 'Helvetica-Bold';
-        let hasUnicodeFont = false;
-
-        if (fontPaths) {
-          doc.registerFont('SalaryFont', fontPaths.regular);
-          doc.registerFont('SalaryFont-Bold', fontPaths.bold);
-          regularFont = 'SalaryFont';
-          boldFont = 'SalaryFont-Bold';
-          hasUnicodeFont = true;
-        }
-
-        const formatInr = (val?: number | null) => {
-          const num = Number(val || 0);
-          const isNeg = num < 0;
-          const abs = Math.abs(num);
-          const parts = abs.toFixed(2).split('.');
-          const intPart = parts[0];
-          const decPart = parts[1];
-          let formattedInt = intPart;
-          if (intPart.length > 3) {
-            const lastThree = intPart.substring(intPart.length - 3);
-            const rest = intPart.substring(0, intPart.length - 3);
-            const formattedRest = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
-            formattedInt = `${formattedRest},${lastThree}`;
-          }
-          const sym = hasUnicodeFont ? '₹' : 'Rs. ';
-          return `${isNeg ? '-' : ''}${sym}${formattedInt}.${decPart}`;
-        };
-
-        const maskAccount = (raw?: string | null) => {
-          if (!raw || !raw.trim()) return '—';
-          const clean = raw.trim();
-          if (clean.length <= 4) return clean;
-          return `XXXX XXXX ${clean.substring(clean.length - 4)}`;
-        };
-
-        const contentWidth = 595.28 - 72; // 523.28 pt printable area
-        const leftX = 36;
-
-        // 1. Header Banner
-        const bannerY = 36;
-        doc.rect(leftX, bannerY, contentWidth, 56).fill('#0F763E');
-
-        doc.font(boldFont).fontSize(14).fillColor('#FFFFFF').text('QUICKBOOM BUSINESS SUITE', leftX + 12, bannerY + 10);
-        doc.font(regularFont).fontSize(8.5).fillColor('#DCFCE7').text('OFFICIAL SALARY & PAYROLL SLIP', leftX + 12, bannerY + 28);
-        doc.font(regularFont).fontSize(8.5).fillColor('#DCFCE7').text(`Pay Period: ${slip.payPeriod || slip.monthName || ''}`, leftX + 12, bannerY + 40);
-
-        const metaX = leftX + contentWidth - 192;
-        doc.font(regularFont).fontSize(8).fillColor('#FFFFFF').text(`Slip No: ${slip.slipNumber || slip.id || 'N/A'}`, metaX, bannerY + 10, { width: 180, align: 'right' });
-        doc.font(regularFont).fontSize(8).fillColor('#FFFFFF').text(`Disbursed On: ${slip.date || '—'}`, metaX, bannerY + 24, { width: 180, align: 'right' });
-        doc.font(boldFont).fontSize(8).fillColor('#FFFFFF').text(`Status: ${(slip.status || 'PAID').toUpperCase()}`, metaX, bannerY + 38, { width: 180, align: 'right' });
-
-        // 2. Employee Details Section
-        const emp = slip.employee || {};
-        const bDetails = typeof emp.bankDetails === 'string'
-          ? (JSON.parse(emp.bankDetails) || {})
-          : (emp.bankDetails || slip.bankDetails || {});
-
-        const infoSectionY = 104;
-        doc.font(boldFont).fontSize(9.5).fillColor('#1E293B').text('EMPLOYEE & DISBURSEMENT DETAILS', leftX, infoSectionY);
-
-        const cardY = infoSectionY + 14;
-        doc.roundedRect(leftX, cardY, contentWidth, 66, 4).fillAndStroke('#F8FAFC', '#E2E8F0');
-
-        // Column 1
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Employee Name:', leftX + 10, cardY + 8);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(`${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee', leftX + 10, cardY + 18, { width: 120, ellipsis: true });
-
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Employee ID:', leftX + 10, cardY + 32);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.employeeCode || '—', leftX + 10, cardY + 42, { width: 120, ellipsis: true });
-
-        // Column 2
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Designation:', leftX + 140, cardY + 8);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.designation?.name || emp.designation || '—', leftX + 140, cardY + 18, { width: 120, ellipsis: true });
-
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Department:', leftX + 140, cardY + 32);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.department?.name || emp.department || '—', leftX + 140, cardY + 42, { width: 120, ellipsis: true });
-
-        // Column 3
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Joining Date:', leftX + 270, cardY + 8);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(emp.joiningDate ? new Date(emp.joiningDate).toISOString().slice(0, 10) : '—', leftX + 270, cardY + 18, { width: 110, ellipsis: true });
-
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Payment Mode:', leftX + 270, cardY + 32);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(slip.paymentMode || 'Bank Transfer', leftX + 270, cardY + 42, { width: 110, ellipsis: true });
-
-        // Column 4
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Bank Name:', leftX + 390, cardY + 8);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(bDetails?.bankName || '—', leftX + 390, cardY + 18, { width: 120, ellipsis: true });
-
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text('Account No:', leftX + 390, cardY + 32);
-        doc.font(boldFont).fontSize(8.5).fillColor('#0F172A').text(maskAccount(bDetails?.accountNumber), leftX + 390, cardY + 42, { width: 120, ellipsis: true });
-
-        // 3. Attendance Summary
-        const sectionOpts = { x: leftX, width: contentWidth, regularFont, boldFont };
-        const attendanceSummary = slip.attendanceSummary !== undefined
-          ? slip.attendanceSummary
-          : buildPayrollAttendanceSummary(slip.payrollItem, { year: slip.year, month: slip.month });
-        const attendanceEndY = drawAttendanceSummarySection(doc, attendanceSummary, { ...sectionOpts, y: cardY + 66 + 14 });
-
-        // 4. Salary Breakdown Table
-        const breakdown = slip.salaryBreakdown || buildSalaryBreakdown(slip);
-        const currRowY = drawSalaryBreakdownSection(doc, breakdown, {
-          ...sectionOpts,
-          y: attendanceEndY + 14,
-          formatAmount: formatInr,
-        });
-
-        // 5. Net Payable Section
-        const netBannerY = currRowY + 12;
-        doc.roundedRect(leftX, netBannerY, contentWidth, 48, 5).fillAndStroke('#E8F9EE', '#23C45E');
-
-        doc.font(boldFont).fontSize(8.5).fillColor('#15803D').text('NET PAYABLE (TAKE HOME SALARY)', leftX + 14, netBannerY + 10);
-        doc.font(boldFont).fontSize(16).fillColor('#15803D').text(formatInr(slip.netSalary), leftX + 14, netBannerY + 23);
-
-        doc.font(regularFont).fontSize(7.5).fillColor('#64748B').text(
-          'Confidential Document — Generated electronically by QB Suite',
-          leftX + contentWidth - 280,
-          netBannerY + 20,
-          { width: 266, align: 'right' }
-        );
-
-        // 6. Footer Note
-        const footerY = netBannerY + 48 + 14;
-        doc.font(regularFont).fontSize(7).fillColor('#94A3B8').text(
-          'This is a computer generated salary slip and does not require a physical signature. For any payroll queries, please contact HR/Accounts.',
-          leftX,
-          footerY,
-          { width: contentWidth, align: 'center' }
-        );
-
-        doc.end();
-      } catch (e) {
-        reject(e);
-      }
+        },
+        payrollItem: {
+          include: {
+            payroll: true,
+          },
+        },
+      },
     });
-  }
-
-  async downloadSalarySlipPdf(
-    customerId: number | string | undefined,
-    id: number | string,
-    res: Response,
-    user?: any,
-  ) {
-    try {
-      const slip = await this.getSalarySlipById(customerId, id);
-      if (!slip) {
-        if (!res.headersSent) {
-          res.status(404).json({ statusCode: 404, message: 'Salary slip not found' });
-        }
-        return;
-      }
-
-      // JWT supplies a user ID, not necessarily an embedded employee relation.
-      // Resolve ownership within the slip tenant and fail closed if none exists.
-      if (!user) {
-        return res.status(401).json({ statusCode: 401, message: 'Unauthorized' });
-      }
-      if (!isUserAdmin(user)) {
-        const employee = user.id ? await this.prisma.employee.findFirst({
-          where: { userId: Number(user.id) },
-          select: { id: true },
-        }) : null;
-        if (!employee || Number(slip.employeeId || slip.employee?.id) !== employee.id) {
-          return res.status(403).json({ statusCode: 403, message: 'Forbidden' });
-        }
-      }
-
-      const pdfBuffer = await this.generateSalarySlipPdfBuffer(slip);
-      const empCode = slip.employee?.employeeCode;
-      const periodStr = slip.year && slip.month
-        ? `${slip.year}_${String(slip.month).padStart(2, '0')}`
-        : String(slip.payPeriod || slip.month || 'slip').replace(/[\/\\:*?"<>| ]+/g, '_');
-      const safeFilename = empCode
-        ? `Salary_Slip_${String(empCode).replace(/[\/\\:*?"<>| ]+/g, '_')}_${periodStr}.pdf`
-        : `salary_slip_${String(slip.payPeriod || slip.month || 'slip').replace(/[\/\\:*?"<>| ]+/g, '_')}.pdf`;
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Length', pdfBuffer.length);
-      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
-      return res.end(pdfBuffer);
-    } catch (err: any) {
-      this.logger.error(`Failed to generate salary slip PDF: ${err?.message}`);
-      if (!res.headersSent) {
-        res.status(500).json({ statusCode: 500, message: 'Unable to generate salary slip PDF' });
-      }
-    }
+    return this.formatSalarySlip(slip);
   }
 
   async getPayrollHistory(customerId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const payrolls = await this.prisma.payroll.findMany({
-      where: {  },
+      where: { customerId: numCustomerId },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
       take: 12,
       include: {
@@ -2202,14 +1100,10 @@ return undefined;
     }));
   }
 
-  async getSalaryStructures(customerId?: number | string, employeeId?: number | string) {
+  async getSalaryStructures(customerId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const where: any = {  };
-    if (employeeId !== undefined && employeeId !== null && employeeId !== '') {
-      where.employeeId = Number(employeeId);
-    }
     return this.prisma.salaryStructure.findMany({
-      where,
+      where: { customerId: numCustomerId },
       include: {
         employee: {
           select: {
@@ -2226,92 +1120,98 @@ return undefined;
     });
   }
 
-  async saveSalaryStructure(customerId: number | string | undefined, data: any, transaction?: any) {
+  async saveSalaryStructure(customerId: number | string | undefined, data: any) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    const save = async (tx: any) => {
-      // Serialize compensation edits for the same employee without a schema change.
-      const target = data.id
-        ? await tx.salaryStructure.findFirst({ where: { id: Number(data.id) } })
-        : null;
-      const lockEmployeeId = target?.employeeId ?? Number(data.employeeId);
-      await tx.$queryRaw(Prisma.sql`SELECT id FROM "Employee" WHERE id = ${lockEmployeeId} FOR UPDATE`);
-      const existing = await tx.salaryStructure.findFirst({
-        where: data.id
-          ? { id: Number(data.id) }
-          : { employeeId: Number(data.employeeId),  status: 'ACTIVE' },
-        orderBy: { createdAt: 'desc' },
+    const basicSalary = Number(data.basicSalary) || 0;
+    const hra = Number(data.hra) || 0;
+    const allowances = Number(data.allowances) || 0;
+    const specialAllowance = Number(data.specialAllowance) || 0;
+    const bonus = Number(data.bonus) || 0;
+    const commission = Number(data.commission) || 0;
+    const overtime = Number(data.overtime) || 0;
+    const otherEarnings = Number(data.otherEarnings) || 0;
+
+    const pf = Number(data.pf) || Math.round(basicSalary * 0.12);
+    const esi = Number(data.esi) || Math.round(basicSalary * 0.0075);
+    const professionalTax = Number(data.professionalTax) || 200;
+    const tds = Number(data.tds) || 0;
+    const otherDeductions = Number(data.otherDeductions) || 0;
+
+    const grossSalary = basicSalary + hra + allowances + specialAllowance + bonus + commission + overtime + otherEarnings;
+    const totalDeductions = pf + esi + professionalTax + tds + otherDeductions;
+    const netSalary = Math.max(0, grossSalary - totalDeductions);
+
+    if (data.id) {
+      return this.prisma.salaryStructure.update({
+        where: { id: Number(data.id) },
+        data: {
+          basicSalary,
+          hra,
+          allowances,
+          specialAllowance,
+          bonus,
+          commission,
+          overtime,
+          otherEarnings,
+          pf,
+          esi,
+          professionalTax,
+          tds,
+          otherDeductions,
+          grossSalary,
+          totalDeductions,
+          netSalary,
+          status: data.status || 'ACTIVE',
+        },
       });
-      if (data.id && !existing) throw new NotFoundException('Salary structure not found');
-      const employeeId = existing?.employeeId ?? Number(data.employeeId);
-      if (data.employeeId && Number(data.employeeId) !== employeeId) {
-        throw new BadRequestException('Salary structure belongs to another employee');
-      }
-      const employee = await tx.employee.findFirst({ where: { id: employeeId } });
-      if (!employee) throw new NotFoundException('Employee not found');
-      const earnings = ['basicSalary', 'hra', 'allowances', 'specialAllowance', 'bonus', 'commission', 'overtime', 'otherEarnings'];
-      const deductions = ['pf', 'esi', 'professionalTax', 'tds', 'otherDeductions'];
-      const values: any = {};
-      for (const key of [...earnings, ...deductions]) {
-        const value = Number(data[key] ?? existing?.[key] ?? 0);
-        if (!Number.isFinite(value) || value < 0) throw new BadRequestException(`Invalid ${key}`);
-        values[key] = value;
-      }
-      values.grossSalary = earnings.reduce((sum, key) => sum + values[key], 0);
-      values.totalDeductions = deductions.reduce((sum, key) => sum + values[key], 0);
-      values.netSalary = Math.max(0, values.grossSalary - values.totalDeductions);
-      const status = data.status ?? existing?.status ?? 'ACTIVE';
-      const saved = existing
-        ? await tx.salaryStructure.update({ where: { id: existing.id }, data: { ...values, status } })
-        : await tx.salaryStructure.create({ data: { ...values,  employeeId, status } });
-      if (status === 'ACTIVE') {
-        // Exactly one current source; historical payroll snapshots are independent.
-        await tx.salaryStructure.updateMany({
-          where: {  employeeId, status: 'ACTIVE', id: { not: saved.id } },
-          data: { status: 'INACTIVE' },
-        });
-        let bank: any = employee.bankDetails;
-        if (typeof bank === 'string') {
-          try { bank = JSON.parse(bank); } catch { bank = {}; }
-        }
-        await tx.employee.update({
-          where: { id: employeeId },
-          data: { bankDetails: { ...(bank || {}), ...values, monthlySalary: values.grossSalary, salaryStructure: values } },
-        });
-      }
-      if (status === 'ACTIVE') {
-        // Invalidate eligible batches; their items are replaced only by normal recalculation.
-        await tx.payroll.updateMany({
-          where: {  status: 'CALCULATED', items: { some: { employeeId, status: { not: 'PAID' } } } },
-          data: { status: 'DRAFT' },
-        });
-      }
-      // Recalculation remains in calculatePayroll, with attendance, deductions and finalization guards.
-      return saved;
-    };
-    return transaction ? save(transaction) : this.prisma.$transaction(save);
+    }
+
+    return this.prisma.salaryStructure.create({
+      data: {
+        customerId: numCustomerId,
+        employeeId: Number(data.employeeId),
+        basicSalary,
+        hra,
+        allowances,
+        specialAllowance,
+        bonus,
+        commission,
+        overtime,
+        otherEarnings,
+        pf,
+        esi,
+        professionalTax,
+        tds,
+        otherDeductions,
+        grossSalary,
+        totalDeductions,
+        netSalary,
+        status: 'ACTIVE',
+      },
+    });
   }
 
   async deleteSalaryStructure(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     return this.prisma.salaryStructure.deleteMany({
-      where: { id: Number(id) },
+      where: { id: Number(id), customerId: numCustomerId },
     });
   }
 
   async getPayrollPolicy(customerId?: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     let policy = await this.prisma.payrollPolicy.findUnique({
-      where: { singletonKey: "GLOBAL" },
+      where: { customerId: numCustomerId },
     });
 
     if (!policy) {
       const salaryPol = await this.prisma.salaryPolicy.findFirst({
-        where: {  isActive: true },
+        where: { customerId: numCustomerId, isActive: true },
       });
 
       policy = await this.prisma.payrollPolicy.create({
         data: {
-
+          customerId: numCustomerId,
           workingDaysPerMonth: salaryPol?.workingDaysPerMonth || 30,
           overtimeMultiplier: salaryPol?.overtimeMultiplier || 1.5,
           pfPercent: salaryPol?.pfPercent || 12.0,
@@ -2333,9 +1233,9 @@ return undefined;
     const taxExemptionLimit = Number(data.taxExemptionLimit) || 300000;
 
     const policy = await this.prisma.payrollPolicy.upsert({
-      where: { singletonKey: "GLOBAL" },
+      where: { customerId: numCustomerId },
       create: {
-
+        customerId: numCustomerId,
         workingDaysPerMonth,
         overtimeMultiplier,
         pfPercent,
@@ -2353,7 +1253,7 @@ return undefined;
 
     // Also sync to SalaryPolicy if it exists
     await this.prisma.salaryPolicy.updateMany({
-      where: {  isActive: true },
+      where: { customerId: numCustomerId, isActive: true },
       data: {
         workingDaysPerMonth,
         overtimeMultiplier,

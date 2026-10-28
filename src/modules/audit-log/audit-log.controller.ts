@@ -74,7 +74,9 @@ export class AuditLogController {
     try {
       // If not super admin, scope to customer if customerId is present on user
       const user = req.user;
-      
+      if (user?.customerId && !query.customerId && user?.role !== 'SUPER_ADMIN') {
+        query.customerId = user.customerId;
+      }
 
       const result = await this.auditLogService.findAll(query);
       return {

@@ -1,12 +1,27 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { EmployeeService } from './employee.service';
+import { WorkService } from '../work/work.service';
+import { WorkStatus } from '@prisma/client';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Employees')
 @ApiBearerAuth()
@@ -15,6 +30,7 @@ import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/account.util';
 export class EmployeeController {
   constructor(
     private readonly employeeService: EmployeeService,
+    private readonly workService: WorkService,
   ) {}
 
   @Get()
@@ -29,7 +45,6 @@ export class EmployeeController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
-  @ApiQuery({ name: 'eligibleForTeamId', required: false, description: 'Filter active candidates eligible to join this team, excluding existing members' })
   @ApiQuery({ name: 'bpoOnly', required: false, description: 'Filter only BPO eligible employees' })
   async findAll(
     @CurrentUser() user: any,
@@ -45,15 +60,16 @@ export class EmployeeController {
     @Query('limit') limit?: string,
     @Query('excludeAdmins') excludeAdmins?: string,
     @Query('bpoOnly') bpoOnly?: string,
-    @Query('eligibleForTeamId') eligibleForTeamId?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
-    
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
 
     return this.employeeService.findAll({
-      
+      customerId: targetCustomerId,
       isSuperAdmin,
       search,
       status,
@@ -65,7 +81,6 @@ export class EmployeeController {
       limit: limit ? parseInt(limit, 10) : 50,
       excludeAdmins: excludeAdmins !== 'false',
       bpoOnly: bpoOnly === 'true',
-      eligibleForTeamId: eligibleForTeamId === undefined ? undefined : Number(eligibleForTeamId),
     });
   }
 
@@ -80,7 +95,7 @@ export class EmployeeController {
     @Query('prefix') prefix?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
   }
@@ -103,6 +118,65 @@ export class EmployeeController {
     return this.employeeService.getMyProfile(user, customerId);
   }
 
+  @Get('me/permissions')
+  @ApiOperation({ summary: 'Get current authenticated employee canonical effective permissions' })
+  async getMyPermissions(@CurrentUser() user: any) {
+    const userId = user?.id || user?.userId;
+    if (!userId) {
+      throw new ForbiddenException('User session invalid');
+    }
+    return this.employeeService.getMyEffectivePermissions(userId);
+  }
+
+  @Get('permissions/me')
+  @ApiOperation({ summary: 'Alias to get current authenticated employee canonical effective permissions' })
+  async getMyPermissionsAlias(@CurrentUser() user: any) {
+    const userId = user?.id || user?.userId;
+    if (!userId) {
+      throw new ForbiddenException('User session invalid');
+    }
+    return this.employeeService.getMyEffectivePermissions(userId);
+  }
+
+  @Get('me/calendar')
+  @ApiOperation({ summary: 'Get calendar scheduled activities for current authenticated employee' })
+  @ApiQuery({ name: 'date', required: false })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'month', required: false })
+  @ApiQuery({ name: 'year', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getMyCalendar(
+    @CurrentUser() user: any,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: WorkStatus,
+    @Query('customerId') customerId?: string,
+  ) {
+    const employeeId = await this.workService.resolveEmployeeIdForUser(user);
+    if (!employeeId) {
+      return [];
+    }
+
+    return this.workService.getEmployeeCalendar(employeeId, {
+      date: date || startDate,
+      dateFrom: startDate || dateFrom,
+      dateTo: endDate || dateTo,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+      status,
+      customerId: customerId ? parseInt(customerId, 10) : undefined,
+    });
+  }
+
   @Get('hrm/offices')
   @ApiOperation({ summary: 'Get list of real branches/offices for filtering' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
@@ -112,7 +186,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getOffices(targetCustomerId, isSuperAdmin);
   }
 
@@ -125,7 +199,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getLeaves(user, targetCustomerId, isSuperAdmin);
   }
 
@@ -138,7 +212,7 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getRemoteRequests(user, targetCustomerId, isSuperAdmin);
   }
 
@@ -161,7 +235,7 @@ export class EmployeeController {
     @Query('limit') limit?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getAttendance(user, targetCustomerId, isSuperAdmin, {
       date,
       branch,
@@ -184,7 +258,7 @@ export class EmployeeController {
     @Query('date') date?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.employeeService.getLiveAttendance(targetCustomerId, isSuperAdmin, branch, date);
   }
 
@@ -198,13 +272,15 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
-    
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
 
     return this.employeeService.findOne({
       id,
-      
+      customerId: targetCustomerId,
       isSuperAdmin,
     });
   }
@@ -219,16 +295,18 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    let targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId || undefined) : undefined;
+    let targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId || user?.customerId) : user?.customerId;
 
     if (!targetCustomerId && isSuperAdmin) {
       targetCustomerId = await this.employeeService.resolveDefaultCustomerId();
     }
 
-    
+    if (!targetCustomerId) {
+      throw new BadRequestException('customerId is required to create an employee');
+    }
 
     return this.employeeService.create({
-      
+      customerId: targetCustomerId,
       dto,
       bypassUserLimit: isUserAdmin(user),
     });
@@ -244,22 +322,16 @@ export class EmployeeController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    let salaryBank: any = dto.bankDetails;
-    if (typeof salaryBank === 'string') {
-      try { salaryBank = JSON.parse(salaryBank); } catch { salaryBank = {}; }
-    }
-    if ((dto.salaryStructure || salaryBank?.salaryStructure || salaryBank?.basicSalary !== undefined || salaryBank?.monthlySalary !== undefined || salaryBank?.salary !== undefined)
-      && !isUserAdmin(user)) {
-      throw new ForbiddenException('Access denied: salary changes require payroll management permission');
-    }
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
-    
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
 
     return this.employeeService.update({
       id,
-      
+      customerId: targetCustomerId,
       isSuperAdmin,
       dto,
     });
@@ -275,14 +347,141 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
 
-    
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
 
     return this.employeeService.remove({
       id,
-      
+      customerId: targetCustomerId,
       isSuperAdmin,
+    });
+  }
+
+  @Get(':id/permissions')
+  @ApiOperation({ summary: 'Get employee role permissions and individual overrides' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async getPermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.getEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+    });
+  }
+
+  @Put(':id/permissions')
+  @ApiOperation({ summary: 'Update individual employee module/permission overrides' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async updatePermissions(
+    @Param('id') id: string,
+    @Body() body: { overrides: Array<{ moduleKey: string; override: 'INHERIT' | 'ALLOW' | 'DENY' | 'DEFAULT' }> },
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    if (!body || !Array.isArray(body.overrides)) {
+      throw new BadRequestException('Request body must contain overrides array');
+    }
+
+    return this.employeeService.updateEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
+      overrides: body.overrides,
+    });
+  }
+
+  @Delete(':id/permissions')
+  @ApiOperation({ summary: 'Reset employee module/permission overrides to role defaults' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async resetPermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.resetEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
+    });
+  }
+
+  @Post(':id/permissions/reset')
+  @ApiOperation({ summary: 'Reset employee module/permission overrides to role defaults (POST alias)' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async resetPermissionsPost(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.resetEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
+    });
+  }
+
+  @Post(':id/permissions/restrict-all')
+  @ApiOperation({ summary: 'Restrict all modules for individual employee to DENY' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async restrictAllPermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+
+    return this.employeeService.restrictAllEmployeePermissions({
+      employeeId: id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+      actorUser: user,
     });
   }
 }

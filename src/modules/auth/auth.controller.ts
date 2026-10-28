@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
@@ -12,11 +12,9 @@ import {
   VerifyMobileOtpDto,
   SendEmailOtpDto,
   VerifyOtpDto,
-  ChangeCustomerPasswordDto,
 } from './dto/auth.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CustomerBillingAccess } from '../../common/decorators/customer-billing.decorator';
 import { SetMetadata } from '@nestjs/common';
 
 export const Public = () => SetMetadata('isPublic', true);
@@ -95,15 +93,9 @@ export class AuthController {
   }
 
   @Public()
-  @Post('register/customer')
-  @ApiOperation({ summary: 'Register a customer with an inactive account' })
-  async registerCustomer(@Body() dto: RegisterCustomerDto) {
-    return this.authService.registerCustomer(dto);
-  }
-
-  @Public()
   @Post('register')
-  @ApiOperation({ summary: 'Customer registration endpoint' })
+  @ApiOperation({ summary: 'Register a new Customer and Customer Admin' })
+  @ApiResponse({ status: 210, description: 'Customer created successfully' })
   async register(@Body() dto: RegisterCustomerDto) {
     return this.authService.registerCustomer(dto);
   }
@@ -144,9 +136,9 @@ export class AuthController {
   @Public()
   @Post('login/employee')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Employee web portal login' })
+  @ApiOperation({ summary: 'Employee mobile application login alias' })
   async loginEmployee(@Body() dto: LoginDto) {
-    return this.authService.login(dto, dto.appType || 'EMPLOYEE_WEB');
+    return this.authService.login(dto, 'EMPLOYEE');
   }
 
   @Public()
@@ -155,6 +147,15 @@ export class AuthController {
   @ApiOperation({ summary: 'Mobile application login alias' })
   async mobileLogin(@Body() dto: LoginDto) {
     return this.authService.login(dto, 'EMPLOYEE_MOBILE');
+  }
+
+  @Public()
+  @Post(['customer/login', 'customer/auth/login', 'login/customer'])
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Customer mobile/web portal login with email and password' })
+  @ApiResponse({ status: 200, description: 'Customer logged in successfully' })
+  async customerLogin(@Body() dto: LoginDto) {
+    return this.authService.login(dto, 'CUSTOMER_MOBILE');
   }
 
   @Public()
@@ -198,24 +199,11 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @CustomerBillingAccess()
-  @ApiBearerAuth()
-  @Post('customer/change-password')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Change password for the authenticated customer account' })
-  async changeCustomerPassword(
-    @CurrentUser() user: any,
-    @Body() dto: ChangeCustomerPasswordDto,
-  ) {
-    return this.authService.changeCustomerPassword(user.id || user.userId, dto);
-  }
-
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Get('profile')
   @ApiOperation({ summary: 'Get current logged-in user profile' })
   async getProfile(@CurrentUser() user: any) {
-    return this.authService.getProfile(user.id || user.userId, user);
+    return this.authService.getProfile(user.id || user.userId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -223,7 +211,102 @@ export class AuthController {
   @Get('me')
   @ApiOperation({ summary: 'Get current user identity' })
   async getMe(@CurrentUser() user: any) {
-    return this.authService.getProfile(user.id || user.userId, user);
+    return this.authService.getProfile(user.id || user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('roles')
+  @ApiOperation({ summary: 'Get all database roles' })
+  async getRoles(@CurrentUser() user: any) {
+    return this.authService.getRoles(user.customerId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Post('roles')
+  @ApiOperation({ summary: 'Create a new security role' })
+  async createRole(
+    @CurrentUser() user: any,
+    @Body() body: { name: string; description?: string; permissions?: (string | { module: string; action: string })[] },
+  ) {
+    return this.authService.createRole(user.customerId, body, user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('roles/:id')
+  @ApiOperation({ summary: 'Get single role details by ID' })
+  async getRoleById(@Param('id') id: string) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.getRoleById(numId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Put('roles/:id')
+  @ApiOperation({ summary: 'Update role details' })
+  async updateRole(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() body: { name?: string; description?: string; isActive?: boolean },
+  ) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.updateRole(numId, body, user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Delete('roles/:id')
+  @ApiOperation({ summary: 'Deactivate / delete a custom role' })
+  async deleteRole(@Param('id') id: string, @CurrentUser() user: any) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.deleteRole(numId, user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('permissions')
+  @ApiOperation({ summary: 'Get all available permissions' })
+  async getAllPermissions() {
+    return this.authService.getAllPermissions();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('roles/:id/permissions')
+  @ApiOperation({ summary: 'Get permissions for a specific role' })
+  async getRolePermissions(@Param('id') id: string) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.getRolePermissions(numId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Put('roles/:id/permissions')
+  @ApiOperation({ summary: 'Update permissions for a specific role' })
+  async updateRolePermissions(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() body: { permissions: (string | { module?: string; action?: string; key?: string })[] },
+  ) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException(`Invalid role ID: ${id}`);
+    }
+    return this.authService.updateRolePermissions(numId, body.permissions || [], user);
   }
 }
 

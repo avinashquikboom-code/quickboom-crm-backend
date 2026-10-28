@@ -8,7 +8,9 @@ export class CreateInvoiceDto {
   @IsOptional()
   invoiceNo?: string;
 
-  
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  customerId?: number | string;
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()

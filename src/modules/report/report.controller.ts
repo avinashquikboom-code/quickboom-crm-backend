@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Reports & Analytics')
 @ApiBearerAuth()
@@ -28,7 +28,17 @@ export class ReportController {
     customerParam: number | string | undefined,
     queryCustomerId?: number | string,
   ): number {
-return undefined;
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const target = isSuperAdmin
+      ? (queryCustomerId || customerParam || user?.customerId)
+      : (user?.customerId || customerParam);
+
+    const num = Number(target);
+    if (!num || isNaN(num)) {
+      if (isSuperAdmin) return 1; // Default fallback for super-admin platform overview
+      throw new ForbiddenException('Customer context required for reports');
+    }
+    return num;
   }
 
   @Get('summary')
@@ -41,7 +51,7 @@ return undefined;
     @CurrentCustomer() customerId: number | string | undefined,
     @Query() query: QueryReportDto,
   ) {
-    const targetCustomer = this.resolveCustomerId(user, customerId, undefined);
+    const targetCustomer = this.resolveCustomerId(user, customerId, query.customerId);
     return this.reportService.getSummaryReport(targetCustomer, query);
   }
 
@@ -62,7 +72,7 @@ return undefined;
     @CurrentCustomer() customerId: number | string | undefined,
     @Query() query: QueryReportDto,
   ) {
-    const targetCustomer = this.resolveCustomerId(user, customerId, undefined);
+    const targetCustomer = this.resolveCustomerId(user, customerId, query.customerId);
     return this.reportService.getReportData(targetCustomer, query);
   }
 

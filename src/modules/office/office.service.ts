@@ -12,7 +12,15 @@ export class OfficeService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
-return undefined;
+    if (customerId !== undefined && customerId !== null) {
+      const num = Number(customerId);
+      if (!isNaN(num) && num > 0) return num;
+    }
+    const firstCust = await this.prisma.customer.findFirst({
+      where: { isActive: true },
+      orderBy: { id: 'asc' },
+    });
+    return firstCust ? firstCust.id : 1;
   }
 
   async findAll(
@@ -25,7 +33,7 @@ return undefined;
     const skip = (page - 1) * limit;
 
     const where: any = {
-      
+      customerId: numCustomerId,
     };
 
     if (query?.isActive !== undefined) {
@@ -68,7 +76,7 @@ return undefined;
       success: true,
       data: items.map((o) => ({
         id: o.id,
-        
+        customerId: o.customerId,
         name: o.name,
         code: o.code || '',
         address: o.address || '',
@@ -98,7 +106,7 @@ return undefined;
   async findOne(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
       include: {
         _count: {
           select: {
@@ -130,7 +138,7 @@ return undefined;
       success: true,
       data: {
         id: office.id,
-        
+        customerId: office.customerId,
         name: office.name,
         code: office.code || '',
         address: office.address || '',
@@ -170,7 +178,7 @@ return undefined;
 
     const existing = await this.prisma.branchGeofence.findFirst({
       where: {
-        
+        customerId: numCustomerId,
         name: { equals: trimmedName, mode: 'insensitive' },
       },
     });
@@ -182,7 +190,7 @@ return undefined;
     if (dto.code && dto.code.trim()) {
       const codeDup = await this.prisma.branchGeofence.findFirst({
         where: {
-          
+          customerId: numCustomerId,
           code: { equals: dto.code.trim(), mode: 'insensitive' },
         },
       });
@@ -193,7 +201,7 @@ return undefined;
 
     const created = await this.prisma.branchGeofence.create({
       data: {
-        
+        customerId: numCustomerId,
         name: trimmedName,
         code: dto.code?.trim().toUpperCase() || null,
         address: dto.address?.trim() || null,
@@ -218,7 +226,7 @@ return undefined;
   async update(customerId: number | string | undefined, id: number, dto: UpdateOfficeDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
     });
 
     if (!office) {
@@ -233,7 +241,7 @@ return undefined;
 
       const dup = await this.prisma.branchGeofence.findFirst({
         where: {
-          
+          customerId: numCustomerId,
           name: { equals: trimmed, mode: 'insensitive' },
           NOT: { id },
         },
@@ -250,7 +258,7 @@ return undefined;
       if (codeTrimmed) {
         const codeDup = await this.prisma.branchGeofence.findFirst({
           where: {
-            
+            customerId: numCustomerId,
             code: { equals: codeTrimmed, mode: 'insensitive' },
             NOT: { id },
           },
@@ -287,7 +295,7 @@ return undefined;
   async toggleStatus(customerId: number | string | undefined, id: number, isActive: boolean) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
     });
 
     if (!office) {
@@ -309,7 +317,7 @@ return undefined;
   async remove(customerId: number | string | undefined, id: number) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const office = await this.prisma.branchGeofence.findFirst({
-      where: { id },
+      where: { id, customerId: numCustomerId },
       include: {
         _count: {
           select: { employees: true, attendances: true },

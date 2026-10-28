@@ -6,7 +6,6 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isBpoPayrollEmployee } from '../payroll/payroll-attendance';
 import {
   CommissionType,
   CommissionConfigStatus,
@@ -20,19 +19,6 @@ import {
   UpdateDesignationCommissionDto,
 } from './dto/commission.dto';
 
-/**
- * Tax-exclusive commission base. Admin manual activation, plan change and renewal
- * store the GST-inclusive total in `amount` (amount === totalAmount with tax > 0).
- */
-export function commissionBaseOf(payment: { amount: number; taxAmount?: number | null; totalAmount?: number | null }): number {
-  const amount = Number(payment.amount);
-  const tax = Number(payment.taxAmount || 0);
-  if (tax > 0 && payment.totalAmount != null && Math.abs(amount - Number(payment.totalAmount)) < 0.005) {
-    return Math.round((amount - tax) * 100) / 100;
-  }
-  return amount;
-}
-
 @Injectable()
 export class CommissionService {
   private readonly logger = new Logger(CommissionService.name);
@@ -44,114 +30,229 @@ export class CommissionService {
    * STRICT IDEMPOTENCY: Duplicate payment webhooks/calls will NOT generate duplicate commissions.
    */
   async calculateAndAwardCommission(params: {
-    customerId?: number;
+    customerId: number;
     purchaseId: number;
-    employeeId?: number;
     purchaseAmount: number;
     planId?: number | null;
     orderId?: string | null;
     tx?: Prisma.TransactionClient;
   }): Promise<any> {
-    if (!params.tx) {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          return await this.prisma.$transaction(tx => this.calculateAndAwardCommission({ ...params, tx }), { isolationLevel: 'Serializable' });
-        } catch (error: any) {
-          if (error.code === 'P2002') {
-            const payment = await this.prisma.paymentHistory.findUnique({ where: { id: params.purchaseId } });
-            const existing = await this.prisma.commission.findFirst({ where: { OR: [{ purchaseId: params.purchaseId }, ...(payment?.paymentId ? [{ sourceKey: `gateway:${payment.paymentMethod}:${payment.paymentId}` }] : [])] }, include: { shares: true } });
-            if (!existing || false) throw error;
-            return existing;
-          }
-          if (error.code !== 'P2034' || attempt === 2) throw error;
-        }
-      }
+    const { customerId, purchaseId, purchaseAmount, planId, orderId } = params;
+    const db = params.tx || this.prisma;
+
+    if (!purchaseId) {
+      this.logger.warn(`[COMMISSION] Missing purchaseId for customer #${customerId}`);
+      return null;
     }
-    const db = params.tx!;
-    const existing = await db.commission.findUnique({ where: { purchaseId: params.purchaseId }, include: { shares: true } });
-    if (existing) {
 
-      return existing;
-    } // Historical entries are never resplit.
-    const payment = await db.paymentHistory.findUnique({ where: { id: params.purchaseId } });
-    if (!payment || false || payment.deletedAt || payment.status !== 'SUCCESS') return null;
-    // Offline receipts start PENDING; their approval update is the earning event.
-    const qualifyingAt = ['BANK_TRANSFER', 'CASH', 'OTHER'].includes(payment.paymentMethod) ? payment.updatedAt : payment.createdAt;
-    const sourceKey = payment.paymentId ? `gateway:${payment.paymentMethod}:${payment.paymentId}` : `purchase:${payment.id}`;
-    if (payment.paymentId) {
-      const duplicate = await db.commission.findFirst({ where: { OR: [{ sourceKey }, { purchase: { paymentId: payment.paymentId, paymentMethod: payment.paymentMethod } }] }, include: { shares: true } });
-      if (duplicate) {
-
-        return duplicate;
-      }
-    }
-    const employeeId = params.employeeId;
-    if (!employeeId) return null; // Explicit seller attribution is required after Lead/Customer removal.
-    const employee = employeeId ? await db.employee.findUnique({ where: { id: employeeId }, include: { designation: true, department: true, commissionConfig: true } }) : null;
-
-    let reviewReason: string | null = !employee ? 'SALE_EMPLOYEE_UNRESOLVED' : employee.status !== 'ACTIVE' ? 'EMPLOYEE_INACTIVE' : null;
-    const bpo = isBpoPayrollEmployee;
-    if (employee && !bpo(employee)) return null;
-    const config = employee?.commissionConfig;
-
-    if (config && config.status !== CommissionConfigStatus.ACTIVE) return null;
-    if (employee && !config && !employee.designation?.commissionEnabled) return null;
-    const commissionType = config?.commissionType || employee?.designation?.commissionType || CommissionType.PERCENTAGE;
-    const commissionRate = Number(config?.commissionValue ?? employee?.designation?.commissionRate ?? 0);
-    if (!Number.isFinite(commissionRate) || commissionRate < 0) throw new BadRequestException('Invalid commission configuration');
-    const rateUpdatedAt = config?.updatedAt || employee?.designation?.updatedAt;
-    if (!reviewReason && rateUpdatedAt && rateUpdatedAt > qualifyingAt) reviewReason = 'HISTORICAL_RATE_REVIEW_REQUIRED';
-    if (employee && commissionRate === 0) return null;
-    const purchaseAmount = commissionBaseOf(payment);
-    if (!Number.isFinite(purchaseAmount) || purchaseAmount < 0) throw new BadRequestException('Invalid commission base');
-    if (purchaseAmount === 0) return null;
-    const commissionAmount = Math.round((commissionType === CommissionType.PERCENTAGE ? purchaseAmount * commissionRate / 100 : commissionRate) * 100) / 100;
-    const memberships = employee ? await db.teamMember.findMany({ where: { employeeId: employee.id, joinedAt: { lte: qualifyingAt }, team: {  isActive: true } }, include: { team: { include: { leader: { include: { designation: true, department: true } } } } } }) : [];
-    const teams = memberships.filter(m => /bpo|telecall|telesales|business process/i.test(`${m.team.name} ${m.team.description || ''}`));
-    const team = teams.length === 1 ? teams[0].team : null;
-    const leader = team?.leader;
-    if (!reviewReason && !team) reviewReason = teams.length > 1 ? 'AMBIGUOUS_BPO_TEAM' : 'BPO_TEAM_UNRESOLVED';
-    if (!reviewReason && (!leader || leader.id === employeeId || leader.status !== 'ACTIVE' || !bpo(leader))) reviewReason = 'BPO_LEADER_UNRESOLVED';
-    // Membership/leader history is not stored. Do not guess historical leadership.
-    if (!reviewReason && team!.updatedAt > qualifyingAt) reviewReason = 'HISTORICAL_TEAM_REVIEW_REQUIRED';
-    const employeeAmount = Math.round(commissionAmount * 100 / 2) / 100;
-    const leaderAmount = Math.round((commissionAmount - employeeAmount) * 100) / 100;
-    return db.commission.create({
-      data: {
-         sourceKey, employeeId: employee?.id || null,
-        planId: payment.planId || params.planId || null, purchaseId: payment.id, orderId: payment.orderId || params.orderId || null,
-        purchaseAmount, commissionType, commissionRate, commissionAmount, qualifyingAt,
-        teamId: team?.id || null, leaderId: leader?.id || null, reviewReason,
-        status: reviewReason ? CommissionStatus.PENDING : CommissionStatus.APPROVED,
-        shares: reviewReason ? undefined : { create: [
-          { employeeId: employee!.id, recipientRole: 'EMPLOYEE', effectiveRate: commissionRate / 2, amount: employeeAmount },
-          { employeeId: leader!.id, recipientRole: 'LEADER', effectiveRate: commissionRate / 2, amount: leaderAmount },
-        ] },
-        history: [{ action: reviewReason ? 'REVIEW_REQUIRED' : 'SPLIT_AWARDED', at: new Date().toISOString(), reason: reviewReason }],
-      }, include: { shares: true },
+    // 1. Idempotency Check: prevent duplicate commission for same purchaseId
+    const existingCommission = await db.commission.findUnique({
+      where: { purchaseId },
     });
+
+    if (existingCommission) {
+      this.logger.log(
+        `[COMMISSION] Commission already exists for purchaseId #${purchaseId} (Commission #${existingCommission.id}). Skipping duplicate creation.`,
+      );
+      return existingCommission;
+    }
+
+    // 2. Fetch Customer and trace Lead conversion / assigned employee
+    const customer = await db.customer.findUnique({
+      where: { id: customerId },
+      include: {
+        originLead: true,
+        assignedEmployeeRel: {
+          include: {
+            commissionConfig: true,
+            designation: true,
+          },
+        },
+        createdByEmployeeRel: {
+          include: {
+            commissionConfig: true,
+            designation: true,
+          },
+        },
+      },
+    });
+
+    if (!customer) {
+      this.logger.warn(`[COMMISSION] Customer #${customerId} not found`);
+      return null;
+    }
+
+    // 3. Resolve Employee who won/converted the Lead
+    // Priority 1: customer.originLead.convertedByEmployeeId (employee who actually WON the lead)
+    // Priority 2: customer.assignedEmployeeId
+    // Priority 3: customer.createdByEmployeeId
+    // Priority 4: customer.originLead.employeeId
+    // Priority 5: employee linked to customer.originLead.assignedToId
+    let employeeId: number | null =
+      customer.originLead?.convertedByEmployeeId ||
+      customer.assignedEmployeeId ||
+      customer.createdByEmployeeId;
+    let employee =
+      customer.originLead?.convertedByEmployeeId
+        ? null
+        : (customer.assignedEmployeeRel || customer.createdByEmployeeRel);
+
+    if (!employeeId && customer.originLead?.employeeId) {
+      employeeId = customer.originLead.employeeId;
+    }
+
+    if (!employee && employeeId) {
+      employee = await db.employee.findUnique({
+        where: { id: employeeId },
+        include: {
+          commissionConfig: true,
+          designation: true,
+        },
+      });
+    }
+
+    if (!employee && customer.originLead?.assignedToId) {
+      employee = await db.employee.findFirst({
+        where: {
+          userId: Number(customer.originLead.assignedToId),
+          status: 'ACTIVE',
+        },
+        include: {
+          commissionConfig: true,
+          designation: true,
+        },
+      });
+      if (employee) {
+        employeeId = employee.id;
+      }
+    }
+
+    if (!employee || !employeeId) {
+      this.logger.log(
+        `[COMMISSION] No converting employee found for Customer #${customerId}. No commission awarded.`,
+      );
+      return null;
+    }
+
+    // 4. Check Commission Eligibility & Rate
+    // Rule:
+    // A. Check employee-specific CommissionConfig override:
+    //    If active, use that config. If inactive, employee is NOT eligible.
+    // B. If no employee config, check employee's designation:
+    //    If designation.commissionEnabled is true, use designation rate.
+    // C. Otherwise, employee is NOT eligible.
+    let commissionType: CommissionType = CommissionType.PERCENTAGE;
+    let commissionRate = 0;
+    let isEligible = false;
+
+    if (employee.commissionConfig) {
+      if (employee.commissionConfig.status === CommissionConfigStatus.ACTIVE) {
+        commissionType = employee.commissionConfig.commissionType;
+        commissionRate = employee.commissionConfig.commissionValue;
+        isEligible = true;
+      } else {
+        this.logger.log(
+          `[COMMISSION] Employee #${employeeId} (${employee.firstName} ${employee.lastName}) has INACTIVE commission config. Skipping commission.`,
+        );
+        return null;
+      }
+    } else if (employee.designation?.commissionEnabled) {
+      commissionType = employee.designation.commissionType;
+      commissionRate = employee.designation.commissionRate;
+      isEligible = true;
+    }
+
+    if (!isEligible || commissionRate <= 0) {
+      this.logger.log(
+        `[COMMISSION] Employee #${employeeId} (${employee.firstName} ${employee.lastName}, designation: ${employee.designation?.name || 'None'}) is not commission eligible (Rate: ${commissionRate}). Skipping.`,
+      );
+      return null;
+    }
+
+    // 5. Calculate Commission
+    let commissionAmount = 0;
+    if (commissionType === CommissionType.PERCENTAGE) {
+      commissionAmount = Math.round(((purchaseAmount * commissionRate) / 100) * 100) / 100;
+    } else {
+      commissionAmount = commissionRate;
+    }
+
+    // 6. Persist Commission Record
+    const leadId = customer.leadId || customer.originLead?.id || null;
+    const resolvedPlanId = planId || null;
+
+    try {
+      const commission = await db.commission.create({
+        data: {
+          customerId,
+          employeeId,
+          leadId,
+          planId: resolvedPlanId,
+          purchaseId,
+          orderId: orderId || null,
+          commissionType,
+          commissionRate,
+          purchaseAmount,
+          commissionAmount,
+          status: CommissionStatus.APPROVED, // Approved / Earned upon confirmed plan purchase
+        },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              designation: { select: { id: true, name: true } },
+            },
+          },
+          lead: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              companyName: true,
+              title: true,
+            },
+          },
+          plan: { select: { id: true, name: true, monthlyPrice: true, yearlyPrice: true } },
+        },
+      });
+
+      this.logger.log(
+        `[COMMISSION] Commission generated: #${commission.id} for Employee #${employeeId} (${employee.firstName} ${employee.lastName}) | Amount: ₹${commissionAmount} (${commissionRate}${commissionType === 'PERCENTAGE' ? '%' : ' Fixed'}) on Purchase ₹${purchaseAmount}`,
+      );
+      return commission;
+    } catch (err: any) {
+      // If concurrent request created it in the meantime, handle gracefully
+      if (err.code === 'P2002') {
+        this.logger.warn(`[COMMISSION] Unique constraint conflict on purchaseId #${purchaseId}, returning existing commission.`);
+        return db.commission.findUnique({ where: { purchaseId } });
+      }
+      this.logger.error(`[COMMISSION] Failed to create commission: ${err.message}`, err.stack);
+      throw err;
+    }
   }
 
   /**
    * Handle payment refund or cancellation by invalidating the commission record.
    */
-  async handleRefundOrCancellation(purchaseId: number, customerId: number, reference = `purchase-${purchaseId}`, partial = false): Promise<void> {
-    await this.prisma.$transaction(async tx => {
-      let event = await tx.commission.findUnique({ where: { purchaseId }, include: { shares: true } });
-      if (!event) {
-        const payment = await tx.paymentHistory.findUnique({ where: { id: purchaseId } });
-        if (payment.paymentId) event = await tx.commission.findFirst({ where: { sourceKey: `gateway:${payment.paymentMethod}:${payment.paymentId}` }, include: { shares: true } });
+  async handleRefundOrCancellation(purchaseId: number, customerId: number): Promise<void> {
+    try {
+      const commission = await this.prisma.commission.findUnique({
+        where: { purchaseId },
+      });
+
+      if (commission && commission.customerId === customerId && commission.status !== CommissionStatus.CANCELLED) {
+        await this.prisma.commission.update({
+          where: { id: commission.id },
+          data: { status: CommissionStatus.CANCELLED },
+        });
+        this.logger.log(`[COMMISSION] Commission #${commission.id} CANCELLED due to refund/cancellation of purchase #${purchaseId}`);
       }
-      if (!event || false) return;
-      const history = Array.isArray(event.history) ? event.history : [];
-      if (history.some((entry: any) => entry?.reference === reference)) return;
-      const paid = event.status === CommissionStatus.PAID || event.shares.some(s => s.status === CommissionStatus.PAID);
-      await tx.commission.update({ where: { id: event.id }, data: {
-        ...(paid || partial ? { reviewReason: paid ? 'PAID_REVERSAL_REQUIRES_AUTHORIZED_ADJUSTMENT' : 'PARTIAL_REFUND_REQUIRES_REVIEW' } : { status: CommissionStatus.CANCELLED }),
-        history: [...history, { action: 'REFUND_REQUESTED', at: new Date().toISOString(), paid, partial, reference }],
-      } });
-      await tx.commissionShare.updateMany({ where: { commissionId: event.id, status: { not: CommissionStatus.PAID } }, data: { status: partial ? CommissionStatus.PENDING : CommissionStatus.CANCELLED } });
-    }, { isolationLevel: 'Serializable' });
+    } catch (err: any) {
+      this.logger.error(`[COMMISSION] Error handling refund for purchase #${purchaseId}: ${err.message}`, err.stack);
+    }
   }
 
   /**
@@ -163,15 +264,15 @@ export class CommissionService {
     const skip = (page - 1) * limit;
 
     const where: Prisma.CommissionWhereInput = {
-
+      customerId,
     };
 
     if (query.status) {
-      where.AND = [{ OR: [{ shares: { some: { status: query.status } } }, { shares: { none: {} }, status: query.status }] }];
+      where.status = query.status;
     }
 
     if (query.employeeId) {
-      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: [{ employeeId: Number(query.employeeId) }, { shares: { some: { employeeId: Number(query.employeeId) } } }] }];
+      where.employeeId = Number(query.employeeId);
     }
 
     if (query.designationId) {
@@ -194,17 +295,17 @@ export class CommissionService {
 
     if (query.search && query.search.trim()) {
       const search = query.search.trim();
-      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: [
+      where.OR = [
         { employee: { firstName: { contains: search, mode: 'insensitive' } } },
         { employee: { lastName: { contains: search, mode: 'insensitive' } } },
         { employee: { employeeCode: { contains: search, mode: 'insensitive' } } },
-
-
-
-
-
+        { customer: { name: { contains: search, mode: 'insensitive' } } },
+        { customer: { companyName: { contains: search, mode: 'insensitive' } } },
+        { lead: { firstName: { contains: search, mode: 'insensitive' } } },
+        { lead: { lastName: { contains: search, mode: 'insensitive' } } },
+        { lead: { companyName: { contains: search, mode: 'insensitive' } } },
         { orderId: { contains: search, mode: 'insensitive' } },
-      ] }];
+      ];
     }
 
     // Fetch items with relations
@@ -215,7 +316,6 @@ export class CommissionService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          shares: { include: { employee: { select: { id: true, firstName: true, lastName: true } }, payrollItem: { select: { id: true, payroll: { select: { month: true, year: true } } } } } },
           employee: {
             select: {
               id: true,
@@ -228,8 +328,26 @@ export class CommissionService {
               },
             },
           },
-
-
+          lead: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              companyName: true,
+              title: true,
+              phone: true,
+              email: true,
+            },
+          },
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              companyName: true,
+              email: true,
+              phone: true,
+            },
+          },
           plan: {
             select: {
               id: true,
@@ -254,10 +372,9 @@ export class CommissionService {
     ]);
 
     // Summary totals calculated across entire tenant dataset (or filtered search)
-    const legacyAgg = await this.prisma.commission.groupBy({
+    const summaryAgg = await this.prisma.commission.groupBy({
       by: ['status'],
-      // Unsplit events: legacy rows plus review-required events (PENDING until resolved).
-      where: { shares: { none: {} } },
+      where: { customerId },
       _sum: {
         commissionAmount: true,
       },
@@ -265,8 +382,6 @@ export class CommissionService {
         id: true,
       },
     });
-    const splitAgg = await this.prisma.commissionShare.groupBy({ by: ['status'], where: {}, _sum: { amount: true }, _count: { id: true } });
-    const summaryAgg = [...legacyAgg, ...splitAgg.map(group => ({ status: group.status, _sum: { commissionAmount: group._sum.amount }, _count: { id: group._count.id } }))];
 
     let totalAmount = 0;
     let pendingAmount = 0;
@@ -280,7 +395,6 @@ export class CommissionService {
     for (const group of summaryAgg) {
       const amount = group._sum.commissionAmount || 0;
       const count = group._count.id || 0;
-      if (group.status === CommissionStatus.CANCELLED) continue;
       totalCount += count;
       totalAmount += amount;
 
@@ -322,7 +436,7 @@ export class CommissionService {
    */
   async getEmployeeCommissions(customerId: number, userId: number, query: CommissionFilterDto) {
     const employee = await this.prisma.employee.findFirst({
-      where: { userId: Number(userId) },
+      where: { userId: Number(userId), customerId },
       include: { designation: true },
     });
 
@@ -330,52 +444,138 @@ export class CommissionService {
       throw new NotFoundException('Employee profile not found for authenticated user');
     }
 
-    return this.recipientLedger(customerId, employee, query);
-  }
-
-  private async recipientLedger(tenantId: number, employee: any, query: CommissionFilterDto, leaderOnly = false) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-    const events = await this.prisma.commission.findMany({
-      where: { OR: [
-        { shares: { some: { employeeId: employee.id, ...(leaderOnly ? { recipientRole: 'LEADER' } : {}) } } },
-        ...(!leaderOnly ? [{ employeeId: employee.id, shares: { none: {} } }, { employeeId: employee.id, reviewReason: { not: null } }] : []),
-      ] }, orderBy: { createdAt: 'desc' },
-      include: { shares: { include: { payrollItem: { include: { payroll: true } } } },   plan: { select: { id: true, name: true } }, purchase: { select: { id: true, amount: true, totalAmount: true, orderNumber: true, createdAt: true } }, employee: { select: { id: true, firstName: true, lastName: true } } },
-    });
-    const records = events.map(event => {
-      const share = event.shares.find(s => s.employeeId === employee.id && (!leaderOnly || s.recipientRole === 'LEADER'));
-      const unresolved = !share && true && !!event.reviewReason;
-      return { ...event, employeeId: share?.employeeId ?? event.employeeId, sourceEmployeeId: event.employeeId, shares: undefined, originalCommissionRate: event.commissionRate, totalCommissionAmount: event.commissionAmount,
-        commissionRate: share?.effectiveRate ?? (unresolved ? 0 : event.commissionRate), commissionAmount: share?.amount ?? (unresolved ? 0 : event.commissionAmount),
-        employeeShareAmount: share?.recipientRole === 'LEADER' ? Math.round((event.commissionAmount - share.amount) * 100) / 100 : share?.amount, leaderShareAmount: share?.recipientRole === 'LEADER' ? share.amount : share ? Math.round((event.commissionAmount - share.amount) * 100) / 100 : null,
-        status: share?.status ?? event.status, paidAt: share?.paidAt ?? event.paidAt, recipientRole: share?.recipientRole ?? 'LEGACY',
-        employeeShareStatus: share?.recipientRole === 'LEADER' ? event.shares.find(s => s.recipientRole === 'EMPLOYEE')?.status : undefined,
-        payrollItemId: share?.payrollItemId, payrollPeriod: share?.payrollItem ? `${share.payrollItem.payroll.year}-${String(share.payrollItem.payroll.month).padStart(2, '0')}` : null,
-      };
-    });
-    const summary = { totalCommission: 0, pendingCommission: 0, approvedCommission: 0, paidCommission: 0, totalCount: 0, pendingCount: 0, approvedCount: 0, paidCount: 0 };
-    for (const record of records) {
-      if (record.status === 'CANCELLED') continue;
-      summary.totalCommission += record.commissionAmount;
-      summary.totalCount++;
-      const prefix = record.status === 'PAID' ? 'paid' : record.status === 'APPROVED' ? 'approved' : 'pending';
-      summary[`${prefix}Commission`] += record.commissionAmount;
-      summary[`${prefix}Count`]++;
-    }
-    const customerTotals = new Map<number, number>();
-    for (const record of records) if (record.status !== 'CANCELLED') customerTotals.set(undefined, (customerTotals.get(undefined) || 0) + record.commissionAmount);
-    const filtered = records.filter(r => (!query.status || r.status === query.status) && (!query.startDate || r.createdAt >= new Date(query.startDate)) && (!query.endDate || r.createdAt < new Date(new Date(query.endDate).getTime() + 86400000)))
-      .map(record => ({ ...record, customerCommissionTotal: Math.round((customerTotals.get(undefined) || 0) * 100) / 100 }));
-    return { data: filtered.slice((page - 1) * limit, page * limit), meta: { total: filtered.length, page, limit }, summary, employee: { id: employee.id, name: `${employee.firstName} ${employee.lastName || ''}`.trim(), employeeCode: employee.employeeCode, designation: employee.designation?.name || 'Staff' } };
-  }
+    const skip = (page - 1) * limit;
 
-  async getLeaderCommissions(tenantId: number, userId: number, query: CommissionFilterDto) {
-    const leader = await this.prisma.employee.findFirst({ where: { userId }, include: { designation: true, department: true } });
-    if (!leader || !/bpo|telecall|telesales|business process/i.test(`${leader.designation?.name || ''} ${leader.department?.name || ''}`)) throw new ForbiddenException('BPO leader account required');
-    // A historical snapshot recipient retains their own leader entries after team changes.
-    const ledger = await this.recipientLedger(tenantId, leader, query, true);
-    return { ...ledger, data: ledger.data.filter(e => e.recipientRole === 'LEADER') };
+    const where: Prisma.CommissionWhereInput = {
+      customerId,
+      employeeId: employee.id,
+    };
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.startDate || query.endDate) {
+      where.createdAt = {};
+      if (query.startDate) where.createdAt.gte = new Date(query.startDate);
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+
+    const [commissions, total] = await Promise.all([
+      this.prisma.commission.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          lead: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              companyName: true,
+              title: true,
+            },
+          },
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              companyName: true,
+            },
+          },
+          plan: {
+            select: {
+              id: true,
+              name: true,
+              monthlyPrice: true,
+              yearlyPrice: true,
+            },
+          },
+          purchase: {
+            select: {
+              id: true,
+              orderNumber: true,
+              paymentId: true,
+              amount: true,
+              totalAmount: true,
+            },
+          },
+        },
+      }),
+      this.prisma.commission.count({ where }),
+    ]);
+
+    // Employee summary totals
+    const summaryAgg = await this.prisma.commission.groupBy({
+      by: ['status'],
+      where: { customerId, employeeId: employee.id },
+      _sum: {
+        commissionAmount: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
+
+    let totalAmount = 0;
+    let pendingAmount = 0;
+    let approvedAmount = 0;
+    let paidAmount = 0;
+    let totalCount = 0;
+    let pendingCount = 0;
+    let approvedCount = 0;
+    let paidCount = 0;
+
+    for (const group of summaryAgg) {
+      const amount = group._sum.commissionAmount || 0;
+      const count = group._count.id || 0;
+      totalCount += count;
+      totalAmount += amount;
+
+      if (group.status === CommissionStatus.PENDING) {
+        pendingAmount += amount;
+        pendingCount += count;
+      } else if (group.status === CommissionStatus.APPROVED) {
+        approvedAmount += amount;
+        approvedCount += count;
+      } else if (group.status === CommissionStatus.PAID) {
+        paidAmount += amount;
+        paidCount += count;
+      }
+    }
+
+    return {
+      data: commissions,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      summary: {
+        totalCommission: totalAmount,
+        pendingCommission: pendingAmount,
+        approvedCommission: approvedAmount,
+        paidCommission: paidAmount,
+        totalCount,
+        pendingCount,
+        approvedCount,
+        paidCount,
+      },
+      employee: {
+        id: employee.id,
+        name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
+        employeeCode: employee.employeeCode,
+        designation: employee.designation?.name || 'Staff',
+      },
+    };
   }
 
   /**
@@ -392,13 +592,9 @@ export class CommissionService {
       include: { employee: true },
     });
 
-    if (!commission) {
+    if (!commission || commission.customerId !== customerId) {
       throw new NotFoundException('Commission record not found');
     }
-
-    if (commission.paidAt || commission.status === CommissionStatus.PAID) throw new BadRequestException('Paid commissions require the authorized adjustment process');
-    const shares = await this.prisma.commissionShare.count({ where: { commissionId } });
-    if (shares || commission.reviewReason) throw new BadRequestException('Split commissions settle through payroll; unresolved events require review');
 
     const updateData: Prisma.CommissionUpdateInput = {
       status: dto.status,
@@ -423,7 +619,14 @@ export class CommissionService {
             designation: { select: { id: true, name: true } },
           },
         },
-
+        lead: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            companyName: true,
+          },
+        },
         plan: true,
         purchase: true,
       },
@@ -441,7 +644,7 @@ export class CommissionService {
    */
   async getDesignationCommissionConfigs(customerId: number) {
     const designations = await this.prisma.designation.findMany({
-      where: {  isActive: true },
+      where: { customerId, isActive: true },
       orderBy: { name: 'asc' },
       include: {
         _count: {
@@ -475,7 +678,7 @@ export class CommissionService {
       where: { id: designationId },
     });
 
-    if (!designation || false) {
+    if (!designation || designation.customerId !== customerId) {
       throw new NotFoundException('Designation not found');
     }
 
@@ -496,7 +699,7 @@ export class CommissionService {
    */
   async getEmployeeCommissionConfigs(customerId: number) {
     const configs = await this.prisma.commissionConfig.findMany({
-      where: {  },
+      where: { customerId },
       include: {
         employee: {
           select: {
@@ -527,14 +730,14 @@ export class CommissionService {
       where: { id: dto.employeeId },
     });
 
-    if (!employee || false) {
+    if (!employee || employee.customerId !== customerId) {
       throw new NotFoundException('Employee not found in this company');
     }
 
     const config = await this.prisma.commissionConfig.upsert({
       where: { employeeId: dto.employeeId },
       create: {
-
+        customerId,
         employeeId: dto.employeeId,
         commissionType: dto.commissionType,
         commissionValue: Number(dto.commissionValue) || 0,

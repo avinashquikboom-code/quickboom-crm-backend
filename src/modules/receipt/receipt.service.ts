@@ -27,7 +27,7 @@ export function formatInrCurrency(amount: any): string {
 export interface NormalizedReceiptPayment {
   id: number;
   isCustom: boolean;
-  customerId?: number;
+  customerId: number;
   customer?: any;
   status: string;
   planName: string;
@@ -73,26 +73,80 @@ export class ReceiptService {
           { paymentId: rawId },
         ],
       },
-      
+      include: {
+        customer: true,
+        subscription: {
+          include: { plan: true },
+        },
+      },
     });
 
     // 2. Direct exact match in CustomPlanOrder
-    
+    if (!record && this.prisma.customPlanOrder) {
+      record = await this.prisma.customPlanOrder.findFirst({
+        where: {
+          deletedAt: null,
+          OR: [
+            { orderNumber: rawId },
+            { orderId: rawId },
+            { transactionId: rawId },
+            { paymentId: rawId },
+          ],
+        },
+        include: {
+          customer: true,
+          subscription: {
+            include: { plan: true },
+          },
+        },
+      });
+      if (record) isCustom = true;
+    }
 
     // 3. Direct numeric ID lookup
     const directNum = Number(rawId);
     if (!record && !isNaN(directNum) && directNum > 0) {
-      
+      if (directNum >= 100000 && this.prisma.customPlanOrder) {
+        // Namespaced Custom Order ID (e.g. 100006 -> co.id = 6)
+        record = await this.prisma.customPlanOrder.findUnique({
+          where: { id: directNum - 100000 },
+          include: {
+            customer: true,
+            subscription: {
+              include: { plan: true },
+            },
+          },
+        });
+        if (record && !record.deletedAt) isCustom = true;
+        else record = null;
+      }
 
       if (!record) {
         record = await this.prisma.paymentHistory.findUnique({
           where: { id: directNum },
-          
+          include: {
+            customer: true,
+            subscription: {
+              include: { plan: true },
+            },
+          },
         });
         if (record?.deletedAt) record = null;
       }
 
-      
+      if (!record && this.prisma.customPlanOrder) {
+        record = await this.prisma.customPlanOrder.findUnique({
+          where: { id: directNum },
+          include: {
+            customer: true,
+            subscription: {
+              include: { plan: true },
+            },
+          },
+        });
+        if (record && !record.deletedAt) isCustom = true;
+        else record = null;
+      }
     }
 
     // 4. Pattern & Prefix Extraction (DOC-*, REC-*, ORD-PAY-*, ORD-CUST-*, QB-*, RCP-*, etc.)
@@ -104,17 +158,46 @@ export class ReceiptService {
       if (match) {
         const extractedNum = parseInt(match[1], 10);
         if (extractedNum > 0) {
-          
+          if (isCustomPrefix && this.prisma.customPlanOrder) {
+            record = await this.prisma.customPlanOrder.findUnique({
+              where: { id: extractedNum },
+              include: {
+                customer: true,
+                subscription: {
+                  include: { plan: true },
+                },
+              },
+            });
+            if (record && !record.deletedAt) isCustom = true;
+            else record = null;
+          }
 
           if (!record) {
             record = await this.prisma.paymentHistory.findUnique({
               where: { id: extractedNum },
-              
+              include: {
+                customer: true,
+                subscription: {
+                  include: { plan: true },
+                },
+              },
             });
             if (record?.deletedAt) record = null;
           }
 
-          
+          if (!record && this.prisma.customPlanOrder) {
+            record = await this.prisma.customPlanOrder.findUnique({
+              where: { id: extractedNum },
+              include: {
+                customer: true,
+                subscription: {
+                  include: { plan: true },
+                },
+              },
+            });
+            if (record && !record.deletedAt) isCustom = true;
+            else record = null;
+          }
         }
       }
     }
@@ -122,7 +205,7 @@ export class ReceiptService {
     // If still not found, log debug and throw 404
     if (!record) {
       this.logger.warn(
-        `[RECEIPT_DOWNLOAD_DEBUG] requestedId: ${rawId}, customerId: ${customerId || undefined || 'N/A'}, result: NOT_FOUND`,
+        `[RECEIPT_DOWNLOAD_DEBUG] requestedId: ${rawId}, customerId: ${customerId || user?.customerId || 'N/A'}, result: NOT_FOUND`,
       );
       throw new NotFoundException(`Receipt ${rawId} not found`);
     }
@@ -138,12 +221,12 @@ export class ReceiptService {
     const normalized: NormalizedReceiptPayment = {
       id: record.id,
       isCustom,
-      
-      
+      customerId: record.customerId,
+      customer: record.customer,
       status: String(record.status || '').toUpperCase(),
       planName: isCustom
         ? `Custom Plan (${record.duration || 1} ${(record.durationUnit || 'MONTH').toLowerCase()}${record.duration > 1 ? 's' : ''})`
-        : (record.planName || undefined || 'Subscription Plan'),
+        : (record.planName || record.subscription?.plan?.name || 'Subscription Plan'),
       billingCycle: isCustom
         ? ((record.duration || 1) >= 12 ? 'YEARLY' : 'MONTHLY')
         : (record.billingCycle || 'MONTHLY'),
@@ -160,10 +243,10 @@ export class ReceiptService {
     // Role-based security validation: customer can only access their own receipts
     const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN' || user?.isSuperAdmin;
     if (!isAdmin && user?.role === 'CUSTOMER') {
-      const authCustId = customerId || undefined;
-      if (authCustId && Number(undefined) !== Number(authCustId)) {
+      const authCustId = customerId || user?.customerId;
+      if (authCustId && Number(normalized.customerId) !== Number(authCustId)) {
         this.logger.warn(
-          `[RECEIPT_DOWNLOAD_DEBUG] requestedId: ${rawId}, customerId: ${authCustId}, receiptCustomerId: ${undefined}, result: FORBIDDEN`,
+          `[RECEIPT_DOWNLOAD_DEBUG] requestedId: ${rawId}, customerId: ${authCustId}, receiptCustomerId: ${normalized.customerId}, result: FORBIDDEN`,
         );
         throw new ForbiddenException('Access to this receipt is forbidden');
       }
@@ -181,7 +264,7 @@ export class ReceiptService {
     }
 
     this.logger.log(
-      `[RECEIPT_DOWNLOAD_DEBUG] requestedId: ${rawId}, customerId: ${customerId || undefined || 'N/A'}, foundReceiptId: ${normalized.id}, receiptNumber: ${normalized.receiptNumber}, documentNumber: ${rawId}, receiptCustomerId: ${undefined}, paymentStatus: ${normalized.status}`,
+      `[RECEIPT_DOWNLOAD_DEBUG] requestedId: ${rawId}, customerId: ${customerId || user?.customerId || 'N/A'}, foundReceiptId: ${normalized.id}, receiptNumber: ${normalized.receiptNumber}, documentNumber: ${rawId}, receiptCustomerId: ${normalized.customerId}, paymentStatus: ${normalized.status}`,
     );
 
     return normalized;
@@ -206,7 +289,12 @@ export class ReceiptService {
       totalAmount: payment.totalAmount,
       paidDate: payment.createdAt,
       status: 'PAID',
-      
+      customer: {
+        id: payment.customer?.id,
+        name: payment.customer?.name || 'Customer',
+        email: payment.customer?.email || '',
+        phone: payment.customer?.phone || '',
+      },
       plan: {
         name: payment.planName,
         billingCycle: payment.billingCycle,
@@ -295,11 +383,11 @@ export class ReceiptService {
 
         // Left Column (x=40, width=245): PAID BY CUSTOMER
         doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('PAID BY CUSTOMER', 40, metaTop);
-        doc.fillColor(darkColor).fontSize(10).font(boldFont).text('Customer Account', 40, metaTop + 14, { width: 245 });
+        doc.fillColor(darkColor).fontSize(10).font(boldFont).text(payment.customer?.name || 'Customer Account', 40, metaTop + 14, { width: 245 });
         doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-          .text(`Email: ${'N/A'}`, 40, metaTop + 28, { width: 245 })
-          .text(`Phone: ${'N/A'}`, 40, metaTop + 40, { width: 245 })
-          .text(`Customer ID: #${undefined}`, 40, metaTop + 52, { width: 245 });
+          .text(`Email: ${payment.customer?.email || 'N/A'}`, 40, metaTop + 28, { width: 245 })
+          .text(`Phone: ${payment.customer?.phone || 'N/A'}`, 40, metaTop + 40, { width: 245 })
+          .text(`Customer ID: #${payment.customerId}`, 40, metaTop + 52, { width: 245 });
 
         // Right Column (x=310, width=245): TRANSACTION DETAILS
         doc.fillColor(grayColor).fontSize(8.5).font(boldFont).text('TRANSACTION DETAILS', 310, metaTop);

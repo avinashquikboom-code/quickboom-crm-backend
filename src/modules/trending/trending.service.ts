@@ -26,7 +26,7 @@ export class TrendingService {
    * Helper to normalize customerId into numeric representation.
    */
   private parseCustomerId(customerId: any): number | undefined {
-    {
+    if (customerId === undefined || customerId === null || customerId === '') {
       return undefined;
     }
     const num = typeof customerId === 'number' ? customerId : parseInt(String(customerId), 10);
@@ -84,7 +84,7 @@ export class TrendingService {
     fileOrFiles?: Express.Multer.File | Express.Multer.File[],
   ) {
     const targetCustomerId = isSuperAdmin
-      ? (null)
+      ? (dto.customerId ? this.parseCustomerId(dto.customerId) : null)
       : this.parseCustomerId(authCustomerId);
 
     const startAt = dto.startAt ? new Date(dto.startAt) : null;
@@ -141,7 +141,7 @@ export class TrendingService {
 
           const content = await this.prisma.trendingContent.create({
             data: {
-
+              customerId: targetCustomerId,
               title: itemTitle,
               description: dto.description?.trim() || null,
               category: fileCategory,
@@ -229,7 +229,7 @@ export class TrendingService {
 
     const content = await this.prisma.trendingContent.create({
       data: {
-
+        customerId: targetCustomerId,
         title: dto.title?.trim() || (resolvedCategory === TrendingCategory.REEL ? 'Trending Reel' : 'Trending Creative'),
         description: dto.description?.trim() || null,
         category: resolvedCategory,
@@ -273,7 +273,7 @@ export class TrendingService {
     isSuperAdmin = false,
   ) {
     const targetCustomerId = isSuperAdmin
-      ? (undefined)
+      ? (query.customerId ? this.parseCustomerId(query.customerId) : undefined)
       : this.parseCustomerId(authCustomerId);
 
     const page = Math.max(1, parseInt(String(query.page || 1), 10) || 1);
@@ -282,7 +282,14 @@ export class TrendingService {
 
     const andConditions: any[] = [{ deletedAt: null }];
 
-
+    if (targetCustomerId !== undefined) {
+      andConditions.push({
+        OR: [
+          { customerId: targetCustomerId },
+          { customerId: null }, // Platform-wide templates
+        ],
+      });
+    }
 
     if (query.category) {
       andConditions.push({ category: query.category });
@@ -339,7 +346,16 @@ export class TrendingService {
     const baseStatsWhere: any = {
       AND: [
         { deletedAt: null },
-        ...([]),
+        ...(targetCustomerId !== undefined
+          ? [
+              {
+                OR: [
+                  { customerId: targetCustomerId },
+                  { customerId: null },
+                ],
+              },
+            ]
+          : []),
       ],
     };
 
@@ -350,7 +366,7 @@ export class TrendingService {
         take: limit,
         orderBy: adminOrderBy,
         include: {
-
+          customer: { select: { id: true, name: true, domain: true } },
           createdByUser: { select: { id: true, firstName: true, lastName: true, email: true } },
         },
       }),
@@ -415,10 +431,15 @@ export class TrendingService {
       where: {
         id: numId,
         deletedAt: null,
-        ...(isSuperAdmin ? {} : {}),
+        ...(isSuperAdmin ? {} : targetCustomerId !== undefined ? {
+          OR: [
+            { customerId: targetCustomerId },
+            { customerId: null },
+          ],
+        } : {}),
       },
       include: {
-
+        customer: { select: { id: true, name: true, domain: true } },
         createdByUser: { select: { id: true, firstName: true, lastName: true, email: true } },
       },
     });
@@ -821,7 +842,7 @@ export class TrendingService {
 
     console.log('[CUSTOMER_TRENDING_REQUEST]', {
       userId: user?.id || null,
-
+      customerId: targetCustomerId || null,
       email: user?.email || null,
       platform,
       sort,
@@ -863,7 +884,12 @@ export class TrendingService {
     };
 
     // Multi-tenant isolation: Content belonging to customer's workspace OR global platform templates
-
+    if (targetCustomerId !== undefined) {
+      where.OR = [
+        { customerId: targetCustomerId },
+        { customerId: null },
+      ];
+    }
 
     if (category) {
       where.category = category;
@@ -878,7 +904,7 @@ export class TrendingService {
     }
 
     console.log('[CUSTOMER_TRENDING_PRISMA]', {
-
+      customerId: targetCustomerId,
       customerIdType: typeof targetCustomerId,
       platform,
     });

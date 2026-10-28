@@ -4,7 +4,7 @@ import { MasterService } from './master.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Master Data Management')
 @ApiBearerAuth()
@@ -22,7 +22,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getMasterSummary(targetCustomerId);
   }
 
@@ -35,7 +35,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getEmployeeTypes(targetCustomerId);
   }
 
@@ -48,7 +48,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getWorkTypes(targetCustomerId);
   }
 
@@ -61,7 +61,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getActivityTypes(targetCustomerId);
   }
 
@@ -74,8 +74,21 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getTaskStatuses(targetCustomerId);
+  }
+
+  @Get('lead-sources')
+  @ApiOperation({ summary: 'Get lead sources and lead distribution' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getLeadSources(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.masterService.getLeadSources(targetCustomerId);
   }
 
   @Get('expense-categories')
@@ -87,7 +100,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getExpenseCategories(targetCustomerId);
   }
 
@@ -100,7 +113,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getLoanTypes(targetCustomerId);
   }
 
@@ -113,7 +126,7 @@ export class MasterController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.masterService.getPaymentMethods(targetCustomerId);
   }
 
@@ -125,7 +138,7 @@ export class MasterController {
     @Body() dto: any,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (dto.customerId || customerId) : user?.customerId;
     return this.masterService.createMasterItem(targetCustomerId, dto);
   }
 
@@ -138,7 +151,7 @@ export class MasterController {
     @Body() dto: any,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerId) : undefined;
+    const targetCustomerId = isSuperAdmin ? (dto.customerId || customerId) : user?.customerId;
     return this.masterService.updateMasterItem(id, targetCustomerId, dto);
   }
 
@@ -150,7 +163,7 @@ export class MasterController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? customerId : undefined;
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
     return this.masterService.deleteMasterItem(id, targetCustomerId);
   }
 }

@@ -1,5 +1,3 @@
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
 import {
   Controller,
   Get,
@@ -18,8 +16,7 @@ import { Response } from 'express';
 
 @ApiTags('Receipts')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
-@WorkspaceAction({ module: 'PAYMENTS', action: 'VIEW' })
+@UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('receipts')
 export class ReceiptController {
   constructor(private readonly receiptService: ReceiptService) {}
@@ -32,7 +29,7 @@ export class ReceiptController {
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const numCustomerId = customerId ? parseInt(customerId, 10) : undefined;
+    const numCustomerId = customerId ? parseInt(customerId, 10) : req?.customerId || user?.customerId;
     return this.receiptService.getReceipt(receiptId, numCustomerId, user);
   }
 
@@ -45,7 +42,7 @@ export class ReceiptController {
     @Req() req: any,
     @Res() res: Response,
   ) {
-    const numCustomerId = customerId ? parseInt(customerId, 10) : undefined;
+    const numCustomerId = customerId ? parseInt(customerId, 10) : req?.customerId || user?.customerId;
     return this.receiptService.downloadReceiptPdf(receiptId, numCustomerId, user, res);
   }
 }

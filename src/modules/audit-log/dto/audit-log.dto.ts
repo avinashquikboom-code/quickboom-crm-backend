@@ -64,5 +64,9 @@ export class AuditLogFilterDto {
   @IsInt()
   userId?: number;
 
-  
+  @ApiPropertyOptional({ description: 'Filter by specific customer ID' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  customerId?: number;
 }

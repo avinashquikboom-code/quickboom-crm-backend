@@ -127,7 +127,11 @@ export class CreateMarketingVideoDto {
   @IsOptional()
   metadata?: any;
 
-  
+  @ApiPropertyOptional({ example: 1 })
+  @IsInt()
+  @IsOptional()
+  @Type(() => Number)
+  customerId?: number;
 }
 
 export class UpdateMarketingVideoDto extends PartialType(CreateMarketingVideoDto) {}

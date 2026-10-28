@@ -16,7 +16,6 @@ export class CreateOrderDto {
   planId: number | string;
   billingCycle: SubscriptionBillingCycle;
   paymentMethod?: string;
-  couponCode?: string;
 }
 
 export class RenewSubscriptionDto {

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max, IsNumber, IsObject, ValidateIf } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateMetaTemplateDto {
@@ -355,8 +355,6 @@ export class PreviewMetaTemplateDto {
 export class TestSendMetaTemplateDto {
   @ApiPropertyOptional({ description: 'Database ID of the Meta template' })
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber({}, { message: 'templateId must be a valid number' })
   templateId?: number;
 
   @ApiPropertyOptional({ description: 'Meta technical template name' })
@@ -364,25 +362,10 @@ export class TestSendMetaTemplateDto {
   @IsString()
   templateName?: string;
 
-  @ApiPropertyOptional({ description: 'Recipient phone number (E.164 or national format)' })
-  @Transform(({ obj, value }) => {
-    const val = value !== undefined ? value : obj?.phoneNumber !== undefined ? obj.phoneNumber : obj?.phone;
-    return typeof val === 'string' ? val.trim() : val;
-  })
-  @ValidateIf((o) => !o.phoneNumber && !o.phone)
-  @IsNotEmpty({ message: 'Recipient WhatsApp phone number (to) is required' })
-  @IsString({ message: 'Recipient phone number must be a string' })
-  to?: string;
-
-  @ApiPropertyOptional({ description: 'Alias for recipient phone number' })
-  @IsOptional()
+  @ApiProperty({ description: 'Recipient phone number (E.164 or national format)' })
+  @IsNotEmpty()
   @IsString()
-  phoneNumber?: string;
-
-  @ApiPropertyOptional({ description: 'Alias for recipient phone number' })
-  @IsOptional()
-  @IsString()
-  phone?: string;
+  to: string;
 
   @ApiPropertyOptional({ description: 'Template language code', default: 'en_US' })
   @IsOptional()
@@ -391,7 +374,6 @@ export class TestSendMetaTemplateDto {
 
   @ApiPropertyOptional({ description: 'Key-value mapping of template variable values' })
   @IsOptional()
-  @IsObject({ message: 'Template variables must be a key-value object' })
   variables?: Record<string, string>;
 }
 

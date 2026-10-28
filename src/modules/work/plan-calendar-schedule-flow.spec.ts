@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
-import { TaskService } from '../task/task.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus, WorkType, SubscriptionStatus, PaymentMethod, InvoiceStatus } from '@prisma/client';
 import { calculatePlanBillingPeriod, calculatePlanExpiry } from '../../common/utils/subscription-date.util';
@@ -199,97 +198,6 @@ describe('Plan-Based Content Calendar & Advance Payment/Billing Tests', () => {
       expect(result.success).toBe(true);
       expect(result.createdCount).toBe(0);
       expect(prisma.work.create).not.toHaveBeenCalled();
-    });
-
-    it.each([null, 55])('uses the eligible customer owner for plan work regardless of lead origin (leadId=%s)', async (leadId) => {
-      const customerId = 101;
-      const sub = mockPlanSub(customerId, ['1 Reel'], new Date('2099-10-17T10:00:00Z'), new Date('2099-11-17T10:00:00Z'));
-      const customer = { id: customerId, leadId, assignedTeamId: null, assignedEmployeeId: 20 };
-      const employee = { id: 20, userId: 120, customerId: 1, status: 'ACTIVE', firstName: 'Production', lastName: 'Employee', designation: { name: 'Senior Photographer' }, department: { name: 'Production' } };
-      (sub as any).customer = customer;
-      prisma.customerSubscription.findFirst.mockResolvedValue(sub);
-      prisma.customer = { findUnique: jest.fn().mockResolvedValue(customer) };
-      prisma.employee = { findUnique: jest.fn().mockResolvedValue(employee) };
-      prisma.teamMember = { findMany: jest.fn().mockResolvedValue([]) };
-      prisma.team = { findMany: jest.fn().mockResolvedValue([]) };
-      prisma.planEntitlement.findFirst.mockResolvedValue({ id: 1 });
-      prisma.planEntitlement.update.mockResolvedValue({});
-      const works: any[] = [];
-      prisma.work.findMany.mockImplementation(async () => works);
-      prisma.work.create.mockImplementation(async ({ data }: any) => {
-        const work = { id: works.length + 1, ...data, customer, tasks: [] };
-        works.push(work);
-        return work;
-      });
-      prisma.workTask.createMany.mockImplementation(async ({ data }: any) => {
-        works.find(w => w.id === data[0].workId).tasks.push(...data);
-        return { count: data.length };
-      });
-      prisma.work.count.mockImplementation(async () => works.length);
-
-      const result = await workService.generatePlanSchedules(customerId);
-      const shoot = works.find(w => w.workType === WorkType.SHOOT || w.workType === WorkType.REELS_SHOOT);
-      expect(result.createdCount).toBe(3);
-      expect(shoot).toMatchObject({ customerId, assignedToId: employee.id, status: WorkStatus.ASSIGNED });
-      expect(shoot.tasks.some(t => t.assignedToId === employee.id)).toBe(true);
-      const calendar = await workService.getEmployeeCalendar(employee.id, { date: shoot.scheduledDate.toISOString().slice(0, 10) }, { assignedOnly: true });
-      expect(calendar.map(row => row.id)).toContain(String(shoot.id));
-      expect(calendar.find(row => row.id === String(shoot.id))).toMatchObject({ customerId: String(customerId), status: WorkStatus.ASSIGNED });
-      const tasks = new TaskService(prisma, workService);
-      const myWork = await (tasks as any).findEmployeeCalendarWorks(employee.id, employee.customerId, [], {});
-      expect(myWork.find(row => row.id === shoot.id)).toMatchObject({ customerId, source: 'WORK', status: WorkStatus.ASSIGNED });
-      const retry = await workService.generatePlanSchedules(customerId);
-      expect(retry.createdCount).toBe(0);
-      expect(prisma.work.create).toHaveBeenCalledTimes(3);
-      expect(prisma.workTask.createMany).toHaveBeenCalledTimes(3);
-    });
-
-    it('assigns existing schedules to the production employee without creating duplicates', async () => {
-      const customerId = 101;
-      const start = new Date('2026-08-20T00:00:00.000Z');
-      const end = new Date('2026-09-20T00:00:00.000Z');
-      const sub = mockPlanSub(customerId, ['1 Reel'], start, end);
-      (sub as any).customer = { id: customerId, assignedTeamId: 2 };
-      prisma.customerSubscription.findFirst.mockResolvedValue(sub);
-      prisma.planEntitlement.findFirst.mockResolvedValue({ id: 1, serviceName: 'Reels', totalQty: 1, scheduledQty: 1 });
-      prisma.planEntitlement.update.mockResolvedValue({});
-
-      const existingWorks = [
-        { id: 1, title: 'Reel #1: Shoot', customerId, subscriptionId: 501, workType: WorkType.SHOOT, assignedToId: null, teamId: null, status: WorkStatus.SCHEDULED, scheduledDate: new Date('2026-08-20T10:00:00.000Z'), scheduledTime: '10:00 AM' },
-        { id: 2, title: 'Reel #1: Editing', customerId, subscriptionId: 501, workType: WorkType.EDITING, assignedToId: null, teamId: null, status: WorkStatus.SCHEDULED, scheduledDate: new Date('2026-08-22T10:00:00.000Z'), scheduledTime: '10:00 AM' },
-        { id: 3, title: 'Reel #1: Post', customerId, subscriptionId: 501, workType: WorkType.POST_DESIGN, assignedToId: null, teamId: null, status: WorkStatus.SCHEDULED, scheduledDate: new Date('2026-08-24T10:00:00.000Z'), scheduledTime: '10:00 AM' },
-      ];
-      prisma.work.findMany.mockImplementation(async () => existingWorks);
-      prisma.work.update = jest.fn().mockImplementation(async ({ where, data }) => {
-        const work = existingWorks.find((item) => item.id === where.id);
-        Object.assign(work, data);
-        return work;
-      });
-      prisma.workTask.updateMany = jest.fn().mockResolvedValue({ count: 0 });
-      prisma.team = {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 2,
-          name: 'Production Team_A',
-          description: '',
-          customerId: 1,
-          leader: null,
-          members: [
-            { employeeId: 12, employee: { id: 12, customerId: 1, status: 'ACTIVE', designation: { name: 'Senior Photographer' }, department: { name: 'Production' } } },
-            { employeeId: 10, employee: { id: 10, customerId: 1, status: 'ACTIVE', designation: { name: 'Video Editor' }, department: { name: 'Production' } } },
-            { employeeId: 11, employee: { id: 11, customerId: 1, status: 'ACTIVE', designation: { name: 'Graphic Designer' }, department: { name: 'Production' } } },
-          ],
-        }),
-      };
-
-      const result = await workService.generatePlanSchedules(customerId);
-
-      expect(result.createdCount).toBe(0);
-      expect(prisma.work.create).not.toHaveBeenCalled();
-      expect(existingWorks.find((work) => work.id === 1)?.assignedToId).toBe(12);
-      expect(existingWorks.find((work) => work.id === 2)?.assignedToId).toBe(10);
-      expect(existingWorks.find((work) => work.id === 3)?.assignedToId).toBe(11);
-      expect(existingWorks.find((work) => work.id === 1)?.scheduledDate).toEqual(new Date('2026-08-20T10:00:00.000Z'));
-      expect(existingWorks.find((work) => work.id === 1)?.scheduledTime).toBe('10:00 AM');
     });
   });
 

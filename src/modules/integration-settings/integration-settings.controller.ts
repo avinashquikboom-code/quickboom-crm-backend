@@ -18,7 +18,7 @@ import {
 import { SendFirebaseTestNotificationDto } from './dto/firebase-test-notification.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { isUserSuperAdmin } from '../../common/utils/account.util';
+import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Admin Integration & Gateway Settings')
 @Controller('admin/settings/integrations')

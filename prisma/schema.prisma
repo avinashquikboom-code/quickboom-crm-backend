@@ -7,71 +7,204 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Customer {
+  id                       Int                       @id @default(autoincrement())
+  name                     String
+  domain                   String?                   @unique
+  logo                     String?
+  phone                    String?
+  email                    String?
+  address                  String?
+  city                     String?
+  state                    String?
+  country                  String?
+  isActive                 Boolean                   @default(true)
+  storageUsed              BigInt                    @default(0)
+  userLimit                Int                       @default(5)
+  leadLimit                Int                       @default(500)
+  storageLimit             BigInt                    @default(5368709120)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  deletedAt                DateTime?
+  pincode                  String?
+  companyName              String?
+  alternatePhone           String?
+  customerType             String?                   @default("ENTERPRISE")
+  industry                 String?
+  source                   String?                   @default("DIRECT")
+  assignedEmployee         String?
+  assignedEmployeeId       Int?
+  createdByEmployeeId      Int?
+  leadId                   Int?                      @unique
+  department               String?
+  notes                    String?
+  attendancePolicies       AttendancePolicy[]
+  auditLogs                AuditLog[]
+  branchGeofences          BranchGeofence[]
+  claimPolicies            ClaimPolicy[]
+  companies                Company[]
+  contacts                 Contact[]
+  dataCaptureJobs          DataCaptureJob[]
+  dataCapturePlaces        DataCapturePlace[]
+  dataCaptureSearches      DataCaptureSearch[]
+  deals                    Deal[]
+  departments              Department[]
+  designations             Designation[]
+  employees                Employee[]
+  employeeClaims           EmployeeClaim[]
+  leaveBalances            EmployeeLeaveBalance[]
+  employeeLoans            EmployeeLoan[]
+  employeeLocations        EmployeeLocation[]
+  featureToggles           FeatureToggle[]
+  invoices                 Invoice[]
+  leads                    Lead[]
+  leadStages               LeadStage[]
+  leaveAdjustments         LeaveAdjustmentHistory[]
+  leavePolicies            LeavePolicy[]
+  locationTrackingSettings LocationTrackingSetting[]
+  notifications            Notification[]
+  payments                 PaymentHistory[]
+  payrolls                 Payroll[]
+  payrollPolicy            PayrollPolicy?
+  pipelines                Pipeline[]
+  planEntitlements         PlanEntitlement[]
+  products                 Product[]
+  publicHolidays           PublicHoliday[]
+  quotations               Quotation[]
+  roles                    Role[]
+  salaryPolicies           SalaryPolicy[]
+  shifts                   Shift[]
+  shiftGuidances           ShiftGuidance[]
+  tickets                  SupportTicket[]
+  mobileRoleId             Int?
+  mobileRole               Designation?              @relation("CustomerMobileRole", fields: [mobileRoleId], references: [id], onDelete: SetNull)
+  moduleOverrides          CustomerModuleOverride[]
+  tasks                    Task[]
+  teams                    Team[]
+  users                    User[]
+  works                    Work[]
+  subscriptions            CustomerSubscription[]
+  monthlySchedules         MonthlySchedule[]
+  customPlanOrders         CustomPlanOrder[]
+  installments             SubscriptionInstallment[]
+  trendingContents         TrendingContent[]
+  marketingBanners         MarketingBanner[]
+  marketingVideos          MarketingVideo[]
+  marketingVideoViews      CustomerMarketingVideoView[]
+  socialMediaHandlers      SocialMediaHandler[]
+  roleWorkPermissions      RoleWorkPermission[]
+  workAccessRequests       WorkAccessRequest[]
+  employeeModuleOverrides  EmployeeModuleOverride[]
+  roleLeadLimits           RoleLeadLimit[]
+  employeeLeadLimits       EmployeeLeadLimit[]
+  assignedEmployeeRel      Employee?                 @relation("CustomerAssignedStaff", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  createdByEmployeeRel     Employee?                 @relation("CustomerCreatedStaff", fields: [createdByEmployeeId], references: [id], onDelete: SetNull)
+  originLead               Lead?                     @relation("CustomerOriginLead", fields: [leadId], references: [id], onDelete: SetNull)
+  assignedTeamId           Int?
+  assignedTeam             Team?                     @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  influencerBookings       InfluencerBooking[]
+  influencerBookingPayments InfluencerBookingPayment[]
+  influencerReviews        InfluencerReview[]
+  aiWallet                 AiCreditWallet?
+  aiTransactions           AiCreditTransaction[]
+  aiGenerations            AiGeneration[]
+  socialAccounts           SocialAccount[]
+  socialPublishes          SocialPublish[]
+  masterItems              MasterItem[]
+  emailTemplates           EmailTemplate[]
+  emailLogs                EmailLog[]
+  metaTemplates            MetaTemplate[]
+  commissionConfigs        CommissionConfig[]
+  commissions              Commission[]
+
+  @@index([deletedAt])
+  @@index([isActive])
+  @@index([assignedEmployeeId])
+  @@index([createdByEmployeeId])
+  @@index([assignedTeamId])
+  @@index([mobileRoleId])
+  @@map("customers")
+}
+
 model Plan {
-  id               Int               @id @default(autoincrement())
-  name             String            @unique
-  code             String            @unique
+  id               Int                    @id @default(autoincrement())
+  name             String                 @unique
+  code             String                 @unique
   description      String?
   monthlyPrice     Float
   yearlyPrice      Float
   userLimit        Int
+  leadLimit        Int
   storageLimit     BigInt
   features         Json
-  isActive         Boolean           @default(true)
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  isActive         Boolean                @default(true)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
   deletedAt        DateTime?
-  taxRateBps       Int @default(1800)
-  yearlyDiscountBps Int @default(2000)
-  billingIntervals String[] @default(["MONTHLY", "YEARLY"])
-  isRecommended Boolean @default(false)
-  customerSubscriptions CustomerSubscription[]
-  checkouts CustomerCheckout[]
+  subscriptions    CustomerSubscription[]
   monthlySchedules MonthlySchedule[]
   commissions      Commission[]
-  couponPlans      CouponPlan[]
 
   @@index([deletedAt])
+}
+
+model CustomerSubscription {
+  id                 Int                       @id @default(autoincrement())
+  customerId         Int
+  planId             Int
+  status             SubscriptionStatus        @default(TRIAL)
+  billingCycle       SubscriptionBillingCycle  @default(MONTHLY)
+  startDate          DateTime
+  endDate            DateTime
+  duration           Int                       @default(1)
+  durationUnit       String                    @default("MONTH")
+  trialEndsAt        DateTime?
+  autoRenew          Boolean                   @default(true)
+  couponId           Int?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  deletedAt          DateTime?
+  customFeatures     Json?
+  customLeadLimit    Int?
+  customPrice        Float?
+  customStorageLimit BigInt?
+  customUserLimit    Int?
+  payments           PaymentHistory[]
+  monthlySchedules   MonthlySchedule[]
+  customPlanOrders   CustomPlanOrder[]
+  works              Work[]
+  installments       SubscriptionInstallment[]
+  coupon             Coupon?                   @relation(fields: [couponId], references: [id])
+  customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan               Plan                      @relation(fields: [planId], references: [id])
+
+  @@index([customerId])
+  @@index([planId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("customer_subscriptions")
 }
 
 model Coupon {
-  id                    Int              @id @default(autoincrement())
-  code                  String           @unique
-  name                  String?
-  description           String?
-  discountPct           Float
-  discountType          String           @default("PERCENTAGE")
-  discountValue         Float?
-  minimumAmount         Float?
-  maximumDiscountAmount Float?
-  startsAt              DateTime?
-  maxRedemptions        Int              @default(100)
-  timesRedeemed         Int              @default(0)
-  appliesToAllPlans     Boolean          @default(true)
-  expiresAt             DateTime?
-  isActive              Boolean          @default(true)
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
-  deletedAt             DateTime?
-  plans                 CouponPlan[]
-  payments              PaymentHistory[]
+  id             Int                    @id @default(autoincrement())
+  code           String                 @unique
+  discountPct    Float
+  maxRedemptions Int                    @default(100)
+  timesRedeemed  Int                    @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean                @default(true)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  deletedAt      DateTime?
+  subscriptions  CustomerSubscription[]
 
   @@index([code])
-  @@index([deletedAt])
-}
-
-model CouponPlan {
-  couponId Int
-  planId   Int
-  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
-
-  @@id([couponId, planId])
-  @@map("coupon_plans")
 }
 
 model PaymentHistory {
   id             Int                       @id @default(autoincrement())
+  customerId     Int
+  subscriptionId Int?
   amount         Float
   currency       String                    @default("INR")
   paymentMethod  PaymentMethod             @default(RAZORPAY)
@@ -86,24 +219,21 @@ model PaymentHistory {
   taxAmount      Float?
   totalAmount    Float?
   transactionId  String?
-  couponId       Int?
-  couponCode     String?
-  originalAmount Float?
-  discountAmount Float?
   createdAt      DateTime                  @default(now())
   updatedAt      DateTime                  @updatedAt
   deletedAt      DateTime?
-  coupon         Coupon?                   @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  installments   SubscriptionInstallment[]
   commission     Commission?
 
+  @@index([customerId])
   @@index([deletedAt])
 }
 
 model User {
-  customerAccount Customer?
-  createdLeads            Lead[]            @relation("LeadCreator")
-  accountType             String            @default("EMPLOYEE")
   id                      Int               @id @default(autoincrement())
+  customerId              Int?
   email                   String            @unique
   phone                   String?           @unique
   passwordHash            String
@@ -126,6 +256,9 @@ model User {
   dataCaptureJobs         DataCaptureJob[]
   assignedDeals           Deal[]            @relation("AssignedDeals")
   employee                Employee?
+  assignedLeads           Lead[]            @relation("AssignedLeads")
+  createdLeads            Lead[]            @relation("CreatedLeads")
+  leadNotes               LeadNote[]
   notifications           Notification[]
   refreshTokens           RefreshToken[]
   sessions                Session[]
@@ -134,15 +267,70 @@ model User {
   assignedTasks           Task[]            @relation("AssignedTasks")
   createdTasks            Task[]            @relation("CreatedTasks")
   ticketComments          TicketComment[]
+  customer                Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userRoles               UserRole[]
   deviceTokens            UserDeviceToken[]
   createdTrendingContents TrendingContent[] @relation("CreatedTrendingContents")
   createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
   createdMarketingVideos  MarketingVideo[]  @relation("CreatedMarketingVideos")
   emailLogs               EmailLog[]
 
+  @@index([customerId])
   @@index([email])
   @@index([phone])
   @@index([deletedAt])
+}
+
+model Role {
+  id              Int              @id @default(autoincrement())
+  customerId      Int?
+  designationId   Int?             @unique
+  name            String
+  type            RoleType         @default(CUSTOM)
+  description     String?
+  permissionsUpdatedAt DateTime         @default(now())
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  deletedAt       DateTime?
+  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  designation     Designation?     @relation(fields: [designationId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@index([customerId])
+  @@index([deletedAt])
+}
+
+model Permission {
+  id              Int              @id @default(autoincrement())
+  module          String
+  action          String
+  description     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  rolePermissions RolePermission[]
+  employeeOverrides EmployeeModuleOverride[]
+  customerOverrides CustomerModuleOverride[]
+
+  @@unique([module, action])
+}
+
+model UserRole {
+  userId Int
+  roleId Int
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
 }
 
 model RefreshToken {
@@ -171,8 +359,211 @@ model Session {
   @@index([userId])
 }
 
+model Lead {
+  id                   Int                    @id @default(autoincrement())
+  customerId           Int
+  title                String
+  firstName            String
+  lastName             String
+  email                String?
+  phone                String?
+  companyName          String?
+  website              String?
+  address              String?
+  city                 String?
+  state                String?
+  pincode              String?
+  category             String?
+  source               String                 @default("WEBSITE")
+  status               LeadStatus             @default(NEW)
+  stageId              Int?
+  stage                LeadStage?             @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  priority             LeadPriority           @default(MEDIUM)
+  value                Float                  @default(0)
+  assignedToId         Int?
+  createdById          Int
+  nextFollowUpDate     DateTime?
+  nextFollowUpTime     String?
+  workStartDate        DateTime?
+  workNotes            String?
+  assignedTeam         String?
+  paidAmount           Float?                 @default(0)
+  paymentStatus        String?                @default("PENDING")
+  paymentMethod        String?
+  paymentRef           String?
+  convertedAt          DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  deletedAt            DateTime?
+  convertedToCompanyId Int?
+  convertedToContactId Int?
+  convertedToDealId    Int?
+  country              String?
+  googlePlaceId        String?
+  latitude             Float?
+  longitude            Float?
+  rating               Float?
+  reviewCount          Int?
+  captureRequestId     String?
+  sourceRecordId       String?
+  createdFrom          RecordCreatedFrom?
+  assignedTo           User?                  @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  createdBy            User                   @relation("CreatedLeads", fields: [createdById], references: [id])
+  customer             Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employeeId           Int?
+  employee             Employee?              @relation("EmployeeLeads", fields: [employeeId], references: [id])
+  convertedByEmployeeId Int?
+  convertedByEmployee  Employee?              @relation("ConvertedLeads", fields: [convertedByEmployeeId], references: [id])
+  convertedCustomer    Customer?              @relation("CustomerOriginLead")
+  timeline             LeadActivityTimeline[]
+  notes                LeadNote[]
+  reminders            LeadReminder[]
+  statusHistory        LeadStatusHistory[]
+  quotations           Quotation[]
+  visits               Visit[]
+  emailLogs            EmailLog[]
+  socialMedia          Json?
+  socialProfiles       LeadSocialProfile[]
+  images               LeadImage[]
+  commissions          Commission[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([stageId])
+  @@index([assignedToId])
+  @@index([employeeId])
+  @@index([convertedByEmployeeId])
+  @@index([googlePlaceId])
+  @@index([captureRequestId])
+  @@index([createdFrom])
+  @@index([deletedAt])
+  @@index([customerId, deletedAt, createdAt])
+  @@index([customerId, status, deletedAt])
+  @@index([customerId, phone])
+  @@index([customerId, email])
+}
+
+model LeadStatusHistory {
+  id          Int         @id @default(autoincrement())
+  leadId      Int
+  fromStatus  LeadStatus?
+  toStatus    LeadStatus
+  fromStageId Int?
+  toStageId   Int?
+  changedById Int?
+  notes       String?
+  createdAt   DateTime    @default(now())
+  lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([toStageId])
+}
+
+model LeadNote {
+  id        Int      @id @default(autoincrement())
+  leadId    Int
+  userId    Int
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([leadId])
+}
+
+model LeadImage {
+  id        Int      @id @default(autoincrement())
+  leadId    Int
+  url       String
+  key       String?
+  caption   String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([leadId, isPrimary])
+  @@map("lead_images")
+}
+
+model LeadSocialProfile {
+  id        Int      @id @default(autoincrement())
+  leadId    Int
+  platform  String
+  url       String
+  username  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, platform])
+  @@index([leadId])
+  @@index([platform])
+  @@map("lead_social_profiles")
+}
+
+model LeadActivityTimeline {
+  id          Int      @id @default(autoincrement())
+  leadId      Int
+  action      String
+  description String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model LeadReminder {
+  id          Int      @id @default(autoincrement())
+  leadId      Int
+  remindAt    DateTime
+  title       String
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model LeadStage {
+  id          Int       @id @default(autoincrement())
+  customerId  Int?
+  name        String
+  key         String
+  color       String    @default("#0284C7")
+  bgColor     String?   @default("#E0F2FE")
+  borderColor String?   @default("#BAE6FD")
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  isSystem    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  emailEnabled        Boolean        @default(true)
+  emailTemplateId     Int?
+  whatsappEnabled     Boolean        @default(true)
+  whatsappTemplateId  Int?
+
+  customer            Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  emailTemplate       EmailTemplate? @relation(fields: [emailTemplateId], references: [id], onDelete: SetNull)
+  whatsappTemplate    MetaTemplate?  @relation(fields: [whatsappTemplateId], references: [id], onDelete: SetNull)
+  leads               Lead[]
+
+  @@unique([customerId, key])
+  @@index([customerId])
+  @@index([sortOrder])
+  @@index([deletedAt])
+  @@index([emailTemplateId])
+  @@index([whatsappTemplateId])
+  @@map("lead_stages")
+}
+
 model Company {
   id            Int       @id @default(autoincrement())
+  customerId    Int
   name          String
   domain        String?
   industry      String?
@@ -196,18 +587,19 @@ model Company {
   state         String?
   status        String?   @default("ACTIVE")
   website       String?
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contacts      Contact[]
   deals         Deal[]
   visits        Visit[]
-  works         Work[]
-  billingCustomer Customer?
 
+  @@index([customerId])
   @@index([googlePlaceId])
   @@index([deletedAt])
 }
 
 model Contact {
   id              Int                    @id @default(autoincrement())
+  customerId      Int
   companyId       Int?
   type            ContactType            @default(CUSTOMER)
   firstName       String
@@ -229,11 +621,13 @@ model Contact {
   communications  CommunicationHistory[]
   assignedTo      User?                  @relation("AssignedContacts", fields: [assignedToId], references: [id])
   company         Company?               @relation(fields: [companyId], references: [id])
+  customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
   deals           Deal[]
   invoices        Invoice[]
   quotations      Quotation[]
   visits          Visit[]
 
+  @@index([customerId])
   @@index([companyId])
   @@index([deletedAt])
 }
@@ -251,15 +645,18 @@ model CommunicationHistory {
 }
 
 model Pipeline {
-  id        Int             @id @default(autoincrement())
-  name      String
-  isDefault Boolean         @default(false)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  deletedAt DateTime?
-  deals     Deal[]
-  stages    PipelineStage[]
+  id         Int             @id @default(autoincrement())
+  customerId Int
+  name       String
+  isDefault  Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  deletedAt  DateTime?
+  deals      Deal[]
+  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  stages     PipelineStage[]
 
+  @@index([customerId])
   @@index([deletedAt])
 }
 
@@ -279,6 +676,7 @@ model PipelineStage {
 
 model Deal {
   id              Int           @id @default(autoincrement())
+  customerId      Int
   pipelineId      Int
   stageId         Int
   contactId       Int?
@@ -296,16 +694,19 @@ model Deal {
   assignedToId    Int?
   currency        String?       @default("INR")
   description     String?
+  leadId          Int?
   notes           String?
   source          String?       @default("CRM")
   assignedTo      User?         @relation("AssignedDeals", fields: [assignedToId], references: [id])
   company         Company?      @relation(fields: [companyId], references: [id])
   contact         Contact?      @relation(fields: [contactId], references: [id])
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   pipeline        Pipeline      @relation(fields: [pipelineId], references: [id])
   stage           PipelineStage @relation(fields: [stageId], references: [id])
   quotations      Quotation[]
   visits          Visit[]
 
+  @@index([customerId])
   @@index([pipelineId])
   @@index([stageId])
   @@index([deletedAt])
@@ -313,6 +714,7 @@ model Deal {
 
 model Task {
   id                Int           @id @default(autoincrement())
+  customerId        Int
   title             String
   description       String?
   status            TaskStatus    @default(PENDING)
@@ -348,6 +750,7 @@ model Task {
   startedAt         DateTime?
   assignedTo        User?         @relation("AssignedTasks", fields: [assignedToId], references: [id])
   createdBy         User          @relation("CreatedTasks", fields: [createdById], references: [id])
+  customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   department        Department?   @relation(fields: [departmentId], references: [id])
   designation       Designation?  @relation(fields: [designationId], references: [id])
   employee          Employee?     @relation(fields: [employeeId], references: [id])
@@ -355,13 +758,14 @@ model Task {
   proofs            TaskProof[]
   reviews           TaskReview[]
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([departmentId])
   @@index([assignedToId])
   @@index([status])
   @@index([dueAt])
   @@index([deletedAt])
-  @@index([deletedAt, createdAt])
+  @@index([customerId, deletedAt, createdAt])
   @@index([assignedToId, status, deletedAt])
 }
 
@@ -415,6 +819,7 @@ model TaskHistory {
 
 model Product {
   id             Int             @id @default(autoincrement())
+  customerId     Int
   name           String
   sku            String
   description    String?
@@ -427,16 +832,20 @@ model Product {
   updatedAt      DateTime        @updatedAt
   deletedAt      DateTime?
   invoiceItems   InvoiceItem[]
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   quotationItems QuotationItem[]
 
-  @@unique([sku])
+  @@unique([customerId, sku])
+  @@index([customerId])
   @@index([deletedAt])
 }
 
 model Quotation {
   id          Int             @id @default(autoincrement())
+  customerId  Int
   contactId   Int?
   dealId      Int?
+  leadId      Int?
   quotationNo String
   status      QuotationStatus @default(DRAFT)
   subTotal    Float
@@ -450,10 +859,14 @@ model Quotation {
   deletedAt   DateTime?
   invoices    Invoice[]
   contact     Contact?        @relation(fields: [contactId], references: [id])
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   deal        Deal?           @relation(fields: [dealId], references: [id])
+  lead        Lead?           @relation(fields: [leadId], references: [id])
   items       QuotationItem[]
 
+  @@index([customerId])
   @@index([contactId])
+  @@index([leadId])
   @@index([deletedAt])
 }
 
@@ -469,25 +882,29 @@ model QuotationItem {
 }
 
 model Invoice {
-  id          Int           @id @default(autoincrement())
-  contactId   Int
-  quotationId Int?
-  invoiceNo   String
-  status      InvoiceStatus @default(DRAFT)
-  issueDate   DateTime
-  dueDate     DateTime
-  subTotal    Float
-  taxAmount   Float
-  discount    Float         @default(0)
-  totalAmount Float
-  notes       String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  deletedAt   DateTime?
-  contact     Contact       @relation(fields: [contactId], references: [id])
-  quotation   Quotation?    @relation(fields: [quotationId], references: [id])
-  items       InvoiceItem[]
+  id           Int                       @id @default(autoincrement())
+  customerId   Int
+  contactId    Int
+  quotationId  Int?
+  invoiceNo    String
+  status       InvoiceStatus             @default(DRAFT)
+  issueDate    DateTime
+  dueDate      DateTime
+  subTotal     Float
+  taxAmount    Float
+  discount     Float                     @default(0)
+  totalAmount  Float
+  notes        String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  deletedAt    DateTime?
+  contact      Contact                   @relation(fields: [contactId], references: [id])
+  customer     Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotation    Quotation?                @relation(fields: [quotationId], references: [id])
+  items        InvoiceItem[]
+  installments SubscriptionInstallment[]
 
+  @@index([customerId])
   @@index([contactId])
   @@index([status])
   @@index([deletedAt])
@@ -506,6 +923,7 @@ model InvoiceItem {
 
 model SupportTicket {
   id           Int             @id @default(autoincrement())
+  customerId   Int
   ticketNo     String
   subject      String
   description  String
@@ -518,8 +936,10 @@ model SupportTicket {
   deletedAt    DateTime?
   assignedTo   User?           @relation("AssignedTickets", fields: [assignedToId], references: [id])
   createdBy    User            @relation("CreatedTickets", fields: [createdById], references: [id])
+  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   comments     TicketComment[]
 
+  @@index([customerId])
   @@index([status])
   @@index([deletedAt])
 }
@@ -537,20 +957,23 @@ model TicketComment {
 }
 
 model Notification {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  title     String
-  message   String
-  type      String
-  isRead    Boolean  @default(false)
-  data      Json?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  userId     Int
+  title      String
+  message    String
+  type       String
+  isRead     Boolean  @default(false)
+  data       Json?
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([userId])
   @@index([isRead])
   @@index([userId, isRead, createdAt])
-  @@index([createdAt])
+  @@index([customerId, createdAt])
 }
 
 model NotificationCampaign {
@@ -558,13 +981,13 @@ model NotificationCampaign {
   title            String
   message          String
   notificationType String    @default("OFFER")
-  targetType       String // "EMPLOYEES"
-  audience         String // "ALL" | "SPECIFIC"
-  targetIds        Json? // Array of target IDs when audience is SPECIFIC
+  targetType       String    // "CUSTOMERS" | "EMPLOYEES"
+  audience         String    // "ALL" | "SPECIFIC"
+  targetIds        Json?     // Array of target IDs when audience is SPECIFIC
   imageUrl         String?
   showCta          Boolean   @default(false)
   ctaText          String?
-  ctaActionType    String? // "DEEP_LINK" | "WEB_URL"
+  ctaActionType    String?   // "DEEP_LINK" | "WEB_URL"
   ctaActionValue   String?
   scheduledAt      DateTime?
   status           String    @default("SENT") // "SENT" | "SCHEDULED" | "FAILED"
@@ -594,26 +1017,29 @@ model UserDeviceToken {
 }
 
 model AuditLog {
-  id           Int      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
+  customerId   Int?
   userId       Int?
   userName     String?
-  userRole     String? // CUSTOMER, EMPLOYEE, ADMIN, SUPER_ADMIN
-  source       String   @default("ADMIN_PANEL") // ADMIN_PANEL, MOBILE_APP
-  action       String // LOGIN, LOGOUT, CREATE, UPDATE, DELETE, APPROVE, REJECT, SUBMIT, etc.
-  module       String // Attendance, Leave, Remote Work, Influencers, CRM, Settings, Payroll, etc.
+  userRole     String?   // CUSTOMER, EMPLOYEE, ADMIN, SUPER_ADMIN
+  source       String    @default("ADMIN_PANEL") // ADMIN_PANEL, MOBILE_APP
+  action       String    // LOGIN, LOGOUT, CREATE, UPDATE, DELETE, APPROVE, REJECT, SUBMIT, etc.
+  module       String    // Attendance, Leave, Remote Work, Influencers, CRM, Settings, Payroll, etc.
   description  String?
   entityType   String?
   entityId     String?
   endpoint     String?
-  method       String? // POST, PUT, PATCH, DELETE, GET
+  method       String?   // POST, PUT, PATCH, DELETE, GET
   ipAddress    String?
   device       String?
-  status       String   @default("SUCCESS") // SUCCESS, FAILED
+  status       String    @default("SUCCESS") // SUCCESS, FAILED
   errorMessage String?
   details      Json?
-  createdAt    DateTime @default(now())
-  user         User?    @relation(fields: [userId], references: [id])
+  createdAt    DateTime  @default(now())
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user         User?     @relation(fields: [userId], references: [id])
 
+  @@index([customerId])
   @@index([userId])
   @@index([createdAt])
   @@index([source])
@@ -625,16 +1051,19 @@ model AuditLog {
 }
 
 model FeatureToggle {
-  id        Int      @id @default(autoincrement())
-  feature   String
-  isEnabled Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  feature    String
+  isEnabled  Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  @@unique([feature])
+  @@unique([customerId, feature])
 }
 
 model EmployeeLocation {
   id                 Int          @id @default(autoincrement())
+  customerId         Int
   employeeId         Int
   latitude           Float
   longitude          Float
@@ -647,8 +1076,10 @@ model EmployeeLocation {
   visitId            Int?
   timestamp          DateTime     @default(now())
   createdAt          DateTime     @default(now())
+  customer           Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee           Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([timestamp])
   @@index([employeeId, timestamp])
@@ -656,6 +1087,7 @@ model EmployeeLocation {
 
 model BranchGeofence {
   id                 Int                @id @default(autoincrement())
+  customerId         Int
   name               String
   code               String?
   address            String?
@@ -671,29 +1103,35 @@ model BranchGeofence {
   updatedAt          DateTime           @updatedAt
   attendances        Attendance[]
   attendancePolicies AttendancePolicy[]
+  customer           Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
   claimPolicies      ClaimPolicy[]
   employees          Employee[]
   leavePolicies      LeavePolicy[]
   publicHolidays     PublicHoliday[]
   salaryPolicies     SalaryPolicy[]
 
+  @@index([customerId])
   @@index([isActive])
 }
 
 model LocationTrackingSetting {
   id               Int                      @id @default(autoincrement())
+  customerId       Int
   employeeId       Int                      @unique
   isEnabled        Boolean                  @default(true)
   trackingMode     TrackingMode             @default(ATTENDANCE_ONLY)
   permissionStatus LocationPermissionStatus @default(GRANTED)
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
+  customer         Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model Department {
   id           Int           @id @default(autoincrement())
+  customerId   Int
   name         String
   code         String
   description  String?
@@ -701,38 +1139,45 @@ model Department {
   isActive     Boolean       @default(true)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   designations Designation[]
   employees    Employee[]
   tasks        Task[]
 
-  @@unique([code])
+  @@unique([customerId, code])
+  @@index([customerId])
 }
 
 model Designation {
-  id                Int                 @id @default(autoincrement())
-  departmentId      Int?
-  name              String
-  code              String
-  description       String?
-  level             Int                 @default(1)
-  isActive          Boolean             @default(true)
-  crmMobileAccess   Boolean             @default(false)
-  commissionEnabled Boolean             @default(false)
-  commissionType    CommissionType      @default(PERCENTAGE)
-  commissionRate    Float               @default(0.0)
-  audience          DesignationAudience @default(EMPLOYEE)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  department        Department?         @relation(fields: [departmentId], references: [id])
-  employees         Employee[]
-  tasks             Task[]
+  id           Int         @id @default(autoincrement())
+  customerId   Int
+  departmentId Int?
+  name         String
+  code         String
+  description  String?
+  level        Int         @default(1)
+  isActive     Boolean     @default(true)
+  crmMobileAccess Boolean  @default(false)
+  commissionEnabled Boolean @default(false)
+  commissionType   CommissionType @default(PERCENTAGE)
+  commissionRate   Float          @default(0.0)
+  audience     DesignationAudience @default(EMPLOYEE)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  customer     Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  department   Department? @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+  mobileCustomers Customer[] @relation("CustomerMobileRole")
+  tasks        Task[]
+  role         Role?
 
-  @@unique([code])
+  @@unique([customerId, code])
+  @@index([customerId])
 }
 
 model Employee {
-  assignedLeads            Lead[]                   @relation("LeadAssignee")
   id                       Int                      @id @default(autoincrement())
+  customerId               Int
   userId                   Int?                     @unique
   employeeCode             String
   firstName                String
@@ -757,9 +1202,11 @@ model Employee {
   createdAt                DateTime                 @default(now())
   updatedAt                DateTime                 @updatedAt
   mobileLoginEnabled       Boolean                  @default(true)
+  permissionsUpdatedAt     DateTime                 @default(now())
   officeId                 Int?
   shiftId                  Int?
   attendances              Attendance[]
+  customer                 Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
   department               Department?              @relation(fields: [departmentId], references: [id])
   designation              Designation?             @relation(fields: [designationId], references: [id])
   office                   BranchGeofence?          @relation(fields: [officeId], references: [id])
@@ -784,40 +1231,47 @@ model Employee {
   workTasks                WorkTask[]
   assignedMonthlySchedules MonthlySchedule[]
   workAccessRequests       WorkAccessRequest[]
+  employeeModuleOverrides  EmployeeModuleOverride[]
   ledTeams                 Team[]                   @relation("TeamLeader")
+  leadLimit                EmployeeLeadLimit?
+  leads                    Lead[]                   @relation("EmployeeLeads")
+  convertedLeads           Lead[]                   @relation("ConvertedLeads")
+  assignedCustomers        Customer[]               @relation("CustomerAssignedStaff")
+  createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
   commissionConfig         CommissionConfig?
   commissions              Commission[]
-  commissionShares         CommissionShare[]
 
-  @@unique([employeeCode])
+  @@unique([customerId, employeeCode])
+  @@index([customerId])
   @@index([email])
   @@index([officeId])
 }
 
 model Attendance {
-  id                        Int               @id @default(autoincrement())
-  employeeId                Int
-  date                      DateTime          @default(now())
-  punchIn                   DateTime?
-  punchOut                  DateTime?
-  workingHours              Float             @default(0.0)
-  workingMinutes            Int?              @default(0)
-  breakDuration             Float             @default(0.0)
-  lateMinutes               Int?              @default(0)
-  isLate                    Boolean?          @default(false)
-  workMode                  String?           @default("OFFICE")
-  locationStatus            String?           @default("INSIDE_RADIUS")
-  status                    AttendanceStatus  @default(PRESENT)
-  locationIn                String?
-  locationOut               String?
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
-  distanceFromOffice        Float?
-  latitude                  Float?
-  longitude                 Float?
-  accuracy                  Float?
-  punchOutLatitude          Float?
-  punchOutLongitude         Float?
+  id                 Int               @id @default(autoincrement())
+  customerId         Int
+  employeeId         Int
+  date               DateTime          @default(now())
+  punchIn            DateTime?
+  punchOut           DateTime?
+  workingHours       Float             @default(0.0)
+  workingMinutes     Int?              @default(0)
+  breakDuration      Float             @default(0.0)
+  lateMinutes        Int?              @default(0)
+  isLate             Boolean?          @default(false)
+  workMode           String?           @default("OFFICE")
+  locationStatus     String?           @default("INSIDE_RADIUS")
+  status             AttendanceStatus  @default(PRESENT)
+  locationIn         String?
+  locationOut        String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  distanceFromOffice Float?
+  latitude           Float?
+  longitude          Float?
+  accuracy           Float?
+  punchOutLatitude   Float?
+  punchOutLongitude  Float?
   punchOutAccuracy          Float?
   officeId                  Int?
   punchInBiometricVerified  Boolean?          @default(false)
@@ -826,12 +1280,13 @@ model Attendance {
   office                    BranchGeofence?   @relation(fields: [officeId], references: [id])
   breaks                    AttendanceBreak[]
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([officeId])
   @@index([date])
   @@index([status])
   @@index([workMode])
-  @@index([employeeId, date])
+  @@index([customerId, employeeId, date])
 }
 
 model AttendanceBreak {
@@ -850,6 +1305,7 @@ model AttendanceBreak {
 
 model LeaveType {
   id                 Int                      @id @default(autoincrement())
+  customerId         Int
   name               String
   code               String
   daysAllowedPerYear Int                      @default(12)
@@ -861,11 +1317,13 @@ model LeaveType {
   leaveAdjustments   LeaveAdjustmentHistory[]
   leaveRequests      LeaveRequest[]
 
-  @@unique([code])
+  @@unique([customerId, code])
+  @@index([customerId])
 }
 
 model LeaveRequest {
   id              Int           @id @default(autoincrement())
+  customerId      Int
   employeeId      Int
   leaveTypeId     Int
   fromDate        DateTime
@@ -881,11 +1339,13 @@ model LeaveRequest {
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType       LeaveType     @relation(fields: [leaveTypeId], references: [id])
 
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model PublicHoliday {
   id          Int             @id @default(autoincrement())
+  customerId  Int
   name        String
   date        DateTime
   description String?
@@ -894,8 +1354,10 @@ model PublicHoliday {
   createdById Int?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   office      BranchGeofence? @relation(fields: [officeId], references: [id])
 
+  @@index([customerId])
   @@index([officeId])
   @@index([date])
   @@index([isActive])
@@ -903,6 +1365,7 @@ model PublicHoliday {
 
 model EmployeeLeaveBalance {
   id            Int                      @id @default(autoincrement())
+  customerId    Int
   employeeId    Int
   leaveTypeId   Int
   year          Int                      @default(2026)
@@ -911,17 +1374,20 @@ model EmployeeLeaveBalance {
   remainingDays Float                    @default(12.0)
   createdAt     DateTime                 @default(now())
   updatedAt     DateTime                 @updatedAt
+  customer      Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee      Employee                 @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType     LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
   adjustments   LeaveAdjustmentHistory[]
 
   @@unique([employeeId, leaveTypeId, year])
+  @@index([customerId])
   @@index([employeeId])
   @@index([leaveTypeId])
 }
 
 model LeaveAdjustmentHistory {
   id               Int                   @id @default(autoincrement())
+  customerId       Int
   employeeId       Int
   leaveTypeId      Int
   balanceId        Int?
@@ -934,9 +1400,11 @@ model LeaveAdjustmentHistory {
   adjustedByName   String?
   createdAt        DateTime              @default(now())
   balance          EmployeeLeaveBalance? @relation(fields: [balanceId], references: [id])
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee         Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType        LeaveType             @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([leaveTypeId])
   @@index([createdAt])
@@ -944,6 +1412,7 @@ model LeaveAdjustmentHistory {
 
 model AttendancePolicy {
   id                         Int             @id @default(autoincrement())
+  customerId                 Int
   officeId                   Int?
   name                       String          @default("Standard Attendance Policy")
   workingDaysPerWeek         Int             @default(5)
@@ -988,14 +1457,17 @@ model AttendancePolicy {
   breakExcessAction          String          @default("DEDUCT_EXCESS")
   breakExcessDeductionPct    Float           @default(100.0)
   allowBreakExtension        Boolean         @default(false)
+  customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   office                     BranchGeofence? @relation(fields: [officeId], references: [id])
 
+  @@index([customerId])
   @@index([officeId])
   @@index([isActive])
 }
 
 model LeavePolicy {
   id                          Int             @id @default(autoincrement())
+  customerId                  Int
   officeId                    Int?
   name                        String          @default("Standard Leave Policy")
   allowHalfDay                Boolean         @default(true)
@@ -1017,14 +1489,17 @@ model LeavePolicy {
   updatedByName               String?
   createdAt                   DateTime        @default(now())
   updatedAt                   DateTime        @updatedAt
+  customer                    Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   office                      BranchGeofence? @relation(fields: [officeId], references: [id])
 
+  @@index([customerId])
   @@index([officeId])
   @@index([isActive])
 }
 
 model SalaryPolicy {
   id                        Int             @id @default(autoincrement())
+  customerId                Int
   officeId                  Int?
   name                      String          @default("Standard Salary Policy")
   salaryCycle               String          @default("MONTHLY")
@@ -1048,14 +1523,17 @@ model SalaryPolicy {
   updatedByName             String?
   createdAt                 DateTime        @default(now())
   updatedAt                 DateTime        @updatedAt
+  customer                  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   office                    BranchGeofence? @relation(fields: [officeId], references: [id])
 
+  @@index([customerId])
   @@index([officeId])
   @@index([isActive])
 }
 
 model ClaimPolicy {
   id                         Int             @id @default(autoincrement())
+  customerId                 Int
   officeId                   Int?
   name                       String          @default("Standard Claim Policy")
   claimsEnabled              Boolean         @default(true)
@@ -1073,14 +1551,17 @@ model ClaimPolicy {
   updatedByName              String?
   createdAt                  DateTime        @default(now())
   updatedAt                  DateTime        @updatedAt
+  customer                   Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   office                     BranchGeofence? @relation(fields: [officeId], references: [id])
 
+  @@index([customerId])
   @@index([officeId])
   @@index([isActive])
 }
 
 model RemoteRequest {
   id              Int           @id @default(autoincrement())
+  customerId      Int
   employeeId      Int
   fromDate        DateTime
   toDate          DateTime
@@ -1101,6 +1582,7 @@ model RemoteRequest {
   rejectedAt      DateTime?
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([fromDate])
   @@index([toDate])
@@ -1108,6 +1590,7 @@ model RemoteRequest {
 
 model Shift {
   id                    Int            @id @default(autoincrement())
+  customerId            Int
   name                  String
   code                  String
   startTime             String         @default("09:30 AM")
@@ -1126,15 +1609,18 @@ model Shift {
   updatedAt             DateTime       @updatedAt
   deletedAt             DateTime?
   employees             Employee[]
+  customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   guidance              ShiftGuidance?
 
-  @@unique([code])
+  @@unique([customerId, code])
+  @@index([customerId])
   @@index([status])
 }
 
 model ShiftGuidance {
   id                       Int      @id @default(autoincrement())
   shiftId                  Int      @unique
+  customerId               Int
   overtimeRule             String?  @default("Overtime commences after 9 hours of active shift work; calculated at 1.5x regular hourly wage.")
   punchInRule              String?  @default("Punch-in allowed 30 minutes prior to shift start. Late arrival recorded after 15-minute grace period.")
   punchOutRule             String?  @default("Early departure before shift completion requires manager half-day authorization.")
@@ -1146,12 +1632,17 @@ model ShiftGuidance {
   notes                    String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
+  customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
 }
 
 model Visit {
   id               Int         @id @default(autoincrement())
+  customerId       Int
   employeeId       Int
+  leadId           Int?
   customerName     String
   purpose          String
   date             DateTime    @default(now())
@@ -1180,8 +1671,11 @@ model Visit {
   contact          Contact?    @relation(fields: [contactId], references: [id])
   deal             Deal?       @relation(fields: [dealId], references: [id])
   employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead             Lead?       @relation(fields: [leadId], references: [id])
 
+  @@index([customerId])
   @@index([employeeId])
+  @@index([leadId])
   @@index([companyId])
   @@index([contactId])
   @@index([dealId])
@@ -1191,6 +1685,7 @@ model Visit {
 
 model SalaryStructure {
   id               Int             @id @default(autoincrement())
+  customerId       Int
   employeeId       Int
   basicSalary      Float
   hra              Float           @default(0.0)
@@ -1215,11 +1710,13 @@ model SalaryStructure {
   updatedAt        DateTime        @updatedAt
   employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model Payroll {
   id              Int           @id @default(autoincrement())
+  customerId      Int
   month           Int
   year            Int
   departmentId    Int?
@@ -1233,64 +1730,58 @@ model Payroll {
   disbursedAt     DateTime?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   items           PayrollItem[]
 
-  @@unique([month, year, departmentId])
+  @@unique([customerId, month, year, departmentId])
+  @@index([customerId])
 }
 
 model PayrollItem {
-  commissionShares    CommissionShare[]
-  id                  Int               @id @default(autoincrement())
-  payrollId           Int
-  employeeId          Int
-  basicSalary         Float
-  hra                 Float             @default(0.0)
-  allowances          Float             @default(0.0)
-  specialAllowance    Float             @default(0.0)
-  bonus               Float             @default(0.0)
-  commission          Float             @default(0.0)
-  overtime            Float             @default(0.0)
-  otherEarnings       Float             @default(0.0)
-  reimbursement       Float             @default(0.0)
-  pf                  Float             @default(0.0)
-  esi                 Float             @default(0.0)
-  professionalTax     Float             @default(0.0)
-  tds                 Float             @default(0.0)
-  otherDeductions     Float             @default(0.0)
-  loanDeduction       Float             @default(0.0)
-  grossSalary         Float
-  totalDeductions     Float
-  netSalary           Float
-  workingDays         Int               @default(30)
-  presentDays         Int               @default(30)
-  absentDays          Int               @default(0)
-  halfDays            Int               @default(0)
-  paidLeaveDays       Int               @default(0)
-  unpaidLeaveDays     Int               @default(0)
-  wfhDays             Int               @default(0)
-  payableDays         Float             @default(0)
-  holidayDays         Float             @default(0)
-  weeklyOffDays       Float             @default(0)
-  lopDays             Float             @default(0)
-  lopDeduction        Float             @default(0)
-  advanceDeduction    Float             @default(0)
-  paidAt              DateTime?
-  emailStatus         String            @default("EMAIL_PENDING")
-  whatsappStatus      String            @default("WHATSAPP_PENDING")
-  calculationSnapshot Json?
-  status              String            @default("GENERATED")
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  employee            Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  payroll             Payroll           @relation(fields: [payrollId], references: [id], onDelete: Cascade)
-  salarySlips         SalarySlip[]
+  id               Int          @id @default(autoincrement())
+  payrollId        Int
+  customerId       Int
+  employeeId       Int
+  basicSalary      Float
+  hra              Float        @default(0.0)
+  allowances       Float        @default(0.0)
+  specialAllowance Float        @default(0.0)
+  bonus            Float        @default(0.0)
+  commission       Float        @default(0.0)
+  overtime         Float        @default(0.0)
+  otherEarnings    Float        @default(0.0)
+  reimbursement    Float        @default(0.0)
+  pf               Float        @default(0.0)
+  esi              Float        @default(0.0)
+  professionalTax  Float        @default(0.0)
+  tds              Float        @default(0.0)
+  otherDeductions  Float        @default(0.0)
+  loanDeduction    Float        @default(0.0)
+  grossSalary      Float
+  totalDeductions  Float
+  netSalary        Float
+  workingDays      Int          @default(30)
+  presentDays      Int          @default(30)
+  absentDays       Int          @default(0)
+  halfDays         Int          @default(0)
+  paidLeaveDays    Int          @default(0)
+  unpaidLeaveDays  Int          @default(0)
+  wfhDays          Int          @default(0)
+  status           String       @default("GENERATED")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  employee         Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payroll          Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+  salarySlips      SalarySlip[]
 
   @@index([payrollId])
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model SalarySlip {
   id              Int         @id @default(autoincrement())
+  customerId      Int
   payrollItemId   Int
   employeeId      Int
   slipNumber      String      @unique
@@ -1306,12 +1797,13 @@ model SalarySlip {
   employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   payrollItem     PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
 }
 
 model PayrollPolicy {
-  singletonKey        String   @unique @default("GLOBAL")
   id                  Int      @id @default(autoincrement())
+  customerId          Int      @unique
   workingDaysPerMonth Int      @default(30)
   lateDeductionRate   Float    @default(0.0)
   overtimeMultiplier  Float    @default(1.5)
@@ -1320,21 +1812,27 @@ model PayrollPolicy {
   taxExemptionLimit   Float    @default(300000)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+  customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
 }
 
 model Team {
   id          Int          @id @default(autoincrement())
+  customerId  Int
   name        String
   description String?
   leaderId    Int?
   isActive    Boolean      @default(true)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   leader      Employee?    @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
   members     TeamMember[]
   works       Work[]
-  assignedCustomers Customer[] @relation("CustomerAssignedTeam")
+  assignedCustomers Customer[]   @relation("CustomerAssignedTeam")
 
+  @@index([customerId])
   @@index([leaderId])
 }
 
@@ -1354,6 +1852,7 @@ model TeamMember {
 
 model PlanEntitlement {
   id           Int       @id @default(autoincrement())
+  customerId   Int
   planId       Int?
   serviceName  String
   totalQty     Int       @default(0)
@@ -1362,53 +1861,54 @@ model PlanEntitlement {
   validUntil   DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   works        Work[]
+
+  @@index([customerId])
 }
 
 model Work {
-  customerId Int?
+  id             Int                   @id @default(autoincrement())
+  customerId     Int
   subscriptionId Int?
-  activityKey String?
-  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
-  @@unique([subscriptionId, activityKey])
-  @@index([customerId])
-  id            Int              @id @default(autoincrement())
-  companyId     Int?
-  planId        Int?
-  entitlementId Int?
-  teamId        Int?
-  assignedToId  Int?
-  editorId      Int?
-  workType      WorkType         @default(REELS_SHOOT)
-  title         String
-  description   String?
-  scheduledDate DateTime         @default(now())
-  scheduledTime String?
-  status        WorkStatus       @default(SCHEDULED)
-  priority      WorkPriority     @default(MEDIUM)
-  notes         String?
-  outputUrl     String?
-  feedback      String?
-  revisionCount Int              @default(0)
-  submittedAt   DateTime?
-  approvedAt    DateTime?
-  completedAt   DateTime?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  assignedTo    Employee?        @relation("AssignedEmployeeWorks", fields: [assignedToId], references: [id])
-  editor        Employee?        @relation("AssignedEditorWorks", fields: [editorId], references: [id])
-  entitlement   PlanEntitlement? @relation(fields: [entitlementId], references: [id])
-  team          Team?            @relation(fields: [teamId], references: [id])
-  company       Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  tasks         WorkTask[]
+  planId         Int?
+  entitlementId  Int?
+  teamId         Int?
+  assignedToId   Int?
+  editorId       Int?
+  workType       WorkType              @default(REELS_SHOOT)
+  title          String
+  description    String?
+  scheduledDate  DateTime              @default(now())
+  scheduledTime  String?
+  status         WorkStatus            @default(SCHEDULED)
+  priority       WorkPriority          @default(MEDIUM)
+  notes          String?
+  outputUrl      String?
+  feedback       String?
+  revisionCount  Int                   @default(0)
+  submittedAt    DateTime?
+  approvedAt     DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  assignedTo     Employee?             @relation("AssignedEmployeeWorks", fields: [assignedToId], references: [id])
+  editor         Employee?             @relation("AssignedEditorWorks", fields: [editorId], references: [id])
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription   CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  entitlement    PlanEntitlement?      @relation(fields: [entitlementId], references: [id])
+  team           Team?                 @relation(fields: [teamId], references: [id])
+  tasks          WorkTask[]
 
+  @@index([customerId])
+  @@index([subscriptionId])
   @@index([teamId])
-  @@index([companyId])
   @@index([assignedToId])
   @@index([editorId])
   @@index([scheduledDate])
   @@index([status])
+  @@index([customerId, scheduledDate])
+  @@index([customerId, status])
 }
 
 model WorkTask {
@@ -1431,69 +1931,72 @@ model WorkTask {
 model DataCaptureJob {
   id                Int                @id @default(autoincrement())
   jobId             String             @unique
+  customerId        Int
   userId            Int
   keyword           String
   location          String
   requestedResults  Int                @default(20)
   capturedResults   Int                @default(0)
   googleApiRequests Int                @default(1)
-  captureStatus     String?
-  foundResults      Int?
   createdFrom       RecordCreatedFrom?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   places            DataCapturePlace[]
 
+  @@index([customerId])
   @@index([jobId])
   @@index([createdFrom])
 }
 
 model DataCapturePlace {
+  id             Int             @id @default(autoincrement())
+  jobId          String?
+  customerId     Int
+  googlePlaceId  String?
+  businessName   String
+  category       String?
+  address        String?
+  phone          String?
+  email          String?
+  website        String?
+  rating         Float?
+  reviewCount    Int?
+  latitude       Float?
+  longitude      Float?
+  googleMapsUrl  String?
+  businessStatus String?         @default("OPERATIONAL")
+  source         String?         @default("GOOGLE_PLACES")
+  status         String?         @default("CAPTURED")
+  rawData        Json?
+  photos         Json?             // Array of Google photo URLs for this business
+  socialMedia    Json?             // Discovered social media handles & website
+  notes          String?
+  isImported       Boolean         @default(false)
   importedLeadId   Int?
-  importedLead     Lead?              @relation(fields: [importedLeadId], references: [id], onDelete: SetNull)
-  id               Int                @id @default(autoincrement())
-  jobId            String?
-  googlePlaceId    String?
-  businessName     String
-  category         String?
-  address          String?
-  phone            String?
-  email            String?
-  website          String?
-  rating           Float?
-  reviewCount      Int?
-  latitude         Float?
-  longitude        Float?
-  googleMapsUrl    String?
-  businessStatus   String?            @default("OPERATIONAL")
-  source           String?            @default("GOOGLE_PLACES")
-  status           String?            @default("CAPTURED")
-  rawData          Json?
-  photos           Json? // Array of Google photo URLs for this business
-  socialMedia      Json? // Discovered social media handles & website
-  notes            String?
-  isImported       Boolean            @default(false)
   captureRequestId String?
   sourceRecordId   String?
   createdFrom      RecordCreatedFrom?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @default(now()) @updatedAt
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @default(now()) @updatedAt
   deletedAt        DateTime?
-  job              DataCaptureJob?    @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  customer         Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  job              DataCaptureJob? @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
 
-  @@index([importedLeadId])
   @@index([jobId])
+  @@index([customerId])
   @@index([googlePlaceId])
   @@index([status])
   @@index([captureRequestId])
   @@index([createdFrom])
   @@index([deletedAt])
-  @@index([deletedAt, createdAt])
+  @@index([customerId, deletedAt, createdAt])
 }
 
 model DataCaptureSearch {
   id          Int      @id @default(autoincrement())
+  customerId  Int
   employeeId  Int
   userId      Int?
   searchQuery String
@@ -1502,16 +2005,20 @@ model DataCaptureSearch {
   searchedAt  DateTime @default(now())
   createdAt   DateTime @default(now())
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
+  @@index([customerId, employeeId])
   @@index([requestId])
   @@index([searchedAt])
-  @@index([employeeId, searchedAt])
+  @@index([customerId, employeeId, searchedAt])
 }
 
 model EmployeeLoan {
   id               Int        @id @default(autoincrement())
+  customerId       Int
   employeeId       Int
   loanAmount       Float
   approvedAmount   Float?
@@ -1529,14 +2036,17 @@ model EmployeeLoan {
   notes            String?
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
+  customer         Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee         Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([status])
 }
 
 model EmployeeClaim {
   id              Int         @id @default(autoincrement())
+  customerId      Int
   employeeId      Int
   category        String      @default("TRAVEL")
   amount          Float
@@ -1553,16 +2063,81 @@ model EmployeeClaim {
   reviewedAt      DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
+  customer        Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([status])
   @@index([category])
 }
 
+enum InstallmentStatus {
+  PENDING
+  DUE
+  UPCOMING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model SubscriptionInstallment {
+  id                Int                  @id @default(autoincrement())
+  customerId        Int
+  subscriptionId    Int
+  installmentNumber Int                  @default(1)
+  totalInstallments Int                  @default(2)
+  title             String               @default("Installment")
+  amount            Float
+  taxAmount         Float                @default(0)
+  totalAmount       Float
+  status            InstallmentStatus    @default(PENDING)
+  dueDate           DateTime
+  expiryDate        DateTime
+  bufferDays        Int                  @default(3)
+  bufferEndDate     DateTime
+  paidAt            DateTime?
+  paymentHistoryId  Int?
+  invoiceId         Int?
+  notes             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  deletedAt         DateTime?
+  customer          Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription      CustomerSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  paymentHistory    PaymentHistory?      @relation(fields: [paymentHistoryId], references: [id], onDelete: SetNull)
+  invoice           Invoice?             @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([bufferEndDate])
+  @@map("subscription_installments")
+}
+
 enum EmployeeType {
   COMPANY
   FREELANCER
+}
+
+enum RoleType {
+  SUPER_ADMIN
+  CUSTOMER_ADMIN
+  TENANT_ADMIN
+  SALES_MANAGER
+  SALES_EXECUTIVE
+  SUPPORT_AGENT
+  CUSTOM
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
 }
 
 enum SubscriptionBillingCycle {
@@ -1573,6 +2148,36 @@ enum SubscriptionBillingCycle {
 enum RecordCreatedFrom {
   MOBILE_APP
   ADMIN_PANEL
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  CALL_BACK
+  DETAILS_SENT
+  FOLLOW_UP
+  VISIT_SCHEDULED
+  VISIT_DONE
+  PROPOSAL_SENT
+  NEGOTIATION
+  FINAL_CALL
+  WON
+  LOST
+  // Legacy values kept for backward compatibility
+  VISIT
+  QUALIFIED
+  PROPOSAL
+  PAYMENT
+  WORK_STARTED
+  CANCELLED
+  CONVERTED
+}
+
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
 enum ContactType {
@@ -1771,6 +2376,8 @@ enum ScheduleStatus {
 
 model MonthlySchedule {
   id                 Int            @id @default(autoincrement())
+  customerId         Int
+  subscriptionId     Int?
   planId             Int?
   month              Int
   year               Int
@@ -1784,9 +2391,14 @@ model MonthlySchedule {
   updatedAt          DateTime       @updatedAt
   deletedAt          DateTime?
 
-  plan             Plan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
-  assignedEmployee Employee? @relation(fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  plan             Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
+  assignedEmployee Employee?             @relation(fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
 
+  @@unique([customerId, subscriptionId, month, year])
+  @@index([customerId])
+  @@index([subscriptionId])
   @@index([planId])
   @@index([assignedEmployeeId])
   @@index([startDate])
@@ -1820,6 +2432,41 @@ model CustomPlanOption {
   @@index([isActive])
   @@index([deletedAt])
   @@map("custom_plan_options")
+}
+
+model CustomPlanOrder {
+  id               Int           @id @default(autoincrement())
+  customerId       Int
+  subscriptionId   Int?
+  orderNumber      String        @unique
+  selectedFeatures Json
+  duration         Int           @default(1) // duration in months
+  durationUnit     String        @default("MONTH")
+  subtotal         Float
+  discount         Float         @default(0)
+  tax              Float         @default(0)
+  totalAmount      Float
+  currency         String        @default("INR")
+  status           String        @default("PENDING_PAYMENT") // PENDING_PAYMENT, PAID, ACTIVATED, CANCELLED, EXPIRED
+  paymentMethod    PaymentMethod @default(RAZORPAY)
+  paymentId        String?
+  orderId          String?
+  transactionId    String?
+  startDate        DateTime?
+  expiryDate       DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([subscriptionId])
+  @@index([orderNumber])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("custom_plan_orders")
 }
 
 model IntegrationSetting {
@@ -1864,36 +2511,38 @@ enum TrendingCategory {
 }
 
 model TrendingContent {
-  id             Int              @id @default(autoincrement())
-  title          String
-  description    String?
-  category       TrendingCategory
-  thumbnailUrl   String?
-  mediaUrl       String?
-  ctaText        String?
-  ctaUrl         String?
-  platform       String?          @default("INSTAGRAM")
-  objective      String?          @default("ENGAGEMENT")
-  priority       Int              @default(0)
-  isPublished    Boolean          @default(true)
-  isActive       Boolean          @default(true)
-  isFeatured     Boolean          @default(false)
-  views          Int?             @default(0)
-  likes          Int?             @default(0)
-  shares         Int?             @default(0)
-  comments       Int?             @default(0)
-  duration       String?
-  engagementRate Float?           @default(0.0)
-  startAt        DateTime?
-  endAt          DateTime?
-  createdBy      Int?
-  createdByUser  User?            @relation("CreatedTrendingContents", fields: [createdBy], references: [id], onDelete: SetNull)
-  metadata       Json?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  deletedAt      DateTime?
+  id            Int              @id @default(autoincrement())
+  customerId    Int?
+  customer      Customer?        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  category      TrendingCategory
+  thumbnailUrl  String?
+  mediaUrl      String?
+  ctaText       String?
+  ctaUrl        String?
+  platform      String?          @default("INSTAGRAM")
+  objective     String?          @default("ENGAGEMENT")
+  priority      Int              @default(0)
+  isPublished   Boolean          @default(true)
+  isActive      Boolean          @default(true)
+  isFeatured    Boolean          @default(false)
+  views         Int?             @default(0)
+  likes         Int?             @default(0)
+  shares        Int?             @default(0)
+  comments      Int?             @default(0)
+  duration      String?
+  engagementRate Float?          @default(0.0)
+  startAt       DateTime?
+  endAt         DateTime?
+  createdBy     Int?
+  createdByUser User?            @relation("CreatedTrendingContents", fields: [createdBy], references: [id], onDelete: SetNull)
+  metadata      Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  deletedAt     DateTime?
 
-  @@index([isActive, isPublished])
+  @@index([customerId, isActive, isPublished])
   @@index([category])
   @@index([priority])
   @@index([isFeatured])
@@ -1903,6 +2552,8 @@ model TrendingContent {
 
 model MarketingBanner {
   id             Int       @id @default(autoincrement())
+  customerId     Int?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   title          String
   subtitle       String?
   description    String?
@@ -1924,7 +2575,7 @@ model MarketingBanner {
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
 
-  @@index([isActive, isPublished])
+  @@index([customerId, isActive, isPublished])
   @@index([priority])
   @@index([startAt, endAt])
   @@index([deletedAt])
@@ -1932,17 +2583,19 @@ model MarketingBanner {
 }
 
 model MarketingVideo {
-  id                 Int       @id @default(autoincrement())
-  title              String
-  subtitle           String?
-  description        String?
-  videoUrl           String
-  videoKey           String?
-  thumbnailUrl       String?
-  thumbnailKey       String?
-  ctaText            String?
-  ctaUrl             String?
-  status             String    @default("ACTIVE") // DRAFT, ACTIVE, INACTIVE, EXPIRED
+  id             Int       @id @default(autoincrement())
+  customerId     Int?
+  customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title          String
+  subtitle       String?
+  description    String?
+  videoUrl       String
+  videoKey       String?
+  thumbnailUrl   String?
+  thumbnailKey   String?
+  ctaText        String?
+  ctaUrl         String?
+  status         String    @default("ACTIVE") // DRAFT, ACTIVE, INACTIVE, EXPIRED
   priority           Int       @default(0)
   isActive           Boolean   @default(true)
   isPublished        Boolean   @default(true)
@@ -1952,12 +2605,13 @@ model MarketingVideo {
   endAt              DateTime?
   createdBy          Int?
   createdByUser      User?     @relation("CreatedMarketingVideos", fields: [createdBy], references: [id], onDelete: SetNull)
+  views              CustomerMarketingVideoView[]
   metadata           Json?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
 
-  @@index([isActive, status])
+  @@index([customerId, isActive, status])
   @@index([priority])
   @@index([showOnHome])
   @@index([showInIntroduction])
@@ -1966,8 +2620,26 @@ model MarketingVideo {
   @@map("marketing_videos")
 }
 
+model CustomerMarketingVideoView {
+  id               Int            @id @default(autoincrement())
+  customerId       Int
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  marketingVideoId Int
+  marketingVideo   MarketingVideo @relation(fields: [marketingVideoId], references: [id], onDelete: Cascade)
+  seenAt           DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([customerId, marketingVideoId])
+  @@index([customerId])
+  @@index([marketingVideoId])
+  @@map("customer_marketing_video_views")
+}
+
 model SocialMediaHandler {
   id           Int       @id @default(autoincrement())
+  customerId   Int
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   platform     String
   accountName  String
   accountUrl   String?
@@ -1984,6 +2656,7 @@ model SocialMediaHandler {
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
 
+  @@index([customerId])
   @@index([platform])
   @@index([status])
   @@index([deletedAt])
@@ -1996,8 +2669,25 @@ enum WorkAccessRequestStatus {
   REJECTED
 }
 
+model RoleWorkPermission {
+  id          Int       @id @default(autoincrement())
+  customerId  Int
+  roleName    String
+  workModule  String
+  isEnabled   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, roleName, workModule])
+  @@index([customerId])
+  @@index([roleName])
+  @@map("role_work_permissions")
+}
+
 model WorkAccessRequest {
   id              Int                     @id @default(autoincrement())
+  customerId      Int
   employeeId      Int
   workModule      String
   status          WorkAccessRequestStatus @default(PENDING)
@@ -2007,8 +2697,10 @@ model WorkAccessRequest {
   reviewedAt      DateTime?
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
+  customer        Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee        Employee                @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([status])
   @@map("work_access_requests")
@@ -2017,6 +2709,84 @@ model WorkAccessRequest {
 enum DesignationAudience {
   EMPLOYEE
   CUSTOMER
+}
+
+enum AccessOverrideType {
+  DEFAULT
+  INHERIT
+  ALLOW
+  DENY
+}
+
+model EmployeeModuleOverride {
+  id          Int                 @id @default(autoincrement())
+  customerId  Int
+  employeeId  Int
+  moduleKey   String
+  override     AccessOverrideType  @default(DEFAULT)
+  permissionId Int?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee     Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  permission   Permission?         @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId, moduleKey])
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([permissionId])
+  @@map("employee_module_overrides")
+}
+
+model CustomerModuleOverride {
+  id                Int                @id @default(autoincrement())
+  subjectCustomerId Int
+  moduleKey         String
+  override          AccessOverrideType @default(INHERIT)
+  permissionId      Int?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  subjectCustomer   Customer           @relation(fields: [subjectCustomerId], references: [id], onDelete: Cascade)
+  permission        Permission?        @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([subjectCustomerId, moduleKey])
+  @@index([subjectCustomerId])
+  @@index([permissionId])
+  @@map("customer_module_overrides")
+}
+
+model RoleLeadLimit {
+  id           Int       @id @default(autoincrement())
+  customerId   Int
+  roleName     String
+  dailyLimit   Int       @default(10)
+  monthlyLimit Int       @default(200)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, roleName])
+  @@index([customerId])
+  @@index([roleName])
+  @@map("role_lead_limits")
+}
+
+model EmployeeLeadLimit {
+  id           Int       @id @default(autoincrement())
+  customerId   Int
+  employeeId   Int       @unique
+  dailyLimit   Int?
+  monthlyLimit Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId])
+  @@index([customerId])
+  @@index([employeeId])
+  @@map("employee_lead_limits")
 }
 
 model MarketplaceTool {
@@ -2063,34 +2833,34 @@ model InfluencerCategory {
 }
 
 model Influencer {
-  id                 Int                 @id @default(autoincrement())
+  id                 Int                      @id @default(autoincrement())
   name               String
   handle             String?
   avatarUrl          String?
   profileImage       String?
   coverImage         String?
-  platform           String              @default("INSTAGRAM") // INSTAGRAM, YOUTUBE, SNAPCHAT, TIKTOK
+  platform           String                   @default("INSTAGRAM") // INSTAGRAM, YOUTUBE, SNAPCHAT, TIKTOK
   categoryId         Int?
   categoryName       String?
-  category           InfluencerCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  location           String?             @default("India")
+  category           InfluencerCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  location           String?                  @default("India")
   city               String?
   localArea          String?
-  followers          Int                 @default(0)
-  followersCount     String?             @default("0")
-  engagementRate     Float               @default(0.0)
-  isVerified         Boolean             @default(true)
-  isFeatured         Boolean             @default(true)
-  isActive           Boolean             @default(true)
-  status             String              @default("PENDING") // PENDING, APPROVED, REJECTED, SUSPENDED, ACTIVE
-  verificationStatus String              @default("VERIFIED") // VERIFIED, PENDING, UNVERIFIED
-  topCreator         Boolean             @default(false)
+  followers          Int                      @default(0)
+  followersCount     String?                  @default("0")
+  engagementRate     Float                    @default(0.0)
+  isVerified         Boolean                  @default(true)
+  isFeatured         Boolean                  @default(true)
+  isActive           Boolean                  @default(true)
+  status             String                   @default("PENDING") // PENDING, APPROVED, REJECTED, SUSPENDED, ACTIVE
+  verificationStatus String                   @default("VERIFIED") // VERIFIED, PENDING, UNVERIFIED
+  topCreator         Boolean                  @default(false)
   startingPrice      Float?
   bio                String?
-  languages          String[]            @default(["English", "Hindi"])
+  languages          String[]                 @default(["English", "Hindi"])
   instagramHandle    String?
   youtubeHandle      String?
-  email              String?             @unique
+  email              String?                  @unique
   phone              String?
   passwordHash       String?
   userId             Int?
@@ -2106,18 +2876,18 @@ model Influencer {
   ageRange           String?
   bookingUrl         String?
   pricing            Float?
-  rating             Float?              @default(4.9)
-  sortOrder          Int                 @default(0)
+  rating             Float?                   @default(4.9)
+  sortOrder          Int                      @default(0)
   metadata           Json?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
   deletedAt          DateTime?
 
-  packages       InfluencerPackage[]
-  availabilities InfluencerAvailability[]
-  portfolios     InfluencerPortfolio[]
-  reviews        InfluencerReview[]
-  bookings       InfluencerBooking[]
+  packages           InfluencerPackage[]
+  availabilities     InfluencerAvailability[]
+  portfolios         InfluencerPortfolio[]
+  reviews            InfluencerReview[]
+  bookings           InfluencerBooking[]
 
   @@index([status])
   @@index([email])
@@ -2168,39 +2938,42 @@ model InfluencerAvailability {
 }
 
 model InfluencerBooking {
-  id                Int                        @id @default(autoincrement())
-  bookingId         String                     @unique
-  influencerId      Int
-  influencer        Influencer                 @relation(fields: [influencerId], references: [id], onDelete: Cascade)
-  packageId         Int?
-  package           InfluencerPackage?         @relation(fields: [packageId], references: [id], onDelete: SetNull)
-  campaignDate      DateTime
-  brandName         String
-  contactPerson     String
-  mobileNumber      String
-  email             String
-  businessName      String
-  instagramId       String?
-  campaignObjective String?
-  notes             String?
-  packageAmount     Float
-  platformFee       Float                      @default(500)
-  gst               Float                      @default(0)
-  totalAmount       Float
-  bookingStatus     String                     @default("PENDING") // PENDING, CONFIRMED, REJECTED, CANCELLED, COMPLETED
-  paymentStatus     String                     @default("PENDING") // PENDING, PROCESSING, PAID, FAILED, REFUNDED
-  paymentMethod     String?                    @default("RAZORPAY")
-  razorpayOrderId   String?
-  razorpayPaymentId String?
-  razorpaySignature String?
-  rejectionReason   String?
-  cancelledAt       DateTime?
-  completedAt       DateTime?
-  createdAt         DateTime                   @default(now())
-  updatedAt         DateTime                   @updatedAt
-  deletedAt         DateTime?
-  payments          InfluencerBookingPayment[]
+  id                 Int                        @id @default(autoincrement())
+  bookingId          String                     @unique
+  customerId         Int
+  customer           Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  influencerId       Int
+  influencer         Influencer                 @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  packageId          Int?
+  package            InfluencerPackage?         @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  campaignDate       DateTime
+  brandName          String
+  contactPerson      String
+  mobileNumber       String
+  email              String
+  businessName       String
+  instagramId        String?
+  campaignObjective  String?
+  notes              String?
+  packageAmount      Float
+  platformFee        Float                      @default(500)
+  gst                Float                      @default(0)
+  totalAmount        Float
+  bookingStatus      String                     @default("PENDING") // PENDING, CONFIRMED, REJECTED, CANCELLED, COMPLETED
+  paymentStatus      String                     @default("PENDING") // PENDING, PROCESSING, PAID, FAILED, REFUNDED
+  paymentMethod      String?                    @default("RAZORPAY")
+  razorpayOrderId    String?
+  razorpayPaymentId  String?
+  razorpaySignature  String?
+  rejectionReason    String?
+  cancelledAt        DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  deletedAt          DateTime?
+  payments           InfluencerBookingPayment[]
 
+  @@index([customerId])
   @@index([influencerId])
   @@index([bookingStatus])
   @@index([paymentStatus])
@@ -2212,6 +2985,8 @@ model InfluencerBookingPayment {
   id            Int               @id @default(autoincrement())
   bookingId     Int
   booking       InfluencerBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  customerId    Int
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   amount        Float
   currency      String            @default("INR")
   paymentMethod String            @default("RAZORPAY")
@@ -2224,6 +2999,7 @@ model InfluencerBookingPayment {
   updatedAt     DateTime          @updatedAt
 
   @@index([bookingId])
+  @@index([customerId])
   @@map("influencer_booking_payments")
 }
 
@@ -2251,6 +3027,8 @@ model InfluencerReview {
   id           Int        @id @default(autoincrement())
   influencerId Int
   influencer   Influencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  customerId   Int?
+  customer     Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   brandName    String
   rating       Float      @default(5.0)
   comment      String
@@ -2286,8 +3064,9 @@ model AiServiceConfig {
 }
 
 model AiCreditWallet {
-  singletonKey String                @unique @default("GLOBAL")
   id           Int                   @id @default(autoincrement())
+  customerId   Int                   @unique
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
   balance      Int                   @default(20) // Welcome credits
   totalEarned  Int                   @default(20)
   totalSpent   Int                   @default(0)
@@ -2295,6 +3074,7 @@ model AiCreditWallet {
   updatedAt    DateTime              @updatedAt
   transactions AiCreditTransaction[]
 
+  @@index([customerId])
   @@map("ai_credit_wallets")
 }
 
@@ -2302,6 +3082,8 @@ model AiCreditTransaction {
   id              Int            @id @default(autoincrement())
   walletId        Int
   wallet          AiCreditWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  customerId      Int
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   amount          Int // Positive for top-ups, negative for usage
   balanceAfter    Int
   type            String // PURCHASE, USAGE, REFUND, GRANT
@@ -2312,6 +3094,7 @@ model AiCreditTransaction {
   notes           String?
   createdAt       DateTime       @default(now())
 
+  @@index([customerId])
   @@index([walletId])
   @@map("ai_credit_transactions")
 }
@@ -2319,6 +3102,8 @@ model AiCreditTransaction {
 model AiGeneration {
   id             Int                 @id @default(autoincrement())
   generationId   String              @unique // AIGEN-YYYYMMDD-XXXX
+  customerId     Int
+  customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
   type           String // POST, POSTER, VIDEO, CAPTION, HASHTAGS
   status         String              @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
   product        String
@@ -2342,6 +3127,7 @@ model AiGeneration {
   assets         AiGenerationAsset[]
   publishes      SocialPublish[]
 
+  @@index([customerId])
   @@index([type])
   @@index([status])
   @@index([deletedAt])
@@ -2366,6 +3152,8 @@ model AiGenerationAsset {
 
 model SocialAccount {
   id                    Int             @id @default(autoincrement())
+  customerId            Int
+  customer              Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   platform              String // INSTAGRAM, FACEBOOK, YOUTUBE, TIKTOK, LINKEDIN
   accountName           String
   username              String?
@@ -2382,7 +3170,8 @@ model SocialAccount {
   deletedAt             DateTime?
   publishes             SocialPublish[]
 
-  @@unique([platform, externalAccountId])
+  @@unique([customerId, platform, externalAccountId])
+  @@index([customerId])
   @@index([platform])
   @@index([isConnected])
   @@index([deletedAt])
@@ -2390,25 +3179,28 @@ model SocialAccount {
 }
 
 model SocialPublish {
-  id              Int           @id @default(autoincrement())
-  publishId       String        @unique // PUB-YYYYMMDD-XXXX
+  id              Int            @id @default(autoincrement())
+  publishId       String         @unique // PUB-YYYYMMDD-XXXX
+  customerId      Int
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   socialAccountId Int
-  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  socialAccount   SocialAccount  @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
   generationId    Int?
-  generation      AiGeneration? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  generation      AiGeneration?  @relation(fields: [generationId], references: [id], onDelete: SetNull)
   platform        String
   content         String?
-  mediaUrls       String[]      @default([])
-  status          String        @default("QUEUED") // DRAFT, QUEUED, PROCESSING, PUBLISHED, FAILED, SCHEDULED, CANCELLED
+  mediaUrls       String[]       @default([])
+  status          String         @default("QUEUED") // DRAFT, QUEUED, PROCESSING, PUBLISHED, FAILED, SCHEDULED, CANCELLED
   scheduledFor    DateTime?
   publishedAt     DateTime?
   externalPostId  String?
   externalPostUrl String?
   errorMessage    String?
-  retryCount      Int           @default(0)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  retryCount      Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
+  @@index([customerId])
   @@index([socialAccountId])
   @@index([status])
   @@index([scheduledFor])
@@ -2417,7 +3209,8 @@ model SocialPublish {
 
 model MasterItem {
   id          Int      @id @default(autoincrement())
-  type        String // "EMPLOYEE_TYPE", "WORK_TYPE", "ACTIVITY_TYPE", "TASK_STATUS", "EXPENSE_CATEGORY", "LOAN_TYPE", "PAYMENT_METHOD"
+  customerId  Int?
+  type        String   // "EMPLOYEE_TYPE", "WORK_TYPE", "ACTIVITY_TYPE", "TASK_STATUS", "LEAD_SOURCE", "EXPENSE_CATEGORY", "LOAN_TYPE", "PAYMENT_METHOD"
   code        String
   name        String
   category    String?
@@ -2431,13 +3224,16 @@ model MasterItem {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([type, code])
-  @@index([type])
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([type, code, customerId])
+  @@index([type, customerId])
   @@map("master_items")
 }
 
 model EmailTemplate {
   id                 Int       @id @default(autoincrement())
+  customerId         Int?
   name               String
   key                String
   subject            String
@@ -2451,39 +3247,48 @@ model EmailTemplate {
   updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
 
-  emailLogs EmailLog[]
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  emailLogs          EmailLog[]
+  leadStages         LeadStage[]
 
   @@index([key])
+  @@index([customerId])
   @@index([isActive])
   @@index([deletedAt])
   @@map("email_templates")
 }
 
 model EmailLog {
-  id                Int      @id @default(autoincrement())
+  id                Int            @id @default(autoincrement())
+  customerId        Int?
   userId            Int?
+  leadId            Int?
   contactId         Int?
   templateId        Int?
   appointmentId     Int?
   planId            Int?
-  channel           String?  @default("EMAIL")
+  channel           String?        @default("EMAIL")
   identifierKey     String?
   recipientEmail    String
   subject           String
-  renderedContent   String?  @db.Text
-  eventType         String?  @default("GENERAL")
+  renderedContent   String?        @db.Text
+  eventType         String?        @default("GENERAL")
   previousStage     String?
   newStage          String?
-  status            String   @default("SENT") // SENT, FAILED
+  status            String         @default("SENT") // SENT, FAILED
   providerMessageId String?
   errorMessage      String?
-  sentAt            DateTime @default(now())
-  createdAt         DateTime @default(now())
+  sentAt            DateTime       @default(now())
+  createdAt         DateTime       @default(now())
 
-  user     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
-  template EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  customer          Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  template          EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  lead              Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
+  @@index([customerId])
   @@index([userId])
+  @@index([leadId])
   @@index([templateId])
   @@index([appointmentId])
   @@index([planId])
@@ -2496,30 +3301,35 @@ model EmailLog {
 }
 
 model MetaTemplate {
-  id              Int       @id @default(autoincrement())
-  name            String
-  templateName    String
-  key             String?
-  language        String    @default("en_US")
-  category        String    @default("UTILITY") // MARKETING, UTILITY, AUTHENTICATION
-  status          String    @default("APPROVED") // APPROVED, PENDING, REJECTED, PAUSED, DISABLED
-  metaTemplateId  String?
-  headerType      String?   @default("NONE") // NONE, TEXT, IMAGE, DOCUMENT, VIDEO
-  headerContent   String?   @db.Text
-  body            String    @db.Text
-  footer          String?
-  buttons         Json?
-  variables       String[]  @default([])
-  rejectionReason String?
-  isLocalActive   Boolean   @default(true)
-  isSystem        Boolean   @default(false)
-  lastSyncedAt    DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  deletedAt       DateTime?
+  id                 Int       @id @default(autoincrement())
+  customerId         Int?
+  name               String
+  templateName       String
+  key                String?
+  language           String    @default("en_US")
+  category           String    @default("UTILITY") // MARKETING, UTILITY, AUTHENTICATION
+  status             String    @default("APPROVED") // APPROVED, PENDING, REJECTED, PAUSED, DISABLED
+  metaTemplateId     String?
+  headerType         String?   @default("NONE") // NONE, TEXT, IMAGE, DOCUMENT, VIDEO
+  headerContent      String?   @db.Text
+  body               String    @db.Text
+  footer             String?
+  buttons            Json?
+  variables          String[]  @default([])
+  rejectionReason    String?
+  isLocalActive      Boolean   @default(true)
+  isSystem           Boolean   @default(false)
+  lastSyncedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  leadStages         LeadStage[]
 
   @@index([templateName])
   @@index([key])
+  @@index([customerId])
   @@index([status])
   @@index([isLocalActive])
   @@index([deletedAt])
@@ -2545,6 +3355,7 @@ enum CommissionStatus {
 
 model CommissionConfig {
   id              Int                    @id @default(autoincrement())
+  customerId      Int
   employeeId      Int                    @unique
   commissionType  CommissionType         @default(PERCENTAGE)
   commissionValue Float                  @default(0)
@@ -2552,197 +3363,45 @@ model CommissionConfig {
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId])
   @@index([employeeId])
   @@index([status])
   @@map("commission_configs")
 }
 
 model Commission {
-  id               Int               @id @default(autoincrement())
-  employeeId       Int?
-  sourceKey        String?           @unique
-  teamId           Int?
-  leaderId         Int?
-  reviewReason     String?
-  qualifyingAt     DateTime?
-  history          Json?
-  shares           CommissionShare[]
+  id               Int              @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  leadId           Int?
   planId           Int?
-  purchaseId       Int?              @unique @map("purchase_id")
-  orderId          String?           @map("order_id")
+  purchaseId       Int?             @unique @map("purchase_id")
+  orderId          String?          @map("order_id")
   commissionType   CommissionType
-  commissionRate   Float             @default(0)
-  purchaseAmount   Float             @default(0)
-  commissionAmount Float             @default(0)
-  status           CommissionStatus  @default(PENDING)
+  commissionRate   Float            @default(0)
+  purchaseAmount   Float            @default(0)
+  commissionAmount Float            @default(0)
+  status           CommissionStatus @default(PENDING)
   paidAt           DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  employee Employee?       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lead     Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
   plan     Plan?           @relation(fields: [planId], references: [id], onDelete: SetNull)
   purchase PaymentHistory? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
 
+  @@index([customerId])
   @@index([employeeId])
+  @@index([leadId])
   @@index([planId])
   @@index([purchaseId])
   @@index([orderId])
   @@index([status])
   @@index([createdAt])
-  @@index([qualifyingAt])
   @@map("commissions")
-}
-
-model CommissionShare {
-  id            Int              @id @default(autoincrement())
-  commissionId  Int
-  employeeId    Int
-  recipientRole String
-  effectiveRate Float
-  amount        Float
-  status        CommissionStatus @default(APPROVED)
-  paidAt        DateTime?
-  payrollItemId Int?
-  commission    Commission       @relation(fields: [commissionId], references: [id], onDelete: Restrict)
-  employee      Employee         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  payrollItem   PayrollItem?     @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
-
-  @@unique([commissionId, recipientRole])
-  @@unique([commissionId, employeeId])
-  @@index([employeeId, status])
-  @@index([payrollItemId])
-  @@map("commission_shares")
-}
-
-// Independent single-organization Lead workflow; no Customer or RBAC dependencies.
-model Lead {
-  customer Customer?
-  id                 Int                @id @default(autoincrement())
-  companyName        String
-  firstName          String?
-  lastName           String?
-  phone              String?
-  email              String?
-  website            String?
-  address            String?
-  city               String?
-  state              String?
-  country            String?
-  pincode            String?
-  category           String?
-  googlePlaceId      String?            @unique
-  latitude           Float?
-  longitude          Float?
-  source             String             @default("MANUAL")
-  createdFrom        RecordCreatedFrom  @default(ADMIN_PANEL)
-  status             CrmLeadStatus      @default(NEW)
-  notes              String?
-  assignedToId       Int?
-  convertedByEmployeeId Int?
-  createdById        Int
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  deletedAt          DateTime?
-  assignedTo         Employee?          @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  createdBy          User               @relation("LeadCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  dataCaptureRecords DataCapturePlace[]
-
-  @@index([deletedAt, createdAt])
-  @@index([assignedToId])
-  @@index([createdById])
-  @@map("crm_leads")
-}
-
-enum CrmLeadStatus {
-  NEW
-  CONTACTED
-  DETAILS_SEND
-  FOLLOW_UP
-  VISIT_SCHEDULED
-  VISIT_DONE
-  PROPOSAL_SENT
-  NEGOTIATION
-  FINAL_CALL
-  WON
-  LOST
-}
-
-// Customer billing for the current single organization. Legacy billing rows remain untouched.
-model Customer {
-  works Work[]
-  deletedAt DateTime?
-  id Int @id @default(autoincrement())
-  originLeadId Int @unique
-  userId Int? @unique
-  companyName String
-  firstName String?
-  lastName String?
-  email String?
-  phone String?
-  status CustomerLifecycleStatus @default(INACTIVE)
-  crmCompanyId Int? @unique
-  assignedTeamId Int?
-  assignedTeam Team? @relation("CustomerAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  lead Lead @relation(fields: [originLeadId], references: [id], onDelete: Restrict)
-  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
-  crmCompany Company? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
-  subscriptions CustomerSubscription[]
-  checkouts CustomerCheckout[]
-  @@index([assignedTeamId])
-  @@index([deletedAt])
-  @@map("customer_accounts")
-}
-
-enum CustomerLifecycleStatus {
-  INACTIVE
-  ACTIVE
-}
-
-model CustomerSubscription {
-  works Work[]
-  id Int @id @default(autoincrement())
-  customerId Int
-  planId Int
-  checkoutId String @unique
-  status String @default("PENDING_ACTIVATION")
-  startDate DateTime
-  endDate DateTime
-  activationDate DateTime?
-  createdAt DateTime @default(now())
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  plan Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
-  checkout CustomerCheckout @relation(fields: [checkoutId], references: [id], onDelete: Restrict)
-  @@index([customerId, status, endDate])
-  @@index([status, activationDate])
-  @@map("customer_subscriptions")
-}
-
-model CustomerCheckout {
-  id String @id @default(uuid())
-  customerId Int
-  planId Int
-  idempotencyKey String
-  billingCycle SubscriptionBillingCycle
-  basePaise Int
-  discountPaise Int
-  taxablePaise Int
-  gstPaise Int
-  totalPaise Int
-  taxRateBps Int
-  yearlyDiscountBps Int
-  status String @default("PENDING")
-  orderId String? @unique
-  paymentId String? @unique
-  paymentHistoryId Int? @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  plan Plan @relation(fields: [planId], references: [id], onDelete: Restrict)
-  subscription CustomerSubscription?
-  @@unique([customerId, idempotencyKey])
-  @@map("customer_checkouts")
 }

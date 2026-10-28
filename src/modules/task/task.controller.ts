@@ -20,27 +20,27 @@ import {
 } from './dto/task.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
-import { WorkspaceAccessGuard } from '../../common/guards/workspace-access.guard';
-import { WorkspaceAction } from '../../common/decorators/workspace-action.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Employee Tasks')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, WorkspaceAccessGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('tasks')
 export class TaskController {
   constructor(private readonly taskService: TaskService) {}
 
   @Get('metrics')
-  @WorkspaceAction({ module: 'TASKS', action: 'VIEW' })
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get summary metrics for HR tasks' })
   async getMetrics(@CurrentCustomer() customerId: string) {
     return this.taskService.getMetrics(customerId);
   }
 
   @Post()
-  @WorkspaceAction({ module: 'TASKS', action: 'CREATE' })
+  @RequirePermissions({ module: 'TASKS', action: 'CREATE' })
   @ApiOperation({ summary: 'Create and allocate a new task to employee' })
   async create(
     @CurrentCustomer() customerId: string,
@@ -51,7 +51,7 @@ export class TaskController {
   }
 
   @Get()
-  @WorkspaceAction({ module: 'TASKS', action: 'VIEW' })
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get paginated/filtered list of tasks' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -88,14 +88,14 @@ export class TaskController {
   }
 
   @Get(':id')
-  @WorkspaceAction({ module: 'TASKS', action: 'VIEW' })
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get task details with proof, review, and history' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.taskService.findOne(customerId, id);
   }
 
   @Patch(':id')
-  @WorkspaceAction({ module: 'TASKS', action: 'EDIT' })
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update task parameters' })
   async update(
     @CurrentCustomer() customerId: string,
@@ -106,7 +106,7 @@ export class TaskController {
   }
 
   @Post(':id/reallocate')
-  @WorkspaceAction({ module: 'TASKS', action: 'EDIT' })
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Reallocate task to another employee' })
   async reallocate(
     @CurrentCustomer() customerId: string,
@@ -118,7 +118,7 @@ export class TaskController {
   }
 
   @Post(':id/start')
-  @WorkspaceAction({ module: 'TASKS', action: 'EDIT' })
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Employee starts working on task' })
   async startTask(
     @CurrentCustomer() customerId: string,
@@ -129,7 +129,7 @@ export class TaskController {
   }
 
   @Post(':id/proof')
-  @WorkspaceAction({ module: 'TASKS', action: 'EDIT' })
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'Submit mandatory photo proof for task completion' })
   async submitProof(
     @CurrentCustomer() customerId: string,
@@ -141,7 +141,7 @@ export class TaskController {
   }
 
   @Post(':id/approve')
-  @WorkspaceAction({ module: 'TASKS', action: 'EDIT' })
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'HR approves task completion proof' })
   async approveTask(
     @CurrentCustomer() customerId: string,
@@ -153,7 +153,7 @@ export class TaskController {
   }
 
   @Post(':id/reject')
-  @WorkspaceAction({ module: 'TASKS', action: 'EDIT' })
+  @RequirePermissions({ module: 'TASKS', action: 'EDIT' })
   @ApiOperation({ summary: 'HR rejects task completion proof with reason' })
   async rejectTask(
     @CurrentCustomer() customerId: string,
@@ -165,14 +165,14 @@ export class TaskController {
   }
 
   @Get(':id/history')
-  @WorkspaceAction({ module: 'TASKS', action: 'VIEW' })
+  @RequirePermissions({ module: 'TASKS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get audit history for a task' })
   async getHistory(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.taskService.getHistory(customerId, id);
   }
 
   @Delete(':id')
-  @WorkspaceAction({ module: 'TASKS', action: 'DELETE' })
+  @RequirePermissions({ module: 'TASKS', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete task' })
   async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
     return this.taskService.delete(customerId, id);

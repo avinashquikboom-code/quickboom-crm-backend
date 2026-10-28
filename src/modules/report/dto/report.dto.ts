@@ -56,7 +56,9 @@ export class QueryReportDto {
   @IsNumber()
   limit?: number = 20;
 
-  
+  @ApiPropertyOptional({ description: 'Target Customer ID (for Super Admin only)' })
+  @IsOptional()
+  customerId?: string | number;
 }
 
 export class ExportReportDto {

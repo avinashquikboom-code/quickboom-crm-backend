@@ -30,7 +30,7 @@ export interface CapturedPlace {
   importedLeadId?: number;
   capturedAt: Date | string;
   updatedAt?: Date | string;
-  customerId?: string;
+  customerId: string;
   capturedBy?: string;
   extractionJobId?: string;
   duplicateMatches?: DuplicateMatch[];
@@ -70,7 +70,7 @@ export interface DuplicateMatch {
 
 export interface ExtractionJob {
   jobId: string;
-  customerId?: string;
+  customerId: string;
   userId: string;
   keyword: string;
   location: string;
@@ -82,7 +82,7 @@ export interface ExtractionJob {
 }
 
 export interface ExtractionUsageSummary {
-  customerId?: string;
+  customerId: string;
   totalExtractions: number;
   totalLeadsCaptured: number;
   totalGoogleApiCalls: number;
