@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { LeadService } from './lead.service';
-import { BulkDeleteLeadsDto, CreateLeadDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
+import { BulkDeleteLeadsDto, CreateLeadDto, CreateLeadNoteDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
@@ -23,6 +23,14 @@ export class LeadController {
   list(@Query() query: LeadQueryDto, @CurrentUser() user: any) { return this.leads.findAll(query, user); }
   @Get(':id')
   detail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) { return this.leads.findOne(id, user); }
+  @Get(':id/notes')
+  getNotes(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.leads.getNotes(id, user);
+  }
+  @Post(':id/notes')
+  addNote(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateLeadNoteDto, @CurrentUser() user: any) {
+    return this.leads.addNote(id, dto, user);
+  }
   @Patch(':id/status')
   updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLeadStageDto, @CurrentUser() user: any) {
     return this.leads.updateStage(id, dto, user);

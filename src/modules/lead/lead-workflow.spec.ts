@@ -245,6 +245,23 @@ describe('shared BPO and Admin pipeline stage synchronization', () => {
     await expect(service.updateStage(943, dto, bpo)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.lead.update).not.toHaveBeenCalled();
   });
+  it('adds and retrieves lead notes persistently', async () => {
+    const { service } = fixture();
+    const result = await service.addNote(943, { content: 'Visitor meeting discussed scope' }, bpo);
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      leadId: '943',
+      content: 'Visitor meeting discussed scope',
+    });
+    const fetched = await service.getNotes(943, bpo);
+    expect(fetched.success).toBe(true);
+    expect(fetched.data.length).toBeGreaterThanOrEqual(1);
+    expect(fetched.data[0].content).toBe('Visitor meeting discussed scope');
+  });
+  it('rejects empty note content', async () => {
+    const { service } = fixture();
+    await expect(service.addNote(943, { content: '   ' }, bpo)).rejects.toBeInstanceOf(BadRequestException);
+  });
 });
 
 describe('Lead single and multiple deletion', () => {

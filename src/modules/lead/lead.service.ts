@@ -3,7 +3,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, CrmLeadStatus, RecordCreatedFrom } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isUserAdmin } from '../../common/utils/account.util';
-import { CreateLeadDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
+import { CreateLeadDto, CreateLeadNoteDto, LeadQueryDto, UpdateLeadDto, UpdateLeadStageDto } from './dto/lead.dto';
 
 export interface LeadStageConfig {
   id: number;
@@ -195,6 +195,134 @@ export class LeadService {
     return { data, items: data, total, page, limit, totalPages, pagination, meta: pagination };
   }
 
+  parseNotesList(
+    rawNotes: string | null | undefined,
+    leadId: number,
+    fallbackDate?: Date | string,
+  ): Array<{
+    id: string;
+    leadId: string;
+    content: string;
+    authorName: string;
+    authorId?: number;
+    createdAt: string;
+  }> {
+    if (!rawNotes || !String(rawNotes).trim()) return [];
+    const trimmed = String(rawNotes).trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((item, idx) => ({
+              id: String(item?.id || `${leadId}-${idx + 1}`),
+              leadId: String(item?.leadId || leadId),
+              content: String(item?.content || item?.note || item?.text || '').trim(),
+              authorName: String(
+                item?.authorName ||
+                (item?.user ? `${item.user.firstName || ''} ${item.user.lastName || ''}`.trim() : null) ||
+                'Team Member',
+              ),
+              authorId: item?.authorId ? Number(item.authorId) : undefined,
+              createdAt: item?.createdAt
+                ? new Date(item.createdAt).toISOString()
+                : new Date().toISOString(),
+            }))
+            .filter((n) => n.content.length > 0);
+        }
+      } catch (_) {}
+    }
+
+    const lines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    const dateStr = fallbackDate
+      ? new Date(fallbackDate).toISOString()
+      : new Date().toISOString();
+    return lines.map((line, idx) => ({
+      id: `${leadId}-${idx + 1}`,
+      leadId: String(leadId),
+      content: line,
+      authorName: 'Team Member',
+      createdAt: dateStr,
+    }));
+  }
+
+  async getNotes(id: number, user: any) {
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        assignedToId: true,
+        createdById: true,
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+    this.assertCanRead(lead, user);
+    const notes = this.parseNotesList(
+      lead.notes,
+      lead.id,
+      lead.updatedAt || lead.createdAt,
+    );
+    return { success: true, data: notes, notes };
+  }
+
+  async addNote(id: number, dto: CreateLeadNoteDto, user: any) {
+    const content = dto?.content?.trim();
+    if (!content) throw new BadRequestException('Note content cannot be empty');
+
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        assignedToId: true,
+        createdById: true,
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+    this.assertCanRead(lead, user);
+
+    const existingNotes = this.parseNotesList(
+      lead.notes,
+      lead.id,
+      lead.updatedAt || lead.createdAt,
+    );
+
+    const authorName =
+      [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+      user?.name ||
+      user?.email ||
+      'Team Member';
+
+    const newNote = {
+      id: String(Date.now()),
+      leadId: String(id),
+      content,
+      authorName,
+      authorId: user?.id ? Number(user.id) : undefined,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedNotes = [newNote, ...existingNotes];
+    await this.prisma.lead.update({
+      where: { id },
+      data: { notes: JSON.stringify(updatedNotes) },
+    });
+
+    this.logger.debug(`[LEAD_NOTE_ADDED] leadId=${id} author=${authorName}`);
+    return {
+      success: true,
+      message: 'Note added successfully',
+      data: newNote,
+      notes: updatedNotes,
+    };
+  }
+
   async findOne(id: number, user: any) {
     const lead = await this.prisma.lead.findFirst({
       where: { id, deletedAt: null },
@@ -220,7 +348,13 @@ export class LeadService {
     });
     if (!lead) throw new NotFoundException('Lead not found');
     this.assertCanRead(lead, user);
-    return this.mapLeadWithStage(lead);
+    const mapped = this.mapLeadWithStage(lead);
+    const parsedNotes = this.parseNotesList(lead.notes, lead.id, lead.updatedAt || lead.createdAt);
+    return {
+      ...mapped,
+      notes: parsedNotes,
+      rawNotes: lead.notes,
+    };
   }
 
   async updateStage(id: number, dto: UpdateLeadStageDto, user: any) {
