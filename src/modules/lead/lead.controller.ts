@@ -395,8 +395,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ManageVisitDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.manageVisit(customerId, id, userId, dto);
+    return this.leadService.manageVisit(customerId, id, userId, dto, user);
   }
 
   @Post(':id/proposals')

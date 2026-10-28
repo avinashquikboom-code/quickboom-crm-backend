@@ -3317,8 +3317,43 @@ export class LeadService {
     return this.leadRepository.logFollowUp(customerId, leadId, userId, dto);
   }
 
-  async manageVisit(customerId: number | string, leadId: number | string, userId: number | string, dto: ManageVisitDto) {
-    await this.getLeadById(customerId, leadId);
+  async manageVisit(
+    customerId: number | string,
+    leadId: number | string,
+    userId: number | string,
+    dto: ManageVisitDto,
+    user?: any,
+  ) {
+    await this.getLeadById(customerId, leadId, user);
+
+    if (user && (await this.leadRepository.isVisitorUser(user))) {
+      if (dto.action === 'SCHEDULE') {
+        throw new ForbiddenException('Visitors cannot schedule visits or reassign visitors.');
+      }
+    }
+
+    if (dto.action === 'SCHEDULE') {
+      if (dto.employeeId) {
+        const empId = Number(dto.employeeId);
+        if (isNaN(empId) || empId <= 0) {
+          throw new BadRequestException('A valid Visitor employee ID must be selected');
+        }
+        const visitorEmp = await this.prisma.employee.findUnique({
+          where: { id: empId },
+          include: { designation: true },
+        });
+        if (!visitorEmp) {
+          throw new BadRequestException(`Visitor employee with ID ${dto.employeeId} not found`);
+        }
+        if (visitorEmp.status !== 'ACTIVE') {
+          throw new BadRequestException(`Selected visitor ${visitorEmp.firstName || ''} ${visitorEmp.lastName || ''} is not active`.trim());
+        }
+        if (!this.leadRepository.isVisitorEmployee(visitorEmp)) {
+          throw new BadRequestException('Selected employee is not authorized for the Visitor role');
+        }
+      }
+    }
+
     return this.leadRepository.manageVisit(customerId, leadId, userId, dto);
   }
 
