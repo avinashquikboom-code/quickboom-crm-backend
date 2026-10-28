@@ -3266,6 +3266,41 @@ export class LeadService {
   }
 
 
+  async getNotes(customerId: number | string, leadId: number | string, user?: any) {
+    const lead = await this.getLeadById(customerId, leadId, user);
+    const notes = await this.leadRepository.findNotes(lead.id);
+
+    const formatted = notes.map((note: any) => ({
+      id: note.id,
+      leadId: note.leadId,
+      content: note.content,
+      userId: note.userId,
+      user: note.user,
+      authorName: note.user
+        ? `${note.user.firstName || ''} ${note.user.lastName || ''}`.trim()
+        : 'Team Member',
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt,
+    }));
+
+    if (formatted.length === 0 && (lead as any).workNotes) {
+      formatted.push({
+        id: -1,
+        leadId: Number(lead.id),
+        content: String((lead as any).workNotes).trim(),
+        userId: (lead as any).createdById ?? 0,
+        user: (lead as any).createdBy ?? null,
+        authorName: (lead as any).createdBy
+          ? `${(lead as any).createdBy.firstName || ''} ${(lead as any).createdBy.lastName || ''}`.trim()
+          : 'Team Member',
+        createdAt: lead.createdAt,
+        updatedAt: lead.updatedAt,
+      });
+    }
+
+    return formatted;
+  }
+
   async addNote(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateLeadNoteDto) {
     await this.getLeadById(customerId, leadId);
     const note = await this.leadRepository.addNote(leadId, userId, dto.content);

@@ -352,6 +352,17 @@ export class LeadController {
   }
 
 
+  @Get(':id/notes')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
+  @ApiOperation({ summary: 'Get all notes for a lead' })
+  async getNotes(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.leadService.getNotes(customerId, id, user);
+  }
+
   @Post(':id/notes')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Add note to lead' })

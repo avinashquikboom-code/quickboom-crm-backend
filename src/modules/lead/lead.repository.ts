@@ -2029,6 +2029,15 @@ export class LeadRepository {
     });
   }
 
+  async findNotes(leadId: number | string) {
+    const numLeadId = Number(leadId);
+    return this.prisma.leadNote.findMany({
+      where: { leadId: numLeadId },
+      include: { user: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async logTimeline(leadId: number | string, action: string, description: string, metadata?: any) {
     const numLeadId = Number(leadId);
     return this.prisma.leadActivityTimeline.create({
