@@ -102,7 +102,8 @@ export class LeadService {
     return this.leadRepository.getSummaryMetrics(customerId, user);
   }
 
-  async convertLead(customerId: number | string, leadId: number | string, userId: number | string, dto: ConvertLeadDto) {
+  async convertLead(customerId: number | string, leadId: number | string, userId: number | string, dto: ConvertLeadDto, user?: any) {
+    if (await this.leadRepository.isVisitorUser(user)) throw new ForbiddenException('Visitors cannot convert leads into customers.');
     return this.leadRepository.convertLead(customerId, leadId, userId, dto);
   }
 
@@ -1282,6 +1283,18 @@ export class LeadService {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }
 
+    if (await this.leadRepository.isVisitorUser(user)) {
+      const visitor = await this.leadRepository.findAuthenticatedVisitor(lead.customerId, user);
+      const visit = await this.prisma.visit.findFirst({
+        where: { leadId: numId, customerId: lead.customerId },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      if (!visitor || !visit || visit.employeeId !== visitor.id || !['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) {
+        throw new ForbiddenException('Only the active visit assigned to you grants access to this lead.');
+      }
+      return lead;
+    }
+
     // Employee ownership enforcement: non-admin employees can only access leads assigned to them
     if (user && !isUserAdmin(user)) {
       const empId = user.employee?.id ?? user.employeeId;
@@ -1355,6 +1368,7 @@ export class LeadService {
   }
 
   async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto, userId?: number | string, user?: any) {
+    if (await this.leadRepository.isVisitorUser(user)) throw new ForbiddenException('Visitors may only mark their scheduled visit as Visit Done.');
     const lead = await this.getLeadById(customerId, id);
 
     // Employee ownership: non-admin employees can only update their assigned leads
@@ -1653,6 +1667,7 @@ export class LeadService {
     let resolvedStageId: number | undefined = dto.stageId ? Number(dto.stageId) : undefined;
     let resolvedStatus: LeadStatus = lead.status as LeadStatus;
     let stageName: string | undefined;
+    let targetStageKey: string | undefined;
 
     if (resolvedStageId) {
       // 1. Resolve LeadStage from DB
@@ -1662,6 +1677,7 @@ export class LeadService {
       }
 
       stageName = stage.name;
+      targetStageKey = stage.key;
 
       // 2. Tenant verification (workspace/company/tenant isolation)
       const numCustomerId = Number(customerId);
@@ -1709,32 +1725,10 @@ export class LeadService {
 
     // Visitor permission enforcement: Visitor can only transition a Visit Scheduled lead to VISIT_DONE
     if (await this.leadRepository.isVisitorUser(user)) {
-      const currentStatus = (lead.status || '').toUpperCase();
-      const currentStageKey = (lead.stage?.key || '').toUpperCase();
-      const currentStageName = (lead.stage?.name || '').toUpperCase();
-      const isCurrentVisitScheduled =
-        currentStatus === 'VISIT_SCHEDULED' ||
-        currentStatus === 'VISIT' ||
-        currentStageKey === 'VISIT_SCHEDULED' ||
-        currentStageKey === 'VISIT' ||
-        currentStageName === 'VISIT SCHEDULED' ||
-        currentStageName.includes('VISIT SCHEDULED');
-
-      if (!isCurrentVisitScheduled) {
-        throw new ForbiddenException('Visitors can only update leads that are currently scheduled for a visit.');
-      }
-
-      const targetStatus = (resolvedStatus || '').toUpperCase();
-      const targetName = (stageName || '').toUpperCase();
-      const isTargetVisitDone =
-        targetStatus === 'VISIT_DONE' ||
-        targetStatus === 'VISIT' ||
-        targetName === 'VISIT DONE' ||
-        targetName === 'VISIT' ||
-        targetName.includes('VISIT DONE');
-
-      if (!isTargetVisitDone) {
-        throw new ForbiddenException('Visitor employee can only update leads to Visit Done stage.');
+      const current = normalizeLeadStatus(lead.stage?.key || lead.status);
+      const target = normalizeLeadStatus(targetStageKey || resolvedStatus);
+      if (!['VISIT_SCHEDULED', 'VISIT'].includes(current) || target !== 'VISIT_DONE') {
+        throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
       }
     }
 
@@ -2381,11 +2375,22 @@ export class LeadService {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: {
             deletedAt: null,
-            OR: [
-              { name: { equals: newStageName, mode: 'insensitive' } },
-              { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
+            AND: [
+              {
+                OR: [
+                  { name: { equals: newStageName, mode: 'insensitive' } },
+                  { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
+                ],
+              },
+              numCustId
+                ? {
+                    OR: [
+                      { customerId: numCustId },
+                      { customerId: null },
+                    ],
+                  }
+                : { customerId: null },
             ],
-            ...(numCustId ? { OR: [{ customerId: numCustId }, { customerId: null }] } : { customerId: null }),
           },
           include: { emailTemplate: true },
         }).catch(() => null);
@@ -3318,42 +3323,30 @@ export class LeadService {
   }
 
   async manageVisit(
-    customerId: number | string,
-    leadId: number | string,
-    userId: number | string,
-    dto: ManageVisitDto,
-    user?: any,
+    customerId: number | string, leadId: number | string, userId: number | string,
+    dto: ManageVisitDto, user?: any,
   ) {
-    await this.getLeadById(customerId, leadId, user);
-
-    if (user && (await this.leadRepository.isVisitorUser(user))) {
-      if (dto.action === 'SCHEDULE') {
+    const lead = await this.getLeadById(customerId, leadId, user);
+    if (await this.leadRepository.isVisitorUser(user)) {
+      if (dto.action === 'SCHEDULE' || dto.employeeId != null) {
         throw new ForbiddenException('Visitors cannot schedule visits or reassign visitors.');
       }
-    }
-
-    if (dto.action === 'SCHEDULE') {
-      if (dto.employeeId) {
-        const empId = Number(dto.employeeId);
-        if (isNaN(empId) || empId <= 0) {
-          throw new BadRequestException('A valid Visitor employee ID must be selected');
-        }
-        const visitorEmp = await this.prisma.employee.findUnique({
-          where: { id: empId },
-          include: { designation: true },
-        });
-        if (!visitorEmp) {
-          throw new BadRequestException(`Visitor employee with ID ${dto.employeeId} not found`);
-        }
-        if (visitorEmp.status !== 'ACTIVE') {
-          throw new BadRequestException(`Selected visitor ${visitorEmp.firstName || ''} ${visitorEmp.lastName || ''} is not active`.trim());
-        }
-        if (!this.leadRepository.isVisitorEmployee(visitorEmp)) {
-          throw new BadRequestException('Selected employee is not authorized for the Visitor role');
-        }
+      if (dto.action === 'COMPLETE' && !['VISIT_SCHEDULED', 'VISIT'].includes(normalizeLeadStatus(lead.stage?.key || lead.status))) {
+        throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
       }
     }
-
+    if (dto.action === 'SCHEDULE') {
+      const employeeId = Number(dto.employeeId);
+      if (!Number.isInteger(employeeId) || employeeId <= 0) throw new BadRequestException('Select an active Visitor employee.');
+      if (!dto.date || !Number.isFinite(Date.parse(dto.date)) || !dto.time?.trim()) throw new BadRequestException('Visit date and time are required.');
+      const visitor = await this.prisma.employee.findFirst({
+        where: { id: employeeId, customerId: lead.customerId, status: 'ACTIVE', mobileLoginEnabled: true },
+        include: { designation: true, user: {select: {isActive:true}} },
+      });
+      if (!visitor || visitor.user?.isActive === false || !this.leadRepository.isVisitorEmployee(visitor)) {
+        throw new BadRequestException('Selected Visitor must be active, authorized and belong to this company.');
+      }
+    }
     return this.leadRepository.manageVisit(customerId, leadId, userId, dto);
   }
 

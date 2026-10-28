@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
+import { VisitorLeadActionsGuard } from './visitor-lead-actions.guard';
 import {
   CheckDuplicateDto,
   ConvertLeadDto,
@@ -45,7 +46,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard, VisitorLeadActionsGuard)
 @Controller(['leads', 'admin/leads'])
 export class LeadController {
   private readonly logger = new Logger(LeadController.name);
@@ -263,8 +264,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ConvertLeadDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.convertLead(customerId, id, userId, dto);
+    return this.leadService.convertLead(customerId, id, userId, dto, user);
   }
 
   @Get(['whatsapp-templates', 'whatsapp/templates'])
