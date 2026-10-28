@@ -83,3 +83,9 @@ export class BulkDeleteLeadsDto {
   ids: number[];
 }
 
+export class CreateLeadNoteDto {
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+}
+
