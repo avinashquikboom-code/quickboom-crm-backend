@@ -2867,21 +2867,25 @@ export class LeadRepository {
 
   public isVisitorEmployee(user: any): boolean {
     if (!user) return false;
+    const rawDesig = user.employee?.designation || user.designation;
     const desigName = (
-      user.employee?.designation?.name ||
+      (typeof rawDesig === 'object' ? rawDesig?.name : rawDesig) ||
       user.employee?.designationName ||
-      user.designation ||
+      user.designationName ||
       ''
-    ).trim().toUpperCase();
+    ).toString().trim().toUpperCase();
     const desigCode = (
+      (typeof rawDesig === 'object' ? rawDesig?.code : null) ||
       user.employee?.designation?.code ||
       user.employee?.designationCode ||
+      user.designationCode ||
       ''
-    ).trim().toUpperCase();
+    ).toString().trim().toUpperCase();
     const allRoles = [
       ...(Array.isArray(user.roles) ? user.roles : []),
       ...(user.userRoles?.map((ur: any) => ur.role?.name || ur.role?.type) || []),
       user.role,
+      user.roleType,
     ]
       .filter(Boolean)
       .map((r: any) => String(r).trim().toUpperCase());

@@ -90,7 +90,7 @@ export class MobileVisitController {
             ],
           }
         : {}),
-      ...(!isAdmin && !isVisitorUser && employee
+      ...(!isAdmin && employee
         ? {
             AND: [
               {
@@ -234,7 +234,7 @@ export class MobileVisitController {
               },
             ],
           },
-          ...(!isAdmin && !isVisitorUser && employee
+          ...(!isAdmin && employee
             ? [
                 {
                   OR: [
@@ -480,8 +480,7 @@ export class MobileVisitController {
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
       (visit.lead as any)?.assignedToId === user?.id ||
-      visit.completedById === employee?.id ||
-      isVisitorUser;
+      visit.completedById === employee?.id;
     if (!isAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to view another employee\'s visit.');
     }
@@ -590,8 +589,7 @@ export class MobileVisitController {
       !visit.employeeId ||
       visit.employeeId === employee.id ||
       visit.lead?.employeeId === employee.id ||
-      (visit.lead as any)?.assignedToId === user?.id ||
-      isVisitorUser;
+      (visit.lead as any)?.assignedToId === user?.id;
     if (!isAdmin && !isAssigned) {
       throw new ForbiddenException('You do not have permission to start another employee\'s visit.');
     }
@@ -666,8 +664,7 @@ export class MobileVisitController {
     const isAssigned =
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
-      (visit.lead as any)?.assignedToId === user?.id ||
-      isVisitorUser;
+      (visit.lead as any)?.assignedToId === user?.id;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
@@ -760,8 +757,7 @@ export class MobileVisitController {
       visit.employeeId === employee?.id ||
       visit.lead?.employeeId === employee?.id ||
       (visit.lead as any)?.assignedToId === user?.id ||
-      visit.completedById === employee?.id ||
-      isVisitorUser;
+      visit.completedById === employee?.id;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
