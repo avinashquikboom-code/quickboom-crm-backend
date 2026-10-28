@@ -183,3 +183,32 @@ $$\text{BPO Mobile} \xrightarrow{\text{Assign Visitor}} \text{Assigned Visitor M
 - **`flutter analyze`**: 0 issues across all modified files.
 - **Backend Build (`npm run build`)**: 0 TypeScript compilation errors.
 
+---
+
+## 6. Leads Pipeline Filter Resolution ("Visit Scheduled" showing "New" leads)
+
+### Root Cause
+When the mobile user tapped the **Visit Scheduled** filter chip, the backend repository (`lead.repository.ts`) constructed a query to locate the customer's Visit Scheduled stages using:
+```ts
+const visitStages = await this.prisma.leadStage.findMany({
+  where: {
+    OR: [
+      { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
+      { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+    ],
+    deletedAt: null,
+    ...(where.customerId ? { OR: [{ customerId: where.customerId }, { customerId: null }] } : {}),
+  },
+  select: { id: true, key: true },
+});
+```
+Due to JavaScript object key semantics, spreading `{ OR: [...] }` over an existing `OR` key completely overwrote the stage name/key condition. Consequently, `visitStages` returned **every stage** belonging to that customer (`[1, 2, 3, 4, 5, 6, 7, 8, ...]`).
+When `stageIds` was populated with all stage IDs, the main lead query filtered by `{ stageId: { in: stageIds } }`, which matched **every lead in the database** (including newly captured leads with stage `1 New`).
+
+### Fix Applied
+1. **Backend (`lead.repository.ts` & `lead.service.ts`)**:
+   - Encapsulated the conditions within Prisma's `AND: [ ... ]` array so the `key`/`name` condition is never overwritten by `customerId`.
+   - Applied the fix to both `isVisitor` visit stage lookup (lines 782-805) and `isVisitScheduledFilter` lookup (lines 888-911).
+2. **Flutter Mobile (`leads_view.dart`)**:
+   - Implemented defensive client-side stage filtering for `displayLeads` so that selecting a stage filter guarantees only leads matching that stage key, status, or alias are rendered in the list.
+

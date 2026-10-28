@@ -38,7 +38,6 @@ export class MobileVisitController {
     const roleName = (user?.role || '').toUpperCase();
     const roleTypeName = (user?.roleType || '').toUpperCase();
     return (
-      employee?.designationId === 11 ||
       desigName.includes('VISIT') ||
       desigName.includes('FIELD') ||
       roleName.includes('VISITOR') ||
@@ -46,6 +45,15 @@ export class MobileVisitController {
       roleTypeName.includes('VISITOR') ||
       roleTypeName.includes('VISIT')
     );
+  }
+
+  private assertVisitorAssignment(visit: any, employee: any, user: any, customerId: number | string | undefined) {
+    if (!this.isVisitorEmployee(employee, user)) return;
+    if (!employee || employee.status !== 'ACTIVE' || employee.mobileLoginEnabled === false ||
+        employee.userId !== Number(user?.id) || employee.customerId !== Number(customerId) ||
+        visit.customerId !== employee.customerId || visit.employeeId !== employee.id) {
+      throw new ForbiddenException('Only the authenticated Visitor assigned to this visit can access it.');
+    }
   }
 
   @Get()
@@ -61,6 +69,7 @@ export class MobileVisitController {
     // Resolve the authenticated employee
     const employee = await this.prisma.employee.findFirst({
       where: {
+        customerId: Number(customerId),
         OR: [
           { userId: user?.id },
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
@@ -106,9 +115,22 @@ export class MobileVisitController {
         : { AND: [] }),
     };
 
+    if (isVisitorUser) {
+      if (!employee || employee.status !== 'ACTIVE' || employee.mobileLoginEnabled === false || employee.userId !== Number(user?.id)) {
+        throw new ForbiddenException('An active authenticated Visitor profile is required.');
+      }
+      where.customerId = employee.customerId;
+      where.employeeId = employee.id;
+      where.AND = [];
+    }
+
     // Tab → status mapping
     const normalizedTab = (tab || '').toLowerCase().trim();
-    if (normalizedTab) {
+    if (isVisitorUser) {
+      const statuses: Record<string, VisitStatus> = {upcoming: VisitStatus.SCHEDULED, scheduled: VisitStatus.SCHEDULED, ongoing: VisitStatus.IN_PROGRESS, in_progress: VisitStatus.IN_PROGRESS, completed: VisitStatus.COMPLETED, done: VisitStatus.COMPLETED};
+      if (statuses[normalizedTab]) where.status = statuses[normalizedTab];
+      else if (status && String(status) !== 'ALL') where.status = status;
+    } else if (normalizedTab) {
       if (normalizedTab === 'upcoming' || normalizedTab === 'scheduled') {
         if (!where.AND) where.AND = [];
         where.AND.push({
@@ -181,7 +203,7 @@ export class MobileVisitController {
     // ── When viewing upcoming / scheduled visits: ────────────────────────────
     // Ensure all leads assigned to this visitor in VISIT_SCHEDULED stage appear
     // in the Scheduled tab as per requirements and reference design.
-    if (normalizedTab === 'upcoming' || normalizedTab === 'scheduled') {
+    if (!isVisitorUser && (normalizedTab === 'upcoming' || normalizedTab === 'scheduled')) {
       const existingLeadIds = new Set(visits.map((v) => v.leadId).filter(Boolean));
 
       // Resolve all stages in the database that correspond to Visit Scheduled
@@ -368,7 +390,7 @@ export class MobileVisitController {
         v.lead?.status === 'VISIT_DONE' ||
         v.lead?.stage?.key === 'VISIT_DONE' ||
         (v.lead?.stage?.name || '').toUpperCase().includes('VISIT DONE');
-      const isCompleted = v.status === VisitStatus.COMPLETED || isLeadVisitDone;
+      const isCompleted = v.status === VisitStatus.COMPLETED || (!isVisitorUser && isLeadVisitDone);
 
       return {
         id: v.id,
@@ -463,6 +485,7 @@ export class MobileVisitController {
 
     const employee = await this.prisma.employee.findFirst({
       where: {
+        customerId: Number(customerId),
         OR: [
           { userId: user?.id },
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
@@ -472,6 +495,7 @@ export class MobileVisitController {
     });
 
     const isVisitorUser = this.isVisitorEmployee(employee, user);
+    this.assertVisitorAssignment(visit, employee, user, customerId);
     const isAdmin =
       isUserSuperAdmin(user) ||
       (user?.role && ['SUPER_ADMIN', 'COMPANY_ADMIN', 'ADMIN'].includes(user.role));
@@ -496,7 +520,7 @@ export class MobileVisitController {
       visit.lead?.status === 'VISIT_DONE' ||
       visit.lead?.stage?.key === 'VISIT_DONE' ||
       (visit.lead?.stage?.name || '').toUpperCase().includes('VISIT DONE');
-    const isCompleted = visit.status === VisitStatus.COMPLETED || isLeadVisitDone;
+    const isCompleted = visit.status === VisitStatus.COMPLETED || (!isVisitorUser && isLeadVisitDone);
 
     return {
       id: visit.id,
@@ -568,6 +592,7 @@ export class MobileVisitController {
 
     const employee = await this.prisma.employee.findFirst({
       where: {
+        customerId: Number(customerId),
         OR: [
           { userId: user?.id },
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
@@ -581,6 +606,7 @@ export class MobileVisitController {
     }
 
     const isVisitorUser = this.isVisitorEmployee(employee, user);
+    this.assertVisitorAssignment(visit, employee, user, customerId);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAdmin =
       isSuperAdmin ||
@@ -651,6 +677,7 @@ export class MobileVisitController {
 
     const employee = await this.prisma.employee.findFirst({
       where: {
+        customerId: Number(customerId),
         OR: [
           { userId: user?.id },
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
@@ -660,6 +687,7 @@ export class MobileVisitController {
     });
 
     const isVisitorUser = this.isVisitorEmployee(employee, user);
+    this.assertVisitorAssignment(visit, employee, user, customerId);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
       visit.employeeId === employee?.id ||
@@ -692,7 +720,7 @@ export class MobileVisitController {
     });
 
     // If attached to a lead, update budget and record timeline
-    if (visit.leadId) {
+    if (visit.leadId && !isVisitorUser) {
       const budgetNum = typeof body.budget === 'number' ? body.budget : parseFloat(String(body.budget || '0').replace(/[^0-9.]/g, ''));
       try {
         await this.prisma.lead.update({
@@ -743,6 +771,7 @@ export class MobileVisitController {
 
     const employee = await this.prisma.employee.findFirst({
       where: {
+        customerId: Number(customerId),
         OR: [
           { userId: user?.id },
           { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
@@ -752,6 +781,7 @@ export class MobileVisitController {
     });
 
     const isVisitorUser = this.isVisitorEmployee(employee, user);
+    this.assertVisitorAssignment(visit, employee, user, customerId);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
       visit.employeeId === employee?.id ||
@@ -760,6 +790,15 @@ export class MobileVisitController {
       visit.completedById === employee?.id;
     if (!isSuperAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
+    }
+
+    if (isVisitorUser) {
+      if (!['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) throw new ForbiddenException('Only an active assigned visit may be completed.');
+      if (visit.leadId) {
+        const lead = await this.prisma.lead.findFirst({where: {id:visit.leadId,customerId:employee!.customerId,deletedAt:null},include:{stage:true}});
+        const key = (lead?.stage?.key || lead?.status || '').toUpperCase();
+        if (!['VISIT_SCHEDULED','VISIT'].includes(key)) throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+      }
     }
 
     const numCustomerId = Number(customerId) || employee?.customerId || visit.customerId;
@@ -794,7 +833,6 @@ export class MobileVisitController {
               {
                 OR: [
                   { key: 'VISIT_DONE' },
-                  { key: 'VISIT' },
                   { name: { equals: 'Visit Done', mode: 'insensitive' } },
                 ],
               },

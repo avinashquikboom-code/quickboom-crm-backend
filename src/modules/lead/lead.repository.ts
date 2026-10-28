@@ -757,61 +757,18 @@ export class LeadRepository {
     const isVisitor = await this.isVisitorUser(user);
 
     if (isVisitor) {
-      let empId = user.employee?.id ?? user.employeeId;
-      if (!empId && user.id && this.prisma) {
-        const emp = await this.prisma.employee.findFirst({ where: { userId: user.id } });
-        if (emp) empId = emp.id;
-      }
-
-      this.logger.log(
-        `[LEAD_VISIBILITY_DEBUG] findAll authenticatedUserId=${user.id} employeeId=${empId ?? 'none'} ` +
-        `companyId=${numCustomerId} isVisitor=true filter=visitor_only`,
-      );
-
-      if (empId) {
-        andConditions.push({
-          OR: [
-            { employeeId: Number(empId) },
-            { visits: { some: { employeeId: Number(empId) } } },
-          ],
-        });
-      } else {
-        andConditions.push({ id: -1 });
-      }
-
-      // Query actual existing "Visit Scheduled" stages from DB for this customer/system
-      const visitStages = await this.prisma.leadStage.findMany({
-        where: {
-          OR: [
-            { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
-            { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-          ],
-          deletedAt: null,
-          ...(where.customerId ? { OR: [{ customerId: where.customerId }, { customerId: null }] } : {}),
-        },
-        select: { id: true, key: true },
-      });
-      const stageIds = visitStages.map((s) => s.id);
-      const stageKeys = visitStages.map((s) => s.key).filter(Boolean);
-
-      andConditions.push({
-        OR: [
-          { status: LeadStatus.VISIT_SCHEDULED },
-          { status: 'VISIT' as any },
-          ...(stageIds.length > 0 ? [{ stageId: { in: stageIds } }] : []),
-          {
-            stage: {
-              is: {
-                OR: [
-                  { key: { in: ['VISIT_SCHEDULED', 'VISIT', ...stageKeys] } },
-                  { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-                ],
-                deletedAt: null,
-              },
-            },
-          },
-        ],
-      });
+      const visitor = await this.findAuthenticatedVisitor(numCustomerId, user);
+      // Lead ownership and historical assignments do not grant Visitor access.
+      // Choose the newest visit before filtering its assignee/status.
+      const visits = visitor ? await this.prisma.visit.findMany({
+        where: { customerId: numCustomerId, leadId: { not: null } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        distinct: ['leadId'],
+        select: { leadId: true, employeeId: true, status: true },
+      }) : [];
+      andConditions.push({ id: { in: visits.filter(v =>
+        v.employeeId === visitor?.id && ['SCHEDULED', 'IN_PROGRESS'].includes(v.status),
+      ).map(v => v.leadId!) } });
     } else if (user && !isAdmin) {
       // Employee RBAC Isolation: Non-admin employees see leads assigned to them via employeeId/assignedToId,
       // or where a visit was scheduled by this employee.
@@ -848,114 +805,36 @@ export class LeadRepository {
 
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
 
-    if (!isVisitor) {
-      let sId: number | null = null;
-      let stageRecord: any = null;
-
-      if (options.stageId && options.stageId !== 'ALL' && !isNaN(Number(options.stageId))) {
-        sId = Number(options.stageId);
-        stageRecord = await this.prisma.leadStage.findFirst({
-          where: { id: sId, deletedAt: null },
+    {
+      const stageId = options.stageId && options.stageId !== 'ALL' ? Number(options.stageId) : null;
+      const status = options.status && options.status.toUpperCase() !== 'ALL' ? String(options.status).trim() : null;
+      let stage: any = null;
+      if (stageId && Number.isInteger(stageId)) {
+        stage = await this.prisma.leadStage.findFirst({
+          where: { id: stageId, deletedAt: null, OR: [{ customerId: numCustomerId }, { customerId: null }] },
+        });
+        if (!stage) andConditions.push({ id: -1 });
+      } else if (status) {
+        const canonical = normalizeLeadStatus(status) === 'VISIT' ? 'VISIT_SCHEDULED' : normalizeLeadStatus(status);
+        stage = await this.prisma.leadStage.findFirst({
+          where: { deletedAt: null, AND: [
+            { OR: [{ key: status }, { key: canonical }, ...(canonical === 'VISIT_SCHEDULED' ? [{key:'VISIT'}] : [])] },
+            { OR: [{ customerId: numCustomerId }, { customerId: null }] },
+          ] }, orderBy: { customerId: 'desc' },
         });
       }
-
-      const statusStr =
-        options.status && options.status.toUpperCase() !== 'ALL' ? String(options.status).trim() : null;
-
-      // Check if this filter is for Visit Scheduled
-      const isVisitScheduledFilter =
-        (statusStr && (statusStr.toUpperCase() === 'VISIT_SCHEDULED' || statusStr.toUpperCase() === 'VISIT')) ||
-        (stageRecord && (
-          stageRecord.key === 'VISIT_SCHEDULED' ||
-          stageRecord.key === 'VISIT' ||
-          stageRecord.name?.toLowerCase().includes('visit schedule')
-        ));
-
-      if (isVisitScheduledFilter) {
-        // Query actual existing "Visit Scheduled" stages from DB for this customer/system
-        const visitStages = await this.prisma.leadStage.findMany({
-          where: {
-            OR: [
-              { key: { in: ['VISIT_SCHEDULED', 'VISIT'] } },
-              { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-            ],
-            deletedAt: null,
-            ...(where.customerId ? { OR: [{ customerId: where.customerId }, { customerId: null }] } : {}),
-          },
-          select: { id: true, key: true },
-        });
-        const stageIds = visitStages.map((s) => s.id);
-        if (sId && !stageIds.includes(sId)) {
-          stageIds.push(sId);
-        }
-        const stageKeys = visitStages.map((s) => s.key).filter(Boolean);
-
-        andConditions.push({
-          OR: [
-            { status: LeadStatus.VISIT_SCHEDULED },
-            { status: 'VISIT' as any },
-            ...(stageIds.length > 0 ? [{ stageId: { in: stageIds } }] : []),
-            {
-              stage: {
-                is: {
-                  OR: [
-                    { key: { in: ['VISIT_SCHEDULED', 'VISIT', ...stageKeys] } },
-                    { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-                  ],
-                  deletedAt: null,
-                },
-              },
-            },
-          ],
-        });
-      } else if (sId && stageRecord) {
-        if (stageRecord.key) {
-          const normKey = normalizeLeadStatus(stageRecord.key);
-          if (ALL_LEAD_STATUSES.includes(normKey)) {
-            andConditions.push({
-              OR: [
-                { stageId: sId },
-                { status: normKey as LeadStatus },
-                { stage: { is: { key: stageRecord.key, deletedAt: null } } },
-              ],
-            });
-          } else {
-            andConditions.push({
-              OR: [
-                { stageId: sId },
-                { stage: { is: { key: stageRecord.key, deletedAt: null } } },
-              ],
-            });
-          }
-        } else {
-          where.stageId = sId;
-        }
-      } else if (statusStr) {
-        if (!isNaN(Number(statusStr))) {
-          where.stageId = Number(statusStr);
-        } else {
-          const normStatus = normalizeLeadStatus(statusStr);
-          if (ALL_LEAD_STATUSES.includes(normStatus)) {
-            where.status = normStatus as LeadStatus;
-          } else {
-            // Custom stage key or label
-            const matchStage = await this.prisma.leadStage.findFirst({
-              where: {
-                OR: [
-                  { key: statusStr },
-                  { name: { equals: statusStr, mode: 'insensitive' } },
-                ],
-                deletedAt: null,
-                ...(where.customerId ? { customerId: where.customerId } : {}),
-              },
-            });
-            if (matchStage) {
-              where.stageId = matchStage.id;
-            } else {
-              where.stage = { name: { equals: statusStr, mode: 'insensitive' } };
-            }
-          }
-        }
+      if (stage) {
+        const canonical = normalizeLeadStatus(stage.key);
+        // Explicit stage is authoritative. Legacy status is a fallback only
+        // for records with no stageId, never an alternative to another stage.
+        andConditions.push({ OR: [
+          { stageId: stage.id },
+          ...(ALL_LEAD_STATUSES.includes(canonical) ? [{ stageId: null, status: canonical }] : []),
+        ] });
+      } else if (!stageId && status) {
+        const canonical = normalizeLeadStatus(status) === 'VISIT' ? 'VISIT_SCHEDULED' : normalizeLeadStatus(status);
+        if (ALL_LEAD_STATUSES.includes(canonical)) andConditions.push({ stageId: null, status: canonical });
+        else andConditions.push({ id: -1 });
       }
     }
 
@@ -1003,6 +882,8 @@ export class LeadRepository {
             employee: { select: { id: true, firstName: true, lastName: true } },
             convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             socialProfiles: true,
+          visits: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1,
+            include: { employee: { select: { id: true, firstName: true, lastName: true } } } },
           },
         }),
         this.prisma.lead.count({ where }),
@@ -1022,6 +903,7 @@ export class LeadRepository {
               createdBy: { select: { id: true, firstName: true, lastName: true } },
               employee: { select: { id: true, firstName: true, lastName: true } },
               convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
+              visits: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1, include: {employee: {select: {id:true, firstName:true, lastName:true}}} },
             },
           }),
           this.prisma.lead.count({ where }),
@@ -1357,8 +1239,12 @@ export class LeadRepository {
     delete mappedSocial.website;
     const finalSocialMedia = Object.keys(mappedSocial).length > 0 ? mappedSocial : null;
 
+    const latestVisit = Array.isArray(lead.visits) ? lead.visits[0] : null;
     return {
       ...lead,
+      visitStatus: latestVisit?.status ?? null,
+      visitScheduledAt: latestVisit?.date ?? null,
+      assignedVisitorId: latestVisit?.employeeId ?? null,
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
       companyName: resolvedBiz,
@@ -2103,7 +1989,12 @@ export class LeadRepository {
     return this.findOne(numCustomerId, numLeadId);
   }
 
-  async manageVisit(customerId: number | string, leadId: number | string, userId: number | string, dto: ManageVisitDto) {
+  async manageVisit(customerId: number | string, leadId: number | string, userId: number | string, dto: ManageVisitDto, inTransaction = false) {
+    if (dto.action === 'SCHEDULE' && !inTransaction) {
+      return this.prisma.$transaction(async tx =>
+        new LeadRepository(tx as PrismaService).manageVisit(customerId, leadId, userId, dto, true),
+      );
+    }
     const numCustomerId = Number(customerId);
     const numLeadId = Number(leadId);
     const numUserId = Number(userId);
@@ -2121,12 +2012,7 @@ export class LeadRepository {
 
     if (dto.action === 'SCHEDULE') {
       const visitDate = dto.date ? new Date(dto.date) : new Date();
-      const fallbackEmpId = employee?.id || (await this.getOrCreateFallbackEmployee(effectiveCustomerId, numUserId));
-      const targetEmpId = dto.employeeId
-        ? Number(dto.employeeId)
-        : lead.employeeId
-          ? Number(lead.employeeId)
-          : fallbackEmpId;
+      const targetEmpId = Number(dto.employeeId);
 
       const actingEmpName = employee
         ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
@@ -2134,7 +2020,7 @@ export class LeadRepository {
 
       // Check if an existing SCHEDULED visit exists for this lead to avoid duplicates
       const existingScheduledVisit = await this.prisma.visit.findFirst({
-        where: { leadId: numLeadId, status: 'SCHEDULED' },
+        where: { leadId: numLeadId, customerId: effectiveCustomerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] } },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -2194,7 +2080,7 @@ export class LeadRepository {
       });
 
       // Assign lead to the Field Visitor employee so their pipeline filter (employeeId) picks it up
-      const leadAssignedEmpId = targetEmpId || (lead.employeeId ? Number(lead.employeeId) : (employee?.id || fallbackEmpId));
+      const leadAssignedEmpId = targetEmpId;
 
       await this.prisma.lead.update({
         where: { id: numLeadId },
@@ -2213,7 +2099,7 @@ export class LeadRepository {
       );
     } else if (dto.action === 'START') {
       const visit = await this.prisma.visit.findFirst({
-        where: { leadId: numLeadId, status: 'SCHEDULED' },
+        where: { leadId: numLeadId, customerId: effectiveCustomerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] } },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -2265,7 +2151,6 @@ export class LeadRepository {
             {
               OR: [
                 { key: 'VISIT_DONE' },
-                { key: 'VISIT' },
                 { name: { equals: 'Visit Done', mode: 'insensitive' } },
               ],
             },
@@ -2863,6 +2748,14 @@ export class LeadRepository {
     }
 
     return result;
+  }
+
+  public async findAuthenticatedVisitor(customerId: number | string, user: any) {
+    if (!user?.id || !Number(customerId)) return null;
+    return this.prisma.employee.findFirst({
+      where: { customerId: Number(customerId), userId: Number(user.id), status: 'ACTIVE', mobileLoginEnabled: true },
+      include: { designation: true },
+    });
   }
 
   public isVisitorEmployee(user: any): boolean {

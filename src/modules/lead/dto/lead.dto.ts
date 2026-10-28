@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -756,6 +757,7 @@ export class ManageVisitDto {
   @ApiProperty({ example: 'SCHEDULE', description: 'SCHEDULE | START | COMPLETE' })
   @IsString()
   @IsNotEmpty()
+  @IsIn(['SCHEDULE', 'START', 'COMPLETE'])
   action: 'SCHEDULE' | 'START' | 'COMPLETE';
 
   @ApiPropertyOptional({ example: 12, description: 'Assigned employee/visitor ID' })
