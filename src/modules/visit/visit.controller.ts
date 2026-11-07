@@ -16,13 +16,14 @@ import { VisitStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { CrmEmployeeAccessGuard } from '../../common/guards/crm-employee-access.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Client Visits')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard, CrmEmployeeAccessGuard)
 @Controller('visits')
 export class VisitController {
   constructor(private readonly visitService: VisitService) {}

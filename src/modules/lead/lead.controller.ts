@@ -40,13 +40,15 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { CrmEmployeeAccessGuard } from '../../common/guards/crm-employee-access.guard';
+import { CrmCategory } from '../../common/decorators/crm-category.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard, VisitorLeadActionsGuard)
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard, CrmEmployeeAccessGuard, VisitorLeadActionsGuard)
 @Controller(['leads', 'admin/leads'])
 export class LeadController {
   private readonly logger = new Logger(LeadController.name);
@@ -54,6 +56,7 @@ export class LeadController {
   constructor(private readonly leadService: LeadService) {}
 
   @Post()
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'CREATE' })
   @ApiOperation({ summary: 'Create a new CRM lead' })
   async create(
@@ -93,6 +96,7 @@ export class LeadController {
   }
 
   @Post('stages')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Create a new lead stage' })
   async createStage(
     @CurrentCustomer() customerId: string,
@@ -103,6 +107,7 @@ export class LeadController {
   }
 
   @Patch('stages/reorder')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Reorder lead stages by updating their sort order positions in bulk' })
   async reorderStages(
     @CurrentCustomer() customerId: string,
@@ -113,6 +118,7 @@ export class LeadController {
   }
 
   @Patch('stages/:id')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Update lead stage details or active status' })
   async updateStage(
     @CurrentCustomer() customerId: string,
@@ -124,6 +130,7 @@ export class LeadController {
   }
 
   @Delete('stages/:id')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Delete lead stage if no leads are assigned' })
   async deleteStage(
     @CurrentCustomer() customerId: string,
@@ -189,6 +196,7 @@ export class LeadController {
   }
 
   @Delete('bulk')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk' })
   async bulkRemove(
@@ -206,6 +214,7 @@ export class LeadController {
   }
 
   @Post('bulk-delete')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk-delete' })
   async bulkRemovePost(
@@ -223,6 +232,7 @@ export class LeadController {
   }
 
   @Post('bulk')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Bulk soft delete leads via POST /leads/bulk' })
   async bulkRemovePostBulk(
@@ -240,6 +250,7 @@ export class LeadController {
   }
 
   @Delete('bulk-delete')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Bulk soft delete leads via DELETE /leads/bulk-delete' })
   async bulkRemoveDeleteBulk(
@@ -257,6 +268,7 @@ export class LeadController {
   }
 
   @Post(':id/convert')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Convert lead to customer account' })
   async convert(
@@ -302,6 +314,7 @@ export class LeadController {
   }
 
   @Patch(':id')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Update lead details' })
   async update(
@@ -327,6 +340,7 @@ export class LeadController {
   }
 
   @Delete(':id')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete lead' })
   async remove(
@@ -366,6 +380,7 @@ export class LeadController {
   }
 
   @Post(':id/notes')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Add note to lead' })
   async addNote(
@@ -378,6 +393,7 @@ export class LeadController {
   }
 
   @Post(':id/follow-ups')
+  @CrmCategory('BPO')
   @RequirePermissions({ module: 'FOLLOW_UP', action: 'CREATE' })
   @ApiOperation({ summary: 'Log follow-up call outcome, next follow up, and update status to FOLLOW_UP' })
   async logFollowUp(
@@ -403,6 +419,7 @@ export class LeadController {
   }
 
   @Post(':id/proposals')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Create & send commercial proposal/quotation, move status to PROPOSAL' })
   async createProposal(
     @CurrentCustomer() customerId: string,
@@ -414,6 +431,7 @@ export class LeadController {
   }
 
   @Post(':id/final-call')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Log final negotiation call, move status to FINAL_CALL or PAYMENT' })
   async recordFinalCall(
     @CurrentCustomer() customerId: string,
@@ -425,6 +443,7 @@ export class LeadController {
   }
 
   @Post(':id/payments')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Record payment verification, move status to PAYMENT' })
   async recordPayment(
     @CurrentCustomer() customerId: string,
@@ -436,6 +455,7 @@ export class LeadController {
   }
 
   @Post(':id/start-work')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Kick off project work, move status to WORK_STARTED' })
   async startWork(
     @CurrentCustomer() customerId: string,
@@ -447,6 +467,7 @@ export class LeadController {
   }
 
   @Post(':id/send-details')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Send lead profile and account details to the lead email via configured SMTP' })
   async sendLeadDetails(
     @CurrentCustomer() customerId: string,
@@ -457,6 +478,7 @@ export class LeadController {
   }
 
   @Post(':id/send-email')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Send a custom email or details email to the lead via configured SMTP' })
   async sendLeadEmail(
     @CurrentCustomer() customerId: string,
@@ -468,6 +490,7 @@ export class LeadController {
   }
 
   @Post(':id/send-whatsapp')
+  @CrmCategory('BPO')
   @ApiOperation({ summary: 'Send a WhatsApp message or template to the lead phone' })
   async sendLeadWhatsApp(
     @CurrentCustomer() customerId: string,

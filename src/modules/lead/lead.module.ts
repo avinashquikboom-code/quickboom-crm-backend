@@ -3,6 +3,7 @@ import { LeadService } from './lead.service';
 import { LeadController } from './lead.controller';
 import { LeadRepository } from './lead.repository';
 import { VisitorLeadActionsGuard } from './visitor-lead-actions.guard';
+import { CrmEmployeeAccessGuard } from '../../common/guards/crm-employee-access.guard';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { LeadLimitModule } from '../lead-limit/lead-limit.module';
@@ -12,7 +13,7 @@ import { S3Module } from '../s3/s3.module';
 @Module({
   imports: [SubscriptionModule, PrismaModule, forwardRef(() => LeadLimitModule), WhatsappModule, S3Module],
   controllers: [LeadController],
-  providers: [LeadService, LeadRepository, VisitorLeadActionsGuard],
+  providers: [LeadService, LeadRepository, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],
   exports: [LeadService, LeadRepository],
 })
 export class LeadModule {}

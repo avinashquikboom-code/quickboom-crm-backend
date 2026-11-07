@@ -29,6 +29,7 @@ import {
 } from './dto/auth.dto';
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
+import { classifyCrmEmployee, CrmEmployeeCategory } from '../../common/crm/crm-employee-category';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
 import { NotificationService } from '../notification/notification.service';
@@ -1365,6 +1366,7 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        crmCategory: this.crmCategoryFor(emp),
       };
     }
 
@@ -1417,6 +1419,7 @@ export class AuthService {
     userData.permissionKeys = rbacData.permissionKeys;
     userData.isCrmEligible = rbacData.isCrmEligible ?? false;
     userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
+    userData.crmCategory = rbacData.crmCategory ?? 'NONE';
 
     const customerPayload = user.customer ? {
       id: user.customer.id,
@@ -1952,6 +1955,7 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        crmCategory: this.crmCategoryFor(emp),
       };
     }
 
@@ -1987,6 +1991,7 @@ export class AuthService {
     userData.permissionKeys = rbacData.permissionKeys;
     userData.isCrmEligible = rbacData.isCrmEligible ?? false;
     userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
+    userData.crmCategory = rbacData.crmCategory ?? 'NONE';
 
     return {
       statusCode: 200,
@@ -2235,6 +2240,7 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        crmCategory: this.crmCategoryFor(emp),
       };
     }
 
@@ -2270,6 +2276,7 @@ export class AuthService {
     userData.permissionKeys = rbacData.permissionKeys;
     userData.isCrmEligible = rbacData.isCrmEligible ?? false;
     userData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
+    userData.crmCategory = rbacData.crmCategory ?? 'NONE';
 
     return {
       statusCode: 200,
@@ -2358,6 +2365,7 @@ export class AuthService {
         joiningDate: emp.joiningDate || user.createdAt,
         isCrmEligible,
         crmMobileAccess: isCrmEligible,
+        crmCategory: this.crmCategoryFor(emp),
       };
     }
 
@@ -2395,6 +2403,7 @@ export class AuthService {
     profileData.permissionKeys = rbacData.permissionKeys;
     profileData.isCrmEligible = rbacData.isCrmEligible ?? false;
     profileData.crmMobileAccess = rbacData.crmMobileAccess ?? false;
+    profileData.crmCategory = rbacData.crmCategory ?? 'NONE';
 
     return profileData;
   }
@@ -2871,7 +2880,8 @@ export class AuthService {
     }
 
     const permissionKeys = permissions.map((p) => toPermissionKey(p.module, p.action));
-    const isCrmEligible = this.determineCrmEligibility(user.employee);
+    const crmCategory = this.crmCategoryFor(user.employee);
+    const isCrmEligible = crmCategory === 'BPO';
 
     return {
       role: specificRoleName,
@@ -2881,16 +2891,23 @@ export class AuthService {
       permissionKeys,
       isCrmEligible,
       crmMobileAccess: isCrmEligible,
+      crmCategory,
     };
   }
 
+  private crmCategoryFor(emp: any): CrmEmployeeCategory {
+    const designation = emp?.designation;
+    return classifyCrmEmployee({
+      departmentName: emp?.department?.name,
+      departmentCode: emp?.department?.code,
+      designationName: typeof designation === 'string' ? designation : designation?.name,
+      designationCode: designation?.code,
+      roles: [emp?.roleName, emp?.role],
+    });
+  }
+
   private determineCrmEligibility(emp: any): boolean {
-    if (!emp) return false;
-    if (emp.designation?.crmMobileAccess !== undefined && emp.designation?.crmMobileAccess !== null) {
-      return Boolean(emp.designation.crmMobileAccess);
-    }
-    const desigName = (emp.designation?.name || '').toUpperCase();
-    return desigName.includes('TELE') || desigName.includes('BPO');
+    return this.crmCategoryFor(emp) === 'BPO';
   }
 
   private formatRoleDisplayName(name: string): string {
