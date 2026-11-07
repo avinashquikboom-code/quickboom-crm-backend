@@ -20,6 +20,8 @@ import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { CrmEmployeeAccessGuard } from '../../common/guards/crm-employee-access.guard';
+import { CrmCategory } from '../../common/decorators/crm-category.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -38,7 +40,8 @@ import {
 @ApiTags('Data Capture (Google Places & Leads Extraction)')
 @ApiBearerAuth()
 @Controller('data-capture')
-@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
+@CrmCategory('BPO')
+@UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard, CrmEmployeeAccessGuard)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class DataCaptureController {
   constructor(private readonly dataCaptureService: DataCaptureService) {}

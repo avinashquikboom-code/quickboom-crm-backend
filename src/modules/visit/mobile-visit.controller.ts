@@ -14,6 +14,8 @@ import { VisitService } from './visit.service';
 import { VisitStatus, LeadStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { CrmEmployeeAccessGuard } from '../../common/guards/crm-employee-access.guard';
+import { CrmCategory } from '../../common/decorators/crm-category.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -25,7 +27,8 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
  */
 @ApiTags('Mobile - Employee Visits')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, CustomerGuard)
+@CrmCategory('VISITOR')
+@UseGuards(JwtAuthGuard, CustomerGuard, CrmEmployeeAccessGuard)
 @Controller('mobile/visits')
 export class MobileVisitController {
   constructor(
