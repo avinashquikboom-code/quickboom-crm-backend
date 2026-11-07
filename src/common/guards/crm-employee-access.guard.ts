@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRM_CATEGORY_KEY } from '../decorators/crm-category.decorator';
 import { classifyCrmEmployee, CrmEmployeeCategory } from '../crm/crm-employee-category';
+import { CRM_APP_ACCESS_DENIED } from '../crm/crm-app-access';
 import { isUserAdmin } from '../utils/role.util';
 
 @Injectable()
@@ -33,7 +34,7 @@ export class CrmEmployeeAccessGuard implements CanActivate {
       throw new ForbiddenException('Access denied');
     }
 
-    if (!this.isEmployeePrincipal(user)) {
+    if (isUserAdmin(user)) {
       return true;
     }
 
@@ -43,11 +44,10 @@ export class CrmEmployeeAccessGuard implements CanActivate {
     ]) || ['BPO', 'VISITOR'];
 
     const category = await this.resolveCategory(user);
-    const allowed = required.includes(category as 'BPO' | 'VISITOR');
+    const employeeStatus = String(user.employee?.status || 'ACTIVE').toUpperCase();
+    const allowed = employeeStatus === 'ACTIVE' && required.includes(category as 'BPO' | 'VISITOR');
     if (!allowed) {
-      const message = category === 'NONE'
-        ? 'CRM access is limited to BPO and Visitor employees.'
-        : `This CRM action is limited to ${required.join(' or ')} employees.`;
+      const message = CRM_APP_ACCESS_DENIED;
       await this.audit(request, user, category, 'ACCESS_DENIED', 'FAILED', message);
       throw new ForbiddenException(message);
     }
@@ -57,15 +57,6 @@ export class CrmEmployeeAccessGuard implements CanActivate {
       await this.audit(request, user, category, 'ACCESS', 'SUCCESS');
     }
     return true;
-  }
-
-  private isEmployeePrincipal(user: any): boolean {
-    if (isUserAdmin(user)) return false;
-    const role = String(user.role || user.roleType || '').toUpperCase();
-    if (['CUSTOMER', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(role)) {
-      return false;
-    }
-    return role === 'EMPLOYEE' || Boolean(user.employee) || Boolean(user.employeeId);
   }
 
   private async resolveCategory(user: any): Promise<CrmEmployeeCategory> {

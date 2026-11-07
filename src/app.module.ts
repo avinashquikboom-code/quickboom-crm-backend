@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { CrmAppContextInterceptor } from './common/interceptors/crm-app-context.interceptor';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -111,6 +113,12 @@ import { AppController } from './app.controller';
     CommissionModule,
   ],
   controllers: [AppController],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CrmAppContextInterceptor,
+    },
+  ],
 })
 export class AppModule {}
 

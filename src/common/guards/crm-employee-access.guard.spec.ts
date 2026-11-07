@@ -92,6 +92,11 @@ describe('CrmEmployeeAccessGuard', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('returns 403 when a customer calls a CRM API directly', async () => {
+    prisma.employee.findFirst.mockResolvedValue(null);
+    await expect(guard.canActivate(contextFor({ id: 2, role: 'CUSTOMER' }))).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('does not block company admins on the same CRM routes', async () => {
     await expect(guard.canActivate(contextFor({ id: 1, role: 'COMPANY_ADMIN' }))).resolves.toBe(true);
     expect(prisma.employee.findFirst).not.toHaveBeenCalled();
