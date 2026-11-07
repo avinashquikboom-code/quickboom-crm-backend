@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterEmployeeDto, SendOtpDto, VerifyMobileOtpDto } from './dto/auth.dto';
@@ -36,8 +36,8 @@ export class MobileAuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify mobile OTP and login' })
   @ApiResponse({ status: 200, description: 'User logged in successfully' })
-  async verifyOtp(@Body() dto: VerifyMobileOtpDto) {
-    return this.authService.verifyOtp(dto);
+  async verifyOtp(@Body() dto: VerifyMobileOtpDto, @Headers('x-app') app?: string) {
+    return this.authService.verifyOtp(dto, String(app || '').toLowerCase() === 'crm');
   }
 
   // ✅ CUSTOMER LOGIN
@@ -48,8 +48,9 @@ export class MobileAuthController {
   @ApiResponse({ status: 200, description: 'Customer logged in successfully' })
   async loginCustomer(
     @Body() loginDto: LoginDto,
+    @Headers('x-app') app?: string,
   ) {
-    return this.authService.login(loginDto.email, loginDto.password, 'CUSTOMER');
+    return this.authService.login(loginDto.email, loginDto.password, 'CUSTOMER', String(app || '').toLowerCase() === 'crm');
   }
 
   // ✅ EMPLOYEE LOGIN
@@ -60,8 +61,9 @@ export class MobileAuthController {
   @ApiResponse({ status: 200, description: 'Employee logged in successfully' })
   async loginEmployee(
     @Body() loginDto: LoginDto,
+    @Headers('x-app') app?: string,
   ) {
-    return this.authService.login(loginDto.email, loginDto.password, 'EMPLOYEE');
+    return this.authService.login(loginDto.email, loginDto.password, 'EMPLOYEE', String(app || '').toLowerCase() === 'crm');
   }
 
   // ✅ COMPANY ADMIN LOGIN
@@ -72,8 +74,9 @@ export class MobileAuthController {
   @ApiResponse({ status: 200, description: 'Company admin logged in successfully' })
   async loginCompanyAdmin(
     @Body() loginDto: LoginDto,
+    @Headers('x-app') app?: string,
   ) {
-    return this.authService.login(loginDto.email, loginDto.password, 'COMPANY_ADMIN');
+    return this.authService.login(loginDto.email, loginDto.password, 'COMPANY_ADMIN', String(app || '').toLowerCase() === 'crm');
   }
 
   // ✅ LOGOUT

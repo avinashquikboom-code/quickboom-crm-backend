@@ -71,8 +71,8 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP code and authenticate user' })
   @ApiResponse({ status: 200, description: 'User authenticated successfully' })
-  async verifyOtp(@Body() dto: VerifyOtpDto | VerifyMobileOtpDto) {
-    return this.authService.verifyOtp(dto as any);
+  async verifyOtp(@Body() dto: VerifyOtpDto | VerifyMobileOtpDto, @Headers('x-app') app?: string) {
+    return this.authService.verifyOtp(dto as any, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
@@ -80,16 +80,16 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify 6-digit Email OTP and authenticate user' })
   @ApiResponse({ status: 200, description: 'User authenticated successfully via email OTP' })
-  async verifyEmailOtp(@Body() dto: VerifyOtpDto) {
-    return this.authService.verifyEmailOtp(dto);
+  async verifyEmailOtp(@Body() dto: VerifyOtpDto, @Headers('x-app') app?: string) {
+    return this.authService.verifyEmailOtp(dto, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
   @Post('email/verify-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Alias for verifying email OTP' })
-  async emailVerifyOtpAlias(@Body() dto: VerifyOtpDto) {
-    return this.authService.verifyEmailOtp(dto);
+  async emailVerifyOtpAlias(@Body() dto: VerifyOtpDto, @Headers('x-app') app?: string) {
+    return this.authService.verifyEmailOtp(dto, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
@@ -113,8 +113,8 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'User login with email and password' })
   @ApiResponse({ status: 200, description: 'Logged in successfully' })
-  async login(@Body() dto: LoginDto, @Headers('x-client-type') clientType?: string) {
-    return this.authService.login(dto, clientType);
+  async login(@Body() dto: LoginDto, @Headers('x-client-type') clientType?: string, @Headers('x-app') app?: string) {
+    return this.authService.login(dto, clientType, undefined, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
@@ -129,24 +129,24 @@ export class AuthController {
   @Post('employee/login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Employee mobile application login' })
-  async employeeLogin(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'EMPLOYEE_MOBILE');
+  async employeeLogin(@Body() dto: LoginDto, @Headers('x-app') app?: string) {
+    return this.authService.login(dto, 'EMPLOYEE_MOBILE', undefined, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
   @Post('login/employee')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Employee mobile application login alias' })
-  async loginEmployee(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'EMPLOYEE');
+  async loginEmployee(@Body() dto: LoginDto, @Headers('x-app') app?: string) {
+    return this.authService.login(dto, 'EMPLOYEE', undefined, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
   @Post('mobile/login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mobile application login alias' })
-  async mobileLogin(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'EMPLOYEE_MOBILE');
+  async mobileLogin(@Body() dto: LoginDto, @Headers('x-app') app?: string) {
+    return this.authService.login(dto, 'EMPLOYEE_MOBILE', undefined, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
@@ -154,24 +154,24 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Customer mobile/web portal login with email and password' })
   @ApiResponse({ status: 200, description: 'Customer logged in successfully' })
-  async customerLogin(@Body() dto: LoginDto) {
-    return this.authService.login(dto, 'CUSTOMER_MOBILE');
+  async customerLogin(@Body() dto: LoginDto, @Headers('x-app') app?: string) {
+    return this.authService.login(dto, 'CUSTOMER_MOBILE', undefined, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh JWT Access Token using Refresh Token' })
-  async refresh(@Body() dto: RefreshTokenDto) {
-    return this.authService.refreshToken(dto);
+  async refresh(@Body() dto: RefreshTokenDto, @Headers('x-app') app?: string) {
+    return this.authService.refreshToken(dto, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()
   @Post('refresh-tokens')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Alias for refresh token' })
-  async refreshTokensAlias(@Body() dto: RefreshTokenDto) {
-    return this.authService.refreshToken(dto);
+  async refreshTokensAlias(@Body() dto: RefreshTokenDto, @Headers('x-app') app?: string) {
+    return this.authService.refreshToken(dto, String(app || '').toLowerCase() === 'crm');
   }
 
   @Public()

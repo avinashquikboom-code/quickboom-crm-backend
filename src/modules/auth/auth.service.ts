@@ -30,6 +30,7 @@ import {
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
 import { classifyCrmEmployee, CrmEmployeeCategory } from '../../common/crm/crm-employee-category';
+import { assertCrmAppEmployee } from '../../common/crm/crm-app-access';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
 import { NotificationService } from '../notification/notification.service';
@@ -571,6 +572,7 @@ export class AuthService {
     emailOrDto: string | LoginDto,
     passwordOrApp?: string,
     targetApp?: string,
+    crmApp = false,
   ) {
     let email: string;
     let password = '';
@@ -1326,6 +1328,10 @@ export class AuthService {
       user.customerId = effectiveCustomerId;
     }
 
+    if (crmApp) {
+      await assertCrmAppEmployee(this.prisma, user);
+    }
+
     const tokens = await this.generateTokens(
       user.id,
       effectiveCustomerId,
@@ -1498,7 +1504,7 @@ export class AuthService {
     }
   }
 
-  async refreshToken(dto: RefreshTokenDto) {
+  async refreshToken(dto: RefreshTokenDto, crmApp = false) {
     const rawToken = (dto.refreshToken || '').trim();
     if (!rawToken) {
       throw new UnauthorizedException('Refresh token is required');
@@ -1681,6 +1687,10 @@ export class AuthService {
     const primaryRole = (user as any).userRoles?.[0]?.role;
     const roleId = primaryRole?.id || ((user as any).userRoles?.[0]?.roleId ?? null);
 
+    if (crmApp) {
+      await assertCrmAppEmployee(this.prisma, user);
+    }
+
     const tokens = await this.generateTokens(
       user.id,
       user.customerId,
@@ -1812,9 +1822,9 @@ export class AuthService {
   /**
    * Verifies OTP code and logs the user in, issuing JWT tokens and roles.
    */
-  async verifyOtp(dto: VerifyMobileOtpDto | VerifyOtpDto) {
+  async verifyOtp(dto: VerifyMobileOtpDto | VerifyOtpDto, crmApp = false) {
     if ((dto as any).email && !(dto as any).mobile) {
-      return this.verifyEmailOtp(dto as any);
+      return this.verifyEmailOtp(dto as any, crmApp);
     }
 
     const rawMobile = (dto as any).mobile?.trim();
@@ -1905,6 +1915,10 @@ export class AuthService {
     });
 
     this.logger.log(`[AUTH_OTP_VERIFIED_SUCCESS] User ${user.id} logged in via mobile ${maskedMobile}`);
+
+    if (crmApp) {
+      await assertCrmAppEmployee(this.prisma, user);
+    }
 
     // Resolve primary role
     const isEmployee = user.employee !== null;
@@ -2109,7 +2123,7 @@ export class AuthService {
   /**
    * Verifies 6-digit Email OTP and authenticates the user, issuing tokens and roles.
    */
-  async verifyEmailOtp(dto: VerifyOtpDto) {
+  async verifyEmailOtp(dto: VerifyOtpDto, crmApp = false) {
     const rawEmail = dto.email?.trim().toLowerCase();
     const otpCode = dto.otp?.trim();
 
@@ -2190,6 +2204,10 @@ export class AuthService {
     });
 
     this.logger.log(`[AUTH_EMAIL_OTP_VERIFIED] User ${user.id} (${user.email}) successfully logged in via email OTP`);
+
+    if (crmApp) {
+      await assertCrmAppEmployee(this.prisma, user);
+    }
 
     // Resolve primary role
     const isEmployee = user.employee !== null;
