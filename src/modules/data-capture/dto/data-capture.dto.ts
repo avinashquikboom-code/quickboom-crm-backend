@@ -9,10 +9,15 @@ import {
   IsEmail,
   IsBoolean,
   IsIn,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ExtractPlacesDto {
+  @IsOptional()
+  @IsString()
+  searchLocation?: string;
+
   @IsOptional()
   @IsString()
   keyword?: string;
@@ -518,6 +523,10 @@ export class BulkActionDto {
 }
 
 export class CreateLeadFromPlaceDto {
+  @IsOptional()
+  @IsObject()
+  independentFields?: Record<string, string>;
+
   @IsOptional()
   @IsString()
   captureRequestId?: string;

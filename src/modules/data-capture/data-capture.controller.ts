@@ -121,7 +121,7 @@ export class DataCaptureController {
    * Batch imports captured prospects into CRM Leads with duplicate detection
    */
   @Post('import-to-leads')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
   @ApiOperation({ summary: 'Import captured places into CRM Leads in batch' })
   async importToLeads(
     @CurrentCustomer() customerId: string,
@@ -186,7 +186,7 @@ export class DataCaptureController {
   }
 
   @Post('sessions/:jobId/retry-failed')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
   @ApiOperation({ summary: 'Retry failed imports for records still stored on the session' })
   async retrySession(
     @CurrentCustomer() customerId: string,
@@ -223,6 +223,14 @@ export class DataCaptureController {
     @CurrentUser() user: any,
     @Body() dto: BulkActionDto,
   ) {
+    if (String(dto.action).toLowerCase() === 'import_leads') {
+      const roles = (Array.isArray(user.roles) ? user.roles : [user.role]).map((role: any) => String(role).toUpperCase().replace(/\s+/g, '_'));
+      const admin = roles.some((role: string) => ['SUPER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'CUSTOMER', 'CUSTOMER_ADMIN'].includes(role));
+      const canCreate = (user.permissions || []).some((permission: any) =>
+        ['LEADS', 'LEAD'].includes(String(permission.module).toUpperCase().replace(/^EMPLOYEE\./, '')) &&
+        ['CREATE', 'MANAGE', 'ALL'].includes(String(permission.action).toUpperCase()));
+      if (!admin && !canCreate) throw new ForbiddenException('Access denied: Missing required permission [LEADS:CREATE]');
+    }
     if (String(dto.action).toUpperCase() === 'DELETE') {
       const userRoles: string[] = Array.isArray(user.roles)
         ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
@@ -265,7 +273,7 @@ export class DataCaptureController {
    * Direct 1-click lead conversion from captured record with duplicate checking
    */
   @Post(':id/create-lead')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
   @ApiOperation({ summary: 'Convert single captured record to CRM Lead' })
   async createLeadFromPlace(
     @CurrentCustomer() customerId: string,
@@ -325,7 +333,7 @@ export class DataCaptureController {
    * Alias for job places import
    */
   @Post(':id/import')
-  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
   @ApiOperation({ summary: 'Import job places into CRM Leads' })
   async importJobToLeads(
     @CurrentCustomer() customerId: string,

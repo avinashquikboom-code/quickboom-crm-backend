@@ -731,7 +731,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -857,7 +857,21 @@ export class LeadRepository {
     }
 
     if (options.source && options.source.toUpperCase() !== 'ALL') {
-      where.source = options.source.trim();
+      where.source = options.source === 'Google Maps'
+        ? { in: ['Google Maps', 'GOOGLE_PLACES', 'GOOGLE_DISCOVERY', 'Google Places', 'Google Discovery'] }
+        : options.source.trim();
+    }
+
+    if (options.leadId) {
+      const id = Number(options.leadId);
+      andConditions.push({ id: Number.isInteger(id) && id > 0 ? id : -1 });
+    }
+    if (options.captureJobId) {
+      const captures = await this.prisma.dataCapturePlace.findMany({
+        where: { customerId: Number(customerId), jobId: options.captureJobId, deletedAt: null, status: 'LEAD_CREATED', isImported: true },
+        select: { importedLeadId: true },
+      });
+      andConditions.push({ id: { in: captures.map((capture) => capture.importedLeadId).filter((id): id is number => id != null) } });
     }
 
     const createdAt: { gte?: Date; lte?: Date } = {};
@@ -916,6 +930,7 @@ export class LeadRepository {
             employee: { select: { id: true, firstName: true, lastName: true } },
             convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             socialProfiles: true,
+            images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }], take: 1 },
           visits: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1,
             include: { employee: { select: { id: true, firstName: true, lastName: true } } } },
           },
@@ -1046,6 +1061,7 @@ export class LeadRepository {
     if (candidateLeads.length === 0) return;
 
     for (const lead of candidateLeads) {
+      if (lead.source === 'Google Maps') continue;
       try {
         let matchingPlace: any = null;
         let matchMethod = '';
@@ -1334,6 +1350,7 @@ export class LeadRepository {
       businessName: resolvedBiz,
       title: (!isFake(lead.title) ? lead.title.trim() : (resolvedBiz || lead.title || '')),
       name: resolvedBiz,
+      imageUrl: (Array.isArray(lead.images) ? lead.images : []).map((image) => image?.url).find((url) => typeof url === 'string' && /^https?:\/\//i.test(url)) || null,
       socialMedia: finalSocialMedia,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
       // Normalized ownership fields for easy frontend consumption

@@ -82,6 +82,22 @@ export class IntegrationSettingsController {
     return this.integrationSettingsService.getAllIntegrationsMasked();
   }
 
+  @Post(':provider/test')
+  @Get(':provider/test')
+  @ApiOperation({
+    summary:
+      'Test live connectivity with the third-party provider API using supplied or saved credentials',
+  })
+  async testIntegration(
+    @Param('provider') provider: string,
+    @Body() dto: TestIntegrationDto,
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.testIntegration(provider, dto, adminUserId);
+  }
+
   @Get(':provider')
   @ApiOperation({
     summary: 'Get specific provider integration configuration with masked secrets',
@@ -136,21 +152,6 @@ export class IntegrationSettingsController {
     this.checkAdminAccess(user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.disconnectIntegration(provider, adminUserId);
-  }
-
-  @Post(':provider/test')
-  @ApiOperation({
-    summary:
-      'Test live connectivity with the third-party provider API using supplied or saved credentials',
-  })
-  async testIntegration(
-    @Param('provider') provider: string,
-    @Body() dto: TestIntegrationDto,
-    @CurrentUser() user: any,
-  ) {
-    this.checkAdminAccess(user);
-    const adminUserId = user?.id ? Number(user.id) : undefined;
-    return this.integrationSettingsService.testIntegration(provider, dto, adminUserId);
   }
 
   @Post(':provider/test-notification')

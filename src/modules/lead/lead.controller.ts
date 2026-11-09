@@ -9,11 +9,15 @@ import {
   Put,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
   ParseIntPipe,
   Req,
   Logger,
   BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { LeadService } from './lead.service';
 import { VisitorLeadActionsGuard } from './visitor-lead-actions.guard';
@@ -166,6 +170,8 @@ export class LeadController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('followUps') followUps?: string,
+    @Query('captureJobId') captureJobId?: string,
+    @Query('leadId') leadId?: string,
   ) {
     return this.leadService.getLeads(
       customerId,
@@ -181,6 +187,8 @@ export class LeadController {
         assignedToId,
         from,
         to,
+        captureJobId,
+        leadId,
         followUps: followUps === 'true',
       },
       user,
@@ -416,6 +424,23 @@ export class LeadController {
     @CurrentUser() user: any,
   ) {
     return this.leadService.getNotes(customerId, id, user);
+  }
+
+  @Post(':id/images')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @UseInterceptors(FileInterceptor('image', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  @ApiOperation({ summary: 'Upload a lead business image to storage and save its URL' })
+  async addImage(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!file) throw new BadRequestException('Choose a JPG, PNG, or WebP image.');
+    if (!allowed.includes(String(file.mimetype || '').toLowerCase())) {
+      throw new BadRequestException('Use a JPG, JPEG, PNG, or WebP image.');
+    }
+    return this.leadService.addImage(customerId, id, file, { isPrimary: true });
   }
 
   @Post(':id/notes')
