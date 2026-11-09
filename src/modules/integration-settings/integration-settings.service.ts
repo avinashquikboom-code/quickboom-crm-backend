@@ -1522,6 +1522,52 @@ export class IntegrationSettingsService {
    */
   async testIntegration(provider: string, dto?: TestIntegrationDto, adminUserId?: number) {
     const normProvider = normalizeProvider(provider);
+    try {
+      const result = await this.runProviderConnectionTest(provider, dto, adminUserId);
+      const message = String(result?.message || '');
+      const notConfigured = /not configured/i.test(`${result?.status || ''} ${message}`);
+      const failed = result?.success === false;
+      if (!notConfigured) {
+        await this.recordConnectionTest(normProvider, failed ? 'FAILED' : 'SUCCESS', message);
+      }
+      return {
+        ...result,
+        lastTestedAt: notConfigured ? result?.lastTestedAt || null : new Date().toISOString(),
+        lastTestResult: notConfigured ? result?.lastTestResult || null : failed ? 'FAILED' : 'SUCCESS',
+      };
+    } catch (error: any) {
+      const message = String(error?.message || 'Connection test failed');
+      const notConfigured = /required to test|is required|not fully configured|not configured|before testing/i.test(message);
+      if (!notConfigured) await this.recordConnectionTest(normProvider, 'FAILED', message);
+      throw error;
+    }
+  }
+
+  private async recordConnectionTest(provider: string, result: 'SUCCESS' | 'FAILED', message?: string) {
+    try {
+      const store = this.prisma.integrationSetting;
+      if (typeof store?.findUnique !== 'function' || typeof store?.updateMany !== 'function') return;
+      const existing = await store.findUnique({ where: { provider } });
+      if (!existing || existing.deletedAt) return;
+      const current = existing.config && typeof existing.config === 'object' && !Array.isArray(existing.config) ? existing.config : {};
+      await store.updateMany({
+        where: { provider, deletedAt: null },
+        data: {
+          config: {
+            ...current,
+            lastTestedAt: new Date().toISOString(),
+            lastTestResult: result,
+            lastTestError: result === 'FAILED' ? message || 'Connection test failed' : null,
+          },
+        },
+      });
+    } catch (error: any) {
+      this.logger.warn(`[INTEGRATION_TEST_RECORD] ${provider}: ${error?.message || error}`);
+    }
+  }
+
+  private async runProviderConnectionTest(provider: string, dto?: TestIntegrationDto, adminUserId?: number) {
+    const normProvider = normalizeProvider(provider);
 
     // Resolve credentials to test: use incoming dto if provided, else use saved/active config
     const active = await this.getIntegrationConfig(normProvider);
@@ -2371,17 +2417,6 @@ export class IntegrationSettingsService {
             }
           }
 
-          await this.prisma.integrationSetting.updateMany({
-            where: { provider: IntegrationProvider.FIREBASE },
-            data: {
-              config: {
-                lastTestedAt: now.toISOString(),
-                lastTestResult: 'SUCCESS',
-                projectId,
-              },
-            },
-          });
-
           return {
             connected: true,
             success: true,
@@ -2395,20 +2430,6 @@ export class IntegrationSettingsService {
         } catch (err: any) {
           this.logger.error(`[FIREBASE_TEST_FAILED] ${err?.message}`);
           const errMsg = err?.message || 'Could not authenticate with Firebase Admin SDK';
-
-          try {
-            await this.prisma.integrationSetting.updateMany({
-              where: { provider: IntegrationProvider.FIREBASE },
-              data: {
-                config: {
-                  lastTestedAt: new Date().toISOString(),
-                  lastTestResult: 'FAILED',
-                  lastTestError: errMsg,
-                  projectId,
-                },
-              },
-            });
-          } catch (_) {}
 
           return {
             connected: false,

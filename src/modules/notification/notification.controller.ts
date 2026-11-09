@@ -174,11 +174,48 @@ export class NotificationController {
   async getAdminCampaigns(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
   ) {
     return this.notificationService.getOfferCampaigns(
       page ? parseInt(page, 10) : 1,
       limit ? parseInt(limit, 10) : 20,
+      search,
+      status,
     );
+  }
+
+  @Get('admin/campaigns/summary')
+  @ApiOperation({ summary: 'Count offer campaigns by status' })
+  getAdminCampaignSummary() {
+    return this.notificationService.getOfferCampaignSummary();
+  }
+
+  @Get('admin/history')
+  @ApiOperation({ summary: 'In-app delivery records created by offer campaigns' })
+  getAdminHistory(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.notificationService.listOfferDeliveryHistory(customerId, {
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+      search,
+      status,
+      from,
+      to,
+    });
+  }
+
+  @Post('admin/campaigns/:id/cancel')
+  @ApiOperation({ summary: 'Cancel a draft or scheduled offer campaign before it is sent' })
+  cancelAdminCampaign(@Param('id') id: string) {
+    return this.notificationService.cancelOfferCampaign(parseInt(id, 10));
   }
 
   @Post('admin/campaigns/bulk-delete')

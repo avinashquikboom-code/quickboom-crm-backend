@@ -156,6 +156,11 @@ export class AdminOfferNotificationDto {
   @IsOptional()
   @IsDateString()
   scheduledAt?: string;
+
+  @ApiPropertyOptional({ description: 'Save the campaign without sending or scheduling it', default: false })
+  @IsOptional()
+  @IsBoolean()
+  saveAsDraft?: boolean;
 }
 
 export class BulkDeleteOfferCampaignsDto {

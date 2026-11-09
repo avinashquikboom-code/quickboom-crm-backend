@@ -1269,8 +1269,42 @@ export class LeadService {
     return this.leadRepository.deleteStage(id);
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
+  }
+
+  async bulkUpdateLeads(
+    customerId: number | string,
+    user: any,
+    body: { ids?: Array<number | string>; selectAll?: boolean; filters?: { search?: string; status?: string; priority?: string; source?: string; assignedToId?: number | string; from?: string; to?: string } },
+    patch: UpdateLeadDto,
+  ) {
+    const ids = body.selectAll
+      ? await this.matchingLeadIds(customerId, user, body.filters || {})
+      : [...new Set((body.ids || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    let success = 0;
+    const failures: Array<{ id: number; message: string }> = [];
+    for (const id of ids) {
+      try {
+        await this.updateLead(customerId, id, patch, user?.id, user);
+        success += 1;
+      } catch (error: any) {
+        failures.push({ id, message: error?.message || 'Update failed' });
+      }
+    }
+    return { total: ids.length, success, failed: failures.length, failures };
+  }
+
+  private async matchingLeadIds(customerId: number | string, user: any, body: { search?: string; status?: string; priority?: string; source?: string; assignedToId?: number | string; from?: string; to?: string }) {
+    const ids: number[] = [];
+    for (let page = 1; page <= 20; page += 1) {
+      const result = await this.leadRepository.findAll(customerId, { ...body, page, limit: 100 }, user);
+      const rows = result?.data || [];
+      ids.push(...rows.map((row: any) => Number(row.id)).filter((id: number) => id > 0));
+      const totalPages = Number(result?.meta?.totalPages || 1);
+      if (page >= totalPages) break;
+    }
+    return [...new Set(ids)];
   }
 
   async getLeadById(customerId: number | string, id: number | string, user?: any) {

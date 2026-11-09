@@ -1158,6 +1158,32 @@ export class NotificationService {
       specificIds = [Number(dto.customerId)];
     }
 
+    if (dto.saveAsDraft) {
+      const campaign = await this.prisma.notificationCampaign.create({
+        data: {
+          title: dto.title.trim(),
+          message: dto.message.trim(),
+          notificationType: 'OFFER',
+          targetType,
+          audience,
+          targetIds: specificIds.length > 0 ? specificIds : null,
+          imageUrl: dto.imageUrl?.trim() || null,
+          showCta: Boolean(dto.showCta),
+          ctaText: dto.showCta ? dto.ctaText?.trim() || null : null,
+          ctaActionType: dto.showCta ? (dto.ctaActionType || 'DEEP_LINK').toUpperCase() : null,
+          ctaActionValue: dto.showCta ? (dto.ctaActionValue?.trim() || dto.deepLink?.trim() || null) : null,
+          status: 'DRAFT',
+          createdById: adminUserId ? Number(adminUserId) : null,
+        },
+      });
+      return {
+        success: true,
+        status: 'DRAFT',
+        campaignId: campaign.id,
+        message: 'Campaign saved as a draft. It has not been sent.',
+      };
+    }
+
     // If future scheduled delivery is requested, save as SCHEDULED campaign
     if (isScheduled) {
       const scheduledDate = new Date(dto.scheduledAt!);
@@ -1448,18 +1474,22 @@ export class NotificationService {
   /**
    * Get paginated offer campaigns history for Admin
    */
-  async getOfferCampaigns(page = 1, limit = 20) {
+  async getOfferCampaigns(page = 1, limit = 20, search?: string, status?: string) {
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.max(1, Math.min(100, Number(limit) || 20));
     const skip = (pageNum - 1) * limitNum;
+    const where: any = {};
+    if (status && status.toUpperCase() !== 'ALL') where.status = status.toUpperCase();
+    if (search?.trim()) where.title = { contains: search.trim(), mode: 'insensitive' };
 
     const [storedItems, total] = await Promise.all([
       this.prisma.notificationCampaign.findMany({
+        where,
         skip,
         take: limitNum,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.notificationCampaign.count(),
+      this.prisma.notificationCampaign.count({ where }),
     ]);
 
     const items = await Promise.all(
@@ -1565,6 +1595,87 @@ export class NotificationService {
   /**
    * Process all pending scheduled notifications (triggered by scheduler)
    */
+  async getOfferCampaignSummary() {
+    const statuses = ['SENT', 'SCHEDULED', 'DRAFT', 'FAILED', 'CANCELLED'] as const;
+    const counts = await Promise.all(statuses.map((status) => this.prisma.notificationCampaign.count({ where: { status } })));
+    const total = counts.reduce((sum, count) => sum + count, 0);
+    return {
+      total,
+      sent: counts[0],
+      scheduled: counts[1],
+      draft: counts[2],
+      failed: counts[3],
+      cancelled: counts[4],
+    };
+  }
+
+  async cancelOfferCampaign(campaignId: number) {
+    const id = Number(campaignId);
+    if (!id || Number.isNaN(id)) throw new BadRequestException('A valid campaign ID is required.');
+    const campaign = await this.prisma.notificationCampaign.findUnique({ where: { id } });
+    if (!campaign) throw new NotFoundException('Offer notification campaign not found');
+    if (!['SCHEDULED', 'DRAFT'].includes(campaign.status)) {
+      throw new BadRequestException(`A ${campaign.status.toLowerCase()} campaign cannot be cancelled.`);
+    }
+    const updated = await this.prisma.notificationCampaign.update({ where: { id }, data: { status: 'CANCELLED' } });
+    return { success: true, campaignId: updated.id, status: updated.status, message: 'Campaign cancelled. It will not be sent.' };
+  }
+
+  async listOfferDeliveryHistory(
+    customerId: number | string | undefined,
+    query: { page?: number; limit?: number; search?: string; status?: string; from?: string; to?: string } = {},
+  ) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
+    const where: any = { type: 'ADMIN_OFFER' };
+    const tenantId = Number(customerId);
+    if (!Number.isNaN(tenantId) && tenantId > 0) where.customerId = tenantId;
+    if (query.search?.trim()) {
+      where.OR = [
+        { title: { contains: query.search.trim(), mode: 'insensitive' } },
+        { message: { contains: query.search.trim(), mode: 'insensitive' } },
+      ];
+    }
+    if (query.status === 'READ') where.isRead = true;
+    if (query.status === 'UNREAD') where.isRead = false;
+    const createdAt: { gte?: Date; lte?: Date } = {};
+    if (query.from) {
+      const from = new Date(query.from);
+      if (!Number.isNaN(from.getTime())) createdAt.gte = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (!Number.isNaN(to.getTime())) createdAt.lte = to;
+    }
+    if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
+    const [rows, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+      }),
+      this.prisma.notification.count({ where }),
+    ]);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        campaignTitle: row.title,
+        message: row.message,
+        imageUrl: (row.data as any)?.imageUrl || null,
+        recipient: `${row.user?.firstName || ''} ${row.user?.lastName || ''}`.trim() || row.user?.email || `User ${row.userId}`,
+        channel: 'IN_APP',
+        pushStatus: 'ACCEPTED_SEPARATELY',
+        status: row.isRead ? 'READ' : 'STORED',
+        sentAt: row.createdAt,
+        deliveredAt: null,
+        failureReason: null,
+      })),
+      pagination: { page, pageSize: limit, total, totalPages: Math.ceil(total / limit) || 1 },
+    };
+  }
+
   async processScheduledCampaigns(): Promise<number> {
     const now = new Date();
     const scheduled = await this.prisma.notificationCampaign.findMany({

@@ -119,6 +119,8 @@ model Customer {
   metaTemplates            MetaTemplate[]
   commissionConfigs        CommissionConfig[]
   commissions              Commission[]
+  salaryTargetPolicies     SalaryTargetPolicy[]
+  salaryTargetReviews      SalaryTargetReview[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -1269,6 +1271,8 @@ model Employee {
   createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
   commissionConfig         CommissionConfig?
   commissions              Commission[]
+  salaryTargetPolicy       SalaryTargetPolicy?
+  salaryTargetReviews      SalaryTargetReview[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -1887,6 +1891,13 @@ model PayrollItem {
   paidLeaveDays    Int          @default(0)
   unpaidLeaveDays  Int          @default(0)
   wfhDays          Int          @default(0)
+  compensationMode String       @default("FIXED")
+  monthlyTarget    Float        @default(0)
+  achievedAmount   Float        @default(0)
+  eligibleSalary   Float        @default(0)
+  registeredSalary Float        @default(0)
+  belowTargetSalary Float       @default(0)
+  targetStatus     String?
   status           String       @default("GENERATED")
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -3506,6 +3517,56 @@ enum CommissionStatus {
   APPROVED
   PAID
   CANCELLED
+}
+
+model SalaryTargetPolicy {
+  id                 Int      @id @default(autoincrement())
+  customerId         Int
+  employeeId         Int      @unique
+  enabled            Boolean  @default(true)
+  monthlyTarget      Float
+  fullSalary         Float?
+  belowTargetSalary  Float
+  createdById        Int?
+  updatedById        Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee           Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@map("salary_target_policies")
+}
+
+model SalaryTargetReview {
+  id                 Int       @id @default(autoincrement())
+  customerId         Int
+  employeeId         Int
+  month              Int
+  year               Int
+  monthlyTarget      Float
+  registeredSalary   Float
+  fullSalary         Float
+  belowTargetSalary  Float
+  achievedAmount     Float     @default(0)
+  achievementPercent Float     @default(0)
+  remainingAmount    Float     @default(0)
+  eligibleSalary     Float
+  targetStatus       String
+  reviewStatus       String    @default("PENDING")
+  approvedById       Int?
+  approvedAt         DateTime?
+  note               String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  customer           Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee           Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId, month, year])
+  @@index([customerId, month, year])
+  @@index([employeeId])
+  @@map("salary_target_reviews")
 }
 
 model CommissionConfig {
