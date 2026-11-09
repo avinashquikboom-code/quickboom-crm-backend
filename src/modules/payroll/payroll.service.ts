@@ -279,6 +279,10 @@ export class PayrollService {
         });
       }
 
+      if (payroll.status === 'PAID') {
+        throw new BadRequestException('Paid payroll cannot be recalculated.');
+      }
+
       let totalGross = 0;
       let totalDeductions = 0;
       let totalNet = 0;
@@ -291,7 +295,29 @@ export class PayrollService {
         const allowances = structure ? structure.allowances : 5000;
         const specialAllowance = structure ? structure.specialAllowance : 5000;
         const bonus = structure ? structure.bonus : 0;
-        const overtime = structure ? structure.overtime : 0;
+        const structureOvertime = structure ? structure.overtime : 0;
+        let overtime = structureOvertime;
+        const overtimeRequestIds: number[] = [];
+        if (tx.overtimeRequest?.findMany) {
+          const overtimeRequests = await tx.overtimeRequest.findMany({
+            where: {
+              customerId: numCustomerId,
+              employeeId: emp.id,
+              status: 'APPROVED',
+              deletedAt: null,
+              overtimeDate: { gte: periodStart, lte: periodEnd },
+              OR: [
+                { payrollStatus: 'READY_FOR_PAYROLL' },
+                { payrollStatus: 'PROCESSED', payrollId: payroll.id },
+              ],
+            },
+          });
+          if (overtimeRequests.length) {
+            overtime = overtimeRequests.reduce((sum, request) => sum + (Number(request.calculatedAmount) || 0), 0);
+            overtimeRequestIds.push(...overtimeRequests.map((request) => request.id));
+          }
+        }
+        (emp as any)._overtimeRequestIds = overtimeRequestIds;
         const otherEarnings = structure ? structure.otherEarnings : 0;
 
         // ── Commission Integration ──
@@ -508,6 +534,19 @@ export class PayrollService {
       await tx.payrollItem.createMany({
         data: itemsData,
       });
+
+      if (tx.overtimeRequest?.updateMany && tx.payrollItem?.findMany) {
+        const savedItems = await tx.payrollItem.findMany({ where: { payrollId: payroll.id }, select: { id: true, employeeId: true } });
+        for (const item of savedItems) {
+          const requestIds = (employees.find((employee) => employee.id === item.employeeId) as any)?._overtimeRequestIds || [];
+          if (requestIds.length) {
+            await tx.overtimeRequest.updateMany({
+              where: { id: { in: requestIds }, payrollStatus: { not: 'PAID' } },
+              data: { payrollStatus: 'PROCESSED', payrollItemId: item.id, payrollId: payroll.id },
+            });
+          }
+        }
+      }
 
       const updatedPayroll = await tx.payroll.update({
         where: { id: payroll.id },
@@ -837,6 +876,13 @@ export class PayrollService {
           where: { payrollItemId: item.id },
           data: { status: 'PAID' },
         });
+
+        if (tx.overtimeRequest?.updateMany) {
+          await tx.overtimeRequest.updateMany({
+            where: { payrollItemId: item.id, payrollStatus: 'PROCESSED' },
+            data: { payrollStatus: 'PAID' },
+          });
+        }
       }
 
       const updated = await tx.payroll.update({

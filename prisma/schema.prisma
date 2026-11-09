@@ -73,6 +73,9 @@ model Customer {
   quotations               Quotation[]
   roles                    Role[]
   salaryPolicies           SalaryPolicy[]
+  overtimePolicy           OvertimePolicy?
+  overtimeRequests         OvertimeRequest[]
+  announcements            Announcement[]
   shifts                   Shift[]
   shiftGuidances           ShiftGuidance[]
   tickets                  SupportTicket[]
@@ -1002,6 +1005,30 @@ model NotificationCampaign {
   @@index([createdAt])
 }
 
+model Announcement {
+  id           Int                   @id @default(autoincrement())
+  customerId   Int
+  title        String
+  description  String
+  category     String                @default("GENERAL")
+  audience     AnnouncementAudience  @default(ALL)
+  departmentId Int?
+  publishAt    DateTime?
+  expiresAt    DateTime?
+  status       AnnouncementStatus    @default(DRAFT)
+  createdById  Int?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  department   Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([publishAt])
+  @@index([expiresAt])
+}
+
 model UserDeviceToken {
   id        Int      @id @default(autoincrement())
   userId    Int
@@ -1142,6 +1169,7 @@ model Department {
   customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   designations Designation[]
   employees    Employee[]
+  announcements Announcement[]
   tasks        Task[]
 
   @@unique([customerId, code])
@@ -1221,6 +1249,7 @@ model Employee {
   leaveRequests            LeaveRequest[]
   payrollItems             PayrollItem[]
   remoteRequests           RemoteRequest[]
+  overtimeRequests         OvertimeRequest[]
   salarySlips              SalarySlip[]
   salaryStructures         SalaryStructure[]
   tasks                    Task[]
@@ -1279,6 +1308,7 @@ model Attendance {
   employee                  Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   office                    BranchGeofence?   @relation(fields: [officeId], references: [id])
   breaks                    AttendanceBreak[]
+  overtimeRequests          OvertimeRequest[]
 
   @@index([customerId])
   @@index([employeeId])
@@ -1609,6 +1639,7 @@ model Shift {
   updatedAt             DateTime       @updatedAt
   deletedAt             DateTime?
   employees             Employee[]
+  overtimeRequests      OvertimeRequest[]
   customer              Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
   guidance              ShiftGuidance?
 
@@ -1636,6 +1667,94 @@ model ShiftGuidance {
   shift                    Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
+}
+
+model OvertimePolicy {
+  id                       Int      @id @default(autoincrement())
+  customerId               Int      @unique
+  enabled                  Boolean  @default(true)
+  maxDailyMinutes          Int      @default(240)
+  maxWeeklyMinutes         Int      @default(720)
+  weekendMultiplier        Float    @default(2.0)
+  holidayMultiplier        Float    @default(2.0)
+  nightShiftMultiplier     Float    @default(1.5)
+  approvalRequired         Boolean  @default(true)
+  autoCalculate            Boolean  @default(false)
+  applicableEmployeeTypes  String[] @default([])
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  customer                 Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model OvertimeRequest {
+  id               Int                     @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  attendanceId     Int?
+  shiftId          Int?
+  overtimeDate     DateTime
+  startTime        String
+  endTime          String
+  startAt          DateTime
+  endAt            DateTime
+  totalMinutes     Int
+  approvedMinutes  Int?
+  overtimeType     OvertimeType            @default(REGULAR)
+  reason           String
+  employeeNotes    String?
+  managerNotes     String?
+  status           OvertimeApprovalStatus  @default(PENDING)
+  approvedById     Int?
+  approvedByName   String?
+  approvedAt       DateTime?
+  rejectedById     Int?
+  rejectedByName   String?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  overtimeRate     Float?
+  multiplier       Float?
+  calculatedAmount Float?
+  payrollStatus    OvertimePayrollStatus   @default(NOT_PROCESSED)
+  payrollId        Int?
+  payrollItemId    Int?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  deletedAt        DateTime?
+  customer         Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee         Employee                @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  attendance       Attendance?             @relation(fields: [attendanceId], references: [id], onDelete: SetNull)
+  shift            Shift?                  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  payroll          Payroll?                @relation(fields: [payrollId], references: [id], onDelete: SetNull)
+  payrollItem      PayrollItem?            @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+  history          OvertimeApproval[]
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([attendanceId])
+  @@index([shiftId])
+  @@index([overtimeDate])
+  @@index([status])
+  @@index([payrollStatus])
+  @@index([customerId, employeeId, overtimeDate])
+}
+
+model OvertimeApproval {
+  id                Int                    @id @default(autoincrement())
+  customerId        Int
+  overtimeRequestId Int
+  action            String
+  fromStatus        OvertimeApprovalStatus
+  toStatus          OvertimeApprovalStatus
+  actorId           Int?
+  actorName         String?
+  notes             String?
+  createdAt         DateTime               @default(now())
+  request           OvertimeRequest        @relation(fields: [overtimeRequestId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([overtimeRequestId])
 }
 
 model Visit {
@@ -1732,6 +1851,7 @@ model Payroll {
   updatedAt       DateTime      @updatedAt
   customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   items           PayrollItem[]
+  overtimeRequests OvertimeRequest[]
 
   @@unique([customerId, month, year, departmentId])
   @@index([customerId])
@@ -1773,6 +1893,7 @@ model PayrollItem {
   employee         Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   payroll          Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)
   salarySlips      SalarySlip[]
+  overtimeRequests OvertimeRequest[]
 
   @@index([payrollId])
   @@index([customerId])
@@ -2278,6 +2399,40 @@ enum RequestStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum OvertimeType {
+  REGULAR
+  WEEKEND
+  HOLIDAY
+  NIGHT_SHIFT
+}
+
+enum OvertimeApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum OvertimePayrollStatus {
+  NOT_PROCESSED
+  READY_FOR_PAYROLL
+  PROCESSED
+  PAID
+}
+
+enum AnnouncementStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AnnouncementAudience {
+  ALL
+  DEPARTMENT
+  EMPLOYEES
 }
 
 enum VisitStatus {

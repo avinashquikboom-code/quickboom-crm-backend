@@ -35,6 +35,8 @@ import { CompanyModule } from './modules/company/company.module';
 import { ShiftModule } from './modules/shift/shift.module';
 import { LoanModule } from './modules/loan/loan.module';
 import { ClaimModule } from './modules/claim/claim.module';
+import { OvertimeModule } from './modules/overtime/overtime.module';
+import { AnnouncementModule } from './modules/announcement/announcement.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { IntegrationSettingsModule } from './modules/integration-settings/integration-settings.module';
@@ -102,6 +104,8 @@ import { AppController } from './app.controller';
     ShiftModule,
     LoanModule,
     ClaimModule,
+    OvertimeModule,
+    AnnouncementModule,
     TrendingModule,
     MarketingModule,
     SocialMediaHandlerModule,
