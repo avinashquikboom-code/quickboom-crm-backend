@@ -1667,14 +1667,15 @@ export class IntegrationSettingsService {
             key_id: keyId,
             key_secret: keySecret,
           });
-
-          // Test API connectivity by querying orders or payments endpoint (fetch count 1)
-          const testOrder = await rzp.orders.all({ count: 1 });
+          const testOrder = await Promise.race([
+            rzp.orders.all({ count: 1 }),
+            new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Razorpay request timed out'), { code: 'ETIMEDOUT' })), 10000)),
+          ]);
           return {
             success: true,
             provider: 'RAZORPAY',
             status: 'CONNECTED',
-            message: `Razorpay API ${env} credentials verified successfully!`,
+            message: `Razorpay API ${env} credentials verified successfully.`,
             details: {
               keyIdPrefix: maskKeyId(keyId),
               environment: env,
@@ -1682,9 +1683,23 @@ export class IntegrationSettingsService {
             },
           };
         } catch (err: any) {
-          this.logger.error(`[RAZORPAY_TEST_FAILED] ${err?.message}`);
+          const statusCode = Number(err?.statusCode || err?.response?.status || 0);
+          const code = String(err?.code || '');
+          this.logger.warn(`[RAZORPAY_TEST_FAILED] environment=${env} status=${statusCode || 'none'} code=${code || 'none'}`);
+          if (code === 'ETIMEDOUT' || code === 'ECONNABORTED') {
+            throw new BadRequestException('Razorpay connection test timed out. Try again.');
+          }
+          if (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN') {
+            throw new BadRequestException('Could not reach Razorpay. Check the server network and try again.');
+          }
+          if (statusCode === 401 || statusCode === 400) {
+            throw new BadRequestException(`Razorpay rejected the ${env} Key ID or Key Secret.`);
+          }
+          const description = err?.error?.description;
           throw new BadRequestException(
-            `Razorpay connection test failed: ${err?.error?.description || err?.message || 'Invalid Key ID or Secret'}`,
+            description
+              ? `Razorpay connection test failed: ${description}`
+              : `Razorpay connection test failed for the ${env} environment.`,
           );
         }
       }

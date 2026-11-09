@@ -1269,7 +1269,7 @@ export class LeadService {
     return this.leadRepository.deleteStage(id);
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
 
@@ -4842,13 +4842,11 @@ Sent by ${senderOrgName} via CRM.
           imageUrl = res.imageUrl;
           imageKey = res.imageKey;
         } catch (err: any) {
-          this.logger.warn(`[LEAD_IMAGE_S3_FALLBACK] S3 upload failed: ${err?.message}`);
-          imageUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-          imageKey = `inline-${Date.now()}`;
+          this.logger.warn(`[LEAD_IMAGE_S3_FAILED] ${err?.message}`);
+          throw new BadRequestException('The image could not be stored. Check the file and try again.');
         }
       } else {
-        imageUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-        imageKey = `inline-${Date.now()}`;
+        throw new BadRequestException('Image storage is not configured.');
       }
     }
 
