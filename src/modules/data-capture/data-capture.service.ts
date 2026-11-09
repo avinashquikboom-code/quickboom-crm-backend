@@ -581,6 +581,54 @@ export class DataCaptureService implements OnModuleInit {
     }
   }
 
+  async suggestLocations(input: string) {
+    const query = String(input || '').trim();
+    if (query.length < 2) return { suggestions: [] };
+    const mapsConfig = await this.integrationSettingsService.getGoogleMapsConfig();
+    if (!mapsConfig.isEnabled || !mapsConfig.apiKey) {
+      throw new BadRequestException('Google Maps is not enabled. Configure it in Settings → Integrations.');
+    }
+    try {
+      const response = await axios.post(
+        'https://places.googleapis.com/v1/places:autocomplete',
+        { input: query },
+        { headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': mapsConfig.apiKey }, timeout: 8000 },
+      );
+      const suggestions = (response.data?.suggestions || [])
+        .map((item: any) => ({
+          placeId: item.placePrediction?.placeId,
+          label: item.placePrediction?.text?.text,
+        }))
+        .filter((item: { placeId?: string; label?: string }) => item.placeId && item.label);
+      return { suggestions };
+    } catch (err: any) {
+      throw new BadRequestException(err.response?.data?.error?.message || 'Location suggestions are unavailable.');
+    }
+  }
+
+  async resolveLocation(placeId: string) {
+    const id = String(placeId || '').trim();
+    if (!id) throw new BadRequestException('Select a location suggestion.');
+    const mapsConfig = await this.integrationSettingsService.getGoogleMapsConfig();
+    if (!mapsConfig.isEnabled || !mapsConfig.apiKey) {
+      throw new BadRequestException('Google Maps is not enabled. Configure it in Settings → Integrations.');
+    }
+    try {
+      const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(id)}`, {
+        headers: { 'X-Goog-Api-Key': mapsConfig.apiKey, 'X-Goog-FieldMask': 'id,formattedAddress,location' },
+        timeout: 8000,
+      });
+      return {
+        placeId: response.data?.id || id,
+        address: response.data?.formattedAddress || '',
+        latitude: response.data?.location?.latitude ?? null,
+        longitude: response.data?.location?.longitude ?? null,
+      };
+    } catch (err: any) {
+      throw new BadRequestException(err.response?.data?.error?.message || 'The selected location could not be resolved.');
+    }
+  }
+
   /**
    * Search and extract verified business prospects via Google Places API (New) - Text Search
    */
@@ -633,7 +681,10 @@ export class DataCaptureService implements OnModuleInit {
         : 1;
 
     // 2. Resolve and Normalize Extraction Input (keyword, location, query, category, city)
-    let keyword = (dto.keyword || dto.category || dto.search || '').trim();
+    const categoryList = Array.isArray(dto.categories)
+      ? dto.categories.map((item) => String(item).trim()).filter(Boolean)
+      : [];
+    let keyword = (categoryList.join(', ') || dto.keyword || dto.category || dto.search || '').trim();
     let location = (dto.location || dto.city || '').trim();
 
     const rawQuery = (dto.query || '').trim();
@@ -663,6 +714,14 @@ export class DataCaptureService implements OnModuleInit {
       location = `${location}, ${dto.country.trim()}`;
     }
 
+    if (dto.strict) {
+      if (!categoryList.length) {
+        throw new BadRequestException('Select at least one business category.');
+      }
+      if (!location) {
+        throw new BadRequestException('Select a location from the suggestions.');
+      }
+    }
     if (!keyword && !location) {
       throw new BadRequestException(
         'Search keyword (or business category) and location are required for place extraction.',
@@ -671,7 +730,7 @@ export class DataCaptureService implements OnModuleInit {
     if (!keyword) {
       keyword = 'Businesses';
     }
-    if (!location) {
+    if (!location && !dto.strict) {
       location = 'Vadodara';
     }
 
@@ -688,7 +747,10 @@ export class DataCaptureService implements OnModuleInit {
     // 4. Extract Places via Google Places API (New) or realistic fallback
     const mapsConfig = await this.integrationSettingsService.getGoogleMapsConfig();
     const apiKey = mapsConfig.apiKey;
-    const textQuery = `${keyword} in ${location}`;
+    const searchQueries = categoryList.length
+      ? categoryList.map((category) => `${category} in ${location}`)
+      : [`${keyword} in ${location}`];
+    const textQuery = searchQueries[0];
     const jobId = `job-${randomUUID().slice(0, 8)}`;
 
     const tStart = Date.now();
@@ -700,22 +762,34 @@ export class DataCaptureService implements OnModuleInit {
 
     if (mapsConfig.isEnabled && apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE') {
       try {
-        let fetchMore = true;
+        const seenPlaceIds = new Set<string>();
+        for (const activeQuery of searchQueries) {
+          if (allPlaces.length >= maxAllowed) break;
+          nextPageToken = undefined;
+          let fetchMore = true;
 
         while (fetchMore && allPlaces.length < maxAllowed) {
           const pageSize = Math.min(maxAllowed - allPlaces.length, 20);
           googleApiRequests++;
 
           const requestBody: any = {
-            textQuery,
+            textQuery: activeQuery,
             pageSize,
           };
+          if (dto.latitude != null && dto.longitude != null && !Number.isNaN(Number(dto.latitude)) && !Number.isNaN(Number(dto.longitude))) {
+            requestBody.locationBias = {
+              circle: {
+                center: { latitude: Number(dto.latitude), longitude: Number(dto.longitude) },
+                radius: 15000,
+              },
+            };
+          }
           if (nextPageToken) {
             requestBody.pageToken = nextPageToken;
           }
 
           this.logger.log(
-            `[Google Places API] Request #${googleApiRequests} for "${textQuery}" (pageSize: ${pageSize})`,
+            `[Google Places API] Request #${googleApiRequests} for "${activeQuery}" (pageSize: ${pageSize})`,
           );
 
           const tGStart = Date.now();
@@ -742,7 +816,8 @@ export class DataCaptureService implements OnModuleInit {
           nextPageToken = response.data?.nextPageToken;
 
           for (const p of rawPlaces) {
-            if (!p.id || !p.displayName?.text) continue;
+            if (!p.id || !p.displayName?.text || seenPlaceIds.has(p.id)) continue;
+            seenPlaceIds.add(p.id);
 
             const normalizedPhone = ContactExtractor.normalizePhoneNumber(
               p.internationalPhoneNumber || p.nationalPhoneNumber,
@@ -791,6 +866,7 @@ export class DataCaptureService implements OnModuleInit {
             fetchMore = false;
           }
         }
+        }
       } catch (err: any) {
         this.logger.warn(
           `[Google Places API] Live search failed for "${textQuery}": ${err.message}`,
@@ -812,6 +888,8 @@ export class DataCaptureService implements OnModuleInit {
           throw new BadRequestException(
             `Google Places search error: ${err.response?.data?.error?.message || err.message}`,
           );
+        } else if (dto.strict) {
+          throw new BadRequestException('Google Places search failed. Check the Google Maps integration and quota, then try again.');
         } else {
           allPlaces = this.generateSandboxPlaces(
             keyword,
@@ -824,6 +902,8 @@ export class DataCaptureService implements OnModuleInit {
           googleApiRequests = 1;
         }
       }
+    } else if (dto.strict) {
+      throw new BadRequestException('Google Maps is not enabled. Configure it in Settings → Integrations, then search again.');
     } else {
       this.logger.log(
         `[Google Places API] No production API key configured. Generating realistic verified sandbox places for "${textQuery}"`,

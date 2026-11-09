@@ -85,6 +85,20 @@ export class DataCaptureController {
     return this.dataCaptureService.getUsageSummary(customerId, user);
   }
 
+  @Post('location-suggestions')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @ApiOperation({ summary: 'Suggest locations from Google Places without exposing the API key' })
+  async suggestLocations(@Body() body: { input?: string }) {
+    return this.dataCaptureService.suggestLocations(body?.input || '');
+  }
+
+  @Post('location-details')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @ApiOperation({ summary: 'Resolve a selected Google location to an address and coordinates' })
+  async resolveLocation(@Body() body: { placeId?: string }) {
+    return this.dataCaptureService.resolveLocation(body?.placeId || '');
+  }
+
   /**
    * POST /api/v1/data-capture/extract
    * Searches & captures verified business records via Google Places API (New) - Text Search

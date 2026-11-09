@@ -34,6 +34,25 @@ export class ExtractPlacesDto {
   category?: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  categories?: string[];
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  longitude?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  strict?: boolean;
+
+  @IsOptional()
   @IsString()
   city?: string;
 
