@@ -9,7 +9,11 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRM_CATEGORY_KEY } from '../decorators/crm-category.decorator';
 import { classifyCrmEmployee, CrmEmployeeCategory } from '../crm/crm-employee-category';
-import { CRM_APP_ACCESS_DENIED } from '../crm/crm-app-access';
+import {
+  CRM_APP_ACCESS_DENIED,
+  CRM_APP_ACCESS_RESTRICTED_TITLE,
+  CRM_APP_ACCESS_RESTRICTED_MESSAGE,
+} from '../crm/crm-app-access';
 import { isUserAdmin } from '../utils/role.util';
 
 @Injectable()
@@ -47,9 +51,13 @@ export class CrmEmployeeAccessGuard implements CanActivate {
     const employeeStatus = String(user.employee?.status || 'ACTIVE').toUpperCase();
     const allowed = employeeStatus === 'ACTIVE' && required.includes(category as 'BPO' | 'VISITOR');
     if (!allowed) {
-      const message = CRM_APP_ACCESS_DENIED;
+      const message = CRM_APP_ACCESS_RESTRICTED_MESSAGE;
       await this.audit(request, user, category, 'ACCESS_DENIED', 'FAILED', message);
-      throw new ForbiddenException(message);
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: CRM_APP_ACCESS_RESTRICTED_TITLE,
+        message: CRM_APP_ACCESS_RESTRICTED_MESSAGE,
+      });
     }
 
     this.assertOwnRecords(request, user);

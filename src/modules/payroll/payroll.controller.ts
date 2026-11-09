@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayrollService } from './payroll.service';
+import { SalaryTargetService } from './salary-target.service';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -14,7 +15,10 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('admin/payroll')
 export class PayrollController {
-  constructor(private readonly payrollService: PayrollService) {}
+  constructor(
+    private readonly payrollService: PayrollService,
+    private readonly salaryTargets: SalaryTargetService,
+  ) {}
 
   @Post('calculate')
   @ApiOperation({ summary: 'Calculate monthly payroll for all active employees' })
@@ -229,6 +233,57 @@ export class PayrollController {
     const isSuperAdmin = isUserSuperAdmin(user);
     const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
     return this.payrollService.savePayrollPolicy(customerId, body);
+  }
+
+  @Get('targets/me')
+  @ApiOperation({ summary: 'Current employee monthly target and eligible salary' })
+  async myTarget(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const customerId = user?.customerId || currentCustomer;
+    return this.salaryTargets.mine(Number(customerId), user, month ? Number(month) : undefined, year ? Number(year) : undefined);
+  }
+
+  @Get('targets')
+  @ApiOperation({ summary: 'List target-based salary performance for a month' })
+  async listTargets(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    const now = new Date();
+    return this.salaryTargets.list(Number(customerId), month ? Number(month) : now.getUTCMonth() + 1, year ? Number(year) : now.getUTCFullYear());
+  }
+
+  @Post('targets')
+  @ApiOperation({ summary: 'Assign target-based salary to an employee or team' })
+  async assignTarget(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.salaryTargets.assign(Number(customerId), body, user);
+  }
+
+  @Post('targets/approve')
+  @ApiOperation({ summary: 'Approve monthly target performance' })
+  async approveTarget(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.salaryTargets.approve(Number(customerId), body, user);
   }
 
   @Get(':id')

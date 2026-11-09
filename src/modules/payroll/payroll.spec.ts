@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { PayrollService } from './payroll.service';
+import { SalaryTargetService } from './salary-target.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 describe('PayrollService (HRM Payroll)', () => {
@@ -124,6 +125,7 @@ describe('PayrollService (HRM Payroll)', () => {
       providers: [
         PayrollService,
         { provide: PrismaService, useValue: prisma },
+        { provide: SalaryTargetService, useValue: { resolveForPayroll: jest.fn().mockResolvedValue(null) } },
       ],
     }).compile();
 

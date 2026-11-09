@@ -160,6 +160,11 @@ export class LeadController {
     @Query('status') status?: string,
     @Query('stageId') stageId?: string,
     @Query('createdFrom') createdFrom?: string,
+    @Query('priority') priority?: string,
+    @Query('source') source?: string,
+    @Query('assignedToId') assignedToId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     return this.leadService.getLeads(
       customerId,
@@ -170,9 +175,41 @@ export class LeadController {
         status,
         stageId,
         createdFrom,
+        priority,
+        source,
+        assignedToId,
+        from,
+        to,
       },
       user,
     );
+  }
+
+  @Post('bulk/assign')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Assign selected leads to an employee' })
+  bulkAssign(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Body() body: any) {
+    return this.leadService.bulkUpdateLeads(customerId, user, body, {
+      assignedToId: body.assignedToId,
+      ...(body.assignedTeam ? { assignedTeam: body.assignedTeam } : {}),
+    });
+  }
+
+  @Post('bulk/status')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Change status for selected leads' })
+  bulkStatus(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Body() body: any) {
+    return this.leadService.bulkUpdateLeads(customerId, user, body, { status: body.status });
+  }
+
+  @Post('bulk/priority')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Change priority for selected leads' })
+  bulkPriority(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Body() body: any) {
+    return this.leadService.bulkUpdateLeads(customerId, user, body, { priority: body.priority });
   }
 
   private parseBulkDeleteIds(

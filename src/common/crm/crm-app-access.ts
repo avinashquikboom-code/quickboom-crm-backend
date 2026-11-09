@@ -1,8 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
 import { classifyCrmEmployee, CrmEmployeeCategory } from './crm-employee-category';
 
-export const CRM_APP_ACCESS_DENIED =
-  'Access Denied. The CRM application is available only to BPO and Visitor employees. Please contact your administrator.';
+export const CRM_APP_ACCESS_RESTRICTED_TITLE = 'Access Restricted';
+
+export const CRM_APP_ACCESS_RESTRICTED_MESSAGE =
+  'Your account is not authorized to access the QB Suite CRM application.\n\nCRM access is available exclusively to BPO and Visitor team employees. Your account does not belong to an eligible team.\n\nPlease contact your administrator if you believe this is a mistake.';
+
+export const CRM_APP_ACCESS_DENIED = CRM_APP_ACCESS_RESTRICTED_MESSAGE;
 
 export function isCrmAppHeader(value?: string | string[]): boolean {
   const header = Array.isArray(value) ? value[0] : value;
@@ -55,7 +59,11 @@ export async function assertCrmAppEmployee(prisma: any, user: any): Promise<CrmE
   const category = crmCategoryForEmployee(employee);
   const active = employee?.status === 'ACTIVE' && employee?.mobileLoginEnabled !== false;
   if (!employee || !active || (category !== 'BPO' && category !== 'VISITOR')) {
-    throw new ForbiddenException(CRM_APP_ACCESS_DENIED);
+    throw new ForbiddenException({
+      statusCode: 403,
+      error: CRM_APP_ACCESS_RESTRICTED_TITLE,
+      message: CRM_APP_ACCESS_RESTRICTED_MESSAGE,
+    });
   }
   return category;
 }

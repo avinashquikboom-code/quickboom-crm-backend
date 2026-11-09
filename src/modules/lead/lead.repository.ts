@@ -726,7 +726,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -839,12 +839,32 @@ export class LeadRepository {
     }
 
     if (options.assignedToId && options.assignedToId !== 'ALL' && !isNaN(Number(options.assignedToId))) {
-      where.assignedToId = Number(options.assignedToId);
+      const assignedId = Number(options.assignedToId);
+      andConditions.push({ OR: [{ assignedToId: assignedId }, { employeeId: assignedId }] });
     }
 
     if (options.createdFrom && options.createdFrom.trim() && options.createdFrom.toUpperCase() !== 'ALL') {
       where.createdFrom = options.createdFrom.trim().toUpperCase();
     }
+
+    if (options.priority && options.priority.toUpperCase() !== 'ALL') {
+      where.priority = options.priority.trim().toUpperCase();
+    }
+
+    if (options.source && options.source.toUpperCase() !== 'ALL') {
+      where.source = options.source.trim();
+    }
+
+    const createdAt: { gte?: Date; lte?: Date } = {};
+    if (options.from) {
+      const from = new Date(options.from);
+      if (!isNaN(from.getTime())) createdAt.gte = from;
+    }
+    if (options.to) {
+      const to = new Date(options.to);
+      if (!isNaN(to.getTime())) createdAt.lte = to;
+    }
+    if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
 
     if (options.search && options.search.trim()) {
       const s = options.search.trim();
