@@ -165,6 +165,7 @@ export class LeadController {
     @Query('assignedToId') assignedToId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('followUps') followUps?: string,
   ) {
     return this.leadService.getLeads(
       customerId,
@@ -180,6 +181,7 @@ export class LeadController {
         assignedToId,
         from,
         to,
+        followUps: followUps === 'true',
       },
       user,
     );

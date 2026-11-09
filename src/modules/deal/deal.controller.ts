@@ -54,6 +54,9 @@ export class DealController {
     @Query('stageId') stageId?: string,
     @Query('assignedToId') assignedToId?: string,
     @Query('status') status?: string,
+    @Query('stage') stage?: string,
+    @Query('closeFrom') closeFrom?: string,
+    @Query('closeTo') closeTo?: string,
     @Query('search') search?: string,
   ) {
     return this.dealService.findAll(
@@ -63,8 +66,11 @@ export class DealController {
         limit: limit ? Number(limit) : 20,
         pipelineId,
         stageId,
+        stage,
         assignedToId,
         status,
+        closeFrom,
+        closeTo,
         search,
       },
       user,

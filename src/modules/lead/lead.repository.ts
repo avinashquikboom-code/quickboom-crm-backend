@@ -646,10 +646,14 @@ export class LeadRepository {
           name: 'Sales Pipeline',
           stages: {
             create: [
-              { name: 'Lead Qualified', order: 1, probability: 25 },
-              { name: 'Proposal', order: 2, probability: 50 },
-              { name: 'Negotiation', order: 3, probability: 75 },
-              { name: 'Won', order: 4, probability: 100 },
+              { name: 'New', order: 1, probability: 10 },
+              { name: 'Contacted', order: 2, probability: 20 },
+              { name: 'Qualified', order: 3, probability: 30 },
+              { name: 'Proposal', order: 4, probability: 50 },
+              { name: 'Negotiation', order: 5, probability: 70 },
+              { name: 'Final Call', order: 6, probability: 85 },
+              { name: 'Won', order: 7, probability: 100 },
+              { name: 'Lost', order: 8, probability: 0 },
             ],
           },
         },
@@ -726,7 +730,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -866,6 +870,15 @@ export class LeadRepository {
     }
     if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
 
+    if (options.followUps) {
+      andConditions.push({
+        OR: [
+          { nextFollowUpDate: { not: null } },
+          { timeline: { some: { action: 'FOLLOW_UP_CALL' } } },
+        ],
+      });
+    }
+
     if (options.search && options.search.trim()) {
       const s = options.search.trim();
       andConditions.push({
@@ -942,6 +955,7 @@ export class LeadRepository {
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
       await this.resolveMissingLeadVisitedAndWonEmployees(data);
+      if (options.followUps) await this.attachFollowUpContext(data);
     }
 
     return {
@@ -953,6 +967,37 @@ export class LeadRepository {
         totalPages: Math.max(Math.ceil((Number(total) || 0) / limit), 1),
       },
     };
+  }
+
+  private async attachFollowUpContext(leads: any[]) {
+    const ids = leads.map((lead) => lead.id).filter((id) => Number(id) > 0);
+    if (!ids.length) return;
+    const [events, deals] = await Promise.all([
+      this.prisma.leadActivityTimeline.findMany({
+        where: { leadId: { in: ids }, action: 'FOLLOW_UP_CALL' },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.deal.findMany({
+        where: { deletedAt: null, OR: [{ leadId: { in: ids } }, { id: { in: leads.map((lead) => lead.convertedToDealId).filter((id) => Number(id) > 0) } }] },
+        include: { stage: true },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+    const eventMap = new Map<number, any>();
+    for (const event of events) if (!eventMap.has(event.leadId)) eventMap.set(event.leadId, event);
+    const dealByLead = new Map<number, any>();
+    const dealById = new Map<number, any>();
+    for (const deal of deals) {
+      if (deal.leadId && !dealByLead.has(deal.leadId)) dealByLead.set(deal.leadId, deal);
+      dealById.set(deal.id, deal);
+    }
+    for (const lead of leads) {
+      const event = eventMap.get(lead.id);
+      const metadata = event?.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+      lead.latestFollowUp = event ? { outcome: metadata.outcome || null, notes: metadata.notes || event.description, createdAt: event.createdAt, nextFollowUpDate: metadata.nextFollowUpDate || null, nextFollowUpTime: metadata.nextFollowUpTime || null } : null;
+      const deal = dealByLead.get(lead.id) || dealById.get(lead.convertedToDealId) || null;
+      lead.deal = deal ? { id: deal.id, title: deal.title, stage: deal.stage?.name || null, amount: deal.amount } : null;
+    }
   }
 
   public async resolveMissingLeadBusinessNames(leads: any[]): Promise<void> {
