@@ -1271,7 +1271,7 @@ model Employee {
   createdCustomers         Customer[]               @relation("CustomerCreatedStaff")
   commissionConfig         CommissionConfig?
   commissions              Commission[]
-  salaryTargetPolicy       SalaryTargetPolicy?
+  salaryTargetPolicy       SalaryTargetPolicy[]
   salaryTargetReviews      SalaryTargetReview[]
 
   @@unique([customerId, employeeCode])
@@ -3522,7 +3522,10 @@ enum CommissionStatus {
 model SalaryTargetPolicy {
   id                 Int      @id @default(autoincrement())
   customerId         Int
-  employeeId         Int      @unique
+  employeeId         Int
+  month              Int      @default(0)
+  year               Int      @default(0)
+  deletedAt          DateTime?
   enabled            Boolean  @default(true)
   monthlyTarget      Float
   fullSalary         Float?
@@ -3534,6 +3537,7 @@ model SalaryTargetPolicy {
   customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   employee           Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@unique([customerId, employeeId, month, year])
   @@index([customerId])
   @@index([employeeId])
   @@map("salary_target_policies")

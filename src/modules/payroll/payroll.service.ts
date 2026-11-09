@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { agreedMonthlySalary, countPayableAttendance, lopDeduction, settleMonthlySalary } from './salary-calculation';
 import { SalaryTargetService } from './salary-target.service';
@@ -1096,6 +1096,19 @@ export class PayrollService {
       employees: p.totalEmployees,
       status: p.status,
     }));
+  }
+
+  async getMySalary(customerId: number | string | undefined, user: any) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const employee = await this.prisma.employee.findFirst({
+      where: { userId: Number(user?.id), customerId: numCustomerId },
+      include: { salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { effectiveFrom: 'desc' }, take: 1 } },
+    });
+    if (!employee) throw new ForbiddenException('Employee record not found for this account');
+    const structure = employee.salaryStructures[0] || null;
+    if (!structure) return { salaryStructure: null, registeredSalary: null, monthlySalary: null };
+    const registeredSalary = agreedMonthlySalary(structure);
+    return { salaryStructure: { ...structure, registeredSalary, monthlySalary: registeredSalary }, registeredSalary, monthlySalary: registeredSalary };
   }
 
   async getSalaryStructures(customerId?: number | string) {

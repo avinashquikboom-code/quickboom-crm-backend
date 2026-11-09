@@ -16,6 +16,39 @@ import {
 import { LeadStatus, Prisma, VisitStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 
+const SOCIAL_PROFILE_KEYS: Array<[string, string]> = [
+  ['instagram', 'INSTAGRAM'],
+  ['facebook', 'FACEBOOK'],
+  ['youtube', 'YOUTUBE'],
+  ['linkedin', 'LINKEDIN'],
+  ['twitter', 'TWITTER'],
+  ['tiktok', 'TIKTOK'],
+  ['pinterest', 'PINTEREST'],
+  ['whatsapp', 'WHATSAPP'],
+  ['other', 'OTHER'],
+];
+
+function safeHttpUrl(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === 'N/A' || raw.toLowerCase() === 'null' || raw.toLowerCase() === 'undefined') return '';
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : (/^[\w.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(raw) ? `https://${raw}` : '');
+  if (!withScheme) return '';
+  try {
+    const url = new URL(withScheme);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+function socialProfileRows(social: Record<string, any>) {
+  return SOCIAL_PROFILE_KEYS.flatMap(([key, platform]) => {
+    const url = safeHttpUrl(social?.[key]);
+    return url ? [{ platform, url }] : [];
+  });
+}
+
 @Injectable()
 export class LeadRepository {
   private readonly logger = new Logger(LeadRepository.name);
@@ -259,6 +292,8 @@ export class LeadRepository {
       ...(leadData.x ? { twitter: String(leadData.x).trim() } : {}),
       ...(leadData.tiktok ? { tiktok: String(leadData.tiktok).trim() } : {}),
       ...(leadData.pinterest ? { pinterest: String(leadData.pinterest).trim() } : {}),
+      ...(leadData.whatsapp && safeHttpUrl(leadData.whatsapp) ? { whatsapp: String(leadData.whatsapp).trim() } : {}),
+      ...(leadData.other ? { other: String(leadData.other).trim() } : {}),
       ...(leadData.website ? { website: String(leadData.website).trim() } : {}),
     };
     if (typeof resolvedSocialMedia === 'string' && resolvedSocialMedia.trim().length > 0 && !resolvedSocialMedia.trim().startsWith('{')) {
@@ -270,12 +305,17 @@ export class LeadRepository {
       else if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) mergedSocial.twitter = trimmed;
       else if (trimmed.includes('tiktok.com')) mergedSocial.tiktok = trimmed;
       else if (trimmed.includes('pinterest.com')) mergedSocial.pinterest = trimmed;
+      else if (trimmed.includes('wa.me') || trimmed.includes('whatsapp.com')) mergedSocial.whatsapp = trimmed;
       else mergedSocial.website = trimmed;
     }
     Object.keys(mergedSocial).forEach((k) => {
-      if (!mergedSocial[k] || mergedSocial[k] === 'N/A' || mergedSocial[k] === 'null') {
-        delete mergedSocial[k];
+      if (k === 'website') {
+        if (!mergedSocial[k] || mergedSocial[k] === 'N/A' || mergedSocial[k] === 'null') delete mergedSocial[k];
+        return;
       }
+      const safe = safeHttpUrl(mergedSocial[k]);
+      if (!safe) delete mergedSocial[k];
+      else mergedSocial[k] = safe;
     });
 
     if (Object.keys(mergedSocial).length > 0) {
@@ -328,15 +368,8 @@ export class LeadRepository {
 
     // Sync social profiles into lead_social_profiles table if present
     if (Object.keys(mergedSocial).length > 0 && client.leadSocialProfile) {
-      const spPlatforms: Array<{ platform: string; url: string }> = [];
-      if (mergedSocial.instagram) spPlatforms.push({ platform: 'INSTAGRAM', url: mergedSocial.instagram });
-      if (mergedSocial.facebook) spPlatforms.push({ platform: 'FACEBOOK', url: mergedSocial.facebook });
-      if (mergedSocial.youtube) spPlatforms.push({ platform: 'YOUTUBE', url: mergedSocial.youtube });
-      if (mergedSocial.linkedin) spPlatforms.push({ platform: 'LINKEDIN', url: mergedSocial.linkedin });
-      if (mergedSocial.twitter) spPlatforms.push({ platform: 'TWITTER', url: mergedSocial.twitter });
-      if (mergedSocial.tiktok) spPlatforms.push({ platform: 'TIKTOK', url: mergedSocial.tiktok });
-      if (mergedSocial.pinterest) spPlatforms.push({ platform: 'PINTEREST', url: mergedSocial.pinterest });
-      if (mergedSocial.website) spPlatforms.push({ platform: 'WEBSITE', url: mergedSocial.website });
+      const spPlatforms = socialProfileRows(mergedSocial);
+      if (mergedSocial.website && safeHttpUrl(mergedSocial.website)) spPlatforms.push({ platform: 'WEBSITE', url: safeHttpUrl(mergedSocial.website) });
 
       for (const sp of spPlatforms) {
         try {
@@ -1333,8 +1366,14 @@ export class LeadRepository {
         else if (plat.includes('twitter') || plat === 'x') mappedSocial.twitter = sp.url;
         else if (plat.includes('tiktok')) mappedSocial.tiktok = sp.url;
         else if (plat.includes('pinterest')) mappedSocial.pinterest = sp.url;
+        else if (plat.includes('whatsapp')) mappedSocial.whatsapp = sp.url;
+        else if (plat === 'other') mappedSocial.other = sp.url;
       }
     }
+    Object.keys(mappedSocial).forEach((key) => {
+      if (key !== 'website' && !safeHttpUrl(mappedSocial[key])) delete mappedSocial[key];
+      else if (key !== 'website') mappedSocial[key] = safeHttpUrl(mappedSocial[key]);
+    });
     delete mappedSocial.website;
     const finalSocialMedia = Object.keys(mappedSocial).length > 0 ? mappedSocial : null;
 
@@ -1637,6 +1676,8 @@ export class LeadRepository {
         ...(leadData.x !== undefined ? { twitter: leadData.x ? String(leadData.x).trim() : '' } : {}),
         ...(leadData.tiktok !== undefined ? { tiktok: leadData.tiktok ? String(leadData.tiktok).trim() : '' } : {}),
         ...(leadData.pinterest !== undefined ? { pinterest: leadData.pinterest ? String(leadData.pinterest).trim() : '' } : {}),
+        ...(leadData.whatsapp !== undefined && safeHttpUrl(leadData.whatsapp) ? { whatsapp: String(leadData.whatsapp).trim() } : {}),
+        ...(leadData.other !== undefined ? { other: leadData.other ? String(leadData.other).trim() : '' } : {}),
         ...(leadData.website !== undefined ? { website: leadData.website ? String(leadData.website).trim() : '' } : {}),
       };
       if (typeof leadData.socialMedia === 'string' && leadData.socialMedia.trim().length > 0 && !leadData.socialMedia.trim().startsWith('{')) {
@@ -1648,26 +1689,28 @@ export class LeadRepository {
         else if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) merged.twitter = trimmed;
         else if (trimmed.includes('tiktok.com')) merged.tiktok = trimmed;
         else if (trimmed.includes('pinterest.com')) merged.pinterest = trimmed;
+        else if (trimmed.includes('wa.me') || trimmed.includes('whatsapp.com')) merged.whatsapp = trimmed;
         else merged.website = trimmed;
       }
       Object.keys(merged).forEach((k) => {
-        if (!merged[k] || merged[k] === 'N/A' || merged[k] === 'null') {
-          delete merged[k];
+        if (k === 'website') {
+          if (!merged[k] || merged[k] === 'N/A' || merged[k] === 'null') delete merged[k];
+          return;
         }
+        const safe = safeHttpUrl(merged[k]);
+        if (!safe) delete merged[k];
+        else merged[k] = safe;
       });
       updateData.socialMedia = Object.keys(merged).length > 0 ? merged : null;
 
       // Sync updated social profiles to lead_social_profiles
       if (this.prisma.leadSocialProfile) {
-        const spPlatforms: Array<{ platform: string; url: string }> = [];
-        if (merged.instagram) spPlatforms.push({ platform: 'INSTAGRAM', url: merged.instagram });
-        if (merged.facebook) spPlatforms.push({ platform: 'FACEBOOK', url: merged.facebook });
-        if (merged.youtube) spPlatforms.push({ platform: 'YOUTUBE', url: merged.youtube });
-        if (merged.linkedin) spPlatforms.push({ platform: 'LINKEDIN', url: merged.linkedin });
-        if (merged.twitter) spPlatforms.push({ platform: 'TWITTER', url: merged.twitter });
-        if (merged.tiktok) spPlatforms.push({ platform: 'TIKTOK', url: merged.tiktok });
-        if (merged.pinterest) spPlatforms.push({ platform: 'PINTEREST', url: merged.pinterest });
-        if (merged.website) spPlatforms.push({ platform: 'WEBSITE', url: merged.website });
+        const spPlatforms = socialProfileRows(merged);
+        if (merged.website && safeHttpUrl(merged.website)) spPlatforms.push({ platform: 'WEBSITE', url: safeHttpUrl(merged.website) });
+        const keep = spPlatforms.map((profile) => profile.platform);
+        await this.prisma.leadSocialProfile.deleteMany({
+          where: { leadId: numId, ...(keep.length ? { platform: { notIn: keep } } : {}) },
+        }).catch(() => undefined);
 
         for (const sp of spPlatforms) {
           try {

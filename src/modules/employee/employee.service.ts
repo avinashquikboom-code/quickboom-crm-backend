@@ -13,6 +13,7 @@ import { CreateEmployeeDto, UpdateEmployeeDto } from './dto/employee.dto';
 import { RoleType, Prisma, AccessOverrideType, AttendanceStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS } from '../../common/constants/rbac.constants';
+import { agreedMonthlySalary } from '../payroll/salary-calculation';
 import {
   getBusinessDate,
   getBusinessDayRange,
@@ -70,6 +71,96 @@ export class EmployeeService {
     @Inject(forwardRef(() => PlanScheduleGateway))
     private readonly planScheduleGateway?: PlanScheduleGateway,
   ) {}
+
+  private money(value: unknown, label: string) {
+    if (value === undefined || value === null || value === '') return undefined;
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new BadRequestException(`${label} must be a valid non-negative amount`);
+    }
+    return Math.round(amount * 100) / 100;
+  }
+
+  private compensationFromDto(dto: { monthlySalary?: number; basicSalary?: number; hra?: number; allowances?: number; otherEarnings?: number }) {
+    const monthly = this.money(dto.monthlySalary, 'Monthly salary');
+    const basicInput = this.money(dto.basicSalary, 'Basic salary');
+    const hra = this.money(dto.hra, 'HRA') ?? 0;
+    const allowances = this.money(dto.allowances, 'Allowances') ?? 0;
+    const otherEarnings = this.money(dto.otherEarnings, 'Other earnings') ?? 0;
+    if (monthly === undefined && basicInput === undefined && dto.hra === undefined && dto.allowances === undefined && dto.otherEarnings === undefined) {
+      return null;
+    }
+    const basicSalary = basicInput ?? monthly ?? 0;
+    const grossSalary = Math.round((basicSalary + hra + allowances + otherEarnings) * 100) / 100;
+    return {
+      basicSalary,
+      hra,
+      allowances,
+      specialAllowance: 0,
+      bonus: 0,
+      commission: 0,
+      overtime: 0,
+      otherEarnings,
+      pf: 0,
+      esi: 0,
+      professionalTax: 0,
+      tds: 0,
+      otherDeductions: 0,
+      grossSalary,
+      totalDeductions: 0,
+      netSalary: grossSalary,
+    };
+  }
+
+  private salaryView(structure?: { basicSalary?: number; hra?: number; allowances?: number; otherEarnings?: number; grossSalary?: number; netSalary?: number; totalDeductions?: number } | null) {
+    if (!structure) {
+      return { registeredSalary: null, monthlySalary: null, salaryStructure: null, salary: null };
+    }
+    const registeredSalary = agreedMonthlySalary(structure);
+    return {
+      registeredSalary,
+      monthlySalary: registeredSalary,
+      salaryStructure: structure,
+      salary: {
+        basic: Number(structure.basicSalary || 0),
+        hra: Number(structure.hra || 0),
+        allowances: Number(structure.allowances || 0),
+        otherEarnings: Number(structure.otherEarnings || 0),
+        gross: Number(structure.grossSalary || 0),
+        deductions: Number(structure.totalDeductions || 0),
+        net: Number(structure.netSalary || 0),
+        registered: registeredSalary,
+      },
+    };
+  }
+
+  private async writeRegisteredSalary(tx: any, customerId: number, employeeId: number, dto: any) {
+    const compensation = this.compensationFromDto(dto);
+    if (!compensation) return null;
+    const current = await tx.salaryStructure.findFirst({
+      where: { employeeId, customerId, status: 'ACTIVE' },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    if (current && agreedMonthlySalary(current) === compensation.grossSalary && Number(current.basicSalary) === compensation.basicSalary && Number(current.hra) === compensation.hra && Number(current.allowances) === compensation.allowances && Number(current.otherEarnings) === compensation.otherEarnings) {
+      return current;
+    }
+    const now = new Date();
+    if (current) {
+      await tx.salaryStructure.update({
+        where: { id: current.id },
+        data: { status: 'INACTIVE', effectiveTo: now },
+      });
+    }
+    return tx.salaryStructure.create({
+      data: {
+        customerId,
+        employeeId,
+        ...compensation,
+        effectiveFrom: now,
+        status: 'ACTIVE',
+      },
+    });
+  }
 
   async findAll(params: FindAllEmployeesParams) {
     const {
@@ -223,6 +314,7 @@ export class EmployeeService {
           designation: true,
           office: true,
           shift: true,
+          salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { effectiveFrom: 'desc' }, take: 1 },
           attendances: {
             where: {
               date: { gte: startOfDay, lte: endOfDay },
@@ -344,6 +436,7 @@ export class EmployeeService {
         joiningDate: e.joiningDate,
         createdAt: e.createdAt,
         updatedAt: e.updatedAt,
+        ...this.salaryView(e.salaryStructures?.[0]),
         attendance: {
           status: displayStatus,
           rawStatus: att?.status || (leave ? 'ON_LEAVE' : 'ABSENT'),
@@ -458,6 +551,7 @@ export class EmployeeService {
         designation: true,
         office: true,
         shift: true,
+        salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { effectiveFrom: 'desc' }, take: 1 },
         attendances: {
           orderBy: { date: 'desc' },
           take: 30,
@@ -541,6 +635,7 @@ export class EmployeeService {
       employeeId: employee.employeeCode,
       employeeCode: employee.employeeCode,
       name: `${employee.firstName} ${employee.lastName}`,
+      ...this.salaryView(employee.salaryStructures?.[0]),
       firstName: employee.firstName,
       lastName: employee.lastName,
       email: employee.email,
@@ -1687,7 +1782,8 @@ export class EmployeeService {
           }).catch(() => null);
         }
 
-        return createdEmployee;
+        const salary = await this.writeRegisteredSalary(tx, numCustomerId, createdEmployee.id, dto);
+        return { ...createdEmployee, ...this.salaryView(salary) };
       } catch (error) {
         if (
           error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -2186,19 +2282,49 @@ export class EmployeeService {
         }
       }
 
-      return updatedEmployee;
+      const salary = await this.writeRegisteredSalary(tx, Number(updatedEmployee.customerId), updatedEmployee.id, dto);
+      return { ...updatedEmployee, ...this.salaryView(salary || (await tx.salaryStructure.findFirst({ where: { employeeId: updatedEmployee.id, status: 'ACTIVE' }, orderBy: { effectiveFrom: 'desc' } }))) };
     });
   }
 
   async remove(params: EmployeeFindOneParams & { hardDelete?: boolean }) {
-    const { id, customerId, isSuperAdmin } = params;
+    const { id, customerId, isSuperAdmin, hardDelete } = params;
     const existing = await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(existing.id);
     const userId = existing?.userId ? Number(existing.userId) : null;
     const empCustomerId = Number(existing.customerId);
 
-    // ── PERMANENT HARD-DELETE ──────────────────────────────────────────
+    if (!hardDelete) {
+      await this.prisma.employee.update({
+        where: { id: numId },
+        data: { status: 'INACTIVE' },
+      });
+      if (userId) {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { isActive: false },
+        }).catch(() => undefined);
+      }
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: empCustomerId,
+          userId,
+          action: 'EMPLOYEE_DEACTIVATED',
+          module: 'EMPLOYEE',
+          details: {
+            employeeId: existing.id,
+            employeeCode: existing.employeeCode || existing.employeeId,
+          },
+        },
+      }).catch(() => undefined);
+      return {
+        success: true,
+        message: 'Employee deactivated. Attendance, payroll, and salary history were kept.',
+      };
+    }
+
+    // Explicit hard delete remains available only when a caller sets hardDelete.
     return this.prisma.$transaction(async (tx) => {
       // 1. Invalidate/delete all active authentication sessions, refresh tokens, and device tokens for linked user
       if (userId) {
@@ -2793,6 +2919,7 @@ export class EmployeeService {
         office: true,
         shift: true,
         user: { select: { avatar: true } },
+        salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { effectiveFrom: 'desc' }, take: 1 },
         customer: {
           select: {
             id: true,
@@ -2818,6 +2945,7 @@ export class EmployeeService {
             office: true,
             shift: true,
             user: { select: { avatar: true } },
+            salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { effectiveFrom: 'desc' }, take: 1 },
             customer: true,
           },
         });
@@ -2869,6 +2997,7 @@ export class EmployeeService {
       documents: employee.documents || [],
       status: employee.status || 'ACTIVE',
       organization: employee.customer?.companyName || employee.customer?.name || 'QuikBoom Enterprise',
+      ...(Number(employee.userId) === Number(user.id) ? this.salaryView(employee.salaryStructures?.[0]) : { registeredSalary: null, monthlySalary: null, salaryStructure: null, salary: null }),
     };
   }
 

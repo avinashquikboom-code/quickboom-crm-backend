@@ -388,6 +388,11 @@ export class DataCaptureService implements OnModuleInit {
         return `https://tiktok.com/@${handle}`;
       case 'pinterest':
         return `https://pinterest.com/${handle}`;
+      case 'whatsapp': {
+        if (/^https?:\/\//i.test(val)) return val;
+        const digits = handle.replace(/\D/g, '');
+        return digits.length >= 8 ? `https://wa.me/${digits}` : undefined;
+      }
       default:
         return undefined;
     }
@@ -422,6 +427,7 @@ export class DataCaptureService implements OnModuleInit {
               else if (plat.includes('twitter') || plat === 'x') result.twitter = normalized;
               else if (plat.includes('tiktok')) result.tiktok = normalized;
               else if (plat.includes('pinterest')) result.pinterest = normalized;
+              else if (plat.includes('whatsapp')) result.whatsapp = normalized;
             }
           }
         }
@@ -434,6 +440,7 @@ export class DataCaptureService implements OnModuleInit {
         if (sm.youtube) result.youtube = this.normalizeSocialUrl('youtube', sm.youtube);
         if (sm.tiktok) result.tiktok = this.normalizeSocialUrl('tiktok', sm.tiktok);
         if (sm.pinterest) result.pinterest = this.normalizeSocialUrl('pinterest', sm.pinterest);
+        if (sm.whatsapp) result.whatsapp = this.normalizeSocialUrl('whatsapp', sm.whatsapp);
       }
     }
 
@@ -444,6 +451,7 @@ export class DataCaptureService implements OnModuleInit {
     if ((place as any).youtube && !result.youtube) result.youtube = this.normalizeSocialUrl('youtube', (place as any).youtube);
     if ((place as any).tiktok && !result.tiktok) result.tiktok = this.normalizeSocialUrl('tiktok', (place as any).tiktok);
     if ((place as any).pinterest && !result.pinterest) result.pinterest = this.normalizeSocialUrl('pinterest', (place as any).pinterest);
+    if ((place as any).whatsapp && !result.whatsapp) result.whatsapp = this.normalizeSocialUrl('whatsapp', (place as any).whatsapp);
 
     return Object.keys(result).length > 0 ? result : undefined;
   }
@@ -1822,6 +1830,7 @@ export class DataCaptureService implements OnModuleInit {
       x: 'TWITTER',
       tiktok: 'TIKTOK',
       pinterest: 'PINTEREST',
+      whatsapp: 'WHATSAPP',
     };
     for (const [key, platform] of Object.entries(mapping)) {
       const val = (socialMedia as any)[key];

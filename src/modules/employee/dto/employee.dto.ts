@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEmail, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateEmployeeDto {
   // employeeCode is intentionally NOT accepted from the client.
@@ -128,6 +129,41 @@ export class CreateEmployeeDto {
   @IsString()
   @IsOptional()
   confirmPassword?: string;
+
+  @ApiPropertyOptional({ example: 15000, description: 'Registered monthly salary' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  monthlySalary?: number;
+
+  @ApiPropertyOptional({ example: 15000 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  basicSalary?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  hra?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  allowances?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  otherEarnings?: number;
 }
 
 export class UpdateEmployeeDto {
@@ -256,4 +292,39 @@ export class UpdateEmployeeDto {
   @IsString()
   @IsOptional()
   city?: string;
+
+  @ApiPropertyOptional({ example: 15000, description: 'Registered monthly salary' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  monthlySalary?: number;
+
+  @ApiPropertyOptional({ example: 15000 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  basicSalary?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  hra?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  allowances?: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  otherEarnings?: number;
 }
