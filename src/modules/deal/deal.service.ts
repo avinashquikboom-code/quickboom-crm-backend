@@ -75,31 +75,59 @@ export class DealService {
   }
 
   private async attachLeadContext(deals: any[]) {
+    const customerIds = [...new Set(deals.map((deal) => deal.customerId).filter((id) => Number(id) > 0))];
+    const tenant = customerIds.length ? { customerId: { in: customerIds } } : {};
     const leadIds = [...new Set(deals.map((deal) => deal.leadId).filter((id) => Number(id) > 0))];
     const dealIds = deals.map((deal) => deal.id);
-    const leadsById = await this.prisma.lead.findMany({
-      where: { id: { in: leadIds.length ? leadIds : [-1] }, deletedAt: null },
-      select: { id: true, title: true, firstName: true, lastName: true, phone: true, email: true, companyName: true, source: true, status: true, nextFollowUpDate: true, nextFollowUpTime: true, stage: { select: { id: true, name: true, key: true } }, assignedTo: { select: { id: true, firstName: true, lastName: true } } },
-    });
-    const leadsByDeal = await this.prisma.lead.findMany({
-      where: { convertedToDealId: { in: dealIds.length ? dealIds : [-1] }, deletedAt: null },
-      select: { id: true, title: true, firstName: true, lastName: true, phone: true, email: true, companyName: true, source: true, status: true, nextFollowUpDate: true, nextFollowUpTime: true, convertedToDealId: true, stage: { select: { id: true, name: true, key: true } }, assignedTo: { select: { id: true, firstName: true, lastName: true } } },
-    });
-    const followUps = await this.prisma.leadActivityTimeline.findMany({
-      where: { leadId: { in: leadIds.length ? leadIds : [-1] }, action: 'FOLLOW_UP_CALL' },
-      orderBy: { createdAt: 'desc' },
-    });
+    const contactIds = [...new Set(deals.map((deal) => deal.contactId).filter((id) => Number(id) > 0))];
+    const leadSelect = { id: true, title: true, firstName: true, lastName: true, phone: true, email: true, companyName: true, source: true, status: true, nextFollowUpDate: true, nextFollowUpTime: true, convertedToDealId: true, convertedToContactId: true, stage: { select: { id: true, name: true, key: true } }, assignedTo: { select: { id: true, firstName: true, lastName: true } } };
+    const [leadsById, leadsByDeal, leadsByContact] = await Promise.all([
+      this.prisma.lead.findMany({ where: { ...tenant, id: { in: leadIds.length ? leadIds : [-1] }, deletedAt: null }, select: leadSelect }),
+      this.prisma.lead.findMany({ where: { ...tenant, convertedToDealId: { in: dealIds.length ? dealIds : [-1] }, deletedAt: null }, select: leadSelect }),
+      this.prisma.lead.findMany({ where: { ...tenant, convertedToContactId: { in: contactIds.length ? contactIds : [-1] }, deletedAt: null }, select: leadSelect }),
+    ]);
     const leadMap = new Map(leadsById.map((lead) => [lead.id, lead]));
     const convertedMap = new Map(leadsByDeal.map((lead) => [lead.convertedToDealId, lead]));
+    const contactGroups = new Map<number, any[]>();
+    for (const lead of leadsByContact) {
+      const group = contactGroups.get(lead.convertedToContactId) || [];
+      group.push(lead);
+      contactGroups.set(lead.convertedToContactId, group);
+    }
+    const resolved = deals.map((deal) => {
+      const byContact = contactGroups.get(deal.contactId) || [];
+      const lead = leadMap.get(deal.leadId) || convertedMap.get(deal.id) || (byContact.length === 1 ? byContact[0] : null) || null;
+      return { deal, lead };
+    });
+    const resolvedLeadIds = [...new Set(resolved.map((item) => item.lead?.id).filter((id) => Number(id) > 0))];
+    const followUps = await this.prisma.leadActivityTimeline.findMany({
+      where: { leadId: { in: resolvedLeadIds.length ? resolvedLeadIds : [-1] }, action: 'FOLLOW_UP_CALL' },
+      orderBy: { createdAt: 'desc' },
+    });
     const followUpMap = new Map<number, any>();
     for (const event of followUps) if (!followUpMap.has(event.leadId)) followUpMap.set(event.leadId, event);
-    return deals.map((deal) => {
-      const lead = leadMap.get(deal.leadId) || convertedMap.get(deal.id) || null;
+    return resolved.map(({ deal, lead }) => {
       const latest = lead ? followUpMap.get(lead.id) : null;
       const metadata = latest?.metadata && typeof latest.metadata === 'object' && !Array.isArray(latest.metadata) ? latest.metadata as { outcome?: string; notes?: string } : {};
+      const person = `${lead?.firstName || ''} ${lead?.lastName || ''}`.trim();
       return {
         ...deal,
-        lead,
+        lead: lead ? {
+          id: lead.id,
+          name: person || lead.title || lead.companyName || `Lead #${lead.id}`,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
+          title: lead.title,
+          mobileNumber: lead.phone || null,
+          phone: lead.phone || null,
+          email: lead.email || null,
+          companyName: lead.companyName || null,
+          source: lead.source,
+          status: lead.stage?.name || lead.status,
+          stage: lead.stage,
+          assignedTo: lead.assignedTo,
+          nextFollowUpDate: lead.nextFollowUpDate,
+        } : null,
         nextFollowUpDate: lead?.nextFollowUpDate || null,
         nextFollowUpTime: lead?.nextFollowUpTime || null,
         latestFollowUp: latest ? { outcome: metadata.outcome || null, notes: metadata.notes || latest.description, createdAt: latest.createdAt } : null,
