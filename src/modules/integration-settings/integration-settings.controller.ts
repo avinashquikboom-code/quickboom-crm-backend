@@ -3,6 +3,7 @@ import {
   Get,
   Put,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -110,6 +111,18 @@ export class IntegrationSettingsController {
       dto,
       adminUserId,
     );
+  }
+
+  @Patch(':provider/toggle')
+  @ApiOperation({ summary: 'Enable or disable an integration without changing saved credentials' })
+  async toggleIntegration(
+    @Param('provider') provider: string,
+    @Body() body: { isEnabled?: boolean },
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
+    const adminUserId = user?.id ? Number(user.id) : undefined;
+    return this.integrationSettingsService.toggleIntegration(provider, body?.isEnabled !== false, adminUserId);
   }
 
   @Delete(':provider')
