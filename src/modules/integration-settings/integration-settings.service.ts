@@ -29,6 +29,7 @@ import {
 } from 'firebase-admin/app';
 import { getMessaging as getFirebaseAdminMessaging } from 'firebase-admin/messaging';
 import { maskAccessToken, resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
+import { integrationDefinition } from './integration-registry';
 
 export enum IntegrationProvider {
   RAZORPAY = 'RAZORPAY',
@@ -1446,8 +1447,16 @@ export class IntegrationSettingsService {
   async getMaskedProviderConfig(provider: string) {
     const norm = normalizeProvider(provider);
     const conf = await this.getIntegrationConfig(norm);
+    const definition = integrationDefinition(norm);
+    const base = {
+      displayName: definition?.displayName || norm,
+      category: definition?.category || 'Other',
+      fields: definition?.fields || [],
+    };
+
     if (!conf) {
       return {
+        ...base,
         provider: norm,
         isEnabled: false,
         environment: 'TEST',
@@ -1461,12 +1470,8 @@ export class IntegrationSettingsService {
 
     const maskedCreds: Record<string, any> = {};
     for (const [k, v] of Object.entries(conf.credentials || {})) {
-      if (typeof v === 'string') {
-        if (isSensitiveKey(k)) {
-          maskedCreds[k] = maskSecret(v);
-        } else {
-          maskedCreds[k] = v;
-        }
+      if (typeof v === 'string' && (isSensitiveKey(k) || /token|secret|password|privatekey|apikey/i.test(k))) {
+        maskedCreds[k] = maskSecret(v);
       } else {
         maskedCreds[k] = v;
       }
@@ -1476,10 +1481,12 @@ export class IntegrationSettingsService {
       const creds = conf.credentials || {};
       const hasToken = Boolean(creds.apiKey || creds.accessToken);
       const hasAppSecret = Boolean(creds.appSecret);
-      if (!maskedCreds.verifyToken) {
-        maskedCreds.verifyToken = '3f4e429cbf154b82ca819b5af5bc046110d18f336db6627a';
+      if (!maskedCreds.verifyToken && creds.verifyToken) {
+        maskedCreds.verifyToken = maskSecret(String(creds.verifyToken));
+        maskedCreds.hasVerifyToken = true;
       }
       return {
+        ...base,
         provider: conf.provider,
         isEnabled: conf.isEnabled,
         environment: conf.environment,
@@ -1506,6 +1513,7 @@ export class IntegrationSettingsService {
     }
 
     return {
+      ...base,
       provider: conf.provider,
       isEnabled: conf.isEnabled,
       environment: conf.environment,
@@ -1515,6 +1523,34 @@ export class IntegrationSettingsService {
       configured: Boolean(conf.isEnabled || (Object.keys(conf.credentials || {}).length > 0 && conf.source === 'DATABASE')),
       updatedAt: conf.updatedAt || null,
     };
+  }
+
+  async toggleIntegration(provider: string, isEnabled: boolean, adminUserId?: number) {
+    const norm = normalizeProvider(provider);
+    if (!integrationDefinition(norm)) throw new BadRequestException('Unknown integration provider');
+    const existing = await this.prisma.integrationSetting.findUnique({ where: { provider: norm } });
+    if ((!existing || existing.deletedAt) && isEnabled) {
+      throw new BadRequestException('Save this integration before enabling it');
+    }
+    if (!existing || existing.deletedAt) return this.getMaskedProviderConfig(norm);
+    await this.prisma.integrationSetting.update({
+      where: { provider: norm },
+      data: { isEnabled, updatedByUserId: adminUserId || null },
+    });
+    this.clearCache(norm);
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: isEnabled ? 'ENABLE_INTEGRATION' : 'DISABLE_INTEGRATION',
+          module: 'INTEGRATIONS',
+          userId: adminUserId,
+          details: { provider: norm, isEnabled },
+        },
+      });
+    } catch {
+      // Audit storage differs between environments; the setting change still stands.
+    }
+    return this.getMaskedProviderConfig(norm);
   }
 
   /**
