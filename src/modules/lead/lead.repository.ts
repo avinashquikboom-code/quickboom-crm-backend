@@ -677,6 +677,7 @@ export class LeadRepository {
           title: dealTitle,
           amount: dealValue,
           probability: 75,
+          leadId: numLeadId,
         },
       });
     }
@@ -983,8 +984,15 @@ export class LeadRepository {
         orderBy: { updatedAt: 'desc' },
       }),
     ]);
-    const eventMap = new Map<number, any>();
-    for (const event of events) if (!eventMap.has(event.leadId)) eventMap.set(event.leadId, event);
+    const historyMap = new Map<number, any[]>();
+    for (const event of events) {
+      const metadata = event?.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata) ? event.metadata : {};
+      const list = historyMap.get(event.leadId) || [];
+      if (list.length < 8) {
+        list.push({ id: event.id, outcome: metadata.outcome || null, notes: metadata.notes || event.description, createdAt: event.createdAt, followUpDate: metadata.nextFollowUpDate || null, followUpTime: metadata.nextFollowUpTime || null });
+      }
+      historyMap.set(event.leadId, list);
+    }
     const dealByLead = new Map<number, any>();
     const dealById = new Map<number, any>();
     for (const deal of deals) {
@@ -992,11 +1000,21 @@ export class LeadRepository {
       dealById.set(deal.id, deal);
     }
     for (const lead of leads) {
-      const event = eventMap.get(lead.id);
-      const metadata = event?.metadata && typeof event.metadata === 'object' ? event.metadata : {};
-      lead.latestFollowUp = event ? { outcome: metadata.outcome || null, notes: metadata.notes || event.description, createdAt: event.createdAt, nextFollowUpDate: metadata.nextFollowUpDate || null, nextFollowUpTime: metadata.nextFollowUpTime || null } : null;
+      const history = historyMap.get(lead.id) || [];
+      const person = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+      lead.followUpHistory = history;
+      lead.latestFollowUp = history[0] || null;
+      lead.upcomingFollowUp = lead.nextFollowUpDate ? { followUpDate: lead.nextFollowUpDate, followUpTime: lead.nextFollowUpTime || null } : null;
       const deal = dealByLead.get(lead.id) || dealById.get(lead.convertedToDealId) || null;
       lead.deal = deal ? { id: deal.id, title: deal.title, stage: deal.stage?.name || null, amount: deal.amount } : null;
+      lead.lead = {
+        id: lead.id,
+        name: person || lead.title || lead.companyName || `Lead #${lead.id}`,
+        mobileNumber: lead.phone || null,
+        email: lead.email || null,
+        companyName: lead.companyName || null,
+        status: lead.stage?.name || lead.status || null,
+      };
     }
   }
 

@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
+import PDFDocument = require('pdfkit');
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -17,6 +18,7 @@ import {
   RejectDataCaptureDto,
   BulkActionDto,
   CreateLeadFromPlaceDto,
+  CaptureSessionQueryDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
@@ -2807,7 +2809,9 @@ export class DataCaptureService implements OnModuleInit {
         : (cb: any) => cb(this.prisma);
 
       let createdViaDirectTx = false;
-      const leadResult = await runTransaction(
+      let leadResult: any;
+      try {
+      leadResult = await runTransaction(
         async (tx: any) => {
           // Resolve initial stage: 'NEW'
           let newStage = await tx.leadStage.findFirst({
@@ -2954,7 +2958,26 @@ export class DataCaptureService implements OnModuleInit {
         },
         { timeout: 15000 },
       );
-
+      } catch (importErr: any) {
+        try {
+          if (dbPlace?.id) {
+            await this.prisma.dataCapturePlace.update({
+              where: { id: dbPlace.id },
+              data: { status: 'IMPORT_FAILED' },
+            });
+          }
+        } catch (_) {}
+        perRecordResults.push({
+          sourceRecordId,
+          googlePlaceId: googlePlaceId || undefined,
+          businessName,
+          imported: false,
+          duplicate: false,
+          failed: true,
+          error: importErr?.message || 'Import failed',
+        });
+        continue;
+      }
 
       // 5. REQUIRED DEBUG LOGS (Section 25)
       this.logger.log(
@@ -3496,5 +3519,225 @@ export class DataCaptureService implements OnModuleInit {
   async backfillHistoricalPlacePhotos(): Promise<void> {
     // Intentionally no-op to prevent injecting dummy/placeholder photos into production places
     return;
+  }
+
+  private requireTenant(customerId?: string | number) {
+    const id = Number(customerId);
+    if (!id || Number.isNaN(id)) {
+      throw new ForbiddenException('A tenant is required to view capture history.');
+    }
+    return id;
+  }
+
+  private placeOutcome(place: { isImported?: boolean; status?: string | null }) {
+    const status = String(place.status || '').toUpperCase();
+    if (status === 'DUPLICATE') return 'duplicate';
+    if (place.isImported) return 'imported';
+    if (status === 'IMPORT_FAILED' || status === 'FAILED') return 'failed';
+    return 'pending';
+  }
+
+  private sessionStatus(counts: { captured: number; imported: number; pending: number; failed: number }) {
+    if (counts.captured === 0 || (counts.failed > 0 && counts.imported === 0 && counts.pending === 0)) return 'Failed';
+    if (counts.pending === 0 && counts.failed === 0) return 'Completed';
+    return 'Partial';
+  }
+
+  private async loadSessionRows(customerId: number) {
+    const jobs = await this.prisma.dataCaptureJob.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, email: true } },
+        places: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            source: true,
+            category: true,
+            status: true,
+            isImported: true,
+            importedLeadId: true,
+            googlePlaceId: true,
+            businessName: true,
+            address: true,
+            phone: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    return jobs.map((job) => {
+      const counts = { captured: job.places.length, imported: 0, pending: 0, failed: 0, duplicate: 0 };
+      const categories = new Set<string>();
+      const sources = new Set<string>();
+      job.places.forEach((place) => {
+        const outcome = this.placeOutcome(place);
+        counts[outcome] += 1;
+        if (place.category) categories.add(place.category);
+        sources.add(place.source || 'GOOGLE_PLACES');
+      });
+      if (sources.size === 0) sources.add('GOOGLE_PLACES');
+      const capturedBy = [job.user?.firstName, job.user?.lastName].filter(Boolean).join(' ').trim() || job.user?.email || `User ${job.userId}`;
+      return {
+        id: job.jobId,
+        captureName: job.keyword,
+        source: Array.from(sources).join(', '),
+        category: Array.from(categories).join(', ') || '—',
+        location: job.location,
+        requestedCount: job.requestedResults,
+        totalRecords: job.capturedResults || counts.captured,
+        imported: counts.imported,
+        pending: counts.pending,
+        failed: counts.failed,
+        duplicate: counts.duplicate,
+        status: this.sessionStatus(counts),
+        capturedBy,
+        capturedById: job.userId,
+        captureDate: job.createdAt,
+        places: job.places,
+      };
+    });
+  }
+
+  private filterSessions(rows: any[], query: CaptureSessionQueryDto) {
+    const search = (query.search || '').trim().toLowerCase();
+    const source = (query.source || '').trim().toLowerCase();
+    const category = (query.category || '').trim().toLowerCase();
+    const location = (query.location || '').trim().toLowerCase();
+    const capturedBy = (query.capturedBy || '').trim().toLowerCase();
+    const status = (query.status || '').trim().toLowerCase();
+    const from = query.dateFrom ? new Date(query.dateFrom) : null;
+    const to = query.dateTo ? new Date(query.dateTo) : null;
+    if (to && !Number.isNaN(to.getTime())) to.setHours(23, 59, 59, 999);
+    return rows.filter((row) => {
+      if (search && !`${row.id} ${row.captureName}`.toLowerCase().includes(search)) return false;
+      if (source && source !== 'all' && !String(row.source).toLowerCase().includes(source)) return false;
+      if (category && category !== 'all' && !String(row.category).toLowerCase().includes(category)) return false;
+      if (location && !String(row.location || '').toLowerCase().includes(location)) return false;
+      if (capturedBy && capturedBy !== 'all' && String(row.capturedById) !== capturedBy && !String(row.capturedBy).toLowerCase().includes(capturedBy)) return false;
+      if (status && status !== 'all' && String(row.status).toLowerCase() !== status) return false;
+      const when = new Date(row.captureDate);
+      if (from && !Number.isNaN(from.getTime()) && when < from) return false;
+      if (to && !Number.isNaN(to.getTime()) && when > to) return false;
+      return true;
+    });
+  }
+
+  private summarizeSessions(rows: any[]) {
+    return rows.reduce((summary, row) => {
+      summary.sessions += 1;
+      summary.captured += row.totalRecords || 0;
+      summary.imported += row.imported || 0;
+      summary.pending += row.pending || 0;
+      summary.failed += row.failed || 0;
+      summary.duplicates += row.duplicate || 0;
+      return summary;
+    }, { sessions: 0, captured: 0, imported: 0, pending: 0, failed: 0, duplicates: 0 });
+  }
+
+  async listCaptureSessions(customerId: string | number | undefined, query: CaptureSessionQueryDto) {
+    const tenantId = this.requireTenant(customerId);
+    const rows = await this.loadSessionRows(tenantId);
+    const filtered = this.filterSessions(rows, query);
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const start = (page - 1) * limit;
+    const sources = Array.from(new Set(rows.flatMap((row) => String(row.source).split(', ')))).filter(Boolean);
+    const categories = Array.from(new Set(rows.flatMap((row) => String(row.category).split(', ')).filter((value) => value && value !== '—')));
+    const users = Array.from(new Map(rows.map((row) => [String(row.capturedById), row.capturedBy])).entries()).map(([id, name]) => ({ id, name }));
+    return {
+      data: filtered.slice(start, start + limit).map(({ places, ...row }) => row),
+      summary: this.summarizeSessions(filtered),
+      meta: { sources, categories, users },
+      pagination: { page, limit, total: filtered.length, totalPages: Math.max(1, Math.ceil(filtered.length / limit)) },
+    };
+  }
+
+  async getCaptureSession(customerId: string | number | undefined, jobId: string) {
+    const tenantId = this.requireTenant(customerId);
+    const rows = await this.loadSessionRows(tenantId);
+    const row = rows.find((item) => item.id === jobId);
+    if (!row) throw new NotFoundException('Capture session not found.');
+    return {
+      data: {
+        ...row,
+        records: row.places.map((place) => ({
+          id: place.id,
+          businessName: place.businessName,
+          category: place.category,
+          address: place.address,
+          phone: place.phone,
+          googlePlaceId: place.googlePlaceId,
+          status: place.status,
+          outcome: this.placeOutcome(place),
+          importedLeadId: place.importedLeadId,
+          capturedAt: place.createdAt,
+        })),
+        places: undefined,
+      },
+    };
+  }
+
+  async retryFailedCapture(customerId: string | number | undefined, user: any, jobId: string, req?: any) {
+    const tenantId = this.requireTenant(customerId);
+    const failed = await this.prisma.dataCapturePlace.findMany({
+      where: { customerId: tenantId, jobId, deletedAt: null, isImported: false, status: { in: ['IMPORT_FAILED', 'FAILED'] } },
+      select: { id: true, googlePlaceId: true },
+    });
+    if (!failed.length) {
+      throw new BadRequestException('No failed records from this session are still available to retry. Pending records are not imported automatically.');
+    }
+    return this.importToLeads(tenantId, user, {
+      jobId,
+      places: failed.map((place) => ({ id: place.id, googlePlaceId: place.googlePlaceId || undefined })),
+    }, req);
+  }
+
+  async exportCaptureSessions(customerId: string | number | undefined, query: CaptureSessionQueryDto, format: 'csv' | 'pdf') {
+    const listed = await this.listCaptureSessions(customerId, { ...query, page: 1, limit: 1000 });
+    const rows = listed.data || [];
+    const customer = await this.prisma.customer.findFirst({ where: { id: this.requireTenant(customerId) }, select: { name: true, companyName: true } });
+    const company = customer?.companyName || customer?.name || 'QB Suite';
+    if (format === 'csv') {
+      const header = ['Capture ID', 'Capture Name', 'Source', 'Category', 'Location', 'Total', 'Imported', 'Pending', 'Failed', 'Duplicates', 'Captured By', 'Capture Date', 'Status'];
+      const lines = rows.map((row) => [row.id, row.captureName, row.source, row.category, row.location, row.totalRecords, row.imported, row.pending, row.failed, row.duplicate, row.capturedBy, row.captureDate, row.status]
+        .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','));
+      return { filename: 'capture-history.csv', contentType: 'text/csv', body: [header.join(','), ...lines].join('\n') };
+    }
+    const buffer = await new Promise<Buffer>((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 36, size: 'A4', layout: 'landscape', bufferPages: true });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+      const generated = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      doc.fontSize(16).fillColor('#163A2E').text('QB Suite');
+      doc.fontSize(10).fillColor('#172B24').text(company);
+      doc.moveDown(0.3);
+      doc.fontSize(14).text('Capture History');
+      doc.fontSize(9).fillColor('#718078').text(`Period: ${query.dateFrom || 'All'} to ${query.dateTo || 'All'}`);
+      doc.text(`Generated: ${generated}`);
+      doc.text(`Sessions ${listed.summary.sessions} · Captured ${listed.summary.captured} · Imported ${listed.summary.imported} · Pending ${listed.summary.pending} · Failed ${listed.summary.failed} · Duplicates ${listed.summary.duplicates}`);
+      doc.moveDown(0.6);
+      if (!rows.length) {
+        doc.fillColor('#172B24').fontSize(11).text('No capture sessions match these filters.');
+      } else {
+        doc.fontSize(8).fillColor('#172B24');
+        rows.forEach((row, index) => {
+          if (doc.y > doc.page.height - 60) doc.addPage();
+          doc.text(`${index + 1}. ${row.id} | ${row.captureName} | ${row.source} | ${row.location || '—'} | Total ${row.totalRecords} | Imported ${row.imported} | Pending ${row.pending} | Failed ${row.failed} | Duplicates ${row.duplicate} | ${row.status} | ${row.capturedBy}`, { width: doc.page.width - 72 });
+          doc.moveDown(0.25);
+        });
+      }
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i += 1) {
+        doc.switchToPage(i);
+        doc.fontSize(8).fillColor('#718078').text(`${company} · Page ${i + 1} of ${range.count} · ${generated}`, 36, doc.page.height - 28, { align: 'center', width: doc.page.width - 72 });
+      }
+      doc.end();
+    });
+    return { filename: 'capture-history.pdf', contentType: 'application/pdf', body: buffer };
   }
 }

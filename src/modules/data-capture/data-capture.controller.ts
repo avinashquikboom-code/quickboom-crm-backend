@@ -35,6 +35,7 @@ import {
   RejectDataCaptureDto,
   BulkActionDto,
   CreateLeadFromPlaceDto,
+  CaptureSessionQueryDto,
 } from './dto/data-capture.dto';
 
 @ApiTags('Data Capture (Google Places & Leads Extraction)')
@@ -147,6 +148,53 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Alias for extraction job history' })
   async getCustomerHistory(@CurrentCustomer() customerId: string) {
     return this.dataCaptureService.getCustomerJobs(customerId);
+  }
+
+  @Get('sessions')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Capture session history with import counts' })
+  async listSessions(
+    @CurrentCustomer() customerId: string,
+    @Query() query: CaptureSessionQueryDto,
+  ) {
+    return this.dataCaptureService.listCaptureSessions(customerId, query);
+  }
+
+  @Get('sessions/export')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Export capture history as CSV or PDF' })
+  async exportSessions(
+    @CurrentCustomer() customerId: string,
+    @Query() query: CaptureSessionQueryDto,
+    @Query('format') format: string,
+    @Res() res: Response,
+  ) {
+    const file = await this.dataCaptureService.exportCaptureSessions(customerId, query, format === 'pdf' ? 'pdf' : 'csv');
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.send(file.body);
+  }
+
+  @Get('sessions/:jobId')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Capture session details and record outcomes' })
+  async getSession(
+    @CurrentCustomer() customerId: string,
+    @Param('jobId') jobId: string,
+  ) {
+    return this.dataCaptureService.getCaptureSession(customerId, jobId);
+  }
+
+  @Post('sessions/:jobId/retry-failed')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' })
+  @ApiOperation({ summary: 'Retry failed imports for records still stored on the session' })
+  async retrySession(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('jobId') jobId: string,
+    @Req() req: any,
+  ) {
+    return this.dataCaptureService.retryFailedCapture(customerId, user, jobId, req);
   }
 
   /**
