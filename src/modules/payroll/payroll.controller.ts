@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayrollService } from './payroll.service';
 import { SalaryTargetService } from './salary-target.service';
@@ -174,6 +174,14 @@ export class PayrollController {
     return this.payrollService.getPayrollHistory(customerId);
   }
 
+  @Get('salary')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
+  @ApiOperation({ summary: 'Registered monthly salary for the authenticated employee' })
+  async mySalary(@CurrentUser() user: any, @CurrentCustomer() currentCustomer?: any) {
+    const customerId = user?.customerId || currentCustomer;
+    return this.payrollService.getMySalary(customerId, user);
+  }
+
   @Get('structures')
   @ApiOperation({ summary: 'Get active employee salary structures' })
   async getStructures(
@@ -248,6 +256,7 @@ export class PayrollController {
   }
 
   @Get('targets')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'List target-based salary performance for a month' })
   async listTargets(
     @CurrentUser() user: any,
@@ -263,6 +272,7 @@ export class PayrollController {
   }
 
   @Post('targets')
+  @RequirePermissions({ module: 'SALARY', action: 'CREATE' })
   @ApiOperation({ summary: 'Assign target-based salary to an employee or team' })
   async assignTarget(
     @CurrentUser() user: any,
@@ -274,7 +284,20 @@ export class PayrollController {
     return this.salaryTargets.assign(Number(customerId), body, user);
   }
 
+  @Patch('targets/:id')
+  @RequirePermissions({ module: 'SALARY', action: 'EDIT' })
+  updateTarget(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Param('id') id: string, @Body() body: any) {
+    return this.salaryTargets.changeAssignment(Number(customerId), Number(id), body, user);
+  }
+
+  @Delete('targets/:id')
+  @RequirePermissions({ module: 'SALARY', action: 'DELETE' })
+  deleteTarget(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Param('id') id: string, @Query('month') month: string, @Query('year') year: string) {
+    return this.salaryTargets.changeAssignment(Number(customerId), Number(id), { month, year }, user, true);
+  }
+
   @Post('targets/approve')
+  @RequirePermissions({ module: 'SALARY', action: 'APPROVE' })
   @ApiOperation({ summary: 'Approve monthly target performance' })
   async approveTarget(
     @CurrentUser() user: any,

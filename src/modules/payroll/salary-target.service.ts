@@ -7,18 +7,19 @@ export class SalaryTargetService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(customerId: number, month: number, year: number) {
+    this.assertTenant(customerId);
     this.assertPeriod(month, year);
     const [policies, employees, teams] = await Promise.all([
       this.prisma.salaryTargetPolicy.findMany({
-        where: { customerId, enabled: true },
+        where: { customerId, OR: [{ month, year }, { month: 0, year: 0 }] },
         include: {
-          employee: { include: { department: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } } },
+          employee: { include: { department: true, designation: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } } },
         },
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.employee.findMany({
         where: { customerId, status: 'ACTIVE' },
-        include: { department: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } },
+        include: { department: true, designation: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } },
         orderBy: { firstName: 'asc' },
       }),
       this.prisma.team.findMany({
@@ -30,7 +31,8 @@ export class SalaryTargetService {
 
     const rows = [];
     for (const policy of policies) {
-      rows.push(await this.resolveForPayroll(this.prisma, customerId, policy.employee, policy.employee.salaryStructures?.[0], year, month, { persist: true }));
+      if (policy.month === 0 && policies.some((other) => other.employeeId === policy.employeeId && other.month === month && other.year === year)) continue;
+      rows.push(await this.resolveForPayroll(this.prisma, customerId, policy.employee, policy.employee.salaryStructures?.[0], year, month, { persist: false }));
     }
     return {
       month,
@@ -59,35 +61,81 @@ export class SalaryTargetService {
   }
 
   async assign(customerId: number, body: any, user: any) {
-    const monthlyTarget = Number(body.monthlyTarget);
-    const belowTargetSalary = Number(body.belowTargetSalary);
-    if (!(monthlyTarget > 0)) throw new BadRequestException('Monthly target must be greater than zero');
-    if (!(belowTargetSalary >= 0)) throw new BadRequestException('Below-target salary is required');
-    const fullSalary = body.fullSalary === undefined || body.fullSalary === null || body.fullSalary === '' ? null : Number(body.fullSalary);
-    if (fullSalary !== null && !(fullSalary >= 0)) throw new BadRequestException('Full-target salary is invalid');
-    const enabled = body.enabled !== false;
-
+    this.assertTenant(customerId);
+    const month = Number(body.month), year = Number(body.year);
+    this.assertPeriod(month, year);
+    const input = this.policyInput(body);
+    let ids = Array.isArray(body.employeeIds) ? body.employeeIds.map(Number) : [Number(body.employeeId)];
     if (body.teamId) {
-      const team = await this.prisma.team.findFirst({
-        where: { id: Number(body.teamId), customerId },
-        include: { members: { include: { employee: true } } },
-      });
+      const team = await this.prisma.team.findFirst({ where: { id: Number(body.teamId), customerId }, include: { members: true } });
       if (!team) throw new NotFoundException('Team not found');
-      const activeMembers = team.members.filter((member) => member.employee?.status === 'ACTIVE');
-      for (const member of activeMembers) {
-        await this.upsertPolicy(customerId, member.employeeId, { monthlyTarget, belowTargetSalary, fullSalary, enabled }, user);
-      }
-      await this.audit(customerId, user, 'SALARY_TARGET_TEAM_ASSIGNED', team.id, `Assigned target salary to ${activeMembers.length} members of ${team.name}`);
-      return { teamId: team.id, assigned: activeMembers.length };
+      ids = team.members.map((member) => member.employeeId);
     }
+    ids = [...new Set<number>(ids)];
+    if (!ids.length || ids.length > 100 || ids.some((id) => !Number.isInteger(id) || id <= 0)) throw new BadRequestException('Choose 1–100 employees.');
+    const results = [];
+    for (const employeeId of ids) {
+      try {
+        const policy = await this.prisma.$transaction(async (tx) => {
+          await this.lockPeriod(tx, customerId, month, year);
+          await this.assertMutable(tx, customerId, employeeId, month, year);
+          const employee = await tx.employee.findFirst({ where: { id: employeeId, customerId, status: 'ACTIVE' } });
+          if (!employee) throw new NotFoundException('Active employee not found');
+          return tx.salaryTargetPolicy.create({ data: { customerId, employeeId, month, year, ...input, createdById: Number(user.id), updatedById: Number(user.id) } });
+        });
+        await this.audit(customerId, user, 'SALARY_TARGET_ASSIGNED', policy.id, `Assigned target salary for ${month}/${year}`);
+        results.push({ employeeId, assignmentId: policy.id, success: true });
+      } catch (error: any) {
+        results.push({ employeeId, success: false, error: error.code === 'P2002' ? 'An assignment already exists for this period.' : error.message });
+      }
+    }
+    return { assigned: results.filter((result) => result.success).length, failed: results.filter((result) => !result.success).length, results };
+  }
 
-    const employeeId = Number(body.employeeId);
-    if (!employeeId) throw new BadRequestException('Choose an employee or a team');
-    const employee = await this.prisma.employee.findFirst({ where: { id: employeeId, customerId, status: 'ACTIVE' } });
-    if (!employee) throw new NotFoundException('Active employee not found');
-    const policy = await this.upsertPolicy(customerId, employeeId, { monthlyTarget, belowTargetSalary, fullSalary, enabled }, user);
-    await this.audit(customerId, user, 'SALARY_TARGET_ASSIGNED', policy.id, `Assigned target salary to employee ${employeeId}`);
-    return policy;
+  async changeAssignment(customerId: number, assignmentId: number, body: any, user: any, remove = false) {
+    this.assertTenant(customerId);
+    if (!Number.isInteger(assignmentId) || assignmentId <= 0) throw new BadRequestException('Invalid assignment ID');
+    const month = Number(body.month), year = Number(body.year);
+    this.assertPeriod(month, year);
+    const input = remove ? null : this.policyInput(body);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const policy = await tx.salaryTargetPolicy.findFirst({ where: { id: assignmentId, customerId, deletedAt: null } });
+      if (!policy) throw new NotFoundException('Target assignment not found');
+      const originalMonth = policy.month || month, originalYear = policy.year || year;
+      for (const period of [...new Set([originalYear * 100 + originalMonth, year * 100 + month])].sort((a, b) => a - b)) await this.lockPeriod(tx, customerId, period % 100, Math.floor(period / 100));
+      await this.assertMutable(tx, customerId, policy.employeeId, originalMonth, originalYear);
+      const employeeId = remove ? policy.employeeId : Number(body.employeeId || policy.employeeId);
+      await this.assertMutable(tx, customerId, employeeId, month, year);
+      if (!await tx.employee.findFirst({ where: { id: employeeId, customerId, status: 'ACTIVE' } })) throw new NotFoundException('Active employee not found');
+      // Legacy defaults remain unchanged: editing/deleting a displayed month creates an override.
+      const data = { ...(input || {}), employeeId, month, year, updatedById: Number(user.id),
+        ...(remove ? { enabled: false, deletedAt: new Date() } : {}) };
+      if (policy.month === 0) return tx.salaryTargetPolicy.create({ data: { ...policy, id: undefined, ...data, createdAt: undefined, updatedAt: undefined } });
+      return tx.salaryTargetPolicy.update({ where: { id: policy.id }, data });
+    }).catch((error) => { if (error.code === 'P2002') throw new BadRequestException('An assignment already exists for this employee and period.'); throw error; });
+    await this.audit(customerId, user, remove ? 'SALARY_TARGET_DEACTIVATED' : 'SALARY_TARGET_UPDATED', result.id, `${month}/${year} assignment ${remove ? 'deactivated' : 'updated'}; payroll history retained`);
+    return result;
+  }
+
+  private policyInput(body: any) {
+    const monthlyTarget = Number(body.monthlyTarget), belowTargetSalary = Number(body.belowTargetSalary);
+    const fullSalary = body.fullSalary === '' || body.fullSalary == null ? null : Number(body.fullSalary);
+    if (!Number.isFinite(monthlyTarget) || monthlyTarget <= 0 || body.belowTargetSalary === '' || body.belowTargetSalary == null || !Number.isFinite(belowTargetSalary) || belowTargetSalary < 0 || (fullSalary !== null && (!Number.isFinite(fullSalary) || fullSalary < 0))) throw new BadRequestException('Enter valid target and salary amounts.');
+    return { monthlyTarget, belowTargetSalary, fullSalary, enabled: true };
+  }
+
+  private async lockPeriod(db: any, customerId: number, month: number, year: number) {
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(${customerId}::integer, ${year * 100 + month}::integer)`;
+  }
+
+  private async assertMutable(db: any, customerId: number, employeeId: number, month: number, year: number) {
+    const approved = await db.salaryTargetReview.findFirst({ where: { customerId, employeeId, month, year, reviewStatus: 'APPROVED' } });
+    const payroll = await db.payrollItem.findFirst({ where: { customerId, employeeId, payroll: { month, year, status: { notIn: ['DRAFT', 'CANCELLED', 'FAILED'] } } } });
+    if (approved || payroll) throw new BadRequestException('This period has approved performance or payroll dependencies. Its assignment cannot be changed.');
+  }
+
+  private assertTenant(customerId: number) {
+    if (!Number.isInteger(customerId) || customerId <= 0) throw new BadRequestException('An authenticated tenant is required.');
   }
 
   async approve(customerId: number, body: any, user: any) {
@@ -95,32 +143,30 @@ export class SalaryTargetService {
     const year = Number(body.year);
     const employeeId = Number(body.employeeId);
     this.assertPeriod(month, year);
-    await this.assertOpen(customerId, employeeId, month, year);
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, customerId },
-      include: { department: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } },
+    this.assertTenant(customerId);
+    const review = await this.prisma.$transaction(async (tx) => {
+      await this.lockPeriod(tx, customerId, month, year);
+      await this.assertMutable(tx, customerId, employeeId, month, year);
+      const employee = await tx.employee.findFirst({ where: { id: employeeId, customerId }, include: { department: true, designation: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } } });
+      if (!employee) throw new NotFoundException('Employee not found');
+      const result = await this.resolveForPayroll(tx, customerId, employee, employee.salaryStructures?.[0], year, month, { persist: true, approve: true, user });
+      if (!result) throw new BadRequestException('This employee has no target assignment for this period');
+      return result;
     });
-    if (!employee) throw new NotFoundException('Employee not found');
-    const review = await this.resolveForPayroll(this.prisma, customerId, employee, employee.salaryStructures?.[0], year, month, { persist: true, approve: true, user });
-    if (!review) throw new BadRequestException('This employee is not on a target-based salary policy');
     await this.audit(customerId, user, 'SALARY_TARGET_APPROVED', review.reviewId, `Approved ${month}/${year} target performance for employee ${employeeId}`);
     return review;
   }
 
   async resolveForPayroll(db: any, customerId: number, employee: any, structure: any, year: number, month: number, options?: { persist?: boolean; approve?: boolean; user?: any }) {
-    if (!db?.salaryTargetPolicy?.findUnique || !employee?.id) return null;
-    const policy = await db.salaryTargetPolicy.findUnique({ where: { employeeId: employee.id } });
-    if (!policy || !policy.enabled || policy.customerId !== customerId) return null;
-
+    if (!db?.salaryTargetPolicy?.findFirst || !employee?.id) return null;
+    const policy = await db.salaryTargetPolicy.findFirst({ where: { customerId, employeeId: employee.id, month, year } })
+      || await db.salaryTargetPolicy.findFirst({ where: { customerId, employeeId: employee.id, month: 0, year: 0 } });
+    const locked = await this.lockedPayroll(db, customerId, employee.id, month, year);
+    const existing = await db.salaryTargetReview.findUnique({ where: { customerId_employeeId_month_year: { customerId, employeeId: employee.id, month, year } } });
+    if (existing && (locked || (existing.reviewStatus === 'APPROVED' && !options?.approve))) return this.present(employee, existing, Boolean(locked), policy);
+    if (!policy || !policy.enabled || policy.deletedAt) return null;
     const registeredSalary = agreedMonthlySalary(structure);
     const fullSalary = policy.fullSalary != null && Number(policy.fullSalary) > 0 ? Number(policy.fullSalary) : registeredSalary;
-    const locked = await this.lockedPayroll(db, customerId, employee.id, month, year);
-    const existing = db.salaryTargetReview?.findUnique
-      ? await db.salaryTargetReview.findUnique({ where: { customerId_employeeId_month_year: { customerId, employeeId: employee.id, month, year } } })
-      : null;
-
-    if (locked && existing) return this.present(employee, existing, true);
-    if (existing?.reviewStatus === 'APPROVED' && !options?.approve) return this.present(employee, existing, false);
 
     const achieved = await this.achievement(db, customerId, employee, year, month);
     const decision = eligibleTargetSalary({
@@ -154,14 +200,18 @@ export class SalaryTargetService {
         create: record,
         update: record,
       });
-      return this.present(employee, saved, false);
+      return this.present(employee, saved, false, policy);
     }
-    return this.present(employee, { ...record, id: existing?.id }, Boolean(locked));
+    return this.present(employee, { ...record, id: existing?.id }, Boolean(locked), policy);
   }
 
-  private present(employee: any, review: any, payrollLocked: boolean) {
+  private present(employee: any, review: any, payrollLocked: boolean, policy?: any) {
     return {
       assigned: true,
+      assignmentId: policy?.id || null,
+      legacyPolicy: policy?.month === 0,
+      designation: employee.designation?.name || '',
+      approvedById: review.approvedById || null,
       reviewId: review.id || null,
       employeeId: employee.id,
       employeeName: `${employee.firstName || ''} ${employee.lastName || ''}`.trim(),
@@ -216,7 +266,7 @@ export class SalaryTargetService {
   private async lockedPayroll(db: any, customerId: number, employeeId: number, month: number, year: number) {
     if (!db.payrollItem?.findFirst) return false;
     const item = await db.payrollItem.findFirst({
-      where: { customerId, employeeId, payroll: { month, year, status: 'PAID' } },
+      where: { customerId, employeeId, payroll: { month, year, status: { notIn: ['DRAFT', 'CANCELLED', 'FAILED'] } } },
       select: { id: true },
     });
     return Boolean(item);
@@ -228,33 +278,17 @@ export class SalaryTargetService {
     }
   }
 
-  private upsertPolicy(customerId: number, employeeId: number, input: { monthlyTarget: number; belowTargetSalary: number; fullSalary: number | null; enabled: boolean }, user: any) {
-    const data = {
-      customerId,
-      monthlyTarget: input.monthlyTarget,
-      belowTargetSalary: input.belowTargetSalary,
-      fullSalary: input.fullSalary,
-      enabled: input.enabled,
-      updatedById: user?.id ? Number(user.id) : null,
-    };
-    return this.prisma.salaryTargetPolicy.upsert({
-      where: { employeeId },
-      create: { ...data, employeeId, createdById: user?.id ? Number(user.id) : null },
-      update: data,
-    });
-  }
-
   private async employeeForUser(customerId: number, user: any) {
     const userId = Number(user?.id);
     if (!userId) return null;
     return this.prisma.employee.findFirst({
       where: { customerId, userId },
-      include: { department: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } },
+      include: { department: true, designation: true, salaryStructures: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 1 } },
     });
   }
 
   private assertPeriod(month: number, year: number) {
-    if (!(month >= 1 && month <= 12) || !(year >= 2000)) throw new BadRequestException('A valid month and year are required');
+    if (!Number.isInteger(month) || !Number.isInteger(year) || !(month >= 1 && month <= 12) || !(year >= 2000 && year <= 9999)) throw new BadRequestException('A valid month and year are required');
   }
 
   private async audit(customerId: number, user: any, action: string, id: number, description: string) {

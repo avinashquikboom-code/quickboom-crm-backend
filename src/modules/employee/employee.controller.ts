@@ -33,6 +33,19 @@ export class EmployeeController {
     private readonly workService: WorkService,
   ) {}
 
+  private assertEmployeePermission(user: any, action: 'EDIT' | 'DELETE') {
+    if (isUserSuperAdmin(user) || isUserAdmin(user)) return;
+    const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+    const allowed = permissions.some((permission: any) => {
+      const code = String(typeof permission === 'string' ? permission : permission?.code || `${permission?.module}:${permission?.action}`).toUpperCase();
+      const [moduleName, permissionAction] = code.split(':');
+      return code === '*' || ((moduleName === 'EMPLOYEE' || moduleName === 'EMPLOYEES' || moduleName === 'HRM') && ['ALL', 'MANAGE', action, action === 'EDIT' ? 'UPDATE' : 'DEACTIVATE'].includes(permissionAction));
+    });
+    if (!allowed) {
+      throw new ForbiddenException(`Access denied: employee ${action.toLowerCase()} permission is required`);
+    }
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get paginated list of employees master data' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
@@ -328,6 +341,7 @@ export class EmployeeController {
     if (!isSuperAdmin && !targetCustomerId) {
       throw new ForbiddenException('User does not belong to any customer');
     }
+    this.assertEmployeePermission(user, 'EDIT');
 
     return this.employeeService.update({
       id,
@@ -352,6 +366,7 @@ export class EmployeeController {
     if (!isSuperAdmin && !targetCustomerId) {
       throw new ForbiddenException('User does not belong to any customer');
     }
+    this.assertEmployeePermission(user, 'DELETE');
 
     return this.employeeService.remove({
       id,
