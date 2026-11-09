@@ -10,6 +10,9 @@ import {
   IsBoolean,
   IsIn,
   IsObject,
+  IsInt,
+  ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -510,7 +513,10 @@ export class RejectDataCaptureDto {
 
 export class BulkActionDto {
   @IsArray()
-  @IsNumber({}, { each: true })
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
   ids: number[];
 
   @IsString()

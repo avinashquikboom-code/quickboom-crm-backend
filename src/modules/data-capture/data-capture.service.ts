@@ -52,6 +52,8 @@ export class DataCaptureService implements OnModuleInit {
     'places.userRatingCount',
     'places.photos',
     'places.attributions',
+    'places.addressComponents',
+    'places.regularOpeningHours',
     'nextPageToken',
   ].join(',');
 
@@ -818,6 +820,7 @@ export class DataCaptureService implements OnModuleInit {
 
             const resolvedGooglePhotos = apiKey ? this.resolveGooglePhotos(p, apiKey) : [];
             const resolvedPhotoUrls = resolvedGooglePhotos.map((gp) => gp.url);
+            const location = this.addressParts(p.addressComponents);
 
             const placeRecord: CapturedPlace = {
               provider: 'GOOGLE_PLACES',
@@ -840,7 +843,14 @@ export class DataCaptureService implements OnModuleInit {
               customerId: String(effectiveCustomerId),
               capturedBy: String(effectiveUserId),
               extractionJobId: jobId,
-              rawData: p || {},
+              rawData: {
+                city: location.city,
+                state: location.state,
+                country: location.country,
+                pincode: location.pincode,
+                openingHours: p.regularOpeningHours?.weekdayDescriptions || null,
+                attributions: p.attributions || [],
+              },
               googlePhotos: resolvedGooglePhotos,
               photos: resolvedPhotoUrls.length > 0 ? resolvedPhotoUrls : undefined,
             };
@@ -860,7 +870,7 @@ export class DataCaptureService implements OnModuleInit {
         }
       } catch (err: any) {
         this.logger.warn(
-          `[Google Places API] Live search failed for "${textQuery}": ${err.message}`,
+          `[Google Places API] Live search failed for "${textQuery}" status=${err.response?.status || 'none'} code=${err.code || 'none'}`,
         );
 
         if (allPlaces.length > 0) {
@@ -916,15 +926,27 @@ export class DataCaptureService implements OnModuleInit {
 
     const resolvedCreatedFrom = resolveCreatedFrom(req, user || userOrUserId, dto.createdFrom);
 
-    const placesToCreate = allPlaces.map((p) => ({
+    const placesToCreate = allPlaces.filter((place) => place.businessName).map((place) => ({
       customerId: effectiveCustomerId,
-      googlePlaceId: p.googlePlaceId,
-      sourceRecordId: p.googlePlaceId,
-      businessName: '', // Required schema field; Google names are live-only.
+      googlePlaceId: place.googlePlaceId,
+      sourceRecordId: place.googlePlaceId,
+      businessName: place.businessName,
+      category: place.category || null,
+      address: place.address || null,
+      phone: place.phone || null,
+      website: place.website || null,
+      rating: place.rating ?? null,
+      reviewCount: place.reviewCount ?? null,
+      latitude: place.latitude ?? null,
+      longitude: place.longitude ?? null,
+      googleMapsUrl: place.googleMapsUrl || null,
+      businessStatus: place.businessStatus || 'OPERATIONAL',
       source: 'GOOGLE_PLACES',
       createdFrom: resolvedCreatedFrom,
-      status: 'CAPTURED',
-      rawData: { googleReferenceOnly: true },
+      status: place.googlePlaceId && existingPlaceIds.has(place.googlePlaceId) ? 'DUPLICATE' : 'CAPTURED',
+      photos: place.photos || undefined,
+      socialMedia: place.socialMedia || undefined,
+      rawData: place.rawData || undefined,
     }));
 
     // 6. Persist Job and Places to PostgreSQL
@@ -937,7 +959,7 @@ export class DataCaptureService implements OnModuleInit {
         keyword,
         location: dto.searchLocation || '',
         requestedResults: maxAllowed,
-        capturedResults: allPlaces.length,
+        capturedResults: placesToCreate.length,
         googleApiRequests,
         places: {
           create: placesToCreate,
@@ -1070,6 +1092,68 @@ export class DataCaptureService implements OnModuleInit {
     });
   }
 
+  private addressParts(components: any[] = []) {
+    const pick = (...types: string[]) => {
+      const match = components.find((component) => types.some((type) => (component?.types || []).includes(type)));
+      return match?.longText || match?.shortText || null;
+    };
+    return {
+      city: pick('locality', 'postal_town', 'administrative_area_level_3', 'administrative_area_level_2'),
+      state: pick('administrative_area_level_1'),
+      country: pick('country'),
+      pincode: pick('postal_code'),
+    };
+  }
+
+  private async refreshReferencePlaces(records: any[]) {
+    const stale = records.filter((place) => place.googlePlaceId && (!place.businessName || place.rawData?.googleReferenceOnly));
+    if (!stale.length) return records;
+    const config = await this.integrationSettingsService.getGoogleMapsConfig();
+    if (!config.isEnabled || !config.apiKey) {
+      this.logger.warn('[Google Places API] Stored places have no business name and Google Maps is not configured.');
+      return records;
+    }
+    await Promise.all(stale.slice(0, 20).map(async (place) => {
+      try {
+        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(place.googlePlaceId)}`, {
+          headers: {
+            'X-Goog-Api-Key': config.apiKey,
+            'X-Goog-FieldMask': 'id,displayName,formattedAddress,addressComponents,location,primaryType,primaryTypeDisplayName,businessStatus,googleMapsUri,internationalPhoneNumber,nationalPhoneNumber,websiteUri,rating,userRatingCount,photos,regularOpeningHours,attributions',
+          },
+          timeout: 10000,
+        });
+        const live = response.data;
+        const name = ContactExtractor.normalizeCompanyName(live.displayName?.text || '');
+        if (!name) {
+          this.logger.warn(`[Google Places API] Place details returned no business name for capture ${place.id}`);
+          return;
+        }
+        const location = this.addressParts(live.addressComponents || []);
+        const photos = this.resolveGooglePhotos(live, config.apiKey).map((photo) => photo.url);
+        const data = {
+          businessName: name,
+          category: live.primaryTypeDisplayName?.text || live.primaryType || place.category || null,
+          address: live.formattedAddress || null,
+          phone: ContactExtractor.normalizePhoneNumber(live.internationalPhoneNumber || live.nationalPhoneNumber) || null,
+          website: ContactExtractor.normalizeWebsiteUrl(live.websiteUri) || null,
+          rating: live.rating ?? null,
+          reviewCount: live.userRatingCount ?? null,
+          latitude: live.location?.latitude ?? null,
+          longitude: live.location?.longitude ?? null,
+          googleMapsUrl: live.googleMapsUri || place.googleMapsUrl || null,
+          businessStatus: live.businessStatus || place.businessStatus || 'OPERATIONAL',
+          photos: photos.length ? photos : undefined,
+          rawData: { ...location, openingHours: live.regularOpeningHours?.weekdayDescriptions || null, attributions: live.attributions || [] },
+        };
+        await this.prisma.dataCapturePlace.update({ where: { id: place.id }, data });
+        Object.assign(place, data);
+      } catch (error: any) {
+        this.logger.warn(`[Google Places API] Place details failed for capture ${place.id} status=${error.response?.status || 'none'} code=${error.code || 'none'}`);
+      }
+    }));
+    return records;
+  }
+
   /**
    * List captured places with pagination, search, status, and source filters
    */
@@ -1161,7 +1245,7 @@ export class DataCaptureService implements OnModuleInit {
       const sortField = query.sortBy || 'createdAt';
       const sortOrder = (query.sortOrder || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
 
-      const [total, records] = await Promise.all([
+      const [total, stored] = await Promise.all([
         this.prisma.dataCapturePlace.count({ where }),
         this.prisma.dataCapturePlace.findMany({
           where,
@@ -1181,6 +1265,7 @@ export class DataCaptureService implements OnModuleInit {
         }),
       ]);
 
+      const records = await this.refreshReferencePlaces(stored);
       const data: CapturedPlace[] = records.map((p) => {
         const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos(
           (p as any).photos || (p as any).rawData?.photos || (p as any).rawData?.googlePhotos,
@@ -1553,32 +1638,42 @@ export class DataCaptureService implements OnModuleInit {
   /**
    * Delete / Soft Delete a Data Capture record
    */
-  async deletePlace(customerId: string | number | undefined, id: number | string): Promise<{ success: boolean; message: string }> {
-    const numCustomerId = Number(customerId);
-    const numId = Number(id);
+  async deletePlace(customerId: string | number | undefined, id: number | string) {
+    return this.deleteCapturedRecords(customerId, [Number(id)]);
+  }
 
-    const where: any = { id: numId, deletedAt: null };
-    if (!isNaN(numCustomerId) && numCustomerId > 0) {
-      where.customerId = numCustomerId;
+  async deleteCapturedRecords(customerId: string | number | undefined, ids: number[]) {
+    const tenantId = this.requireTenant(customerId);
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new BadRequestException('Select 1–100 valid captured-record IDs.');
     }
-
-    const existing = await this.prisma.dataCapturePlace.findFirst({
-      where,
-    });
-
-    if (!existing) {
-      throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
+    const selected = [...new Set(ids)];
+    const records = [];
+    for (const id of selected) {
+      try {
+        const result = await this.prisma.$transaction(async (tx) => {
+          // Coordinate with import transactions so an imported record cannot be removed mid-import.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(72341, ${tenantId}::integer)`;
+          const record = await tx.dataCapturePlace.findFirst({ where: { id, customerId: tenantId, deletedAt: null } });
+          if (!record) return { id, status: 'failed', message: 'Capture record not found or unavailable.' };
+          if (record.isImported || record.importedLeadId || ['LEAD_CREATED', 'DUPLICATE'].includes(record.status || '')) {
+            return { id, status: 'skipped', message: 'Imported or protected capture record; CRM Lead retained.' };
+          }
+          const deleted = await tx.dataCapturePlace.updateMany({
+            where: { id, customerId: tenantId, deletedAt: null, isImported: false, importedLeadId: null },
+            data: { deletedAt: new Date() },
+          });
+          return deleted.count === 1 ? { id, status: 'deleted', message: 'Captured record deleted.' }
+            : { id, status: 'skipped', message: 'Record changed; refresh and retry.' };
+        });
+        records.push(result);
+      } catch { records.push({ id, status: 'failed', message: 'Unable to delete this captured record. Please retry.' }); }
     }
-
-    await this.prisma.dataCapturePlace.update({
-      where: { id: numId },
-      data: { deletedAt: new Date() },
-    });
-
-    return {
-      success: true,
-      message: `Data Capture record #${numId} deleted successfully.`,
-    };
+    const deleted = records.filter((record) => record.status === 'deleted').length;
+    const failed = records.filter((record) => record.status === 'failed').length;
+    const skipped = records.filter((record) => record.status === 'skipped').length;
+    return { success: failed === 0, totalSelected: selected.length, deleted, failed, skipped, affectedCount: deleted, records,
+      message: `Deleted ${deleted}; skipped ${skipped}; failed ${failed}. CRM Leads were not changed.` };
   }
 
   /**
@@ -1912,14 +2007,7 @@ export class DataCaptureService implements OnModuleInit {
         affectedCount = res.count;
         break;
       }
-      case 'delete': {
-        const res = await this.prisma.dataCapturePlace.updateMany({
-          where: { id: { in: dto.ids }, customerId: numCustomerId, deletedAt: null },
-          data: { deletedAt: new Date() },
-        });
-        affectedCount = res.count;
-        break;
-      }
+      case 'delete': return this.deleteCapturedRecords(customerId, dto.ids);
       case 'import_leads': {
         const result = await this.importToLeads(numCustomerId, userId, { places: dto.ids.map((id) => ({ id })) });
         return { ...result, affectedCount: result.imported };
@@ -1947,7 +2035,7 @@ export class DataCaptureService implements OnModuleInit {
       if (typeof value !== 'string' || value.length > (key === 'address' ? 2000 : 500)) throw new BadRequestException(`Invalid ${key}.`);
       fields[key] = value.trim();
     }
-    if (!fields.businessName) throw new BadRequestException('An independently sourced business name is required.');
+    if (!fields.businessName) throw new BadRequestException('Business name is missing. Place details could not be retrieved.');
     if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) throw new BadRequestException('Invalid email.');
     if (fields.phone && (!/^\+?[\d\s().-]{8,25}$/.test(fields.phone) || fields.phone.replace(/\D/g, '').length < 8 || fields.phone.replace(/\D/g, '').length > 15)) throw new BadRequestException('Invalid phone.');
     if (fields.website) {
@@ -2096,44 +2184,28 @@ export class DataCaptureService implements OnModuleInit {
           imported: false, duplicate: false, failed: true, error: 'Captured record not found in this tenant/session.' });
         continue;
       }
-      // Provider content is never copied into CRM. Independent fields are explicitly submitted,
-      // or reused from a prior failed attempt recorded by this importer.
+      if (!dbPlace.businessName || (dbPlace.rawData as any)?.googleReferenceOnly) {
+        await this.refreshReferencePlaces([dbPlace]);
+        dbPlace = await this.prisma.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } }) || dbPlace;
+      }
       const googleReference = Boolean(dbPlace.googlePlaceId) || /GOOGLE/i.test(dbPlace.source || '');
-      const independent = candidate.independentFields || (dbPlace.rawData as any)?.independentFields;
-      if (googleReference && independent) {
-        dbPlace = { ...dbPlace, businessName: '', phone: null, email: null, website: null,
-          address: null, category: null, rating: null, reviewCount: null, latitude: null,
-          longitude: null, socialMedia: null, rawData: { independentFields: independent },
-          ...Object.fromEntries(['businessName', 'phone', 'email', 'website', 'address', 'city', 'state', 'country', 'pincode', 'category'].map((key) => [key, independent[key]])) };
-      }
-      if (googleReference && !independent) {
-        // Allow provider-ID duplicate checks without requiring re-entry of existing CRM data.
-        const existing = await this.prisma.lead.findFirst({ where: {
-          customerId: numCustomerId, deletedAt: null, googlePlaceId: dbPlace.googlePlaceId,
-        } });
-        if (existing && dbPlace.googlePlaceId) {
-          skippedDuplicates++;
-          duplicateNames.push(existing.title);
-          await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: {
-            isImported: true, importedLeadId: existing.id,
-            status: dbPlace.importedLeadId === existing.id && dbPlace.status === 'LEAD_CREATED' ? 'LEAD_CREATED' : 'DUPLICATE',
-          } });
-          perRecordResults.push({ googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
-            imported: false, duplicate: true, existingLeadId: existing.id, leadId: existing.id });
-          createdLeads.push(existing);
-          continue;
-        }
-        await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
-        perRecordResults.push({ googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
-          imported: false, duplicate: false, failed: true,
-          error: 'Enter independently sourced CRM fields before importing this Google reference.' });
-        continue;
-      }
 
       // 2. Authoritative field mapping from candidate and dbPlace (Sections 4, 5, 6, 7, 8)
       let fields: any;
       try {
-        fields = this.validateIndependentLeadFields(dbPlace);
+        const location = dbPlace.rawData && typeof dbPlace.rawData === 'object' ? dbPlace.rawData : {};
+        fields = this.validateIndependentLeadFields({
+          businessName: dbPlace.businessName,
+          phone: dbPlace.phone,
+          email: dbPlace.email,
+          website: dbPlace.website,
+          address: dbPlace.address,
+          category: dbPlace.category,
+          city: location.city,
+          state: location.state,
+          country: location.country,
+          pincode: location.pincode,
+        });
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
         perRecordResults.push({ googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
@@ -2157,14 +2229,14 @@ export class DataCaptureService implements OnModuleInit {
 
       const resolvedAddress = fields.address || null;
       const resolvedCategory = fields.category || null;
-      const resolvedRating = null;
-      const resolvedReviewCount = null;
-      const resolvedLatitude = null;
-      const resolvedLongitude = null;
+      const resolvedRating = dbPlace.rating ?? null;
+      const resolvedReviewCount = dbPlace.reviewCount ?? null;
+      const resolvedLatitude = dbPlace.latitude ?? null;
+      const resolvedLongitude = dbPlace.longitude ?? null;
       const parsedAddress = { city: fields.city || null, state: fields.state || null, pincode: fields.pincode || null };
       const genuineFirstName = '';
       const genuineLastName = '';
-      const placeSocialMedia = null;
+      const placeSocialMedia = this.extractSocialMediaFromPlace(dbPlace) || null;
 
       // 3. Duplicate Detection against CRM Leads (Section 13)
       const leadOrConditions: any[] = [];
@@ -2197,6 +2269,7 @@ export class DataCaptureService implements OnModuleInit {
         async (tx: any) => {
           // Serialize imports for this tenant across processes; recheck only after the lock.
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(72341, ${numCustomerId}::integer)`;
+          if (!await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } })) throw new BadRequestException('Capture record was deleted before import.');
       if (leadOrConditions.length > 0) {
         const candidateLeads = await tx.lead.findMany({
           where: {
@@ -2367,7 +2440,6 @@ export class DataCaptureService implements OnModuleInit {
                 isImported: true,
                 importedLeadId: created.id,
                 status: 'LEAD_CREATED',
-                rawData: { googleReferenceOnly: googleReference, independentFields: fields },
                 captureRequestId: placeCaptureRequestId,
                 sourceRecordId,
               },
@@ -2401,7 +2473,7 @@ export class DataCaptureService implements OnModuleInit {
           if (dbPlace?.id) {
             await this.prisma.dataCapturePlace.update({
               where: { id: dbPlace.id },
-              data: { status: 'IMPORT_FAILED', rawData: { googleReferenceOnly: googleReference, independentFields: fields } },
+              data: { status: 'IMPORT_FAILED' },
             });
           }
         } catch (_) {}
@@ -2927,7 +2999,7 @@ export class DataCaptureService implements OnModuleInit {
         category: Array.from(categories).join(', ') || '—',
         location: job.location,
         requestedCount: job.requestedResults,
-        totalRecords: job.capturedResults || counts.captured,
+        totalRecords: counts.captured,
         selected: counts.imported + counts.duplicate + counts.failed,
         imported: counts.imported,
         pending: counts.pending,
