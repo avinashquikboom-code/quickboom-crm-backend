@@ -29,5 +29,5 @@ CREATE INDEX "Announcement_status_idx" ON "Announcement"("status");
 CREATE INDEX "Announcement_publishAt_idx" ON "Announcement"("publishAt");
 CREATE INDEX "Announcement_expiresAt_idx" ON "Announcement"("expiresAt");
 
-ALTER TABLE "Announcement" ADD CONSTRAINT "Announcement_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Announcement" ADD CONSTRAINT "Announcement_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Announcement" ADD CONSTRAINT "Announcement_departmentId_fkey" FOREIGN KEY ("departmentId") REFERENCES "Department"("id") ON DELETE SET NULL ON UPDATE CASCADE;

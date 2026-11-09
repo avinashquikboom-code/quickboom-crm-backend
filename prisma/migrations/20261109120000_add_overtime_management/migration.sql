@@ -96,8 +96,8 @@ CREATE INDEX "OvertimeApproval_customerId_idx" ON "OvertimeApproval"("customerId
 CREATE INDEX "OvertimeApproval_overtimeRequestId_idx" ON "OvertimeApproval"("overtimeRequestId");
 
 -- AddForeignKey
-ALTER TABLE "OvertimePolicy" ADD CONSTRAINT "OvertimePolicy_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "OvertimeRequest" ADD CONSTRAINT "OvertimeRequest_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "OvertimePolicy" ADD CONSTRAINT "OvertimePolicy_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "OvertimeRequest" ADD CONSTRAINT "OvertimeRequest_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "OvertimeRequest" ADD CONSTRAINT "OvertimeRequest_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "OvertimeRequest" ADD CONSTRAINT "OvertimeRequest_attendanceId_fkey" FOREIGN KEY ("attendanceId") REFERENCES "Attendance"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 ALTER TABLE "OvertimeRequest" ADD CONSTRAINT "OvertimeRequest_shiftId_fkey" FOREIGN KEY ("shiftId") REFERENCES "Shift"("id") ON DELETE SET NULL ON UPDATE CASCADE;
