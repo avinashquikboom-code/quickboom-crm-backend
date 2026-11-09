@@ -235,7 +235,7 @@ export class DataCaptureController {
       const userRoles: string[] = Array.isArray(user.roles)
         ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
         : (user.role ? [String(user.role).toUpperCase().replace(/\s+/g, '_')] : []);
-      const isSuper = userRoles.some((r) => ['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN'].includes(r));
+      const isSuper = userRoles.some((r) => ['SUPER_ADMIN', 'CUSTOMER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'CUSTOMER'].includes(r));
       if (!isSuper) {
         const userPerms: { module?: string; action?: string }[] = user.permissions || [];
         const hasDelete = userPerms.some((p) => {
