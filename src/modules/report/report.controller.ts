@@ -4,9 +4,11 @@ import {
   Post,
   Body,
   Query,
+  Res,
   UseGuards,
   ForbiddenException,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ReportService } from './report.service';
 import { QueryReportDto, ExportReportDto } from './dto/report.dto';
@@ -39,6 +41,39 @@ export class ReportController {
       throw new ForbiddenException('Customer context required for reports');
     }
     return num;
+  }
+
+  @Get('catalog')
+  @ApiOperation({ summary: 'List report categories and which reports can run on live data' })
+  getCatalog() {
+    return this.reportService.getCatalog();
+  }
+
+  @Get('view')
+  @ApiOperation({ summary: 'Preview one report using the same filters as PDF export' })
+  async viewReport(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('reportId') reportId: string,
+    @Query() query: QueryReportDto,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, query.customerId);
+    return this.reportService.runCatalogReport(targetCustomer, reportId, query, user);
+  }
+
+  @Post('export/pdf')
+  @ApiOperation({ summary: 'Download a report as a PDF built from the same live query as the preview' })
+  async exportPdf(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: ExportReportDto & { reportId?: string; department?: string },
+    @Res() res: Response,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);
+    const result = await this.reportService.buildPdf(targetCustomer, body.reportId || '', body, user);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
   }
 
   @Get('summary')

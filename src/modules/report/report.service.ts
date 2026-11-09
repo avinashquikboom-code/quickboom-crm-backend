@@ -1,7 +1,10 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QueryReportDto, ExportReportDto } from './dto/report.dto';
 import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezone.util';
+import { REPORT_CATALOG, REPORT_CATEGORIES, reportById, ReportDefinition } from './report-catalog';
+import PDFDocument = require('pdfkit');
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class ReportService {
@@ -716,5 +719,181 @@ export class ReportService {
       rowsCount: Math.max(0, csvContent.split('\n').length - 1),
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  getCatalog() {
+    return { categories: REPORT_CATEGORIES, reports: REPORT_CATALOG };
+  }
+
+  assertReportAccess(user: any, report: ReportDefinition) {
+    if (report.sensitive === 'payroll' && !isUserSuperAdmin(user) && !isUserAdmin(user)) {
+      throw new ForbiddenException('Payroll reports are limited to administrators');
+    }
+  }
+
+  async runCatalogReport(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
+    const report = reportById(reportId);
+    if (!report) throw new BadRequestException('Unknown report');
+    if (!report.available || !report.type) throw new BadRequestException(report.reason || 'This report is not available');
+    this.assertReportAccess(user, report);
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(500, Math.max(1, Number(query.limit) || 20));
+    const preset = report.preset || {};
+    const { startDate, endDate } = this.resolveDateRange(query.dateFrom, query.dateTo);
+    const status = query.status || preset.status;
+    let rows: Record<string, any>[] = [];
+    let total = 0;
+
+    if (['ATTENDANCE', 'PAYROLL', 'LEAVES', 'EMPLOYEES', 'VISITS', 'REVENUE'].includes(report.type) && !preset.dateField) {
+      const data = await this.getReportData(customerId, { ...query, type: report.type as any, status, page, limit });
+      rows = data.items || [];
+      total = data.pagination?.total || rows.length;
+    } else if (report.type === 'LEADS') {
+      const where: any = { customerId, deletedAt: null, createdAt: { gte: startDate, lte: endDate } };
+      if (status && status !== 'ALL') where.status = status;
+      const [items, count] = await Promise.all([
+        this.prisma.lead.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' }, include: { stage: true, assignedTo: { select: { firstName: true, lastName: true } } } }),
+        this.prisma.lead.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((lead) => ({ name: `${lead.firstName} ${lead.lastName}`.trim(), company: lead.companyName || '—', phone: lead.phone || '—', status: lead.stage?.name || lead.status, source: lead.source, category: lead.category || '—', assigned: `${lead.assignedTo?.firstName || ''} ${lead.assignedTo?.lastName || ''}`.trim() || '—' }));
+    } else if (report.type === 'DEALS') {
+      const where: any = { customerId, deletedAt: null, createdAt: { gte: startDate, lte: endDate } };
+      if (preset.outcome === 'closed') where.OR = [{ isWon: true }, { isLost: true }];
+      if (query.department || preset.stage) where.stage = { name: { equals: preset.stage || query.department, mode: 'insensitive' } };
+      const [items, count] = await Promise.all([
+        this.prisma.deal.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' }, include: { stage: true, company: true, assignedTo: { select: { firstName: true, lastName: true } } } }),
+        this.prisma.deal.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((deal) => ({ deal: deal.title, value: deal.amount, stage: deal.stage?.name || '—', company: deal.company?.name || '—', status: deal.isWon ? 'Won' : deal.isLost ? 'Lost' : 'Open', closeDate: deal.expectedClosing ? deal.expectedClosing.toISOString().slice(0, 10) : '—', assigned: `${deal.assignedTo?.firstName || ''} ${deal.assignedTo?.lastName || ''}`.trim() || '—' }));
+    } else if (report.type === 'FOLLOWUPS') {
+      const where: any = { customerId, deletedAt: null, nextFollowUpDate: { not: null } };
+      const items = await this.prisma.lead.findMany({ where, take: 500, orderBy: { nextFollowUpDate: 'asc' }, include: { stage: true, assignedTo: { select: { firstName: true, lastName: true } } } });
+      const today = new Date().toISOString().slice(0, 10);
+      const filtered = items.filter((lead) => {
+        const day = lead.nextFollowUpDate ? lead.nextFollowUpDate.toISOString().slice(0, 10) : '';
+        if (preset.bucket === 'upcoming') return day >= today;
+        if (preset.bucket === 'overdue') return day < today;
+        return true;
+      });
+      total = filtered.length;
+      rows = filtered.slice((page - 1) * limit, page * limit).map((lead) => ({ name: `${lead.firstName} ${lead.lastName}`.trim(), company: lead.companyName || '—', phone: lead.phone || '—', followUp: lead.nextFollowUpDate ? lead.nextFollowUpDate.toISOString().slice(0, 10) : 'Not Scheduled', time: lead.nextFollowUpTime || '—', status: lead.stage?.name || lead.status, assigned: `${lead.assignedTo?.firstName || ''} ${lead.assignedTo?.lastName || ''}`.trim() || '—' }));
+    } else if (report.type === 'TASKS') {
+      const where: any = { customerId, deletedAt: null, createdAt: { gte: startDate, lte: endDate } };
+      if (status && status !== 'ALL') where.status = status;
+      const [items, count] = await Promise.all([
+        this.prisma.task.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }),
+        this.prisma.task.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((task) => ({ title: task.title, status: task.status, priority: task.priority, due: task.dueDate ? task.dueDate.toISOString().slice(0, 10) : '—' }));
+    } else if (report.type === 'AUDIT') {
+      const where: any = { customerId, createdAt: { gte: startDate, lte: endDate } };
+      const [items, count] = await Promise.all([
+        this.prisma.auditLog.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }),
+        this.prisma.auditLog.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((log) => ({ when: log.createdAt.toISOString(), user: log.userName || '—', action: log.action, module: log.module, description: log.description || '—' }));
+    } else if (report.type === 'CUSTOMERS') {
+      const where: any = { deletedAt: null, createdAt: { gte: startDate, lte: endDate } };
+      if (status && status !== 'ALL') where.isActive = status === 'ACTIVE';
+      const [items, count] = await Promise.all([
+        this.prisma.customer.findMany({ where: { ...where, OR: [{ id: customerId }, { parentCustomerId: customerId }] } as any, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }).catch(() => this.prisma.customer.findMany({ where: { id: customerId, deletedAt: null }, take: limit })),
+        this.prisma.customer.count({ where: { id: customerId, deletedAt: null } }),
+      ]);
+      total = count;
+      rows = items.map((item) => ({ name: item.name, email: item.email || '—', phone: item.phone || '—', city: item.city || '—', status: item.isActive ? 'Active' : 'Inactive' }));
+    } else if (report.type === 'INVOICES') {
+      const where: any = { customerId, deletedAt: null, issueDate: { gte: startDate, lte: endDate } };
+      if (preset.outstanding === 'true') where.status = { notIn: ['PAID', 'CANCELLED'] };
+      else if (status && status !== 'ALL') where.status = status;
+      const [items, count] = await Promise.all([
+        this.prisma.invoice.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { issueDate: 'desc' }, include: { contact: true } }),
+        this.prisma.invoice.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((invoice) => ({ invoice: invoice.invoiceNo, customer: `${invoice.contact?.firstName || ''} ${invoice.contact?.lastName || ''}`.trim() || '—', status: invoice.status, subtotal: invoice.subTotal, tax: invoice.taxAmount, total: invoice.totalAmount, due: invoice.dueDate.toISOString().slice(0, 10) }));
+    } else if (report.type === 'PRODUCTS') {
+      const where: any = { customerId, deletedAt: null };
+      if (preset.lowStock === 'true') where.stock = { lte: 5 };
+      const [items, count] = await Promise.all([
+        this.prisma.product.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { name: 'asc' } }),
+        this.prisma.product.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((product) => ({ name: product.name, sku: product.sku, price: product.unitPrice, tax: product.taxRate, stock: product.stock, status: product.isActive ? 'Active' : 'Inactive' }));
+    } else if (report.type === 'INFLUENCERS') {
+      const where: any = { deletedAt: null };
+      if (status && status !== 'ALL') where.status = status;
+      const [items, count] = await Promise.all([
+        this.prisma.influencer.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { name: 'asc' } }),
+        this.prisma.influencer.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((person) => ({ name: person.name, platform: person.platform, status: person.status, city: person.city || '—', followers: person.followers }));
+    } else if (report.type === 'EMPLOYEES') {
+      const where: any = { customerId, joiningDate: { gte: startDate, lte: endDate } };
+      const [items, count] = await Promise.all([
+        this.prisma.employee.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { joiningDate: 'desc' }, include: { department: true, designation: true } }),
+        this.prisma.employee.count({ where }),
+      ]);
+      total = count;
+      rows = items.map((employee) => ({ code: employee.employeeCode, name: `${employee.firstName} ${employee.lastName}`.trim(), department: employee.department?.name || '—', designation: employee.designation?.name || '—', joined: employee.joiningDate.toISOString().slice(0, 10), status: employee.status }));
+    }
+
+    const columns = rows[0] ? Object.keys(rows[0]) : [];
+    const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, email: true, phone: true, city: true } });
+    return {
+      report: { id: report.id, name: report.name, description: report.description, category: report.category },
+      company: customer,
+      dateRange: { from: startDate.toISOString().slice(0, 10), to: endDate.toISOString().slice(0, 10) },
+      filters: { status: status || 'All', stage: preset.stage || query.department || 'All' },
+      columns,
+      rows,
+      summary: { records: total },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) || 1 },
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async buildPdf(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
+    const view = await this.runCatalogReport(customerId, reportId, { ...query, page: 1, limit: 500 }, user);
+    const buffer = await new Promise<Buffer>((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 36, size: 'A4', layout: view.columns.length > 6 ? 'landscape' : 'portrait', bufferPages: true });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+      const company = view.company?.name || 'QB Suite';
+      doc.fontSize(16).fillColor('#163A2E').text('QB Suite');
+      doc.fontSize(10).fillColor('#172B24').text(company);
+      doc.moveDown(0.4);
+      doc.fontSize(14).text(view.report.name);
+      doc.fontSize(9).fillColor('#718078').text(view.report.description);
+      doc.text(`Period: ${view.dateRange.from} to ${view.dateRange.to}`);
+      doc.text(`Generated: ${new Date(view.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+      doc.text(`Records: ${view.summary.records}`);
+      doc.moveDown(0.6);
+      if (!view.rows.length) {
+        doc.fillColor('#172B24').fontSize(11).text('No records match these filters.');
+      } else {
+        doc.fontSize(8).fillColor('#172B24');
+        view.rows.forEach((row, index) => {
+          if (doc.y > doc.page.height - 60) doc.addPage();
+          const line = view.columns.map((column) => `${column}: ${row[column] ?? '—'}`).join('  |  ');
+          doc.text(`${index + 1}. ${line}`, { width: doc.page.width - 72 });
+          doc.moveDown(0.3);
+        });
+      }
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i += 1) {
+        doc.switchToPage(i);
+        doc.fontSize(8).fillColor('#718078').text(`${company} · Page ${i + 1} of ${range.count}`, 36, doc.page.height - 28, { align: 'center', width: doc.page.width - 72 });
+      }
+      doc.end();
+    });
+    return { filename: `${reportId}.pdf`, buffer };
   }
 }

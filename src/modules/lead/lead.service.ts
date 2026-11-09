@@ -1269,7 +1269,7 @@ export class LeadService {
     return this.leadRepository.deleteStage(id);
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
 
