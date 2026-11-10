@@ -1201,7 +1201,6 @@ export class LeadService {
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
     try {
       await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
-      await this.leadRepository.restoreMissingLeadStage(numCustomerId);
     } catch (err) {
       console.warn('[LeadService] ensureDefaultStagesForCustomer failed (non-fatal):', err);
     }

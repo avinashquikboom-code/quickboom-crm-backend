@@ -586,6 +586,29 @@ export class LeadRepository {
       this.prisma.lead.count({ where: { ...baseWhere, status: 'LOST' } }),
     ]);
 
+    let stages: Array<{ id: number; name: string; color: string | null; sortOrder: number; count: number }> = [];
+    if (typeof this.prisma.lead?.groupBy === 'function' && typeof this.prisma.leadStage?.findMany === 'function') {
+      try {
+        const grouped = await this.prisma.lead.groupBy({ by: ['stageId'], where: baseWhere, _count: { _all: true } });
+        const orderBy = [{ sortOrder: 'asc' as const }, { id: 'asc' as const }];
+        let stageRows = baseWhere.customerId
+          ? await this.prisma.leadStage.findMany({ where: { customerId: baseWhere.customerId, deletedAt: null, isActive: true }, orderBy })
+          : [];
+        if (!stageRows.length) {
+          stageRows = await this.prisma.leadStage.findMany({ where: { customerId: null, deletedAt: null, isActive: true }, orderBy });
+        }
+        stages = stageRows.map((stage: any) => ({
+          id: stage.id,
+          name: stage.name,
+          color: stage.color || null,
+          sortOrder: stage.sortOrder,
+          count: Number(grouped.find((row: any) => row.stageId === stage.id)?._count?._all || 0),
+        }));
+      } catch {
+        stages = [];
+      }
+    }
+
     return {
       total,
       new: newCount,
@@ -593,6 +616,7 @@ export class LeadRepository {
       qualified,
       converted,
       lost,
+      stages,
     };
   }
 
@@ -1042,6 +1066,7 @@ export class LeadRepository {
 
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
+      await this.attachPlacePhotos(data);
       await this.resolveMissingLeadVisitedAndWonEmployees(data);
       if (options.followUps) await this.attachFollowUpContext(data);
     }
@@ -1056,6 +1081,92 @@ export class LeadRepository {
         ...(stageCounts ? { counts: stageCounts, durationMs: Date.now() - startedAt } : { durationMs: Date.now() - startedAt }),
       },
     };
+  }
+
+  private photoProxyPath(resource: string): string {
+    return `/api/v1/data-capture/photo?ref=${encodeURIComponent(resource)}`;
+  }
+
+  private isRealPhotoResource(name: string): boolean {
+    const match = String(name || '').match(/^places\/[^/]+\/photos\/([^/?&]+)$/);
+    return Boolean(match && !/^\d{1,3}$/.test(match[1]));
+  }
+
+  private photoAttributions(item: any): string[] {
+    const list = Array.isArray(item?.authorAttributions) ? item.authorAttributions : [];
+    const names: string[] = [];
+    for (const author of list) {
+      const name = String(author?.displayName || author || '').trim();
+      if (name && !names.includes(name)) names.push(name);
+    }
+    return names;
+  }
+
+  private photoProxyUrls(photosField: any): Array<{ url: string; attributions: string[] }> {
+    const list = Array.isArray(photosField) ? photosField : [];
+    const photos: Array<{ url: string; attributions: string[] }> = [];
+    const add = (value: string, attributions: string[] = []) => {
+      const raw = value.trim();
+      if (!raw) return;
+      let url = '';
+      if (raw.startsWith('/api/v1/data-capture/photo')) url = raw;
+      else {
+        const resource = raw.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/)?.[1] || '';
+        if (this.isRealPhotoResource(resource)) url = this.photoProxyPath(resource);
+        else if (raw.startsWith('https://lh3.googleusercontent.com') || raw.startsWith('http://lh3.googleusercontent.com')) url = this.photoProxyPath(raw);
+      }
+      if (url && !photos.some((photo) => photo.url === url)) photos.push({ url, attributions });
+    };
+    for (const item of list) {
+      if (typeof item === 'string') {
+        add(item);
+        continue;
+      }
+      const name = String(item?.name || item?.photoReference || item?.photo_reference || '');
+      const attributions = this.photoAttributions(item);
+      if (this.isRealPhotoResource(name)) add(name, attributions);
+      else add(String(item?.url || ''), attributions);
+    }
+    return photos;
+  }
+
+  private leadPhotoEntries(lead: any): Array<{ url: string; source: string; attributions: string[] }> {
+    const uploaded = (Array.isArray(lead?.images) ? lead.images : [])
+      .map((image) => image?.url)
+      .filter((url) => typeof url === 'string' && (/^https?:\/\//i.test(url) || url.startsWith('/api/v1/data-capture/photo')))
+      .map((url) => ({ url, source: String(url).includes('/data-capture/photo') ? 'GOOGLE_PLACES' : 'UPLOAD', attributions: [] as string[] }));
+    const google = (Array.isArray(lead?.placePhotos) ? lead.placePhotos : [])
+      .filter((photo) => photo?.url && !uploaded.some((image) => image.url === photo.url))
+      .map((photo) => ({ url: photo.url, source: 'GOOGLE_PLACES', attributions: Array.isArray(photo.attributions) ? photo.attributions : [] }));
+    return [...uploaded, ...google];
+  }
+
+  private async attachPlacePhotos(leads: any[]) {
+    if (!leads.length || typeof this.prisma.dataCapturePlace?.findMany !== 'function') return;
+    const ids = leads.map((lead) => Number(lead.id)).filter((id) => Number.isInteger(id) && id > 0);
+    const placeIds = [...new Set(leads.map((lead) => lead.googlePlaceId).filter((id) => id && !String(id).startsWith('custom_')))];
+    const or = [
+      ...(ids.length ? [{ importedLeadId: { in: ids } }] : []),
+      ...(placeIds.length ? [{ googlePlaceId: { in: placeIds } }] : []),
+    ];
+    if (!or.length) return;
+    const customerIds = [...new Set(leads.map((lead) => Number(lead.customerId)).filter((id) => Number.isInteger(id) && id > 0))];
+    let places: Array<{ customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown }> = [];
+    try {
+      places = await this.prisma.dataCapturePlace.findMany({
+        where: { deletedAt: null, ...(customerIds.length ? { customerId: { in: customerIds } } : {}), OR: or },
+        select: { customerId: true, importedLeadId: true, googlePlaceId: true, photos: true },
+      });
+    } catch (error: any) {
+      this.logger.warn(`Lead photo lookup skipped: ${error?.message || error}`);
+      return;
+    }
+    for (const lead of leads) {
+      const sameCustomer = (place: { customerId?: number | null }) => !lead.customerId || Number(place.customerId) === Number(lead.customerId);
+      const match = places.find((place) => sameCustomer(place) && Number(place.importedLeadId) === Number(lead.id))
+        || places.find((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
+      lead.placePhotos = match ? this.photoProxyUrls(match.photos) : [];
+    }
   }
 
   private async attachFollowUpContext(leads: any[]) {
@@ -1443,7 +1554,8 @@ export class LeadRepository {
       businessName: resolvedBiz,
       title: (!isFake(lead.title) ? lead.title.trim() : (resolvedBiz || lead.title || '')),
       name: resolvedBiz,
-      imageUrl: (Array.isArray(lead.images) ? lead.images : []).map((image) => image?.url).find((url) => typeof url === 'string' && /^https?:\/\//i.test(url)) || null,
+      imageUrl: this.leadPhotoEntries(lead)[0]?.url || null,
+      images: this.leadPhotoEntries(lead).map((photo, index) => ({ ...photo, isPrimary: index === 0 })),
       socialMedia: finalSocialMedia,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
       // Normalized ownership fields for easy frontend consumption
@@ -1563,6 +1675,7 @@ export class LeadRepository {
             orderBy: { createdAt: 'desc' },
           },
           socialProfiles: true,
+          images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
           convertedCustomer: {
             select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
           },
@@ -1573,6 +1686,7 @@ export class LeadRepository {
       });
       if (result) {
         await this.resolveMissingLeadBusinessNames([result]);
+        await this.attachPlacePhotos([result]);
         await this.resolveMissingLeadVisitedAndWonEmployees([result]);
       }
       return this.enrichLeadRecord(result);
@@ -1611,10 +1725,12 @@ export class LeadRepository {
             select: { id: true, commissionAmount: true, status: true, commissionType: true, paidAt: true, createdAt: true },
           },
           socialProfiles: true,
+          images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
         },
       });
       if (fallbackResult) {
         await this.resolveMissingLeadBusinessNames([fallbackResult]);
+        await this.attachPlacePhotos([fallbackResult]);
         await this.resolveMissingLeadVisitedAndWonEmployees([fallbackResult]);
       }
       return this.enrichLeadRecord(fallbackResult);
@@ -2801,56 +2917,6 @@ export class LeadRepository {
   }
 
   /**
-   * The configured catalog has 12 stages. Tenants that already show the other
-   * 11 keep those rows; Call Back is the catalog entry they do not have.
-   * A soft-deleted row at the open sort position is restored instead.
-   */
-  async restoreMissingLeadStage(customerId: number | null) {
-    if (typeof this.prisma.leadStage?.findMany !== 'function' || typeof this.prisma.leadStage?.create !== 'function') return;
-    const rows = await this.prisma.leadStage.findMany({ where: { customerId } });
-    if (!Array.isArray(rows) || rows.length === 0) return;
-
-    const active = rows.filter((stage) => !stage.deletedAt);
-    if (active.length === 0) return;
-    const used = new Set(active.map((stage) => Number(stage.sortOrder)));
-    let gap = 1;
-    while (used.has(gap)) gap += 1;
-
-    const deletedAtGap = rows.find((stage) => stage.deletedAt && Number(stage.sortOrder) === gap);
-    const callBack = rows.find((stage) => String(stage.key || '').toUpperCase().replace(/[\s-]+/g, '_') === 'CALL_BACK');
-    const hidden = deletedAtGap || (callBack?.deletedAt ? callBack : null);
-    if (hidden && typeof this.prisma.leadStage.update === 'function') {
-      const orderTaken = active.some((stage) => stage.id !== hidden.id && Number(stage.sortOrder) === Number(hidden.sortOrder));
-      await this.prisma.leadStage.update({
-        where: { id: hidden.id },
-        data: { deletedAt: null, isActive: true, ...(orderTaken ? { sortOrder: gap } : {}) },
-      });
-      return;
-    }
-    if (callBack) return;
-
-    const known = new Set(active.map((stage) => String(stage.key || '').toUpperCase()));
-    const hasEleven = ['NEW', 'CONTACTED', 'FOLLOW_UP', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST'].every((key) => known.has(key))
-      && (known.has('DETAILS_SEND') || known.has('DETAILS_SENT'))
-      && (known.has('VISIT_SCHEDULED') || known.has('VISIT'));
-    if (!hasEleven) return;
-
-    await this.prisma.leadStage.create({
-      data: {
-        customerId,
-        name: 'Call Back',
-        key: 'CALL_BACK',
-        sortOrder: gap,
-        color: '#8B5CF6',
-        bgColor: '#F3E8FF',
-        borderColor: '#E9D5FF',
-        isActive: true,
-        isSystem: true,
-      },
-    });
-  }
-
-  /**
    * Seed the 12 default lead stages for a customer if they don't already have any.
    * Idempotent — safe to call multiple times.
    */
@@ -2876,7 +2942,7 @@ export class LeadRepository {
         })
       : 0;
 
-    if (existingCount > 0) return; // Already has stages — missing entries are restored separately
+    if (existingCount > 0) return; // Keep the stages already configured for this workspace.
     if (typeof this.prisma.leadStage?.upsert !== 'function') return;
 
     // Load available default templates to associate
