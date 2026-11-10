@@ -479,17 +479,19 @@ export class MetaTemplateService {
     this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for account: ${targetAccount}`);
 
     let metaTemplates: any[] = [];
+    let nextUrl = `https://graph.facebook.com/v21.0/${targetAccount}/message_templates?limit=100`;
     try {
-      const metaUrl = `https://graph.facebook.com/v21.0/${targetAccount}/message_templates?limit=100`;
-      const response = await axios.get(metaUrl, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-        timeout: 15000,
-      });
-
-      if (response.data && Array.isArray(response.data.data)) {
-        metaTemplates = response.data.data;
+      while (nextUrl) {
+        const response = await axios.get(nextUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          timeout: 15000,
+        });
+        if (Array.isArray(response.data?.data)) metaTemplates.push(...response.data.data);
+        const next = response.data?.paging?.next;
+        if (!next) break;
+        const parsed = new URL(next);
+        parsed.searchParams.delete('access_token');
+        nextUrl = parsed.toString();
       }
     } catch (err: any) {
       const errMsg = err?.response?.data?.error?.message || err?.message || 'Meta API communication error';
@@ -499,6 +501,13 @@ export class MetaTemplateService {
 
     const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
     let syncedCount = 0;
+    let createdCount = 0;
+    let updatedCount = 0;
+    const failed: Array<{ name: string; reason: string }> = [];
+    const scope = {
+      deletedAt: null,
+      OR: [{ customerId: null }, ...(parsedCustId ? [{ customerId: parsedCustId }] : [])],
+    };
 
     for (const mt of metaTemplates) {
       const templateName = (mt.name || '').trim().toLowerCase();
@@ -530,17 +539,11 @@ export class MetaTemplateService {
       const status = (mt.status || 'APPROVED').toUpperCase();
       const variables = this.extractVariables(bodyText + ' ' + (headerContent || ''));
 
-      const existing = await this.prisma.metaTemplate.findFirst({
-        where: {
-          templateName,
-          deletedAt: null,
-          OR: [
-            { customerId: null },
-            ...(parsedCustId ? [{ customerId: parsedCustId }] : []),
-          ],
-        },
-      });
+      const existing = (mt.id
+        ? await this.prisma.metaTemplate.findFirst({ where: { ...scope, metaTemplateId: String(mt.id) } })
+        : null) || await this.prisma.metaTemplate.findFirst({ where: { ...scope, templateName, language } });
 
+      try {
       if (existing) {
         await this.prisma.metaTemplate.update({
           where: { id: existing.id },
@@ -557,6 +560,7 @@ export class MetaTemplateService {
             lastSyncedAt: new Date(),
           },
         });
+        updatedCount++;
       } else {
         await this.prisma.metaTemplate.create({
           data: {
@@ -578,14 +582,25 @@ export class MetaTemplateService {
             lastSyncedAt: new Date(),
           },
         });
+        createdCount++;
       }
       syncedCount++;
+      } catch (error: any) {
+        failed.push({ name: templateName, reason: error?.message || 'Could not save template' });
+      }
     }
 
     return {
-      success: true,
-      message: `Successfully synchronized ${syncedCount} templates from Meta Business Cloud API.`,
+      success: failed.length === 0,
+      message: `Synchronized ${syncedCount} of ${metaTemplates.length} templates from Meta.`,
       syncedCount,
+      fetched: metaTemplates.length,
+      created: createdCount,
+      updated: updatedCount,
+      approved: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'APPROVED').length,
+      pending: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'PENDING').length,
+      rejected: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'REJECTED').length,
+      failed,
       lastSyncedAt: new Date().toISOString(),
     };
   }

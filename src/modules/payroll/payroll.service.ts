@@ -949,18 +949,22 @@ export class PayrollService {
 
     const where: any = { customerId: numCustomerId };
 
-    if (query?.user && (query.user.role === 'EMPLOYEE' || query.user.roleType === 'EMPLOYEE')) {
+    const role = String(query?.user?.role || query?.user?.roleType || '').toUpperCase();
+    const payrollAdmin = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'ADMIN'].includes(role);
+    if (query?.user && !payrollAdmin) {
       const emp = await this.prisma.employee.findFirst({
         where: {
+          customerId: numCustomerId,
           OR: [
-            { userId: query.user.id },
+            { userId: Number(query.user.id) || 0 },
             { email: { equals: query.user.email?.trim().toLowerCase(), mode: 'insensitive' } },
           ],
         },
       });
-      if (emp) {
-        where.employeeId = emp.id;
+      if (!emp) {
+        return { data: [], items: [], pagination: { page, pageSize: limit, total: 0, totalPages: 1 }, meta: { page, limit, total: 0, totalPages: 1 } };
       }
+      where.employeeId = emp.id;
     }
 
     if (query?.month || query?.year) {
@@ -1027,9 +1031,11 @@ export class PayrollService {
     };
   }
 
-  async getSalarySlipById(customerId: number | string | undefined, id: number | string) {
+  async getSalarySlipById(customerId: number | string | undefined, id: number | string, user?: any) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
+    const role = String(user?.role || user?.roleType || '').toUpperCase();
+    const payrollAdmin = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'ADMIN'].includes(role);
     const slip = await this.prisma.salarySlip.findFirst({
       where: { id: numId, customerId: numCustomerId },
       include: {
@@ -1046,6 +1052,21 @@ export class PayrollService {
         },
       },
     });
+    if (slip && user && !payrollAdmin && Number(slip.employeeId) !== Number(user.employeeId || user.employee?.id)) {
+      const emp = await this.prisma.employee.findFirst({
+        where: {
+          customerId: numCustomerId,
+          OR: [
+            { userId: Number(user.id) || 0 },
+            { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!emp || emp.id !== slip.employeeId) {
+        throw new ForbiddenException('You can only access your own payslips.');
+      }
+    }
     return this.formatSalarySlip(slip);
   }
 

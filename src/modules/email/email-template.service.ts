@@ -1060,12 +1060,13 @@ export class EmailTemplateService {
   /**
    * Lists templates with optional search and category filters.
    */
-  async findAll(customerId?: number | null, query?: { category?: string; isActive?: string | boolean; search?: string }) {
+  async findAll(customerId?: number | null, query?: { category?: string; isActive?: string | boolean; search?: string; page?: string | number; limit?: string | number; status?: string; sort?: string }) {
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
     await this.ensureDefaultTemplates(numCustomerId);
 
+    const status = String(query?.status || '').toUpperCase();
     const where: any = {
-      deletedAt: null,
+      deletedAt: status === 'ARCHIVED' ? { not: null } : null,
       OR: [
         { customerId: numCustomerId },
         { customerId: null },
@@ -1076,7 +1077,9 @@ export class EmailTemplateService {
       where.category = query.category.toUpperCase();
     }
 
-    if (query?.isActive !== undefined && query.isActive !== '' && query.isActive !== 'ALL') {
+    if (status === 'ACTIVE') where.isActive = true;
+    else if (status === 'INACTIVE') where.isActive = false;
+    else if (query?.isActive !== undefined && query.isActive !== '' && query.isActive !== 'ALL') {
       where.isActive = String(query.isActive) === 'true';
     }
 
@@ -1094,23 +1097,45 @@ export class EmailTemplateService {
       ];
     }
 
+    const sort = String(query?.sort || 'updatedAt:desc');
+    const [sortField, sortDir] = sort.split(':');
+    const direction = sortDir === 'asc' ? 'asc' : 'desc';
+    const orderField = ['name', 'key', 'updatedAt', 'isActive'].includes(sortField) ? sortField : 'updatedAt';
     const templates = await this.prisma.emailTemplate.findMany({
       where,
       orderBy: [
-        { isSystem: 'desc' },
-        { updatedAt: 'desc' },
+        { [orderField]: direction },
+        { id: 'asc' },
       ],
     });
 
     // Deduplicate: customer-specific overrides take precedence over global templates
     const map = new Map<string, any>();
     for (const t of templates) {
-      if (!map.has(t.key) || (t.customerId === numCustomerId && map.get(t.key)?.customerId === null)) {
-        map.set(t.key, this.formatTemplate(t));
+      const identity = `${t.key}:${t.deletedAt ? 'archived' : 'live'}`;
+      if (!map.has(identity) || (t.customerId === numCustomerId && map.get(identity)?.customerId === null)) {
+        map.set(identity, this.formatTemplate(t));
       }
     }
 
-    return Array.from(map.values());
+    const rows = Array.from(map.values());
+    if (query?.page == null || query.page === '') return rows;
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const scope = { OR: [{ customerId: numCustomerId }, { customerId: null }] };
+    const [totalAll, active, inactive, archived, sent] = await Promise.all([
+      this.prisma.emailTemplate.count({ where: { deletedAt: null, ...scope } }),
+      this.prisma.emailTemplate.count({ where: { deletedAt: null, isActive: true, ...scope } }),
+      this.prisma.emailTemplate.count({ where: { deletedAt: null, isActive: false, ...scope } }),
+      this.prisma.emailTemplate.count({ where: { deletedAt: { not: null }, ...scope } }),
+      this.prisma.emailLog.count({ where: { status: 'SENT', ...(numCustomerId ? { customerId: numCustomerId } : {}) } }),
+    ]);
+    return {
+      data: rows.slice((page - 1) * limit, page * limit),
+      items: rows.slice((page - 1) * limit, page * limit),
+      pagination: { page, limit, total: rows.length, totalPages: Math.max(1, Math.ceil(rows.length / limit)) },
+      stats: { total: totalAll, active, inactive, archived, sent },
+    };
   }
 
   /**
@@ -1312,10 +1337,19 @@ export class EmailTemplateService {
    * Sets active status directly.
    */
   async setActive(id: number, isActive: boolean, customerId?: number | null) {
-    const template = await this.findOne(id, customerId);
+    let template: any;
+    try {
+      template = await this.findOne(id, customerId);
+    } catch {
+      const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
+      template = await this.prisma.emailTemplate.findFirst({
+        where: { id: Number(id), OR: [{ customerId: numCustomerId }, { customerId: null }] },
+      });
+      if (!template) throw new NotFoundException(`Email template with ID ${id} not found`);
+    }
     const updated = await this.prisma.emailTemplate.update({
       where: { id: template.id },
-      data: { isActive: Boolean(isActive) },
+      data: { isActive: Boolean(isActive), ...(isActive ? { deletedAt: null } : {}) },
     });
     return this.formatTemplate(updated);
   }

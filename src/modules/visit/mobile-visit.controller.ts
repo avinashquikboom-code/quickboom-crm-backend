@@ -50,10 +50,17 @@ export class MobileVisitController {
     );
   }
 
+  private visitorOwnsAccount(employee: any, user: any): boolean {
+    if (!employee || employee.status !== 'ACTIVE' || employee.mobileLoginEnabled === false) return false;
+    const userId = Number(user?.id);
+    if (Number.isInteger(userId) && userId > 0 && Number(employee.userId) === userId) return true;
+    const email = String(user?.email || '').trim().toLowerCase();
+    return email.length > 0 && String(employee.email || '').trim().toLowerCase() === email;
+  }
+
   private assertVisitorAssignment(visit: any, employee: any, user: any, customerId: number | string | undefined) {
     if (!this.isVisitorEmployee(employee, user)) return;
-    if (!employee || employee.status !== 'ACTIVE' || employee.mobileLoginEnabled === false ||
-        employee.userId !== Number(user?.id) || employee.customerId !== Number(customerId) ||
+    if (!this.visitorOwnsAccount(employee, user) || employee.customerId !== Number(customerId) ||
         visit.customerId !== employee.customerId || visit.employeeId !== employee.id) {
       throw new ForbiddenException('Only the authenticated Visitor assigned to this visit can access it.');
     }
@@ -119,7 +126,7 @@ export class MobileVisitController {
     };
 
     if (isVisitorUser) {
-      if (!employee || employee.status !== 'ACTIVE' || employee.mobileLoginEnabled === false || employee.userId !== Number(user?.id)) {
+      if (!this.visitorOwnsAccount(employee, user)) {
         throw new ForbiddenException('An active authenticated Visitor profile is required.');
       }
       where.customerId = employee.customerId;
@@ -206,7 +213,7 @@ export class MobileVisitController {
     // ── When viewing upcoming / scheduled visits: ────────────────────────────
     // Ensure all leads assigned to this visitor in VISIT_SCHEDULED stage appear
     // in the Scheduled tab as per requirements and reference design.
-    if (!isVisitorUser && (normalizedTab === 'upcoming' || normalizedTab === 'scheduled')) {
+    if (normalizedTab === 'upcoming' || normalizedTab === 'scheduled') {
       const existingLeadIds = new Set(visits.map((v) => v.leadId).filter(Boolean));
 
       // Resolve all stages in the database that correspond to Visit Scheduled

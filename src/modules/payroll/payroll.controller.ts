@@ -106,7 +106,6 @@ export class PayrollController {
   }
 
   @Get('slips')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slips list' })
   async findSlips(
     @CurrentUser() user: any,
@@ -131,7 +130,6 @@ export class PayrollController {
   }
 
   @Get('slips/:id')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Get salary slip by ID' })
   async findSlipById(
     @CurrentUser() user: any,
@@ -141,7 +139,7 @@ export class PayrollController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
-    return this.payrollService.getSalarySlipById(customerId, id);
+    return this.payrollService.getSalarySlipById(customerId, id, user);
   }
 
   @Get('slips/:id/download')
@@ -154,7 +152,7 @@ export class PayrollController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
-    const slip = await this.payrollService.getSalarySlipById(customerId, id);
+    const slip = await this.payrollService.getSalarySlipById(customerId, id, user);
     return {
       message: 'Download salary slip PDF',
       slip,
@@ -175,7 +173,6 @@ export class PayrollController {
   }
 
   @Get('salary')
-  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
   @ApiOperation({ summary: 'Registered monthly salary for the authenticated employee' })
   async mySalary(@CurrentUser() user: any, @CurrentCustomer() currentCustomer?: any) {
     const customerId = user?.customerId || currentCustomer;
