@@ -1066,6 +1066,7 @@ export class LeadRepository {
 
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
+      await this.attachPlacePhotos(data);
       await this.resolveMissingLeadVisitedAndWonEmployees(data);
       if (options.followUps) await this.attachFollowUpContext(data);
     }
@@ -1080,6 +1081,92 @@ export class LeadRepository {
         ...(stageCounts ? { counts: stageCounts, durationMs: Date.now() - startedAt } : { durationMs: Date.now() - startedAt }),
       },
     };
+  }
+
+  private photoProxyPath(resource: string): string {
+    return `/api/v1/data-capture/photo?ref=${encodeURIComponent(resource)}`;
+  }
+
+  private isRealPhotoResource(name: string): boolean {
+    const match = String(name || '').match(/^places\/[^/]+\/photos\/([^/?&]+)$/);
+    return Boolean(match && !/^\d{1,3}$/.test(match[1]));
+  }
+
+  private photoAttributions(item: any): string[] {
+    const list = Array.isArray(item?.authorAttributions) ? item.authorAttributions : [];
+    const names: string[] = [];
+    for (const author of list) {
+      const name = String(author?.displayName || author || '').trim();
+      if (name && !names.includes(name)) names.push(name);
+    }
+    return names;
+  }
+
+  private photoProxyUrls(photosField: any): Array<{ url: string; attributions: string[] }> {
+    const list = Array.isArray(photosField) ? photosField : [];
+    const photos: Array<{ url: string; attributions: string[] }> = [];
+    const add = (value: string, attributions: string[] = []) => {
+      const raw = value.trim();
+      if (!raw) return;
+      let url = '';
+      if (raw.startsWith('/api/v1/data-capture/photo')) url = raw;
+      else {
+        const resource = raw.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/)?.[1] || '';
+        if (this.isRealPhotoResource(resource)) url = this.photoProxyPath(resource);
+        else if (raw.startsWith('https://lh3.googleusercontent.com') || raw.startsWith('http://lh3.googleusercontent.com')) url = this.photoProxyPath(raw);
+      }
+      if (url && !photos.some((photo) => photo.url === url)) photos.push({ url, attributions });
+    };
+    for (const item of list) {
+      if (typeof item === 'string') {
+        add(item);
+        continue;
+      }
+      const name = String(item?.name || item?.photoReference || item?.photo_reference || '');
+      const attributions = this.photoAttributions(item);
+      if (this.isRealPhotoResource(name)) add(name, attributions);
+      else add(String(item?.url || ''), attributions);
+    }
+    return photos;
+  }
+
+  private leadPhotoEntries(lead: any): Array<{ url: string; source: string; attributions: string[] }> {
+    const uploaded = (Array.isArray(lead?.images) ? lead.images : [])
+      .map((image) => image?.url)
+      .filter((url) => typeof url === 'string' && (/^https?:\/\//i.test(url) || url.startsWith('/api/v1/data-capture/photo')))
+      .map((url) => ({ url, source: String(url).includes('/data-capture/photo') ? 'GOOGLE_PLACES' : 'UPLOAD', attributions: [] as string[] }));
+    const google = (Array.isArray(lead?.placePhotos) ? lead.placePhotos : [])
+      .filter((photo) => photo?.url && !uploaded.some((image) => image.url === photo.url))
+      .map((photo) => ({ url: photo.url, source: 'GOOGLE_PLACES', attributions: Array.isArray(photo.attributions) ? photo.attributions : [] }));
+    return [...uploaded, ...google];
+  }
+
+  private async attachPlacePhotos(leads: any[]) {
+    if (!leads.length || typeof this.prisma.dataCapturePlace?.findMany !== 'function') return;
+    const ids = leads.map((lead) => Number(lead.id)).filter((id) => Number.isInteger(id) && id > 0);
+    const placeIds = [...new Set(leads.map((lead) => lead.googlePlaceId).filter((id) => id && !String(id).startsWith('custom_')))];
+    const or = [
+      ...(ids.length ? [{ importedLeadId: { in: ids } }] : []),
+      ...(placeIds.length ? [{ googlePlaceId: { in: placeIds } }] : []),
+    ];
+    if (!or.length) return;
+    const customerIds = [...new Set(leads.map((lead) => Number(lead.customerId)).filter((id) => Number.isInteger(id) && id > 0))];
+    let places: Array<{ customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown }> = [];
+    try {
+      places = await this.prisma.dataCapturePlace.findMany({
+        where: { deletedAt: null, ...(customerIds.length ? { customerId: { in: customerIds } } : {}), OR: or },
+        select: { customerId: true, importedLeadId: true, googlePlaceId: true, photos: true },
+      });
+    } catch (error: any) {
+      this.logger.warn(`Lead photo lookup skipped: ${error?.message || error}`);
+      return;
+    }
+    for (const lead of leads) {
+      const sameCustomer = (place: { customerId?: number | null }) => !lead.customerId || Number(place.customerId) === Number(lead.customerId);
+      const match = places.find((place) => sameCustomer(place) && Number(place.importedLeadId) === Number(lead.id))
+        || places.find((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
+      lead.placePhotos = match ? this.photoProxyUrls(match.photos) : [];
+    }
   }
 
   private async attachFollowUpContext(leads: any[]) {
@@ -1467,7 +1554,8 @@ export class LeadRepository {
       businessName: resolvedBiz,
       title: (!isFake(lead.title) ? lead.title.trim() : (resolvedBiz || lead.title || '')),
       name: resolvedBiz,
-      imageUrl: (Array.isArray(lead.images) ? lead.images : []).map((image) => image?.url).find((url) => typeof url === 'string' && /^https?:\/\//i.test(url)) || null,
+      imageUrl: this.leadPhotoEntries(lead)[0]?.url || null,
+      images: this.leadPhotoEntries(lead).map((photo, index) => ({ ...photo, isPrimary: index === 0 })),
       socialMedia: finalSocialMedia,
       upcomingCommission: upcomingCommission ?? lead.upcomingCommission ?? null,
       // Normalized ownership fields for easy frontend consumption
@@ -1587,6 +1675,7 @@ export class LeadRepository {
             orderBy: { createdAt: 'desc' },
           },
           socialProfiles: true,
+          images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
           convertedCustomer: {
             select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
           },
@@ -1597,6 +1686,7 @@ export class LeadRepository {
       });
       if (result) {
         await this.resolveMissingLeadBusinessNames([result]);
+        await this.attachPlacePhotos([result]);
         await this.resolveMissingLeadVisitedAndWonEmployees([result]);
       }
       return this.enrichLeadRecord(result);
@@ -1635,10 +1725,12 @@ export class LeadRepository {
             select: { id: true, commissionAmount: true, status: true, commissionType: true, paidAt: true, createdAt: true },
           },
           socialProfiles: true,
+          images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
         },
       });
       if (fallbackResult) {
         await this.resolveMissingLeadBusinessNames([fallbackResult]);
+        await this.attachPlacePhotos([fallbackResult]);
         await this.resolveMissingLeadVisitedAndWonEmployees([fallbackResult]);
       }
       return this.enrichLeadRecord(fallbackResult);
