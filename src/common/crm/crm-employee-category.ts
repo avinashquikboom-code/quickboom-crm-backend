@@ -44,9 +44,10 @@ function isSales(value?: string | null): boolean {
 
 /**
  * CRM category comes from the employee department, designation, team, and role
- * already stored for the account. A department, designation, or team of BPO is BPO.
- * Telesales belongs to that calling team. Sales stays Sales. Visitor designations
- * stay Visitor unless that same record is also BPO or telesales.
+ * already stored for the account. A visitor designation or visitor team stays
+ * Visitor even when the department display name contains BPO. A BPO department,
+ * designation, or team stays BPO. Telesales belongs to that calling team.
+ * Sales stays Sales.
  */
 export function classifyCrmEmployee(signals: CrmEmployeeSignals): CrmEmployeeCategory {
   const values = [
@@ -64,7 +65,7 @@ export function classifyCrmEmployee(signals: CrmEmployeeSignals): CrmEmployeeCat
   const telesales = values.some((value) => isTelesales(value));
   const sales = values.some((value) => isSales(value));
 
-  if (designationVisitor && !departmentBpo && !designationBpo && !telesales) {
+  if ((designationVisitor || roleVisitor) && !designationBpo && !telesales) {
     return 'VISITOR';
   }
   if (departmentBpo || designationBpo || roleBpo || telesales) {

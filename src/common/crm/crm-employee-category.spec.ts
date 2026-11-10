@@ -17,6 +17,24 @@ describe('classifyCrmEmployee', () => {
     })).toBe('VISITOR');
   });
 
+  it('keeps a Lead Visitor in a BPO Call Center department as Visitor', () => {
+    expect(classifyCrmEmployee({
+      departmentName: 'BPO Call Center',
+      departmentCode: 'BPO',
+      designationName: 'Lead Visitor',
+      designationCode: 'LEAD_VISITOR',
+      roles: ['EMPLOYEE'],
+    })).toBe('VISITOR');
+  });
+
+  it('classifies a visitor team even when the department name is different', () => {
+    expect(classifyCrmEmployee({
+      departmentName: 'Operations',
+      designationName: 'Executive',
+      roles: ['Visitor Team'],
+    })).toBe('VISITOR');
+  });
+
   it('does not classify other departments as CRM staff', () => {
     expect(classifyCrmEmployee({
       departmentName: 'Creative',
