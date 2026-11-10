@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CRM_CATEGORY_KEY } from '../decorators/crm-category.decorator';
 import { classifyCrmEmployee, CrmEmployeeCategory } from '../crm/crm-employee-category';
+import { crmCategoryForEmployee, hasExplicitLeadView } from '../crm/crm-app-access';
 import {
   CRM_APP_ACCESS_DENIED,
   CRM_APP_ACCESS_RESTRICTED_TITLE,
@@ -42,14 +43,18 @@ export class CrmEmployeeAccessGuard implements CanActivate {
       return true;
     }
 
-    const required = this.reflector.getAllAndOverride<Array<'BPO' | 'VISITOR'>>(CRM_CATEGORY_KEY, [
+    const required = this.reflector.getAllAndOverride<Array<'BPO' | 'VISITOR' | 'SALES'>>(CRM_CATEGORY_KEY, [
       context.getHandler(),
       context.getClass(),
-    ]) || ['BPO', 'VISITOR'];
+    ]) || ['BPO', 'VISITOR', 'SALES'];
 
     const category = await this.resolveCategory(user);
     const employeeStatus = String(user.employee?.status || 'ACTIVE').toUpperCase();
-    const allowed = employeeStatus === 'ACTIVE' && required.includes(category as 'BPO' | 'VISITOR');
+    const sharedRoute = required.includes('BPO') && required.includes('VISITOR') && required.includes('SALES');
+    const allowed = employeeStatus === 'ACTIVE' && (
+      required.includes(category as 'BPO' | 'VISITOR' | 'SALES') ||
+      (sharedRoute && category === 'NONE' && hasExplicitLeadView(user))
+    );
     if (!allowed) {
       const message = CRM_APP_ACCESS_RESTRICTED_MESSAGE;
       await this.audit(request, user, category, 'ACCESS_DENIED', 'FAILED', message);
@@ -68,40 +73,33 @@ export class CrmEmployeeAccessGuard implements CanActivate {
   }
 
   private async resolveCategory(user: any): Promise<CrmEmployeeCategory> {
-    let department = user.employee?.department;
-    let designation = user.employee?.designation;
-    const needsLookup = !department?.name && !designation?.name;
-    if (needsLookup && this.prisma?.employee) {
+    let employee = user.employee;
+    if (this.prisma?.employee?.findFirst) {
       const employeeId = Number(user.employee?.id || user.employeeId);
-      const employee = await this.prisma.employee.findFirst({
+      const loaded = await this.prisma.employee.findFirst({
         where: {
           OR: [
             ...(Number.isInteger(employeeId) && employeeId > 0 ? [{ id: employeeId }] : []),
             ...(user.id ? [{ userId: Number(user.id) }] : []),
           ],
         },
-        include: { department: true, designation: true },
+        include: {
+          department: true,
+          designation: true,
+          teamMembers: { include: { team: true } },
+          ledTeams: true,
+        },
       }).catch(() => null);
-      department = employee?.department || department;
-      designation = employee?.designation || designation;
-      if (employee && user.employee) {
-        user.employee.id = user.employee.id || employee.id;
-      } else if (employee) {
-        user.employee = employee;
+      if (loaded) {
+        employee = loaded;
+        user.employee = loaded;
       }
     }
 
-    const roles = [
-      user.role,
-      user.roleType,
-      ...(Array.isArray(user.roles) ? user.roles : []),
-    ];
+    const category = crmCategoryForEmployee(employee);
+    if (category !== 'NONE') return category;
     return classifyCrmEmployee({
-      departmentName: department?.name,
-      departmentCode: department?.code,
-      designationName: typeof designation === 'string' ? designation : designation?.name,
-      designationCode: designation?.code,
-      roles,
+      roles: [user.role, user.roleType, ...(Array.isArray(user.roles) ? user.roles : [])],
     });
   }
 

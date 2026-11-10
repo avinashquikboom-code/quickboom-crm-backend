@@ -52,6 +52,34 @@ describe('CrmEmployeeAccessGuard', () => {
     await expect(guard.canActivate(contextFor({ id: 4, role: 'EMPLOYEE' }))).resolves.toBe(true);
   });
 
+  it('allows a telesales employee on a BPO team to open CRM leads', async () => {
+    prisma.employee.findFirst.mockResolvedValue({
+      id: 12,
+      status: 'ACTIVE',
+      department: { name: 'Sales', code: 'SALES' },
+      designation: { name: 'Telesales Executive', code: 'TELESALES' },
+      teamMembers: [{ team: { name: 'BPO Calling', code: 'BPO' } }],
+      ledTeams: [],
+    });
+    await expect(guard.canActivate(contextFor({ id: 6, role: 'EMPLOYEE', employee: { department: { name: 'Sales' }, designation: { name: 'Telesales Executive' } } }))).resolves.toBe(true);
+  });
+
+  it('allows a sales employee with explicit lead view when the route is shared', async () => {
+    prisma.employee.findFirst.mockResolvedValue({
+      id: 13,
+      status: 'ACTIVE',
+      department: { name: 'Accounts', code: 'ACC' },
+      designation: { name: 'Executive', code: 'EXE' },
+      teamMembers: [],
+      ledTeams: [],
+    });
+    await expect(guard.canActivate(contextFor({
+      id: 7,
+      role: 'EMPLOYEE',
+      permissions: [{ module: 'LEADS', action: 'VIEW' }],
+    }))).resolves.toBe(true);
+  });
+
   it('returns 403 for any other employee', async () => {
     prisma.employee.findFirst.mockResolvedValue({
       id: 11,

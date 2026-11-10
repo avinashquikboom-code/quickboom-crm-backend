@@ -433,6 +433,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    const departmentText = `${user.employee?.department?.name || ''} ${user.employee?.department?.code || ''}`.toUpperCase();
+    const roleText = (user.userRoles || [])
+      .map((ur: any) => `${ur.role?.name || ''} ${ur.role?.type || ''}`)
+      .join(' ')
+      .toUpperCase();
+    const leadListSignals = `${desigUpper} ${departmentText} ${roleText}`;
+    const canListAssignedLeads =
+      isVisitorDesignation ||
+      ['BPO', 'TELE', 'SALES', 'VISITOR', 'FIELD'].some((signal) => leadListSignals.includes(signal));
+    if (canListAssignedLeads && !permissionsMap.has('LEADS:VIEW')) {
+      permissionsMap.set('LEADS:VIEW', { module: 'LEADS', action: 'VIEW' });
+    }
+
     // 4. Apply individual employee overrides (Hierarchy: Role Defaults -> Employee Overrides -> Effective Permissions)
     let overrideCount = 0;
     if (user.employee?.id && !isSuperAdmin && !isCustomerAdmin && !isCompanyAdmin) {
