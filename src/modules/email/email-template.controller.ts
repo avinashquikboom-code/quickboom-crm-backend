@@ -39,13 +39,21 @@ export class EmailTemplateController {
   @ApiQuery({ name: 'category', required: false })
   @ApiQuery({ name: 'isActive', required: false })
   @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'sort', required: false })
   async findAll(
     @CurrentUser() user: any,
     @Query('category') category?: string,
     @Query('isActive') isActive?: string,
     @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('sort') sort?: string,
   ) {
-    return this.emailTemplateService.findAll(user?.customerId, { category, isActive, search });
+    return this.emailTemplateService.findAll(user?.customerId, { category, isActive, search, page, limit, status, sort });
   }
 
   @Get('events')
