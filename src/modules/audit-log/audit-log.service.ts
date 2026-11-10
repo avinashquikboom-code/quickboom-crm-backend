@@ -24,6 +24,9 @@ export interface CreateAuditLogParams {
 
 const SENSITIVE_KEYS = [
   'password',
+  'currentpassword',
+  'newpassword',
+  'confirmpassword',
   'passwordhash',
   'passwd',
   'token',

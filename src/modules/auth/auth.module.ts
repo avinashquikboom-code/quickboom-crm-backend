@@ -1,3 +1,5 @@
+import { SelfProfileController } from './self-profile.controller';
+import { SelfProfileService } from './self-profile.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -17,8 +19,8 @@ import { WorkModule } from '../work/work.module';
     NotificationModule,
     forwardRef(() => WorkModule),
   ],
-  controllers: [AuthController, MobileAuthController, AdminAuthController],
-  providers: [AuthService, JwtStrategy, QBIdGenerator],
+  controllers: [SelfProfileController, AuthController, MobileAuthController, AdminAuthController],
+  providers: [SelfProfileService, AuthService, JwtStrategy, QBIdGenerator],
   exports: [AuthService, JwtStrategy, QBIdGenerator, PassportModule],
 })
 export class AuthModule {}
