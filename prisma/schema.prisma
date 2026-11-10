@@ -671,12 +671,16 @@ model PipelineStage {
   name        String
   order       Int
   probability Float    @default(50.0)
+  description String?
+  color       String   @default("#163A2E")
+  isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deals       Deal[]
   pipeline    Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
 
   @@index([pipelineId])
+  @@index([isActive])
 }
 
 model Deal {

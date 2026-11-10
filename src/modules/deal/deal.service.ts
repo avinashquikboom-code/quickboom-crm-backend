@@ -9,21 +9,7 @@ const DEAL_STAGE_SPECS = [
   { name: 'Lost', order: 8, probability: 0 },
 ];
 
-function stageMatches(existingName: string, canonical: string) {
-  const name = String(existingName || '').trim().toLowerCase();
-  const target = canonical.toLowerCase();
-  if (name === target) return true;
-  if (target === 'qualified' && name.includes('qualified')) return true;
-  if (target === 'proposal' && name.includes('proposal')) return true;
-  if (target === 'negotiation' && name.includes('negotiation')) return true;
-  if (target === 'final call' && (name === 'final call' || name === 'final')) return true;
-  if (target === 'won' && (name === 'won' || name === 'closed won')) return true;
-  if (target === 'lost' && (name === 'lost' || name === 'closed lost')) return true;
-  if (target === 'new' && (name === 'new' || name === 'new deal')) return true;
-  if (target === 'contacted' && name === 'contacted') return true;
-  return false;
-}
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDealDto, UpdateDealDto, UpdateDealStageDto } from './dto/deal.dto';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -35,43 +21,29 @@ export class DealService {
   constructor(private prisma: PrismaService) {}
 
   private async ensureDealStages(customerId?: number) {
-    const key = customerId ? String(customerId) : 'all';
-    if (this.ensuredCustomers.has(key)) return;
-    const where: any = { deletedAt: null };
-    if (customerId) where.customerId = customerId;
-    let pipelines = await this.prisma.pipeline.findMany({ where, include: { stages: true } });
-    if (!pipelines.length && customerId) {
-      const created = await this.prisma.pipeline.create({
+    if (!customerId) return;
+    await this.ensureDefaultPipeline(customerId);
+  }
+
+  private async ensureDefaultPipeline(customerId: number) {
+    const key = String(customerId);
+    let pipeline = await this.prisma.pipeline.findFirst({
+      where: { customerId, deletedAt: null },
+      include: { stages: { orderBy: { order: 'asc' } } },
+    });
+    if (!pipeline) {
+      pipeline = await this.prisma.pipeline.create({
         data: {
           customerId,
           name: 'Sales Pipeline',
           isDefault: true,
           stages: { create: DEAL_STAGE_SPECS },
         },
-        include: { stages: true },
+        include: { stages: { orderBy: { order: 'asc' } } },
       });
-      pipelines = [created];
-    }
-    for (const pipeline of pipelines) {
-      const used = new Set<number>();
-      for (const spec of DEAL_STAGE_SPECS) {
-        const match = pipeline.stages.find((stage) => !used.has(stage.id) && stageMatches(stage.name, spec.name));
-        if (match) {
-          used.add(match.id);
-          if (match.order !== spec.order || match.name !== spec.name || match.probability !== spec.probability) {
-            await this.prisma.pipelineStage.update({
-              where: { id: match.id },
-              data: { order: spec.order, name: spec.name, probability: spec.probability },
-            });
-          }
-        } else {
-          await this.prisma.pipelineStage.create({
-            data: { pipelineId: pipeline.id, name: spec.name, order: spec.order, probability: spec.probability },
-          });
-        }
-      }
     }
     this.ensuredCustomers.add(key);
+    return pipeline;
   }
 
   private async attachLeadContext(deals: any[]) {
@@ -167,8 +139,11 @@ export class DealService {
       }
 
       pipelineId = pipeline.id;
-      stageId = stageId || pipeline.stages[0]?.id;
+      const activeStage = pipeline.stages.find((stage) => stage.isActive !== false);
+      stageId = stageId || activeStage?.id;
     }
+    if (!stageId) throw new BadRequestException('Add an active stage before creating a deal.');
+    await this.assertAssignableStage(numCustomerId, stageId);
 
     return this.prisma.deal.create({
       data: {
@@ -353,7 +328,7 @@ export class DealService {
     return {
       data: rows,
       pagination: { page, pageSize: limit, total, totalPages },
-      meta: { total, page, limit, totalPages, stages: DEAL_STAGE_SPECS },
+      meta: { total, page, limit, totalPages, stages: effectiveCustomerId ? (await this.ensureDefaultPipeline(Number(effectiveCustomerId))).stages : [] },
     };
   }
 
@@ -396,7 +371,8 @@ export class DealService {
   async update(customerId: number | string, id: number | string, dto: UpdateDealDto) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    const existing = await this.findOne(numCustomerId, numId);
+    if (dto.stageId) await this.assertAssignableStage(numCustomerId, Number(dto.stageId), existing.stageId);
 
     return this.prisma.deal.update({
       where: { id: numId },
@@ -432,7 +408,8 @@ export class DealService {
   async updateStage(customerId: number | string, id: number | string, dto: UpdateDealStageDto) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    const deal = await this.findOne(numCustomerId, numId);
+    await this.assertAssignableStage(numCustomerId, Number(dto.stageId), deal.stageId);
 
     return this.prisma.deal.update({
       where: { id: numId },
@@ -448,6 +425,132 @@ export class DealService {
         pipeline: true,
       },
     });
+  }
+
+  private async assertAssignableStage(customerId: number, stageId: number, currentStageId?: number) {
+    if (!stageId || stageId === currentStageId) return;
+    const stage = await this.prisma.pipelineStage.findFirst({ where: { id: stageId, pipeline: { customerId, deletedAt: null } } });
+    if (!stage) throw new NotFoundException('Deal stage not found');
+    if (stage.isActive === false) throw new BadRequestException('Inactive stages cannot be assigned to a deal. Activate the stage first.');
+  }
+
+  private requireCustomer(customerId: number | string) {
+    const id = Number(customerId);
+    if (!Number.isInteger(id) || id <= 0) throw new UnauthorizedException('User is not associated with any customer account');
+    return id;
+  }
+
+  private async pipelineFor(customerId: number) {
+    return this.ensureDefaultPipeline(customerId);
+  }
+
+  private async stageInTenant(customerId: number, stageId: number) {
+    const stage = await this.prisma.pipelineStage.findFirst({
+      where: { id: stageId, pipeline: { customerId, deletedAt: null } },
+      include: { _count: { select: { deals: { where: { deletedAt: null } } } } },
+    });
+    if (!stage) throw new NotFoundException('Deal stage not found');
+    return stage;
+  }
+
+  async listStages(customerId: number | string, activeOnly = false) {
+    const tenantId = this.requireCustomer(customerId);
+    const pipeline = await this.pipelineFor(tenantId);
+    const stages = await this.prisma.pipelineStage.findMany({
+      where: { pipelineId: pipeline.id, ...(activeOnly ? { isActive: true } : {}) },
+      orderBy: [{ order: 'asc' }, { id: 'asc' }],
+      include: { _count: { select: { deals: { where: { deletedAt: null } } } } },
+    });
+    return { pipelineId: pipeline.id, stages };
+  }
+
+  async createStage(customerId: number | string, dto: { name: string; order?: number; probability?: number; description?: string; color?: string; isActive?: boolean }) {
+    const tenantId = this.requireCustomer(customerId);
+    const pipeline = await this.pipelineFor(tenantId);
+    const name = String(dto.name || '').trim();
+    if (!name) throw new BadRequestException('Stage name is required');
+    await this.assertUniqueStageName(pipeline.id, name);
+    const maxOrder = pipeline.stages.reduce((max, stage) => Math.max(max, stage.order), 0);
+    const order = Number.isInteger(Number(dto.order)) ? Number(dto.order) : maxOrder + 1;
+    await this.shiftOrders(pipeline.id, order);
+    return this.prisma.pipelineStage.create({
+      data: {
+        pipelineId: pipeline.id,
+        name,
+        order,
+        probability: this.probability(dto.probability, 50),
+        description: dto.description?.trim() || null,
+        color: dto.color || '#163A2E',
+        isActive: dto.isActive !== false,
+      },
+    });
+  }
+
+  async updateStageDefinition(customerId: number | string, id: number | string, dto: { name?: string; order?: number; probability?: number; description?: string; color?: string; isActive?: boolean }) {
+    const tenantId = this.requireCustomer(customerId);
+    const stage = await this.stageInTenant(tenantId, Number(id));
+    const name = dto.name !== undefined ? String(dto.name).trim() : stage.name;
+    if (!name) throw new BadRequestException('Stage name is required');
+    if (name.toLowerCase() !== stage.name.toLowerCase()) await this.assertUniqueStageName(stage.pipelineId, name, stage.id);
+    if (dto.order !== undefined && Number(dto.order) !== stage.order) await this.shiftOrders(stage.pipelineId, Number(dto.order), stage.id);
+    return this.prisma.pipelineStage.update({
+      where: { id: stage.id },
+      data: {
+        name,
+        ...(dto.order !== undefined ? { order: Number(dto.order) } : {}),
+        ...(dto.probability !== undefined ? { probability: this.probability(dto.probability, stage.probability) } : {}),
+        ...(dto.description !== undefined ? { description: dto.description.trim() || null } : {}),
+        ...(dto.color !== undefined ? { color: dto.color || '#163A2E' } : {}),
+        ...(dto.isActive !== undefined ? { isActive: Boolean(dto.isActive) } : {}),
+      },
+    });
+  }
+
+  async deleteStage(customerId: number | string, id: number | string) {
+    const tenantId = this.requireCustomer(customerId);
+    const stage = await this.stageInTenant(tenantId, Number(id));
+    if (stage._count.deals > 0) {
+      throw new BadRequestException(`"${stage.name}" is used by ${stage._count.deals} deal${stage._count.deals === 1 ? '' : 's'}. Deactivate it instead of deleting it.`);
+    }
+    await this.prisma.pipelineStage.delete({ where: { id: stage.id } });
+    return { deleted: true, id: stage.id };
+  }
+
+  async bulkStages(customerId: number | string, body: { ids?: number[]; action?: string }) {
+    const ids = [...new Set((body.ids || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    const action = String(body.action || '').toLowerCase();
+    const failures: Array<{ id: number; message: string }> = [];
+    let success = 0;
+    for (const id of ids) {
+      try {
+        if (action === 'delete') await this.deleteStage(customerId, id);
+        else if (action === 'activate' || action === 'deactivate') await this.updateStageDefinition(customerId, id, { isActive: action === 'activate' });
+        else throw new BadRequestException('Unsupported bulk action');
+        success += 1;
+      } catch (error: any) {
+        failures.push({ id, message: error?.message || 'Stage update failed' });
+      }
+    }
+    return { total: ids.length, success, failed: failures.length, failures };
+  }
+
+  private probability(value: unknown, fallback: number) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.min(100, Math.max(0, number));
+  }
+
+  private async assertUniqueStageName(pipelineId: number, name: string, ignoreId?: number) {
+    const existing = await this.prisma.pipelineStage.findMany({ where: { pipelineId, ...(ignoreId ? { id: { not: ignoreId } } : {}) } });
+    if (existing.some((stage) => stage.name.trim().toLowerCase() === name.toLowerCase())) {
+      throw new BadRequestException('A stage with this name already exists');
+    }
+  }
+
+  private async shiftOrders(pipelineId: number, order: number, ignoreId?: number) {
+    const clash = await this.prisma.pipelineStage.findFirst({ where: { pipelineId, order, ...(ignoreId ? { id: { not: ignoreId } } : {}) } });
+    if (!clash) return;
+    await this.prisma.pipelineStage.updateMany({ where: { pipelineId, order: { gte: order }, ...(ignoreId ? { id: { not: ignoreId } } : {}) }, data: { order: { increment: 1 } } });
   }
 
   async delete(customerId: number | string, id: number | string) {
