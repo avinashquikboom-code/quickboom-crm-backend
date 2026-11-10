@@ -100,6 +100,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           include: {
             employeeModuleOverrides: true,
             designation: true,
+            department: { select: { id: true, name: true, code: true } },
           },
         },
         customer: true,
