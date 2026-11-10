@@ -819,7 +819,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -937,6 +937,10 @@ export class LeadRepository {
 
     if (options.priority && options.priority.toUpperCase() !== 'ALL') {
       where.priority = options.priority.trim().toUpperCase();
+    }
+
+    if (options.category && options.category.trim() && options.category.toUpperCase() !== 'ALL') {
+      where.category = { equals: options.category.trim(), mode: 'insensitive' };
     }
 
     if (options.source && options.source.toUpperCase() !== 'ALL') {
