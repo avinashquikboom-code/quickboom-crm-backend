@@ -54,6 +54,7 @@ import { SocialPublishingModule } from './modules/social-publishing/social-publi
 import { MasterModule } from './modules/master/master.module';
 import { MetaTemplateModule } from './modules/meta-template/meta-template.module';
 import { CommissionModule } from './modules/commission/commission.module';
+import { GeneralSettingsModule } from './modules/general-settings/general-settings.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -67,6 +68,7 @@ import { AppController } from './app.controller';
     Msg91Module,
     WhatsappModule,
     IntegrationSettingsModule,
+    GeneralSettingsModule,
     EmailModule,
     AuthModule,
     // Register before CustomerModule so /customer/influencers is not captured by GET /customer/:id

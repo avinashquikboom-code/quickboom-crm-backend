@@ -2669,6 +2669,38 @@ model PaymentSetting {
   @@map("payment_settings")
 }
 
+model GeneralSetting {
+  id                    Int       @id @default(autoincrement())
+  singletonKey          String    @unique @default("DEFAULT")
+  appName               String    @default("QB Suite")
+  appLogoUrl            String?
+  defaultLanguage       String    @default("en")
+  availableLanguages    String[]  @default(["en", "mr"])
+  defaultLocale         String    @default("en-IN")
+  defaultTimezone       String    @default("Asia/Kolkata")
+  dateFormat            String    @default("DD-MM-YYYY")
+  timeFormat            String    @default("12h")
+  firstDayOfWeek        String    @default("Monday")
+  defaultCurrency       String    @default("INR")
+  currencySymbol        String    @default("₹")
+  currencyCode          String    @default("INR")
+  decimalPrecision      Int       @default(2)
+  numberFormatting      String    @default("en-IN")
+  currencyDisplayFormat String    @default("SYMBOL_FIRST")
+  faviconUrl            String?
+  loginPageBranding     String?
+  primaryColor          String?   @default("#163A2E")
+  secondaryColor        String?   @default("#204C3D")
+  paleColor             String?   @default("#E8F1EC")
+  configVersion         String    @default("1.0.0")
+  lastSyncedAt          DateTime?
+  updatedByUserId       Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("general_settings")
+}
+
 enum TrendingCategory {
   REEL
   STORY

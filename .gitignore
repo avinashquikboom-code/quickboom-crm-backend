@@ -33,3 +33,4 @@ yarn-error.log*
 .idea
 /uploads/**/*
 !/uploads/.gitkeep
+/storage/data-backups/

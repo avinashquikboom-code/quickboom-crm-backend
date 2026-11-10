@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsArray, IsIn } from 'class-validator';
 
 export class ModuleResetDto {
   @IsString()
@@ -12,6 +12,10 @@ export class ModuleResetDto {
   @IsString()
   @IsOptional()
   reason?: string;
+
+  @IsOptional()
+  @IsString()
+  backupId?: string;
 }
 
 export class MultipleModulesResetDto {
@@ -41,6 +45,10 @@ export class ResetAllDto {
   @IsString()
   @IsOptional()
   reason?: string;
+
+  @IsOptional()
+  @IsString()
+  backupId?: string;
 }
 
 export class EmployeeModuleResetDto {
@@ -65,6 +73,106 @@ export class EmployeeResetAllDto {
   @IsString()
   @IsOptional()
   reason?: string;
+}
+
+export class ResetPreviewDto {
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  modules?: string[];
+
+  @IsOptional()
+  @IsIn(['selected', 'application', 'global'])
+  scope?: 'selected' | 'application' | 'global';
+}
+
+export class ExecuteResetDto extends ResetPreviewDto {
+  @IsString()
+  @IsNotEmpty()
+  previewToken: string;
+
+  @IsString()
+  @IsNotEmpty()
+  backupId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  confirmation: string;
+
+  @IsOptional()
+  @IsString()
+  acknowledgement?: string;
+
+  @IsOptional()
+  @IsString()
+  globalConfirmation?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  idempotencyKey: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class CreateBackupDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  modules?: string[];
+
+  @IsOptional()
+  @IsIn(['tenant', 'global'])
+  scope?: 'tenant' | 'global';
+}
+
+export class RestoreBackupDto {
+  @IsString()
+  @IsNotEmpty()
+  confirmation: string;
+
+  @IsString()
+  @IsNotEmpty()
+  idempotencyKey: string;
+}
+
+export class CleanupPreviewDto {
+  @IsString()
+  @IsNotEmpty()
+  operation: string;
+}
+
+export class ExecuteCleanupDto extends CleanupPreviewDto {
+  @IsString()
+  @IsNotEmpty()
+  confirmation: string;
+
+  @IsString()
+  @IsNotEmpty()
+  idempotencyKey: string;
+}
+
+export class ImportLeadsDto {
+  @IsString()
+  @IsNotEmpty()
+  csv: string;
+
+  @IsOptional()
+  @IsString()
+  confirmation?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }
 
 export class BulkDeleteBinItemDto {
