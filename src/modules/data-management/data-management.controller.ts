@@ -6,10 +6,13 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
   ValidationPipe,
   UsePipes,
+  BadRequestException,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -19,12 +22,21 @@ import { RoleType } from '@prisma/client';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
+import { DataGovernanceService } from './data-governance.service';
+import { availableModules, resolveModuleId } from './data-governance.catalog';
 import {
   ModuleResetDto,
   ResetAllDto,
   EmployeeModuleResetDto,
   EmployeeResetAllDto,
   BulkDeleteBinDto,
+  ResetPreviewDto,
+  ExecuteResetDto,
+  CreateBackupDto,
+  RestoreBackupDto,
+  CleanupPreviewDto,
+  ExecuteCleanupDto,
+  ImportLeadsDto,
 } from './dto/data-management.dto';
 
 @ApiTags('Admin Data Management')
@@ -34,7 +46,157 @@ import {
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 @Controller('admin/data-management')
 export class DataManagementController {
-  constructor(private readonly dataManagementService: DataManagementService) {}
+  constructor(
+    private readonly dataManagementService: DataManagementService,
+    private readonly governance: DataGovernanceService,
+  ) {}
+
+  @Get('overview')
+  @ApiOperation({ summary: 'Database size, table count, and tenant record totals' })
+  overview(@CurrentCustomer() customerId: string) {
+    return this.governance.overview(customerId);
+  }
+
+  @Get('modules')
+  @ApiOperation({ summary: 'Reset modules mapped to real tables' })
+  modules() {
+    return this.governance.listModules();
+  }
+
+  @Post('reset/preview')
+  @ApiOperation({ summary: 'Preview a tenant data reset without deleting records' })
+  previewReset(@CurrentCustomer() customerId: string, @Body() dto: ResetPreviewDto) {
+    return this.governance.previewReset(customerId, dto);
+  }
+
+  @Post('reset')
+  @ApiOperation({ summary: 'Delete approved module data after backup, preview, and confirmation' })
+  reset(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
+    @Body() dto: ExecuteResetDto,
+  ) {
+    return this.governance.executeReset(customerId, userId, role, dto);
+  }
+
+  @Get('reset/history')
+  @ApiOperation({ summary: 'Reset, backup, restore, cleanup, and import history' })
+  resetHistory(@CurrentCustomer() customerId: string) {
+    return this.governance.history(customerId);
+  }
+
+  @Post('backups')
+  @ApiOperation({ summary: 'Create a verified tenant snapshot backup' })
+  createBackup(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
+    @Body() dto: CreateBackupDto,
+  ) {
+    return this.governance.createBackup(customerId, userId, role, dto);
+  }
+
+  @Get('backups')
+  @ApiOperation({ summary: 'List verified backups for this tenant' })
+  listBackups(@CurrentCustomer() customerId: string) {
+    return this.governance.listBackups(customerId);
+  }
+
+  @Get('backups/:id/download')
+  @ApiOperation({ summary: 'Download a verified backup' })
+  async downloadBackup(@CurrentCustomer() customerId: string, @Param('id') id: string, @Res() res: Response) {
+    const file = await this.governance.backupFile(customerId, id);
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+    file.stream.pipe(res);
+  }
+
+  @Post('backups/:id/verify')
+  @ApiOperation({ summary: 'Recheck backup size, checksum, and tenant metadata' })
+  verifyBackup(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.governance.verifyBackup(customerId, id);
+  }
+
+  @Post('backups/:id/restore/preview')
+  @ApiOperation({ summary: 'Preview a verified backup restore' })
+  previewRestore(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.governance.previewRestore(customerId, id);
+  }
+
+  @Post('backups/:id/restore')
+  @ApiOperation({ summary: 'Restore a verified backup after creating a pre-restore backup' })
+  restoreBackup(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
+    @Param('id') id: string,
+    @Body() dto: RestoreBackupDto,
+  ) {
+    return this.governance.executeRestore(customerId, userId, role, id, dto);
+  }
+
+  @Get('backups/:id')
+  @ApiOperation({ summary: 'Backup metadata' })
+  backup(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.governance.backupDetails(customerId, id);
+  }
+
+  @Post('cleanup/preview')
+  @ApiOperation({ summary: 'Count records a cleanup operation would remove' })
+  previewCleanup(@CurrentCustomer() customerId: string, @Body() dto: CleanupPreviewDto) {
+    return this.governance.previewCleanup(customerId, dto.operation);
+  }
+
+  @Post('cleanup')
+  @ApiOperation({ summary: 'Run an approved cleanup after confirmation' })
+  cleanup(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
+    @Body() dto: ExecuteCleanupDto,
+  ) {
+    return this.governance.executeCleanup(customerId, userId, role, dto);
+  }
+
+  @Get('jobs/:id')
+  @ApiOperation({ summary: 'Status of a data-management operation' })
+  job(@Param('id') id: string) {
+    const job = this.governance.job(id);
+    if (!job) throw new BadRequestException('Operation status is no longer available. Check reset history.');
+    return job;
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'Export one supported module as CSV, Excel, or JSON' })
+  async exportData(
+    @CurrentCustomer() customerId: string,
+    @Query('module') moduleName: string,
+    @Query('format') format: string,
+    @Res() res: Response,
+  ) {
+    const file = await this.governance.exportModule(customerId, moduleName, format);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+    res.send(file.body);
+  }
+
+  @Post('import/preview')
+  @ApiOperation({ summary: 'Validate a lead CSV without writing records' })
+  previewImport(@CurrentCustomer() customerId: string, @Body() dto: ImportLeadsDto) {
+    return this.governance.previewImport(customerId, dto.csv);
+  }
+
+  @Post('import')
+  @ApiOperation({ summary: 'Import valid lead rows' })
+  importLeads(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
+    @Body() dto: ImportLeadsDto,
+  ) {
+    return this.governance.executeImport(customerId, userId, role, dto);
+  }
 
   /**
    * GET /api/v1/admin/data-management/summary
@@ -68,6 +230,7 @@ export class DataManagementController {
     @CurrentUser('role') userRole: string,
     @Body() dto: ModuleResetDto,
   ) {
+    await this.governance.assertBackupCovers(this.tenantId(customerId), dto.backupId, [resolveModuleId(dto.module)]);
     return this.dataManagementService.resetModule(
       customerId,
       userId,
@@ -88,6 +251,11 @@ export class DataManagementController {
     @CurrentUser('role') userRole: string,
     @Body() dto: ResetAllDto,
   ) {
+    await this.governance.assertBackupCovers(
+      this.tenantId(customerId),
+      dto.backupId,
+      availableModules().map((item) => item.id),
+    );
     return this.dataManagementService.resetAllTransactional(
       customerId,
       userId,
@@ -313,6 +481,14 @@ export class DataManagementController {
   @ApiOperation({ summary: 'Permanently delete multiple items (customers and/or employees) from the Bin (irreversible)' })
   async deleteBinBulk(@Body() dto: BulkDeleteBinDto) {
     return this.dataManagementService.deleteBinBulk(dto);
+  }
+
+  private tenantId(customerId: number | string | null | undefined) {
+    const tenantId = Number(customerId);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      throw new BadRequestException('Select a tenant before managing data.');
+    }
+    return tenantId;
   }
 }
 
