@@ -1,0 +1,4 @@
+ALTER TABLE "PipelineStage" ADD COLUMN IF NOT EXISTS "description" TEXT;
+ALTER TABLE "PipelineStage" ADD COLUMN IF NOT EXISTS "color" TEXT NOT NULL DEFAULT '#163A2E';
+ALTER TABLE "PipelineStage" ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true;
+CREATE INDEX IF NOT EXISTS "PipelineStage_isActive_idx" ON "PipelineStage"("isActive");

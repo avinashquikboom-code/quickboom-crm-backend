@@ -77,6 +77,37 @@ export class DealController {
     );
   }
 
+  @Get('stages')
+  @ApiOperation({ summary: 'List deal pipeline stages for the current tenant' })
+  @ApiQuery({ name: 'active', required: false })
+  listStages(@CurrentCustomer() customerId: string, @Query('active') active?: string) {
+    return this.dealService.listStages(customerId, active === 'true');
+  }
+
+  @Post('stages')
+  @ApiOperation({ summary: 'Create a deal pipeline stage' })
+  createStage(@CurrentCustomer() customerId: string, @Body() body: any) {
+    return this.dealService.createStage(customerId, body);
+  }
+
+  @Post('stages/bulk')
+  @ApiOperation({ summary: 'Bulk delete or activate deal stages' })
+  bulkStages(@CurrentCustomer() customerId: string, @Body() body: { ids?: number[]; action?: string }) {
+    return this.dealService.bulkStages(customerId, body);
+  }
+
+  @Patch('stages/:id')
+  @ApiOperation({ summary: 'Update a deal pipeline stage' })
+  updateStageDefinition(@CurrentCustomer() customerId: string, @Param('id') id: string, @Body() body: any) {
+    return this.dealService.updateStageDefinition(customerId, id, body);
+  }
+
+  @Delete('stages/:id')
+  @ApiOperation({ summary: 'Delete an unused deal pipeline stage' })
+  deleteStage(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.dealService.deleteStage(customerId, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get deal details by ID' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
