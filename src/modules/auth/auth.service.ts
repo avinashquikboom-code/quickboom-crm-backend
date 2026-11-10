@@ -29,8 +29,8 @@ import {
 } from './dto/auth.dto';
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
-import { classifyCrmEmployee, CrmEmployeeCategory } from '../../common/crm/crm-employee-category';
-import { assertCrmAppEmployee } from '../../common/crm/crm-app-access';
+import { CrmEmployeeCategory } from '../../common/crm/crm-employee-category';
+import { assertCrmAppEmployee, crmCategoryForEmployee } from '../../common/crm/crm-app-access';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
 import { NotificationService } from '../notification/notification.service';
@@ -2917,18 +2917,12 @@ export class AuthService {
   }
 
   private crmCategoryFor(emp: any): CrmEmployeeCategory {
-    const designation = emp?.designation;
-    return classifyCrmEmployee({
-      departmentName: emp?.department?.name,
-      departmentCode: emp?.department?.code,
-      designationName: typeof designation === 'string' ? designation : designation?.name,
-      designationCode: designation?.code,
-      roles: [emp?.roleName, emp?.role],
-    });
+    return crmCategoryForEmployee(emp);
   }
 
   private determineCrmEligibility(emp: any): boolean {
-    return this.crmCategoryFor(emp) === 'BPO';
+    const category = this.crmCategoryFor(emp);
+    return category === 'BPO' || category === 'SALES';
   }
 
   private formatRoleDisplayName(name: string): string {

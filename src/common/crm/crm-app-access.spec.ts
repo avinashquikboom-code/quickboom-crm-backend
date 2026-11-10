@@ -18,6 +18,18 @@ describe('assertCrmAppEmployee', () => {
     }), { id: 9 })).resolves.toBe('BPO');
   });
 
+  it('allows an active sales employee to open assigned leads', async () => {
+    await expect(assertCrmAppEmployee(prismaFor({
+      id: 6,
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { name: 'Sales', code: 'SALES' },
+      designation: { name: 'Sales Executive', code: 'SALES' },
+      teamMembers: [],
+      ledTeams: [],
+    }), { id: 11 })).resolves.toBe('SALES');
+  });
+
   it('allows an active Visitor employee from the team record', async () => {
     await expect(assertCrmAppEmployee(prismaFor({
       id: 5,
