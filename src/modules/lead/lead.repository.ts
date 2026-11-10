@@ -586,6 +586,29 @@ export class LeadRepository {
       this.prisma.lead.count({ where: { ...baseWhere, status: 'LOST' } }),
     ]);
 
+    let stages: Array<{ id: number; name: string; color: string | null; sortOrder: number; count: number }> = [];
+    if (typeof this.prisma.lead?.groupBy === 'function' && typeof this.prisma.leadStage?.findMany === 'function') {
+      try {
+        const grouped = await this.prisma.lead.groupBy({ by: ['stageId'], where: baseWhere, _count: { _all: true } });
+        const orderBy = [{ sortOrder: 'asc' as const }, { id: 'asc' as const }];
+        let stageRows = baseWhere.customerId
+          ? await this.prisma.leadStage.findMany({ where: { customerId: baseWhere.customerId, deletedAt: null, isActive: true }, orderBy })
+          : [];
+        if (!stageRows.length) {
+          stageRows = await this.prisma.leadStage.findMany({ where: { customerId: null, deletedAt: null, isActive: true }, orderBy });
+        }
+        stages = stageRows.map((stage: any) => ({
+          id: stage.id,
+          name: stage.name,
+          color: stage.color || null,
+          sortOrder: stage.sortOrder,
+          count: Number(grouped.find((row: any) => row.stageId === stage.id)?._count?._all || 0),
+        }));
+      } catch {
+        stages = [];
+      }
+    }
+
     return {
       total,
       new: newCount,
@@ -593,6 +616,7 @@ export class LeadRepository {
       qualified,
       converted,
       lost,
+      stages,
     };
   }
 
@@ -2801,56 +2825,6 @@ export class LeadRepository {
   }
 
   /**
-   * The configured catalog has 12 stages. Tenants that already show the other
-   * 11 keep those rows; Call Back is the catalog entry they do not have.
-   * A soft-deleted row at the open sort position is restored instead.
-   */
-  async restoreMissingLeadStage(customerId: number | null) {
-    if (typeof this.prisma.leadStage?.findMany !== 'function' || typeof this.prisma.leadStage?.create !== 'function') return;
-    const rows = await this.prisma.leadStage.findMany({ where: { customerId } });
-    if (!Array.isArray(rows) || rows.length === 0) return;
-
-    const active = rows.filter((stage) => !stage.deletedAt);
-    if (active.length === 0) return;
-    const used = new Set(active.map((stage) => Number(stage.sortOrder)));
-    let gap = 1;
-    while (used.has(gap)) gap += 1;
-
-    const deletedAtGap = rows.find((stage) => stage.deletedAt && Number(stage.sortOrder) === gap);
-    const callBack = rows.find((stage) => String(stage.key || '').toUpperCase().replace(/[\s-]+/g, '_') === 'CALL_BACK');
-    const hidden = deletedAtGap || (callBack?.deletedAt ? callBack : null);
-    if (hidden && typeof this.prisma.leadStage.update === 'function') {
-      const orderTaken = active.some((stage) => stage.id !== hidden.id && Number(stage.sortOrder) === Number(hidden.sortOrder));
-      await this.prisma.leadStage.update({
-        where: { id: hidden.id },
-        data: { deletedAt: null, isActive: true, ...(orderTaken ? { sortOrder: gap } : {}) },
-      });
-      return;
-    }
-    if (callBack) return;
-
-    const known = new Set(active.map((stage) => String(stage.key || '').toUpperCase()));
-    const hasEleven = ['NEW', 'CONTACTED', 'FOLLOW_UP', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST'].every((key) => known.has(key))
-      && (known.has('DETAILS_SEND') || known.has('DETAILS_SENT'))
-      && (known.has('VISIT_SCHEDULED') || known.has('VISIT'));
-    if (!hasEleven) return;
-
-    await this.prisma.leadStage.create({
-      data: {
-        customerId,
-        name: 'Call Back',
-        key: 'CALL_BACK',
-        sortOrder: gap,
-        color: '#8B5CF6',
-        bgColor: '#F3E8FF',
-        borderColor: '#E9D5FF',
-        isActive: true,
-        isSystem: true,
-      },
-    });
-  }
-
-  /**
    * Seed the 12 default lead stages for a customer if they don't already have any.
    * Idempotent — safe to call multiple times.
    */
@@ -2876,7 +2850,7 @@ export class LeadRepository {
         })
       : 0;
 
-    if (existingCount > 0) return; // Already has stages — missing entries are restored separately
+    if (existingCount > 0) return; // Keep the stages already configured for this workspace.
     if (typeof this.prisma.leadStage?.upsert !== 'function') return;
 
     // Load available default templates to associate
