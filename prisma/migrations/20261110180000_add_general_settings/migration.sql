@@ -33,3 +33,4 @@ CREATE TABLE IF NOT EXISTS "general_settings" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "general_settings_singletonKey_key" ON "general_settings"("singletonKey");
+

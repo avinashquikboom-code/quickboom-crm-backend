@@ -167,3 +167,4 @@ export class GeneralSettingsController {
     return this.generalSettingsService.syncSettings(user?.id);
   }
 }
+

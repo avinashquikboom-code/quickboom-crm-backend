@@ -111,3 +111,4 @@ export class UpdateGeneralSettingsDto {
   @IsOptional()
   paleColor?: string;
 }
+
