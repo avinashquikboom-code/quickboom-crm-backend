@@ -2393,6 +2393,9 @@ export class AuthService {
     const qbCode = this.qbIdGenerator.generateQBUserId(userRole, targetNumericId);
 
     const profileData: any = {
+      avatar: user.avatar,
+      isActive: user.isActive,
+      organizationName: user.customer?.companyName || user.customer?.name || null,
       id: user.id,
       email: user.email,
       phone: user.phone,
