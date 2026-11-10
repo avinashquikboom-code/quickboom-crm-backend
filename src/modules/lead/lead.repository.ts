@@ -762,9 +762,40 @@ export class LeadRepository {
     };
   }
 
+  private async latestAssignedVisitLeadIds(customerId: number, employeeId: number) {
+    if (typeof this.prisma.$queryRaw === 'function') {
+      try {
+        const rows = await this.prisma.$queryRaw<Array<{ leadId: number }>>`
+          SELECT latest."leadId" AS "leadId"
+          FROM (
+            SELECT DISTINCT ON ("leadId") "leadId", "employeeId", status
+            FROM "Visit"
+            WHERE "customerId" = ${customerId} AND "leadId" IS NOT NULL
+            ORDER BY "leadId", "createdAt" DESC, "id" DESC
+          ) AS latest
+          WHERE latest."employeeId" = ${employeeId}
+            AND latest.status::text IN ('SCHEDULED', 'IN_PROGRESS')
+        `;
+        return rows.map((row) => Number(row.leadId)).filter((id) => Number.isInteger(id) && id > 0);
+      } catch (error: any) {
+        this.logger.warn(`Visitor lead lookup used the Prisma fallback: ${error?.message || error}`);
+      }
+    }
+    const visits = await this.prisma.visit.findMany({
+      where: { customerId, leadId: { not: null } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      distinct: ['leadId'],
+      select: { leadId: true, employeeId: true, status: true },
+    });
+    return visits
+      .filter((visit) => visit.employeeId === employeeId && ['SCHEDULED', 'IN_PROGRESS'].includes(visit.status))
+      .map((visit) => visit.leadId)
+      .filter((id): id is number => id != null);
+  }
+
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -798,15 +829,8 @@ export class LeadRepository {
       const visitor = await this.findAuthenticatedVisitor(numCustomerId, user);
       // Lead ownership and historical assignments do not grant Visitor access.
       // Choose the newest visit before filtering its assignee/status.
-      const visits = visitor ? await this.prisma.visit.findMany({
-        where: { customerId: numCustomerId, leadId: { not: null } },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        distinct: ['leadId'],
-        select: { leadId: true, employeeId: true, status: true },
-      }) : [];
-      andConditions.push({ id: { in: visits.filter(v =>
-        v.employeeId === visitor?.id && ['SCHEDULED', 'IN_PROGRESS'].includes(v.status),
-      ).map(v => v.leadId!) } });
+      const leadIds = visitor ? await this.latestAssignedVisitLeadIds(numCustomerId, visitor.id) : [];
+      andConditions.push({ id: { in: leadIds.length ? leadIds : [-1] } });
     } else if (user && !isAdmin) {
       // Employee RBAC Isolation: Non-admin employees see leads assigned to them via employeeId/assignedToId,
       // or where a visit was scheduled by this employee.
@@ -842,6 +866,7 @@ export class LeadRepository {
     }
 
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
+    const pipelineFilters: any[] = [];
 
     {
       const stageId = options.stageId && options.stageId !== 'ALL' ? Number(options.stageId) : null;
@@ -851,7 +876,7 @@ export class LeadRepository {
         stage = await this.prisma.leadStage.findFirst({
           where: { id: stageId, deletedAt: null, OR: [{ customerId: numCustomerId }, { customerId: null }] },
         });
-        if (!stage) andConditions.push({ id: -1 });
+        if (!stage) pipelineFilters.push({ id: -1 });
       } else if (status) {
         const canonical = normalizeLeadStatus(status) === 'VISIT' ? 'VISIT_SCHEDULED' : normalizeLeadStatus(status);
         stage = await this.prisma.leadStage.findFirst({
@@ -865,16 +890,17 @@ export class LeadRepository {
         const canonical = normalizeLeadStatus(stage.key);
         // Explicit stage is authoritative. Legacy status is a fallback only
         // for records with no stageId, never an alternative to another stage.
-        andConditions.push({ OR: [
+        pipelineFilters.push({ OR: [
           { stageId: stage.id },
           ...(ALL_LEAD_STATUSES.includes(canonical) ? [{ stageId: null, status: canonical }] : []),
         ] });
       } else if (!stageId && status) {
         const canonical = normalizeLeadStatus(status) === 'VISIT' ? 'VISIT_SCHEDULED' : normalizeLeadStatus(status);
-        if (ALL_LEAD_STATUSES.includes(canonical)) andConditions.push({ stageId: null, status: canonical });
-        else andConditions.push({ id: -1 });
+        if (ALL_LEAD_STATUSES.includes(canonical)) pipelineFilters.push({ stageId: null, status: canonical });
+        else pipelineFilters.push({ id: -1 });
       }
     }
+    if (pipelineFilters.length) andConditions.push(...pipelineFilters);
 
     if (options.assignedToId && options.assignedToId !== 'ALL' && !isNaN(Number(options.assignedToId))) {
       const assignedId = Number(options.assignedToId);
@@ -948,6 +974,19 @@ export class LeadRepository {
 
     let data: any[] = [];
     let total = 0;
+    const startedAt = Date.now();
+    let stageCounts: Array<{ status: string | null; stageId: number | null; count: number }> | undefined;
+
+    if (options.includeCounts && typeof this.prisma.lead.groupBy === 'function') {
+      const countWhere = { ...where, AND: andConditions.filter((condition) => !pipelineFilters.includes(condition)) };
+      if (!countWhere.AND.length) delete countWhere.AND;
+      const grouped = await this.prisma.lead.groupBy({
+        by: ['status', 'stageId'],
+        where: countWhere,
+        _count: { _all: true },
+      });
+      stageCounts = grouped.map((row) => ({ status: row.status, stageId: row.stageId, count: row._count._all }));
+    }
 
     try {
       [data, total] = await Promise.all([
@@ -998,7 +1037,7 @@ export class LeadRepository {
 
     // Safe diagnostic log (Section 9)
     this.logger.log(
-      `[LEADS_FIND_ALL_DIAGNOSTIC] requestedEmployee=${user?.employee?.id ?? user?.employee?.employeeCode ?? user?.id ?? 'N/A'} companyId=${numCustomerId} role=${user?.role ?? 'N/A'} isAdmin=${isAdmin} totalResults=${total}`,
+      `[LEADS_FIND_ALL_DIAGNOSTIC] requestedEmployee=${user?.employee?.id ?? user?.employee?.employeeCode ?? user?.id ?? 'N/A'} companyId=${numCustomerId} role=${user?.role ?? 'N/A'} isAdmin=${isAdmin} totalResults=${total} page=${page} limit=${limit} ms=${Date.now() - startedAt}`,
     );
 
     if (Array.isArray(data) && data.length > 0) {
@@ -1014,6 +1053,7 @@ export class LeadRepository {
         page,
         limit,
         totalPages: Math.max(Math.ceil((Number(total) || 0) / limit), 1),
+        ...(stageCounts ? { counts: stageCounts, durationMs: Date.now() - startedAt } : { durationMs: Date.now() - startedAt }),
       },
     };
   }
@@ -1066,6 +1106,40 @@ export class LeadRepository {
     }
   }
 
+  private applyResolvedBusinessName(lead: any, matchingPlace: any) {
+    const isFake = (value: any) => !value || typeof value !== 'string' || ['business lead', 'direct lead', 'new lead', 'unnamed business', 'unknown business', 'placeholder lead', 'test lead', 'placeholder customer', 'test customer', '.'].includes(value.trim().toLowerCase());
+    const resolvedName = String(matchingPlace.businessName).trim();
+    const titleWasFake = isFake(lead.title);
+    const hadPhone = Boolean(lead.phone);
+    const hadWebsite = Boolean(lead.website);
+    const hadEmail = Boolean(lead.email);
+    const hadAddress = Boolean(lead.address);
+    lead.companyName = resolvedName;
+    lead.businessName = resolvedName;
+    lead.name = resolvedName;
+    if (titleWasFake) lead.title = resolvedName;
+    if (!hadPhone && matchingPlace.phone) lead.phone = matchingPlace.phone;
+    if (!hadWebsite && matchingPlace.website) lead.website = matchingPlace.website;
+    if (!hadEmail && matchingPlace.email) lead.email = matchingPlace.email;
+    if (!hadAddress && matchingPlace.address) lead.address = matchingPlace.address;
+    if (matchingPlace.source && matchingPlace.source !== 'GOOGLE_DISCOVERY') lead.source = matchingPlace.source;
+    else if (matchingPlace.googlePlaceId && (lead.source === 'GOOGLE_DISCOVERY' || !lead.source)) lead.source = 'GOOGLE_PLACES';
+    if (!lead.createdFrom) lead.createdFrom = 'MOBILE_APP';
+    this.prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        companyName: resolvedName,
+        ...(titleWasFake ? { title: resolvedName } : {}),
+        ...(!hadPhone && matchingPlace.phone ? { phone: matchingPlace.phone } : {}),
+        ...(!hadWebsite && matchingPlace.website ? { website: matchingPlace.website } : {}),
+        ...(!hadEmail && matchingPlace.email ? { email: matchingPlace.email } : {}),
+        ...(!hadAddress && matchingPlace.address ? { address: matchingPlace.address } : {}),
+        ...(lead.source ? { source: lead.source } : {}),
+        ...(lead.createdFrom ? { createdFrom: lead.createdFrom } : {}),
+      },
+    }).catch((error: any) => this.logger.error(`[LEAD_NAME_RESOLUTION_DB_ERROR] Failed to persist Lead ${lead.id}: ${error?.message || error}`));
+  }
+
   public async resolveMissingLeadBusinessNames(leads: any[]): Promise<void> {
     const isFake = (s: any) =>
       !s ||
@@ -1093,7 +1167,28 @@ export class LeadRepository {
 
     if (candidateLeads.length === 0) return;
 
+    const resolvedLeadIds = new Set<number>();
+    if (typeof this.prisma.dataCapturePlace?.findMany === 'function') {
+      try {
+        const customerIds = [...new Set(candidateLeads.map((lead) => Number(lead.customerId)).filter((id) => id > 0))];
+        const places = await this.prisma.dataCapturePlace.findMany({
+          where: { customerId: { in: customerIds }, importedLeadId: { in: candidateLeads.map((lead) => lead.id) }, deletedAt: null },
+          select: { importedLeadId: true, businessName: true, phone: true, email: true, website: true, address: true, googlePlaceId: true, source: true },
+        });
+        const leadsById = new Map(candidateLeads.map((lead) => [lead.id, lead]));
+        for (const place of places) {
+          const lead = leadsById.get(place.importedLeadId);
+          if (!lead || resolvedLeadIds.has(lead.id) || !place.businessName || isFake(place.businessName)) continue;
+          this.applyResolvedBusinessName(lead, place);
+          resolvedLeadIds.add(lead.id);
+        }
+      } catch (error: any) {
+        this.logger.warn(`Batched lead name lookup failed: ${error?.message || error}`);
+      }
+    }
+
     for (const lead of candidateLeads) {
+      if (resolvedLeadIds.has(lead.id)) continue;
       if (lead.source === 'Google Maps') continue;
       try {
         let matchingPlace: any = null;
@@ -1170,48 +1265,7 @@ export class LeadRepository {
         }
 
         if (matchingPlace && matchingPlace.businessName && !isFake(matchingPlace.businessName)) {
-          const resolvedName = matchingPlace.businessName.trim();
-          lead.companyName = resolvedName;
-          lead.businessName = resolvedName;
-          lead.name = resolvedName;
-          if (isFake(lead.title)) {
-            lead.title = resolvedName;
-          }
-          if (!lead.phone && matchingPlace.phone) lead.phone = matchingPlace.phone;
-          if (!lead.website && matchingPlace.website) lead.website = matchingPlace.website;
-          if (!lead.email && matchingPlace.email) lead.email = matchingPlace.email;
-          if (!lead.address && matchingPlace.address) lead.address = matchingPlace.address;
-
-          if (matchingPlace.source && matchingPlace.source !== 'GOOGLE_DISCOVERY') {
-            lead.source = matchingPlace.source;
-          } else if (matchingPlace.googlePlaceId && (lead.source === 'GOOGLE_DISCOVERY' || !lead.source)) {
-            lead.source = 'GOOGLE_PLACES';
-          }
-
-          if (!lead.createdFrom) {
-            lead.createdFrom = 'MOBILE_APP';
-          }
-
-          this.logger.log(`[LEAD_NAME_RESOLUTION_UPDATED] Lead ${lead.id} companyName updated to "${resolvedName}"`);
-
-          // Asynchronously update in PostgreSQL so database has real companyName
-          this.prisma.lead.update({
-            where: { id: lead.id },
-            data: {
-              companyName: resolvedName,
-              ...(isFake(lead.title) ? { title: resolvedName } : {}),
-              ...(!lead.phone && matchingPlace.phone ? { phone: matchingPlace.phone } : {}),
-              ...(!lead.website && matchingPlace.website ? { website: matchingPlace.website } : {}),
-              ...(!lead.email && matchingPlace.email ? { email: matchingPlace.email } : {}),
-              ...(!lead.address && matchingPlace.address ? { address: matchingPlace.address } : {}),
-              ...(lead.source ? { source: lead.source } : {}),
-              ...(lead.createdFrom ? { createdFrom: lead.createdFrom as any } : {}),
-            },
-          }).then(() => {
-            this.logger.log(`[LEAD_NAME_RESOLUTION_DB_UPDATED] Lead ${lead.id} persisted to database`);
-          }).catch((err: any) => {
-            this.logger.error(`[LEAD_NAME_RESOLUTION_DB_ERROR] Failed to persist Lead ${lead.id}: ${err?.message || err}`);
-          });
+          this.applyResolvedBusinessName(lead, matchingPlace);
         } else if (matchingPlace && !matchingPlace.businessName) {
           this.logger.warn(`[LEAD_NAME_RESOLUTION_EMPTY_PLACE] Lead ${lead.id} matched DataCapturePlace but it has empty businessName`);
         }
@@ -2747,6 +2801,56 @@ export class LeadRepository {
   }
 
   /**
+   * The configured catalog has 12 stages. Tenants that already show the other
+   * 11 keep those rows; Call Back is the catalog entry they do not have.
+   * A soft-deleted row at the open sort position is restored instead.
+   */
+  async restoreMissingLeadStage(customerId: number | null) {
+    if (typeof this.prisma.leadStage?.findMany !== 'function' || typeof this.prisma.leadStage?.create !== 'function') return;
+    const rows = await this.prisma.leadStage.findMany({ where: { customerId } });
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    const active = rows.filter((stage) => !stage.deletedAt);
+    if (active.length === 0) return;
+    const used = new Set(active.map((stage) => Number(stage.sortOrder)));
+    let gap = 1;
+    while (used.has(gap)) gap += 1;
+
+    const deletedAtGap = rows.find((stage) => stage.deletedAt && Number(stage.sortOrder) === gap);
+    const callBack = rows.find((stage) => String(stage.key || '').toUpperCase().replace(/[\s-]+/g, '_') === 'CALL_BACK');
+    const hidden = deletedAtGap || (callBack?.deletedAt ? callBack : null);
+    if (hidden && typeof this.prisma.leadStage.update === 'function') {
+      const orderTaken = active.some((stage) => stage.id !== hidden.id && Number(stage.sortOrder) === Number(hidden.sortOrder));
+      await this.prisma.leadStage.update({
+        where: { id: hidden.id },
+        data: { deletedAt: null, isActive: true, ...(orderTaken ? { sortOrder: gap } : {}) },
+      });
+      return;
+    }
+    if (callBack) return;
+
+    const known = new Set(active.map((stage) => String(stage.key || '').toUpperCase()));
+    const hasEleven = ['NEW', 'CONTACTED', 'FOLLOW_UP', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST'].every((key) => known.has(key))
+      && (known.has('DETAILS_SEND') || known.has('DETAILS_SENT'))
+      && (known.has('VISIT_SCHEDULED') || known.has('VISIT'));
+    if (!hasEleven) return;
+
+    await this.prisma.leadStage.create({
+      data: {
+        customerId,
+        name: 'Call Back',
+        key: 'CALL_BACK',
+        sortOrder: gap,
+        color: '#8B5CF6',
+        bgColor: '#F3E8FF',
+        borderColor: '#E9D5FF',
+        isActive: true,
+        isSystem: true,
+      },
+    });
+  }
+
+  /**
    * Seed the 12 default lead stages for a customer if they don't already have any.
    * Idempotent — safe to call multiple times.
    */
@@ -2772,7 +2876,7 @@ export class LeadRepository {
         })
       : 0;
 
-    if (existingCount > 0) return; // Already has stages — don't overwrite
+    if (existingCount > 0) return; // Already has stages — missing entries are restored separately
     if (typeof this.prisma.leadStage?.upsert !== 'function') return;
 
     // Load available default templates to associate

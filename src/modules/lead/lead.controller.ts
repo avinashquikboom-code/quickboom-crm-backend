@@ -172,12 +172,14 @@ export class LeadController {
     @Query('followUps') followUps?: string,
     @Query('captureJobId') captureJobId?: string,
     @Query('leadId') leadId?: string,
+    @Query('includeCounts') includeCounts?: string,
   ) {
     return this.leadService.getLeads(
       customerId,
       {
         page: page ? Number(page) : 1,
         limit: limit ? Number(limit) : 50,
+        includeCounts: includeCounts === 'true',
         search,
         status,
         stageId,

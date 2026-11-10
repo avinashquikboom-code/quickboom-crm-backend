@@ -1201,6 +1201,7 @@ export class LeadService {
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
     try {
       await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
+      await this.leadRepository.restoreMissingLeadStage(numCustomerId);
     } catch (err) {
       console.warn('[LeadService] ensureDefaultStagesForCustomer failed (non-fatal):', err);
     }
@@ -1269,7 +1270,7 @@ export class LeadService {
     return this.leadRepository.deleteStage(id);
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
 
