@@ -819,7 +819,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -937,6 +937,10 @@ export class LeadRepository {
 
     if (options.priority && options.priority.toUpperCase() !== 'ALL') {
       where.priority = options.priority.trim().toUpperCase();
+    }
+
+    if (options.category && options.category.trim() && options.category.toUpperCase() !== 'ALL') {
+      where.category = { equals: options.category.trim(), mode: 'insensitive' };
     }
 
     if (options.source && options.source.toUpperCase() !== 'ALL') {
@@ -1102,8 +1106,23 @@ export class LeadRepository {
     return names;
   }
 
+  private photoList(photosField: any): any[] {
+    if (!photosField) return [];
+    if (Array.isArray(photosField)) return photosField;
+    if (typeof photosField === 'string') {
+      try {
+        return this.photoList(JSON.parse(photosField));
+      } catch {
+        return [photosField];
+      }
+    }
+    if (Array.isArray(photosField.googlePhotos)) return photosField.googlePhotos;
+    if (Array.isArray(photosField.photos)) return photosField.photos;
+    return [];
+  }
+
   private photoProxyUrls(photosField: any): Array<{ url: string; attributions: string[] }> {
-    const list = Array.isArray(photosField) ? photosField : [];
+    const list = this.photoList(photosField);
     const photos: Array<{ url: string; attributions: string[] }> = [];
     const add = (value: string, attributions: string[] = []) => {
       const raw = value.trim();
@@ -1163,8 +1182,10 @@ export class LeadRepository {
     }
     for (const lead of leads) {
       const sameCustomer = (place: { customerId?: number | null }) => !lead.customerId || Number(place.customerId) === Number(lead.customerId);
-      const match = places.find((place) => sameCustomer(place) && Number(place.importedLeadId) === Number(lead.id))
-        || places.find((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
+      const owned = places.filter((place) => sameCustomer(place) && Number(place.importedLeadId) === Number(lead.id));
+      const samePlace = places.filter((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
+      const ranked = [...owned, ...samePlace.filter((place) => !owned.includes(place))];
+      const match = ranked.find((place) => this.photoProxyUrls(place.photos).length) || ranked[0];
       lead.placePhotos = match ? this.photoProxyUrls(match.photos) : [];
     }
   }

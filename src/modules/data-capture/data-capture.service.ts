@@ -1092,6 +1092,38 @@ export class DataCaptureService implements OnModuleInit {
     });
   }
 
+  private persistablePhotoUrls(photosField: any): string[] {
+    const { googlePhotos } = this.normalizeStoredPhotos(photosField);
+    const urls: string[] = [];
+    for (const photo of googlePhotos) {
+      const name = String(photo?.name || '');
+      const url = String(photo?.url || '');
+      if (/^places\/[^/]+\/photos\/(?!\d{1,3}$)[^/?&]+$/.test(name)) {
+        urls.push(`/api/v1/data-capture/photo?ref=${encodeURIComponent(name)}`);
+      } else if (url.startsWith('/api/v1/data-capture/photo')) {
+        urls.push(url);
+      }
+    }
+    return [...new Set(urls)];
+  }
+
+  private async copyCapturePhotosToLead(tx: any, leadId: number, photosField: any) {
+    if (!leadId || typeof tx.leadImage?.create !== 'function') return;
+    const urls = this.persistablePhotoUrls(photosField);
+    if (!urls.length) return;
+    const existing = typeof tx.leadImage.findMany === 'function'
+      ? await tx.leadImage.findMany({ where: { leadId }, select: { url: true } })
+      : [];
+    const saved = new Set((existing || []).map((row: { url?: string }) => row.url));
+    for (const url of urls) {
+      if (saved.has(url)) continue;
+      await tx.leadImage.create({
+        data: { leadId, url, isPrimary: saved.size === 0, caption: 'Google Maps' },
+      });
+      saved.add(url);
+    }
+  }
+
   private addressParts(components: any[] = []) {
     const pick = (...types: string[]) => {
       const match = components.find((component) => types.some((type) => (component?.types || []).includes(type)));
@@ -2330,6 +2362,7 @@ export class DataCaptureService implements OnModuleInit {
               isImported: true, importedLeadId: matchedLead.id,
               status: currentPlace?.importedLeadId === matchedLead.id && currentPlace?.status === 'LEAD_CREATED' ? 'LEAD_CREATED' : 'DUPLICATE',
             } });
+            await this.copyCapturePhotosToLead(tx, matchedLead.id, dbPlace.photos);
             return { ...matchedLead, alreadyExists: true };
           }
           // Resolve initial stage: 'NEW'
@@ -2464,6 +2497,7 @@ export class DataCaptureService implements OnModuleInit {
             });
           }
 
+          await this.copyCapturePhotosToLead(tx, created.id, dbPlace.photos);
           return created;
         },
         { timeout: 15000, maxWait: 15000 },
