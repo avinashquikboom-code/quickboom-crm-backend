@@ -166,12 +166,14 @@ export class MetaTemplateService {
       ],
     };
 
-    const [totalAll, totalActive, totalApproved, totalPending, totalRejected] = await Promise.all([
+    const [totalAll, totalActive, totalApproved, totalPending, totalRejected, totalPaused, totalDisabled] = await Promise.all([
       this.prisma.metaTemplate.count({ where: baseStatsWhere }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, isLocalActive: true } }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'APPROVED' } }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'PENDING' } }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'REJECTED' } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'PAUSED' } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: { in: ['DISABLED', 'DISABLED_BY_META'] } } }),
     ]);
 
     const formattedItems = items.map((t) => ({
@@ -197,6 +199,8 @@ export class MetaTemplateService {
         approved: totalApproved,
         pending: totalPending,
         rejected: totalRejected,
+        paused: totalPaused,
+        disabled: totalDisabled,
       },
     };
   }
@@ -216,12 +220,14 @@ export class MetaTemplateService {
       ],
     };
 
-    const [totalAll, totalActive, totalApproved, totalPending, totalRejected] = await Promise.all([
+    const [totalAll, totalActive, totalApproved, totalPending, totalRejected, totalPaused, totalDisabled] = await Promise.all([
       this.prisma.metaTemplate.count({ where: baseStatsWhere }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, isLocalActive: true } }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'APPROVED' } }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'PENDING' } }),
       this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'REJECTED' } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: 'PAUSED' } }),
+      this.prisma.metaTemplate.count({ where: { ...baseStatsWhere, status: { in: ['DISABLED', 'DISABLED_BY_META'] } } }),
     ]);
 
     const stats = {
@@ -230,6 +236,8 @@ export class MetaTemplateService {
       approved: totalApproved,
       pending: totalPending,
       rejected: totalRejected,
+      paused: totalPaused,
+      disabled: totalDisabled,
       inactive: Math.max(0, totalAll - totalActive),
     };
 
@@ -450,6 +458,10 @@ export class MetaTemplateService {
     const wabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
     const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
 
+    if (config && config.isEnabled === false) {
+      throw new BadRequestException('The WhatsApp integration is disabled. Enable it in Settings → Integrations → WhatsApp before syncing templates.');
+    }
+
     if (!apiKey) {
       throw new BadRequestException(
         'WhatsApp / Meta integration is not configured. Please configure Access Token in Settings → Integrations → WhatsApp.',
@@ -459,7 +471,8 @@ export class MetaTemplateService {
     let resolvedWabaId = wabaId;
     if (!resolvedWabaId && phoneNumberId) {
       try {
-        const phoneLookup = await axios.get(`https://graph.facebook.com/v21.0/${phoneNumberId}?fields=whatsapp_business_account`, {
+        const lookupVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
+        const phoneLookup = await axios.get(`https://graph.facebook.com/${lookupVersion}/${phoneNumberId}?fields=whatsapp_business_account`, {
           headers: { Authorization: `Bearer ${apiKey}` },
           timeout: 10000,
         });
@@ -476,10 +489,11 @@ export class MetaTemplateService {
       );
     }
 
+    const apiVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
     this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for account: ${targetAccount}`);
 
     let metaTemplates: any[] = [];
-    let nextUrl = `https://graph.facebook.com/v21.0/${targetAccount}/message_templates?limit=100`;
+    let nextUrl = `https://graph.facebook.com/${apiVersion}/${targetAccount}/message_templates?limit=100&fields=id,name,language,status,category,components,rejected_reason`;
     try {
       while (nextUrl) {
         const response = await axios.get(nextUrl, {
@@ -503,6 +517,7 @@ export class MetaTemplateService {
     let syncedCount = 0;
     let createdCount = 0;
     let updatedCount = 0;
+    let unchangedCount = 0;
     const failed: Array<{ name: string; reason: string }> = [];
     const scope = {
       deletedAt: null,
@@ -545,22 +560,32 @@ export class MetaTemplateService {
 
       try {
       if (existing) {
+        const nextMetaId = mt.id ? String(mt.id) : existing.metaTemplateId;
+        const unchanged = existing.status === status
+          && existing.language === language
+          && existing.category === category
+          && String(existing.metaTemplateId || '') === String(nextMetaId || '')
+          && existing.body === (bodyText || existing.body)
+          && (existing.rejectionReason || null) === (mt.rejected_reason || null);
         await this.prisma.metaTemplate.update({
           where: { id: existing.id },
           data: {
             status,
             language,
-            metaTemplateId: mt.id ? String(mt.id) : existing.metaTemplateId,
+            category,
+            metaTemplateId: nextMetaId,
             body: bodyText || existing.body,
             headerType,
             headerContent: headerContent || existing.headerContent,
             footer: footerText || existing.footer,
             buttons: buttonsList.length > 0 ? buttonsList : (existing.buttons as any),
+            variables: variables.length > 0 ? variables : existing.variables,
             rejectionReason: mt.rejected_reason || null,
             lastSyncedAt: new Date(),
           },
         });
-        updatedCount++;
+        if (unchanged) unchangedCount++;
+        else updatedCount++;
       } else {
         await this.prisma.metaTemplate.create({
           data: {
@@ -597,6 +622,7 @@ export class MetaTemplateService {
       fetched: metaTemplates.length,
       created: createdCount,
       updated: updatedCount,
+      unchanged: unchangedCount,
       approved: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'APPROVED').length,
       pending: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'PENDING').length,
       rejected: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'REJECTED').length,
