@@ -27,7 +27,7 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
  */
 @ApiTags('Mobile - Employee Visits')
 @ApiBearerAuth()
-@CrmCategory('VISITOR')
+@CrmCategory('BPO', 'VISITOR')
 @UseGuards(JwtAuthGuard, CustomerGuard, CrmEmployeeAccessGuard)
 @Controller('mobile/visits')
 export class MobileVisitController {

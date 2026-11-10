@@ -99,6 +99,29 @@ describe('CrmEmployeeAccessGuard', () => {
     await expect(guard.canActivate(contextFor({ id: 4, role: 'EMPLOYEE' }, 'POST'))).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('allows BPO and Visitor employees on field visit routes', async () => {
+    reflector.getAllAndOverride.mockReturnValue(['BPO', 'VISITOR']);
+    prisma.employee.findFirst.mockResolvedValue({
+      id: 16,
+      status: 'ACTIVE',
+      department: { name: 'BPO Call Center', code: 'BPO' },
+      designation: { name: 'Lead Visitor', code: 'LEAD_VISITOR' },
+      teamMembers: [],
+      ledTeams: [],
+    });
+    await expect(guard.canActivate(contextFor({ id: 16, role: 'EMPLOYEE' }))).resolves.toBe(true);
+
+    prisma.employee.findFirst.mockResolvedValue({
+      id: 9,
+      status: 'ACTIVE',
+      department: { name: 'BPO', code: 'BPO' },
+      designation: { name: 'BPO Executive', code: 'BPO' },
+      teamMembers: [],
+      ledTeams: [],
+    });
+    await expect(guard.canActivate(contextFor({ id: 3, role: 'EMPLOYEE' }))).resolves.toBe(true);
+  });
+
   it('returns 403 when a BPO employee calls a Visitor-only API', async () => {
     reflector.getAllAndOverride.mockReturnValue(['VISITOR']);
     prisma.employee.findFirst.mockResolvedValue({
