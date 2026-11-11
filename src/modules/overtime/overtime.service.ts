@@ -174,6 +174,7 @@ export class OvertimeService {
       approved: approved.length,
       rejected: rows.filter((row) => row.status === 'REJECTED').length,
       cancelled: rows.filter((row) => row.status === 'CANCELLED').length,
+      cancellationRequested: rows.filter((row) => row.status === 'CANCELLATION_REQUESTED').length,
       totalRequestedHours: Math.round((sum(rows, 'totalMinutes') / 60) * 100) / 100,
       totalApprovedHours: Math.round((sum(approved, 'approvedMinutes') / 60) * 100) / 100,
       compensationAmount: Math.round(sum(approved, 'calculatedAmount') * 100) / 100,
@@ -344,6 +345,7 @@ export class OvertimeService {
 
   async start(user: any, customerId: number | string | undefined, id: number) {
     const row = await this.loadOwned(user, customerId, id);
+    if (row.status === 'CANCELLATION_REQUESTED') throw new BadRequestException('Overtime cannot be marked while a cancellation request is waiting for admin review.');
     if (row.status !== 'APPROVED') throw new BadRequestException('Overtime can start only after admin approval.');
     if (row.actualStartAt) throw new ConflictException('Overtime has already started.');
     const now = new Date();
@@ -380,13 +382,16 @@ export class OvertimeService {
     if (this.isEmployee(user) && current.employeeId !== (await this.ownEmployeeId(user, numCustomerId))) {
       throw new ForbiddenException('You can cancel only your own overtime request.');
     }
-    if (!['PENDING', 'APPROVED'].includes(current.status) || ['PROCESSED', 'PAID'].includes(current.payrollStatus)) {
+    if (current.status === 'APPROVED' && this.isEmployee(user)) {
+      return this.requestCancellation(user, numCustomerId, id, dto);
+    }
+    if (current.status !== 'PENDING' || ['PROCESSED', 'PAID'].includes(current.payrollStatus)) {
       throw new ConflictException('This overtime request can no longer be cancelled.');
     }
     const actor = this.actor(user);
     const updatedCount = await this.prisma.overtimeRequest.updateMany({
       where: { id, customerId: numCustomerId, status: current.status, payrollStatus: { notIn: ['PROCESSED', 'PAID'] } },
-      data: { status: 'CANCELLED', managerNotes: dto.managerNotes?.trim() || current.managerNotes, payrollStatus: 'NOT_PROCESSED', calculatedAmount: current.status === 'APPROVED' ? current.calculatedAmount : null },
+      data: { status: 'CANCELLED', managerNotes: dto.managerNotes?.trim() || current.managerNotes, payrollStatus: 'NOT_PROCESSED', calculatedAmount: null },
     });
     if (updatedCount.count !== 1) throw new ConflictException('This overtime request was updated by someone else.');
     await this.prisma.overtimeApproval.create({
@@ -394,6 +399,84 @@ export class OvertimeService {
     });
     await this.audit(this.prisma, numCustomerId, user, 'CANCEL', id, 'Overtime request cancelled');
     return this.findOne(user, numCustomerId, id);
+  }
+
+  async requestCancellation(user: any, customerId: number | string | undefined, id: number, dto: CancelOvertimeDto = {}) {
+    const reason = dto.reason?.trim() || '';
+    if (!reason) throw new BadRequestException('A cancellation reason is required.');
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const current = await this.loadOwned(user, numCustomerId, id);
+    if (!this.isEmployee(user) || current.employeeId !== (await this.ownEmployeeId(user, numCustomerId))) {
+      throw new ForbiddenException('You can cancel only your own overtime request.');
+    }
+    if (current.status === 'CANCELLATION_REQUESTED') throw new ConflictException('A cancellation request is already waiting for admin review.');
+    if (current.status !== 'APPROVED' || current.actualStartAt || current.actualEndAt) {
+      throw new ConflictException('Only approved overtime that has not started can be cancelled.');
+    }
+    if (new Date().getTime() >= new Date(current.startAt).getTime()) {
+      throw new ConflictException('Overtime that has already started cannot be cancelled.');
+    }
+    const actor = this.actor(user);
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.overtimeRequest.updateMany({
+        where: { id, customerId: numCustomerId, status: 'APPROVED', actualStartAt: null, deletedAt: null },
+        data: {
+          status: 'CANCELLATION_REQUESTED',
+          cancellationReason: reason,
+          cancellationRemarks: dto.remarks?.trim() || null,
+          cancellationRequestedAt: new Date(),
+          cancellationDecision: null,
+          cancellationDecisionNotes: null,
+          cancellationDecidedAt: null,
+          cancellationDecidedById: null,
+          cancellationDecidedByName: null,
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('This overtime request can no longer be cancelled.');
+      await tx.overtimeApproval.create({
+        data: { customerId: numCustomerId, overtimeRequestId: id, action: 'REQUEST_CANCELLATION', fromStatus: 'APPROVED', toStatus: 'CANCELLATION_REQUESTED', actorId: actor.id, actorName: actor.name, notes: reason },
+      });
+      const row = await tx.overtimeRequest.findFirst({ where: { id }, include: requestInclude });
+      const admins = await this.adminUserIds(tx, numCustomerId);
+      await this.notify(tx, numCustomerId, admins, 'Overtime cancellation requested', `${row?.employee ? `${row.employee.firstName} ${row.employee.lastName}`.trim() : 'An employee'} asked to cancel approved overtime on ${String(row?.overtimeDate || '').slice(0, 10)}. Reason: ${reason}`, 'OVERTIME_CANCELLATION_REQUESTED', { overtimeRequestId: id });
+      return this.present(row, await this.rules(numCustomerId));
+    });
+  }
+
+  async decideCancellation(user: any, customerId: number | string | undefined, id: number, dto: { decision: 'APPROVE' | 'REJECT'; remarks?: string }) {
+    this.assertReviewer(user);
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const actor = this.actor(user);
+    const approve = dto.decision === 'APPROVE';
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.overtimeRequest.findFirst({ where: { id, customerId: numCustomerId, deletedAt: null }, include: requestInclude });
+      if (!current) throw new NotFoundException('Overtime request was not found.');
+      if (current.status !== 'CANCELLATION_REQUESTED') throw new ConflictException('This overtime request is not waiting for a cancellation decision.');
+      const updated = await tx.overtimeRequest.updateMany({
+        where: { id, customerId: numCustomerId, status: 'CANCELLATION_REQUESTED', deletedAt: null },
+        data: {
+          status: approve ? 'CANCELLED' : 'APPROVED',
+          payrollStatus: approve ? 'NOT_PROCESSED' : current.payrollStatus,
+          calculatedAmount: approve ? null : current.calculatedAmount,
+          cancellationDecision: approve ? 'APPROVED' : 'REJECTED',
+          cancellationDecisionNotes: dto.remarks?.trim() || null,
+          cancellationDecidedAt: new Date(),
+          cancellationDecidedById: actor.id,
+          cancellationDecidedByName: actor.name,
+        },
+      });
+      if (updated.count !== 1) throw new ConflictException('This cancellation request was already reviewed.');
+      await tx.overtimeApproval.create({
+        data: { customerId: numCustomerId, overtimeRequestId: id, action: approve ? 'APPROVE_CANCELLATION' : 'REJECT_CANCELLATION', fromStatus: 'CANCELLATION_REQUESTED', toStatus: approve ? 'CANCELLED' : 'APPROVED', actorId: actor.id, actorName: actor.name, notes: dto.remarks?.trim() || null },
+      });
+      const row = await tx.overtimeRequest.findFirst({ where: { id }, include: requestInclude });
+      if (row?.employee?.userId) {
+        await this.notify(tx, numCustomerId, [row.employee.userId], approve ? 'Overtime cancellation approved' : 'Overtime cancellation rejected', approve
+          ? `Your overtime on ${String(row.overtimeDate).slice(0, 10)} is cancelled.`
+          : `Your overtime on ${String(row.overtimeDate).slice(0, 10)} stays approved.${dto.remarks?.trim() ? ` ${dto.remarks.trim()}` : ''}`, approve ? 'OVERTIME_CANCELLATION_APPROVED' : 'OVERTIME_CANCELLATION_REJECTED', { overtimeRequestId: id });
+      }
+      return this.present(row, await this.rules(numCustomerId));
+    });
   }
 
   private async whereFor(user: any, customerId: number, query: OvertimeQueryDto): Promise<Prisma.OvertimeRequestWhereInput> {
@@ -480,7 +563,7 @@ export class OvertimeService {
     const day = overtimeWindow(date, '00:00', '23:59');
     const week = weekBounds(date);
     const existing = await this.prisma.overtimeRequest.findMany({
-      where: { customerId, employeeId, deletedAt: null, status: { in: ['PENDING', 'APPROVED'] }, overtimeDate: { gte: week.start, lte: week.end } },
+      where: { customerId, employeeId, deletedAt: null, status: { in: ['PENDING', 'APPROVED', 'CANCELLATION_REQUESTED'] }, overtimeDate: { gte: week.start, lte: week.end } },
       select: { startAt: true, endAt: true, totalMinutes: true, overtimeDate: true },
     });
     if (existing.some((row) => rangesOverlap(startAt, new Date(startAt.getTime() + minutes * 60000), row.startAt, row.endAt))) {
@@ -526,7 +609,7 @@ export class OvertimeService {
       requestedHours: Math.round((row.totalMinutes / 60) * 100) / 100,
       approvedHours: row.approvedMinutes ? Math.round((row.approvedMinutes / 60) * 100) / 100 : null,
       actualHours: row.actualMinutes ? Math.round((row.actualMinutes / 60) * 100) / 100 : null,
-      sessionStatus: row.actualEndAt ? 'COMPLETED' : row.actualStartAt ? 'IN_PROGRESS' : row.status,
+      sessionStatus: row.actualEndAt ? 'COMPLETED' : row.actualStartAt ? 'IN_PROGRESS' : row.status === 'APPROVED' && row.cancellationDecision === 'REJECTED' ? 'CANCELLATION_REJECTED' : row.status,
       estimatedAmount,
       compensation: {
         hourlyRate: Math.round(hourlyRate * 100) / 100,
@@ -535,6 +618,22 @@ export class OvertimeService {
         method: rules.overtimeCalculationMethod,
       },
     };
+  }
+
+  private async adminUserIds(db: any, customerId: number) {
+    if (!db.user?.findMany) return [];
+    const rows = await db.user.findMany({
+      where: { customerId, deletedAt: null, isActive: true, userRoles: { some: { role: { name: { in: ['ADMIN', 'COMPANY_ADMIN', 'HR', 'HR_MANAGER', 'SUPER_ADMIN'] } } } } },
+      select: { id: true },
+    }).catch(() => []);
+    return rows.map((row: { id: number }) => row.id);
+  }
+
+  private async notify(db: any, customerId: number, userIds: number[], title: string, message: string, type: string, data: Record<string, unknown>) {
+    if (!db.notification?.create) return;
+    for (const userId of [...new Set(userIds)].filter((id) => id > 0)) {
+      await db.notification.create({ data: { customerId, userId, title, message, type, data } }).catch(() => undefined);
+    }
   }
 
   private async audit(db: any, customerId: number, user: any, action: string, id: number, description: string) {

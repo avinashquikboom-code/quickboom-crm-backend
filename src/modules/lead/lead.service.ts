@@ -1213,6 +1213,10 @@ export class LeadService {
       return [];
     }
 
+    const legacyCounts = !user || isUserAdmin(user)
+      ? await this.leadRepository.unassignedStatusCounts(customerId)
+      : {};
+
     return dbStages
       .map((stage: any) => ({
         id: stage.id,
@@ -1225,7 +1229,7 @@ export class LeadService {
         sortOrder: stage.sortOrder,
         isActive: stage.isActive,
         isSystem: stage.isSystem ?? false,
-        leadsCount: stage._count?.leads ?? 0,
+        leadsCount: (stage._count?.leads ?? 0) + (legacyCounts[stage.key] || 0),
         emailEnabled: stage.emailEnabled !== undefined ? Boolean(stage.emailEnabled) : true,
         emailTemplateId: stage.emailTemplateId ?? null,
         emailTemplate: stage.emailTemplate ?? null,
@@ -1260,13 +1264,33 @@ export class LeadService {
     if (!stage) {
       throw new NotFoundException(`Stage with ID ${id} not found`);
     }
-    const leadCount = await this.leadRepository.countLeadsForStage(id, stage.key);
+    if (stage.customerId != null && Number(stage.customerId) !== Number(customerId)) {
+      throw new ForbiddenException('This stage belongs to another workspace.');
+    }
+    const leadCount = await this.leadRepository.countLeadsForStage(id, stage.key, customerId);
     if (leadCount > 0) {
       throw new BadRequestException(
-        `Cannot delete stage "${stage.name}" because it is currently assigned to ${leadCount} lead(s). Please reassign existing leads or deactivate the stage instead.`,
+        `Cannot delete stage "${stage.name}" because it is currently assigned to ${leadCount} lead(s). Reassign those leads to another lead stage, or deactivate this stage. Leads are not deleted.`,
       );
     }
+    if (stage.customerId == null) {
+      throw new BadRequestException(`"${stage.name}" is a shared default stage. Deactivate it instead of deleting it.`);
+    }
     return this.leadRepository.deleteStage(id);
+  }
+
+  async reassignAndDeleteStage(customerId: number | string | undefined, id: number | string, targetStageId: number | string) {
+    const tenantId = Number(customerId);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) throw new BadRequestException('A workspace is required.');
+    const target = Number(targetStageId);
+    if (!Number.isInteger(target) || target <= 0) throw new BadRequestException('Choose a lead stage to receive the existing leads.');
+    try {
+      const result = await this.leadRepository.reassignAndDeleteStage(tenantId, id, target);
+      return Array.isArray(result) ? result[1] : result;
+    } catch (error: any) {
+      if (error?.status) throw error;
+      throw new BadRequestException(error?.message || 'The stage could not be reassigned.');
+    }
   }
 
   async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; category?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean }, user?: any) {

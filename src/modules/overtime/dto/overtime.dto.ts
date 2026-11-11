@@ -3,7 +3,7 @@ import { Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 const TYPES = ['REGULAR', 'WEEKEND', 'HOLIDAY', 'NIGHT_SHIFT', 'BEFORE_SHIFT', 'AFTER_SHIFT'];
-const STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'IN_PROGRESS', 'COMPLETED'];
+const STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'CANCELLATION_REQUESTED', 'IN_PROGRESS', 'COMPLETED'];
 const PAYROLL = ['NOT_PROCESSED', 'READY_FOR_PAYROLL', 'PROCESSED', 'PAID'];
 
 export class CreateOvertimeDto {
@@ -81,6 +81,27 @@ export class CancelOvertimeDto {
   @IsOptional()
   @IsString()
   managerNotes?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  remarks?: string;
+}
+
+export class CancellationDecisionDto {
+  @ApiProperty({ enum: ['APPROVE', 'REJECT'] })
+  @IsIn(['APPROVE', 'REJECT'])
+  decision: 'APPROVE' | 'REJECT';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  remarks?: string;
 }
 
 export class OvertimeQueryDto {

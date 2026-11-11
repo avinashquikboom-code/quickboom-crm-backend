@@ -1732,6 +1732,14 @@ model OvertimeRequest {
   payrollStatus    OvertimePayrollStatus   @default(NOT_PROCESSED)
   payrollId        Int?
   payrollItemId    Int?
+  cancellationReason        String?
+  cancellationRemarks       String?
+  cancellationRequestedAt   DateTime?
+  cancellationDecision      String?
+  cancellationDecisionNotes String?
+  cancellationDecidedAt     DateTime?
+  cancellationDecidedById   Int?
+  cancellationDecidedByName String?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
   deletedAt        DateTime?
@@ -2460,6 +2468,7 @@ enum OvertimeApprovalStatus {
   APPROVED
   REJECTED
   CANCELLED
+  CANCELLATION_REQUESTED
 }
 
 enum OvertimePayrollStatus {

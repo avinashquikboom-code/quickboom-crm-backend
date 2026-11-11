@@ -7,6 +7,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OvertimeService } from './overtime.service';
 import {
   ApproveOvertimeDto,
+  CancellationDecisionDto,
   CancelOvertimeDto,
   CreateOvertimeDto,
   OvertimeQueryDto,
@@ -106,6 +107,28 @@ export class OvertimeController {
     @Body() dto: RejectOvertimeDto,
   ) {
     return this.overtimeService.reject(user, customerId, id, dto);
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({ summary: 'Employee requests cancellation of an approved overtime window' })
+  requestCancellation(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancelOvertimeDto,
+  ) {
+    return this.overtimeService.requestCancellation(user, customerId, id, dto);
+  }
+
+  @Patch(':id/cancellation-decision')
+  @ApiOperation({ summary: 'Approve or reject an employee overtime cancellation request' })
+  decideCancellation(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancellationDecisionDto,
+  ) {
+    return this.overtimeService.decideCancellation(user, customerId, id, dto);
   }
 
   @Patch(':id/cancel')
