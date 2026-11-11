@@ -14,10 +14,12 @@ describe('OvertimeService', () => {
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
 
+  let prisma: any;
+
   beforeEach(async () => {
     tx.overtimeRequest.findFirst.mockReset();
     tx.overtimeRequest.updateMany.mockReset();
-    const prisma = {
+    prisma = {
       overtimePolicy: { findUnique: jest.fn().mockResolvedValue(null) },
       salaryPolicy: { findFirst: jest.fn().mockResolvedValue({ overtimeMultiplier: 1.5, workingDaysPerMonth: 30, overtimeCalculationMethod: 'HOURLY_BASE', overtimeEnabled: true }) },
       employee: { findFirst: jest.fn().mockResolvedValue({ id: 9, customerId: 3, shiftId: 1, employeeType: 'FULL_TIME', shift: { id: 1, startTime: '10:00', endTime: '18:00' } }) },
@@ -62,6 +64,20 @@ describe('OvertimeService', () => {
       overtimeType: 'BEFORE_SHIFT',
       reason: 'Coverage',
     }, true)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('uses the company active shift when the employee has no assigned shift', async () => {
+    prisma.employee.findFirst.mockResolvedValue({ id: 9, customerId: 3, shiftId: null, employeeType: 'FULL_TIME', shift: null });
+    prisma.shift.findFirst.mockResolvedValue({ id: 4, startTime: '10:00', endTime: '18:00' });
+    const later = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const date = later.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    await expect(service.create({ role: 'EMPLOYEE', employee: { id: 9 } }, 3, {
+      overtimeDate: date,
+      startTime: '11:00',
+      endTime: '12:00',
+      overtimeType: 'BEFORE_SHIFT',
+      reason: 'Coverage',
+    }, true)).rejects.toThrow('Before-shift overtime must finish when the shift starts');
   });
 
   it('rejects before-shift overtime that overlaps the regular shift', async () => {

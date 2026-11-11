@@ -211,11 +211,19 @@ export class OvertimeService {
     if (rules.applicableEmployeeTypes.length && !rules.applicableEmployeeTypes.includes(employee.employeeType)) {
       throw new BadRequestException('This employee type is not eligible for overtime.');
     }
-    const shiftId = dto.shiftId ? Number(dto.shiftId) : employee.shiftId;
-    const shift = shiftId
-      ? await this.prisma.shift.findFirst({ where: { id: shiftId, customerId: numCustomerId, deletedAt: null } })
+    const requestedShiftId = dto.shiftId ? Number(dto.shiftId) : employee.shiftId;
+    let shift = requestedShiftId
+      ? await this.prisma.shift.findFirst({ where: { id: requestedShiftId, customerId: numCustomerId, deletedAt: null } })
       : employee.shift;
-    if (shiftId && !shift) throw new BadRequestException('Shift does not belong to this company.');
+    if (requestedShiftId && !shift) throw new BadRequestException('Shift does not belong to this company.');
+    // Attendance shows the company's active shift when the employee has none. Use that same shift here.
+    if (!shift?.startTime || !shift?.endTime) {
+      shift = await this.prisma.shift.findFirst({
+        where: { customerId: numCustomerId, status: 'ACTIVE', deletedAt: null },
+        orderBy: { id: 'asc' },
+      });
+    }
+    const shiftId = shift?.id ?? null;
     if (ownOnly && window.startAt.getTime() < Date.now() + 24 * 60 * 60 * 1000) {
       throw new BadRequestException('Overtime must be requested at least 24 hours before the overtime start time.');
     }
