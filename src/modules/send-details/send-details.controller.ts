@@ -249,3 +249,4 @@ export class SendDetailsController {
     return this.sendDetailsService.retryDelivery(cid, deliveryId, user?.id, dto);
   }
 }
+

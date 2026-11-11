@@ -201,3 +201,4 @@ export class RetryDeliveryDto {
   @IsIn(['WHATSAPP', 'EMAIL', 'ALL'])
   channel?: 'WHATSAPP' | 'EMAIL' | 'ALL';
 }
+
