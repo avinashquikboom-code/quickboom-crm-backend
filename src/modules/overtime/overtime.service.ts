@@ -212,10 +212,14 @@ export class OvertimeService {
       throw new BadRequestException('This employee type is not eligible for overtime.');
     }
     const shiftId = dto.shiftId ? Number(dto.shiftId) : employee.shiftId;
-    if (shiftId) {
-      const shift = await this.prisma.shift.findFirst({ where: { id: shiftId, customerId: numCustomerId, deletedAt: null } });
-      if (!shift) throw new BadRequestException('Shift does not belong to this company.');
+    const shift = shiftId
+      ? await this.prisma.shift.findFirst({ where: { id: shiftId, customerId: numCustomerId, deletedAt: null } })
+      : employee.shift;
+    if (shiftId && !shift) throw new BadRequestException('Shift does not belong to this company.');
+    if (ownOnly && window.startAt.getTime() < Date.now() + 24 * 60 * 60 * 1000) {
+      throw new BadRequestException('Overtime must be requested at least 24 hours before the overtime start time.');
     }
+    this.assertShiftWindow(dto.overtimeType, shift, window);
     if (dto.attendanceId) {
       const attendance = await this.prisma.attendance.findFirst({ where: { id: Number(dto.attendanceId), customerId: numCustomerId, employeeId } });
       if (!attendance) throw new BadRequestException('Attendance record does not belong to this employee.');
@@ -285,6 +289,18 @@ export class OvertimeService {
       });
       await this.audit(tx, numCustomerId, user, 'APPROVE', id, 'Overtime request approved');
       const row = await tx.overtimeRequest.findFirst({ where: { id }, include: requestInclude });
+      if (row?.employee?.userId) {
+        await tx.notification.create({
+          data: {
+            customerId: numCustomerId,
+            userId: row.employee.userId,
+            title: 'Overtime approved',
+            message: `Your overtime on ${String(row.overtimeDate).slice(0, 10)} from ${row.startTime} to ${row.endTime} is approved.`,
+            type: 'OVERTIME_APPROVED',
+            data: { overtimeRequestId: row.id },
+          },
+        }).catch(() => undefined);
+      }
       return this.present(row, rules);
     });
   }
@@ -316,6 +332,38 @@ export class OvertimeService {
       const row = await tx.overtimeRequest.findFirst({ where: { id }, include: requestInclude });
       return this.present(row, await this.rules(numCustomerId));
     });
+  }
+
+  async start(user: any, customerId: number | string | undefined, id: number) {
+    const row = await this.loadOwned(user, customerId, id);
+    if (row.status !== 'APPROVED') throw new BadRequestException('Overtime can start only after admin approval.');
+    if (row.actualStartAt) throw new ConflictException('Overtime has already started.');
+    const now = new Date();
+    if (now.getTime() < row.startAt.getTime() || now.getTime() > row.endAt.getTime()) {
+      throw new BadRequestException('Overtime can be marked only inside the approved window.');
+    }
+    this.assertShiftWindow(row.overtimeType, row.shift, { date: row.startAt.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }), startAt: row.startAt, endAt: row.endAt });
+    await this.prisma.overtimeRequest.update({ where: { id: row.id }, data: { actualStartAt: now } });
+    await this.prisma.overtimeApproval.create({
+      data: { customerId: row.customerId, overtimeRequestId: row.id, action: 'START', fromStatus: 'APPROVED', toStatus: 'APPROVED', actorId: this.actor(user).id, actorName: this.actor(user).name, notes: 'Overtime started' },
+    });
+    return this.findOne(user, row.customerId, row.id);
+  }
+
+  async end(user: any, customerId: number | string | undefined, id: number) {
+    const row = await this.loadOwned(user, customerId, id);
+    if (!row.actualStartAt || row.actualEndAt) throw new ConflictException('Overtime is not currently in progress.');
+    const now = new Date();
+    if (now.getTime() < row.actualStartAt.getTime()) throw new BadRequestException('Overtime end time is before the recorded start.');
+    if (now.getTime() > row.endAt.getTime()) {
+      throw new BadRequestException('The approved overtime window has ended. An admin must correct a missed overtime check-out.');
+    }
+    const actualMinutes = Math.max(1, Math.round((now.getTime() - row.actualStartAt.getTime()) / 60000));
+    await this.prisma.overtimeRequest.update({ where: { id: row.id }, data: { actualEndAt: now, actualMinutes } });
+    await this.prisma.overtimeApproval.create({
+      data: { customerId: row.customerId, overtimeRequestId: row.id, action: 'END', fromStatus: 'APPROVED', toStatus: 'APPROVED', actorId: this.actor(user).id, actorName: this.actor(user).name, notes: `Overtime ended after ${actualMinutes} minutes` },
+    });
+    return this.findOne(user, row.customerId, row.id);
   }
 
   async cancel(user: any, customerId: number | string | undefined, id: number, dto: CancelOvertimeDto = {}) {
@@ -350,7 +398,11 @@ export class OvertimeService {
       };
     }
     if (query.overtimeType) where.overtimeType = query.overtimeType as any;
-    if (query.status) where.status = query.status as any;
+    if (query.status === 'COMPLETED') where.actualEndAt = { not: null };
+    else if (query.status === 'IN_PROGRESS') {
+      where.actualStartAt = { not: null };
+      where.actualEndAt = null;
+    } else if (query.status) where.status = query.status as any;
     if (query.payrollStatus) where.payrollStatus = query.payrollStatus as any;
     if (query.dateFrom || query.dateTo) {
       where.overtimeDate = {
@@ -402,6 +454,20 @@ export class OvertimeService {
     return this.settingsView(policy, salary);
   }
 
+  private assertShiftWindow(type: string, shift: { startTime?: string | null; endTime?: string | null } | null, window: { date: string; startAt: Date; endAt: Date }) {
+    if (type !== 'BEFORE_SHIFT' && type !== 'AFTER_SHIFT') return;
+    if (!shift?.startTime || !shift?.endTime) throw new BadRequestException('An assigned shift is required for before-shift or after-shift overtime.');
+    const shiftStart = istDateTime(window.date, shift.startTime);
+    let shiftEnd = istDateTime(window.date, shift.endTime);
+    if (shiftEnd.getTime() <= shiftStart.getTime()) shiftEnd = new Date(shiftEnd.getTime() + 24 * 60 * 60 * 1000);
+    if (type === 'BEFORE_SHIFT' && !(window.endAt.getTime() <= shiftStart.getTime() && window.startAt.getTime() < shiftStart.getTime())) {
+      throw new BadRequestException('Before-shift overtime must finish when the shift starts and cannot include regular shift hours.');
+    }
+    if (type === 'AFTER_SHIFT' && window.startAt.getTime() < shiftEnd.getTime()) {
+      throw new BadRequestException('After-shift overtime must start when the shift ends and cannot include regular shift hours.');
+    }
+  }
+
   private async assertLimits(customerId: number, employeeId: number, date: string, startAt: Date, minutes: number, rules: { maxDailyMinutes: number; maxWeeklyMinutes: number }) {
     const day = overtimeWindow(date, '00:00', '23:59');
     const week = weekBounds(date);
@@ -451,6 +517,8 @@ export class OvertimeService {
       designation: row.employee?.designation?.name || '',
       requestedHours: Math.round((row.totalMinutes / 60) * 100) / 100,
       approvedHours: row.approvedMinutes ? Math.round((row.approvedMinutes / 60) * 100) / 100 : null,
+      actualHours: row.actualMinutes ? Math.round((row.actualMinutes / 60) * 100) / 100 : null,
+      sessionStatus: row.actualEndAt ? 'COMPLETED' : row.actualStartAt ? 'IN_PROGRESS' : row.status,
       estimatedAmount,
       compensation: {
         hourlyRate: Math.round(hourlyRate * 100) / 100,

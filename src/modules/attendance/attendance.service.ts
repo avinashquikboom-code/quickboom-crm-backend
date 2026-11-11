@@ -1005,10 +1005,29 @@ result: SUCCESS`);
       }
     }
     const items = Array.from(dailyMap.values());
+    const overtime = await this.prisma.overtimeRequest.findMany({
+      where: { customerId: employee.customerId, employeeId: employee.id, deletedAt: null },
+      orderBy: { overtimeDate: 'desc' },
+      take: 30,
+      select: {
+        id: true,
+        overtimeDate: true,
+        overtimeType: true,
+        startTime: true,
+        endTime: true,
+        totalMinutes: true,
+        approvedMinutes: true,
+        actualStartAt: true,
+        actualEndAt: true,
+        actualMinutes: true,
+        status: true,
+      },
+    });
 
     return {
       success: true,
       data: items,
+      overtime,
       total,
       page,
       limit,

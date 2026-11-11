@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { OvertimeService } from './overtime.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -20,6 +20,9 @@ describe('OvertimeService', () => {
     const prisma = {
       overtimePolicy: { findUnique: jest.fn().mockResolvedValue(null) },
       salaryPolicy: { findFirst: jest.fn().mockResolvedValue({ overtimeMultiplier: 1.5, workingDaysPerMonth: 30, overtimeCalculationMethod: 'HOURLY_BASE', overtimeEnabled: true }) },
+      employee: { findFirst: jest.fn().mockResolvedValue({ id: 9, customerId: 3, shiftId: 1, employeeType: 'FULL_TIME', shift: { id: 1, startTime: '10:00', endTime: '18:00' } }) },
+      shift: { findFirst: jest.fn().mockResolvedValue({ id: 1, startTime: '10:00', endTime: '18:00' }) },
+      overtimeRequest: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(async (callback) => callback(tx)),
     };
     const module = await Test.createTestingModule({
@@ -47,5 +50,29 @@ describe('OvertimeService', () => {
     });
     tx.overtimeRequest.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.approve({ role: 'ADMIN', id: 1, firstName: 'Asha' }, 3, 4, { approvedMinutes: 60 })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects an employee overtime request submitted less than 24 hours ahead', async () => {
+    const soon = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const date = soon.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    await expect(service.create({ role: 'EMPLOYEE', employee: { id: 9 } }, 3, {
+      overtimeDate: date,
+      startTime: '08:00',
+      endTime: '10:00',
+      overtimeType: 'BEFORE_SHIFT',
+      reason: 'Coverage',
+    }, true)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects before-shift overtime that overlaps the regular shift', async () => {
+    const later = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    const date = later.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    await expect(service.create({ role: 'EMPLOYEE', employee: { id: 9 } }, 3, {
+      overtimeDate: date,
+      startTime: '11:00',
+      endTime: '12:00',
+      overtimeType: 'BEFORE_SHIFT',
+      reason: 'Coverage',
+    }, true)).rejects.toBeInstanceOf(BadRequestException);
   });
 });

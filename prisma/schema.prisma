@@ -1726,6 +1726,9 @@ model OvertimeRequest {
   overtimeRate     Float?
   multiplier       Float?
   calculatedAmount Float?
+  actualStartAt    DateTime?
+  actualEndAt      DateTime?
+  actualMinutes    Int?
   payrollStatus    OvertimePayrollStatus   @default(NOT_PROCESSED)
   payrollId        Int?
   payrollItemId    Int?
@@ -2448,6 +2451,8 @@ enum OvertimeType {
   WEEKEND
   HOLIDAY
   NIGHT_SHIFT
+  BEFORE_SHIFT
+  AFTER_SHIFT
 }
 
 enum OvertimeApprovalStatus {
