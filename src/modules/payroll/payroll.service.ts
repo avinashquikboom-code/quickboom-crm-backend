@@ -882,6 +882,102 @@ export class PayrollService {
     });
   }
 
+  async payPayrollItem(customerId: number | string | undefined, itemId: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const id = Number(itemId);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new BadRequestException('Payroll item id is required.');
+    }
+
+    const item = await this.prisma.payrollItem.findFirst({
+      where: { id, customerId: numCustomerId },
+      include: { payroll: true },
+    });
+    if (!item) {
+      throw new NotFoundException('Payroll item not found.');
+    }
+    if (String(item.status || '').toUpperCase() === 'PAID') {
+      return { success: true, message: 'This payroll item is already paid.', data: { id: item.id, status: 'PAID' } };
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.settlePayrollItem(tx, item, numCustomerId);
+      await tx.payrollItem.update({
+        where: { id: item.id },
+        data: { status: 'PAID' },
+      });
+
+      const unpaid = await tx.payrollItem.count({
+        where: { payrollId: item.payrollId, status: { not: 'PAID' } },
+      });
+      if (unpaid === 0) {
+        await tx.payroll.update({
+          where: { id: item.payrollId },
+          data: { status: 'PAID', disbursedAt: new Date() },
+        });
+      }
+
+      return {
+        success: true,
+        message: `Payroll item #${item.id} marked paid.`,
+        data: { id: item.id, status: 'PAID' },
+      };
+    });
+  }
+
+  private async settlePayrollItem(tx: any, item: { id: number; employeeId: number; reimbursement?: number | null; loanDeduction?: number | null; payroll?: { year: number; month: number } | null }, customerId: number) {
+    const payroll = item.payroll;
+    const periodEnd = payroll ? new Date(payroll.year, payroll.month, 0, 23, 59, 59, 999) : new Date();
+
+    if (Number(item.reimbursement) > 0) {
+      await tx.employeeClaim.updateMany({
+        where: {
+          customerId,
+          employeeId: item.employeeId,
+          status: 'APPROVED',
+          paymentStatus: { in: ['UNPAID', 'PENDING'] },
+          claimDate: { lte: periodEnd },
+        },
+        data: { paymentStatus: 'PAID', status: 'PAID', paidAt: new Date() },
+      });
+    }
+
+    if (Number(item.loanDeduction) > 0) {
+      const activeLoans = await tx.employeeLoan.findMany({
+        where: {
+          customerId,
+          employeeId: item.employeeId,
+          status: { in: ['ACTIVE', 'APPROVED'] },
+          remainingBalance: { gt: 0 },
+        },
+      });
+      let pendingDeduction = Number(item.loanDeduction);
+      for (const loan of activeLoans) {
+        if (pendingDeduction <= 0) break;
+        const currentBalance = loan.remainingBalance || 0;
+        const deduct = Math.min(pendingDeduction, currentBalance);
+        const newBalance = Math.max(0, currentBalance - deduct);
+        pendingDeduction -= deduct;
+        await tx.employeeLoan.update({
+          where: { id: loan.id },
+          data: { remainingBalance: newBalance, status: newBalance <= 0 ? 'PAID' : loan.status },
+        });
+      }
+    }
+
+    await tx.salarySlip.updateMany({
+      where: { payrollItemId: item.id },
+      data: { status: 'PAID' },
+    });
+
+    if (tx.overtimeRequest?.updateMany) {
+      await tx.overtimeRequest.updateMany({
+        where: { payrollItemId: item.id, payrollStatus: 'PROCESSED' },
+        data: { payrollStatus: 'PAID' },
+      });
+    }
+  }
+
   async getPayrolls(
     customerId?: number | string,
     query?: { page?: number; limit?: number; month?: number; year?: number; status?: string; departmentId?: number },
