@@ -124,6 +124,16 @@ model Customer {
   sendDetailsDocuments     SendDetailsDocument[]
   sendDetailsConfigs       SendDetailsConfig[]
   sendDetailsDeliveries    SendDetailsDelivery[]
+  hrmReportSetting         HrmReportSetting?
+  hrmMonthlyReportRuns     HrmMonthlyReportRun[]
+  hrmEmployeeMonthlyReports HrmEmployeeMonthlyReport[]
+  hrmLeaveSnapshots        HrmLeaveMonthlySnapshot[]
+  hrmNotificationDeliveries HrmNotificationDelivery[]
+  hrmNotificationTemplates HrmNotificationTemplate[]
+  hrmNotificationOutbox    HrmNotificationOutbox[]
+  overtimeNotificationEvents OvertimeNotificationEvent[]
+  hrmMonthlyCycles         HrmMonthlyCycle[]
+  hrmCommissionSnapshots   HrmCommissionMonthlySnapshot[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -1284,6 +1294,12 @@ model Employee {
   commissions              Commission[]
   salaryTargetPolicy       SalaryTargetPolicy[]
   salaryTargetReviews      SalaryTargetReview[]
+  whatsappReportsOptIn     Boolean                  @default(false)
+  hrmMonthlyReports        HrmEmployeeMonthlyReport[]
+  hrmLeaveSnapshots        HrmLeaveMonthlySnapshot[]
+  hrmNotificationDeliveries HrmNotificationDelivery[]
+  overtimeNotificationEvents OvertimeNotificationEvent[]
+  hrmCommissionSnapshots   HrmCommissionMonthlySnapshot[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -1361,6 +1377,7 @@ model LeaveType {
   leaveBalances      EmployeeLeaveBalance[]
   leaveAdjustments   LeaveAdjustmentHistory[]
   leaveRequests      LeaveRequest[]
+  hrmLeaveSnapshots  HrmLeaveMonthlySnapshot[]
 
   @@unique([customerId, code])
   @@index([customerId])
@@ -1755,6 +1772,7 @@ model OvertimeRequest {
   payroll          Payroll?                @relation(fields: [payrollId], references: [id], onDelete: SetNull)
   payrollItem      PayrollItem?            @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
   history          OvertimeApproval[]
+  notificationEvents OvertimeNotificationEvent[]
 
   @@index([customerId])
   @@index([employeeId])
@@ -1781,6 +1799,32 @@ model OvertimeApproval {
 
   @@index([customerId])
   @@index([overtimeRequestId])
+}
+
+model OvertimeNotificationEvent {
+  id                Int             @id @default(autoincrement())
+  customerId        Int
+  overtimeRequestId Int
+  employeeId        Int
+  recipientUserId   Int?
+  eventType         String
+  channel           String
+  status            String          @default("PENDING")
+  idempotencyKey    String          @unique
+  providerMessageId String?
+  attemptCount      Int             @default(0)
+  lastError         String?
+  lastAttemptAt     DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  customer          Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  request           OvertimeRequest @relation(fields: [overtimeRequestId], references: [id], onDelete: Cascade)
+  employee          Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, status])
+  @@index([overtimeRequestId])
+  @@index([employeeId])
+  @@map("overtime_notification_events")
 }
 
 model Visit {
@@ -1903,6 +1947,7 @@ model Payroll {
   customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   items           PayrollItem[]
   overtimeRequests OvertimeRequest[]
+  hrmReports      HrmEmployeeMonthlyReport[]
 
   @@unique([customerId, month, year, departmentId])
   @@index([customerId])
@@ -3790,4 +3835,249 @@ model SendDetailsDelivery {
   @@index([overallStatus])
   @@index([createdAt])
   @@map("send_details_deliveries")
+}
+
+enum HrmReportType {
+  ATTENDANCE
+  LEAVE_BALANCE
+  SALARY_SUMMARY
+  COMMISSION
+}
+
+enum HrmReportStatus {
+  PENDING
+  GENERATING
+  GENERATED
+  COMPLETED
+  FAILED
+}
+
+enum HrmNotificationChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum HrmNotificationKind {
+  MONTHLY_ATTENDANCE
+  MONTHLY_LEAVE_BALANCE
+  MONTHLY_SALARY
+  MONTHLY_COMMISSION
+  MONTHLY_REPORTS
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+}
+
+enum HrmDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+}
+
+model HrmReportSetting {
+  id                 Int      @id @default(autoincrement())
+  customerId         Int      @unique
+  attendanceEnabled  Boolean  @default(true)
+  leaveEnabled       Boolean  @default(true)
+  salaryEnabled      Boolean  @default(true)
+  commissionEnabled  Boolean  @default(true)
+  emailEnabled       Boolean  @default(true)
+  whatsappEnabled    Boolean  @default(true)
+  deliveryTime       String   @default("18:30")
+  timezone           String   @default("Asia/Kolkata")
+  graceHours         Int      @default(2)
+  maxAttempts        Int      @default(5)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("hrm_report_settings")
+}
+
+model HrmMonthlyReportRun {
+  id             Int             @id @default(autoincrement())
+  customerId     Int
+  year           Int
+  month          Int
+  status         HrmReportStatus @default(PENDING)
+  idempotencyKey String          @unique
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reports        HrmEmployeeMonthlyReport[]
+
+  @@unique([customerId, year, month])
+  @@index([customerId, status])
+  @@map("hrm_monthly_report_runs")
+}
+
+model HrmEmployeeMonthlyReport {
+  id            Int             @id @default(autoincrement())
+  customerId    Int
+  runId         Int?
+  employeeId    Int
+  payrollId     Int?
+  year          Int
+  month         Int
+  reportType    HrmReportType
+  status        HrmReportStatus @default(PENDING)
+  isProvisional Boolean         @default(false)
+  fileName      String
+  storageKey    String?
+  fileUrl       String?
+  summary       Json?
+  generatedAt   DateTime?
+  error         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  customer      Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  run           HrmMonthlyReportRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  employee      Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payroll       Payroll?        @relation(fields: [payrollId], references: [id], onDelete: SetNull)
+  deliveries    HrmNotificationDelivery[]
+
+  @@unique([customerId, employeeId, year, month, reportType])
+  @@index([customerId, year, month])
+  @@index([employeeId])
+  @@index([status])
+  @@index([payrollId])
+  @@map("hrm_employee_monthly_reports")
+}
+
+model HrmLeaveMonthlySnapshot {
+  id            Int      @id @default(autoincrement())
+  customerId    Int
+  employeeId    Int
+  leaveTypeId   Int
+  year          Int
+  month         Int
+  opening       Decimal  @db.Decimal(8, 2)
+  credited      Decimal  @db.Decimal(8, 2)
+  carryForward  Decimal  @db.Decimal(8, 2)
+  taken         Decimal  @db.Decimal(8, 2)
+  adjustments   Decimal  @db.Decimal(8, 2)
+  expired       Decimal  @db.Decimal(8, 2)
+  unpaid        Decimal  @db.Decimal(8, 2)
+  closing       Decimal  @db.Decimal(8, 2)
+  createdAt     DateTime @default(now())
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType     LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, leaveTypeId, year, month])
+  @@index([customerId, year, month])
+  @@map("hrm_leave_monthly_snapshots")
+}
+
+model HrmNotificationDelivery {
+  id                Int                    @id @default(autoincrement())
+  customerId        Int
+  employeeId        Int
+  reportId          Int?
+  leaveRequestId    Int?
+  channel           HrmNotificationChannel
+  kind              HrmNotificationKind
+  status            HrmDeliveryStatus      @default(PENDING)
+  idempotencyKey    String                 @unique
+  providerMessageId String?
+  attemptCount      Int                    @default(0)
+  lastAttemptAt     DateTime?
+  error             String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  customer          Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee          Employee               @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  report            HrmEmployeeMonthlyReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, status])
+  @@index([employeeId])
+  @@index([providerMessageId])
+  @@map("hrm_notification_deliveries")
+}
+
+model HrmNotificationTemplate {
+  id         Int                    @id @default(autoincrement())
+  customerId Int
+  kind       HrmNotificationKind
+  channel    HrmNotificationChannel
+  subject    String?
+  body       String
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @updatedAt
+  customer   Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, kind, channel])
+  @@map("hrm_notification_templates")
+}
+
+model HrmNotificationOutbox {
+  id             Int               @id @default(autoincrement())
+  customerId     Int
+  eventType      String
+  payload        Json
+  idempotencyKey String            @unique
+  status         HrmDeliveryStatus @default(PENDING)
+  attemptCount   Int               @default(0)
+  availableAt    DateTime          @default(now())
+  lastError      String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  customer       Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@map("hrm_notification_outbox")
+}
+
+model HrmMonthlyCycle {
+  id                 Int       @id @default(autoincrement())
+  customerId         Int
+  year               Int
+  month              Int
+  periodStart        DateTime
+  periodEnd          DateTime
+  attendanceStatus   String    @default("OPEN")
+  payrollStatus      String    @default("OPEN")
+  commissionStatus   String    @default("OPEN")
+  idempotencyKey     String    @unique
+  initializedAt      DateTime  @default(now())
+  finalizedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  customer           Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, year, month])
+  @@index([customerId, year, month])
+  @@map("hrm_monthly_cycles")
+}
+
+model HrmCommissionMonthlySnapshot {
+  id             Int      @id @default(autoincrement())
+  customerId     Int
+  employeeId     Int
+  year           Int
+  month          Int
+  generated      Float    @default(0)
+  employeeShare  Float    @default(0)
+  leaderShare    Float    @default(0)
+  approved       Float    @default(0)
+  pending        Float    @default(0)
+  paid           Float    @default(0)
+  outstanding    Float    @default(0)
+  reversed       Float    @default(0)
+  netEarned      Float    @default(0)
+  provisional    Boolean  @default(true)
+  lines          Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId, year, month])
+  @@index([customerId, year, month])
+  @@map("hrm_commission_monthly_snapshots")
 }

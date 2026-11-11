@@ -2221,6 +2221,18 @@ export class WhatsappService {
     } catch (commErr: any) {
       this.logger.debug(`[WHATSAPP_STATUS_COMM_HISTORY_ERR] ${commErr?.message}`);
     }
+
+    try {
+      const mapped = status === 'read' ? 'READ' : status === 'delivered' ? 'DELIVERED' : status === 'failed' ? 'FAILED' : status === 'sent' ? 'SENT' : null;
+      if (mapped && this.prisma.hrmNotificationDelivery?.updateMany) {
+        await this.prisma.hrmNotificationDelivery.updateMany({
+          where: { providerMessageId: messageId, channel: 'WHATSAPP' },
+          data: { status: mapped, error: errorMessage || null },
+        });
+      }
+    } catch (reportErr: any) {
+      this.logger.debug(`[WHATSAPP_STATUS_HRM_REPORT_ERR] ${reportErr?.message}`);
+    }
   }
 
   /**

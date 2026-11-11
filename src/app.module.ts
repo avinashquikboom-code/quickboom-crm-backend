@@ -30,6 +30,7 @@ import { DesignationModule } from './modules/designation/designation.module';
 import { OfficeModule } from './modules/office/office.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { LeaveModule } from './modules/leave/leave.module';
+import { HrmReportsModule } from './modules/hrm-reports/hrm-reports.module';
 import { RemoteWorkModule } from './modules/remote-work/remote-work.module';
 import { CompanyModule } from './modules/company/company.module';
 import { ShiftModule } from './modules/shift/shift.module';
@@ -85,6 +86,7 @@ import { AppController } from './app.controller';
     OfficeModule,
     AttendanceModule,
     LeaveModule,
+    HrmReportsModule,
     RemoteWorkModule,
     TeamModule,
     VisitModule,

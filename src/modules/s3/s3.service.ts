@@ -458,4 +458,25 @@ export class S3Service {
     await client.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }));
     return { success: true, bucket, region };
   }
+
+  async uploadPrivatePdf(buffer: Buffer, key: string): Promise<{ key: string }> {
+    if (!buffer?.length) throw new BadRequestException('PDF buffer is required');
+    const { client, bucket } = await this.resolveS3Client(true);
+    await client.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: buffer,
+      ContentType: 'application/pdf',
+      ServerSideEncryption: 'AES256',
+    }));
+    return { key };
+  }
+
+  async readPrivateObject(key: string): Promise<Buffer> {
+    const { client, bucket } = await this.resolveS3Client();
+    const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const bytes = await response.Body?.transformToByteArray();
+    if (!bytes) throw new BadRequestException('Stored PDF is empty');
+    return Buffer.from(bytes);
+  }
 }
