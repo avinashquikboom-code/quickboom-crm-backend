@@ -12,6 +12,7 @@ import {
   istDateTime,
   overtimeAmount,
   overtimeWindow,
+  payableOvertimeMinutes,
   rangesOverlap,
   weekBounds,
 } from './overtime.calculator';
@@ -345,34 +346,70 @@ export class OvertimeService {
 
   async start(user: any, customerId: number | string | undefined, id: number) {
     const row = await this.loadOwned(user, customerId, id);
+    if (row.actualEndAt) throw new ConflictException('This overtime session is already completed.');
+    if (row.actualStartAt) return this.findOne(user, row.customerId, row.id);
     if (row.status === 'CANCELLATION_REQUESTED') throw new BadRequestException('Overtime cannot be marked while a cancellation request is waiting for admin review.');
     if (row.status !== 'APPROVED') throw new BadRequestException('Overtime can start only after admin approval.');
-    if (row.actualStartAt) throw new ConflictException('Overtime has already started.');
     const now = new Date();
     if (now.getTime() < row.startAt.getTime() || now.getTime() > row.endAt.getTime()) {
       throw new BadRequestException('Overtime can be marked only inside the approved window.');
     }
     this.assertShiftWindow(row.overtimeType, row.shift, { date: row.startAt.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }), startAt: row.startAt, endAt: row.endAt });
-    await this.prisma.overtimeRequest.update({ where: { id: row.id }, data: { actualStartAt: now } });
+    const active = await this.prisma.overtimeRequest.findFirst({
+      where: { customerId: row.customerId, employeeId: row.employeeId, deletedAt: null, actualStartAt: { not: null }, actualEndAt: null },
+      select: { id: true },
+    });
+    if (active) throw new ConflictException('Another overtime session is already in progress.');
+    const started = await this.prisma.overtimeRequest.updateMany({
+      where: { id: row.id, customerId: row.customerId, status: 'APPROVED', actualStartAt: null, deletedAt: null },
+      data: { actualStartAt: now },
+    });
+    if (started.count !== 1) return this.findOne(user, row.customerId, row.id);
     await this.prisma.overtimeApproval.create({
       data: { customerId: row.customerId, overtimeRequestId: row.id, action: 'START', fromStatus: 'APPROVED', toStatus: 'APPROVED', actorId: this.actor(user).id, actorName: this.actor(user).name, notes: 'Overtime started' },
     });
+    await this.audit(this.prisma, row.customerId, user, 'START', row.id, 'Overtime session started');
     return this.findOne(user, row.customerId, row.id);
   }
 
   async end(user: any, customerId: number | string | undefined, id: number) {
     const row = await this.loadOwned(user, customerId, id);
-    if (!row.actualStartAt || row.actualEndAt) throw new ConflictException('Overtime is not currently in progress.');
+    if (row.actualEndAt) return this.findOne(user, row.customerId, row.id);
+    if (!row.actualStartAt) throw new ConflictException('Overtime is not currently in progress.');
     const now = new Date();
     if (now.getTime() < row.actualStartAt.getTime()) throw new BadRequestException('Overtime end time is before the recorded start.');
-    if (now.getTime() > row.endAt.getTime()) {
-      throw new BadRequestException('The approved overtime window has ended. An admin must correct a missed overtime check-out.');
-    }
-    const actualMinutes = Math.max(1, Math.round((now.getTime() - row.actualStartAt.getTime()) / 60000));
-    await this.prisma.overtimeRequest.update({ where: { id: row.id }, data: { actualEndAt: now, actualMinutes } });
-    await this.prisma.overtimeApproval.create({
-      data: { customerId: row.customerId, overtimeRequestId: row.id, action: 'END', fromStatus: 'APPROVED', toStatus: 'APPROVED', actorId: this.actor(user).id, actorName: this.actor(user).name, notes: `Overtime ended after ${actualMinutes} minutes` },
+    const capped = now.getTime() > row.endAt.getTime();
+    const effectiveEnd = capped ? row.endAt : now;
+    const actualMinutes = Math.max(1, Math.round((effectiveEnd.getTime() - row.actualStartAt.getTime()) / 60000));
+    const payableMinutes = payableOvertimeMinutes(actualMinutes, row.approvedMinutes ?? row.totalMinutes);
+    const rules = await this.rules(row.customerId);
+    const pay = row.overtimeRate != null && row.multiplier != null
+      ? { hourlyRate: row.overtimeRate, multiplier: row.multiplier, amount: overtimeAmount(payableMinutes, row.overtimeRate, row.multiplier) }
+      : await this.compensation(row, payableMinutes, rules);
+    const locked = ['PROCESSED', 'PAID'].includes(row.payrollStatus);
+    await this.prisma.overtimeRequest.update({
+      where: { id: row.id },
+      data: {
+        actualEndAt: effectiveEnd,
+        actualMinutes,
+        ...(locked ? {} : { calculatedAmount: pay.amount, overtimeRate: pay.hourlyRate, multiplier: pay.multiplier, payrollStatus: 'READY_FOR_PAYROLL' }),
+      },
     });
+    await this.prisma.overtimeApproval.create({
+      data: {
+        customerId: row.customerId,
+        overtimeRequestId: row.id,
+        action: 'END',
+        fromStatus: 'APPROVED',
+        toStatus: 'APPROVED',
+        actorId: this.actor(user).id,
+        actorName: this.actor(user).name,
+        notes: capped
+          ? `Overtime ended after the window. Worked ${actualMinutes} minutes. Payable ${payableMinutes} minutes.`
+          : `Overtime ended. Worked ${actualMinutes} minutes. Payable ${payableMinutes} minutes.`,
+      },
+    });
+    await this.audit(this.prisma, row.customerId, user, 'END', row.id, `Overtime session ended. Payable ${payableMinutes} minutes.`);
     return this.findOne(user, row.customerId, row.id);
   }
 
@@ -592,11 +629,30 @@ export class OvertimeService {
     return { hourlyRate: Math.round(hourlyRate * 100) / 100, multiplier, amount: overtimeAmount(minutes, hourlyRate, multiplier), method: rules.overtimeCalculationMethod };
   }
 
+  private sessionClock(row: any) {
+    const serverNow = new Date();
+    const started = row.actualStartAt ? new Date(row.actualStartAt) : null;
+    const ended = row.actualEndAt ? new Date(row.actualEndAt) : null;
+    if (!started) return { workedMinutes: null, payableMinutes: null, remainingMinutes: null, serverNow: serverNow.toISOString() };
+    const workedMinutes = ended
+      ? (row.actualMinutes ?? Math.max(0, Math.round((ended.getTime() - started.getTime()) / 60000)))
+      : Math.max(0, Math.round((serverNow.getTime() - started.getTime()) / 60000));
+    const approved = row.approvedMinutes ?? row.totalMinutes;
+    return {
+      workedMinutes,
+      payableMinutes: ended ? payableOvertimeMinutes(workedMinutes, approved) : null,
+      remainingMinutes: ended ? 0 : Math.max(0, approved - workedMinutes),
+      serverNow: serverNow.toISOString(),
+    };
+  }
+
   private present(row: any, rules: any) {
     const multiplier = row.multiplier ?? (row.overtimeType === 'WEEKEND' ? rules.weekendMultiplier : row.overtimeType === 'HOLIDAY' ? rules.holidayMultiplier : row.overtimeType === 'NIGHT_SHIFT' ? rules.nightShiftMultiplier : rules.regularMultiplier);
     const structure = row.employee?.salaryStructures?.[0];
     const hourlyRate = row.overtimeRate ?? hourlyRateFromSalary(structure?.basicSalary || 0, rules.workingDaysPerMonth, row.shift?.durationHours || 8);
-    const estimatedAmount = row.calculatedAmount ?? overtimeAmount(row.totalMinutes, hourlyRate, multiplier);
+    const clock = this.sessionClock(row);
+    const payableAmount = clock.payableMinutes == null ? null : overtimeAmount(clock.payableMinutes, hourlyRate, multiplier);
+    const estimatedAmount = row.actualEndAt ? (row.calculatedAmount ?? payableAmount) : (row.calculatedAmount ?? overtimeAmount(row.approvedMinutes || row.totalMinutes, hourlyRate, multiplier));
     const { salaryStructures, ...employee } = row.employee || {};
     return {
       ...row,
@@ -608,7 +664,13 @@ export class OvertimeService {
       designation: row.employee?.designation?.name || '',
       requestedHours: Math.round((row.totalMinutes / 60) * 100) / 100,
       approvedHours: row.approvedMinutes ? Math.round((row.approvedMinutes / 60) * 100) / 100 : null,
-      actualHours: row.actualMinutes ? Math.round((row.actualMinutes / 60) * 100) / 100 : null,
+      actualMinutes: clock.workedMinutes,
+      actualHours: clock.workedMinutes == null ? null : Math.round((clock.workedMinutes / 60) * 100) / 100,
+      payableMinutes: clock.payableMinutes,
+      payableHours: clock.payableMinutes == null ? null : Math.round((clock.payableMinutes / 60) * 100) / 100,
+      remainingApprovedMinutes: clock.remainingMinutes,
+      serverNow: clock.serverNow,
+      payableAmount,
       sessionStatus: row.actualEndAt ? 'COMPLETED' : row.actualStartAt ? 'IN_PROGRESS' : row.status === 'APPROVED' && row.cancellationDecision === 'REJECTED' ? 'CANCELLATION_REJECTED' : row.status,
       estimatedAmount,
       compensation: {

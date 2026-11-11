@@ -117,7 +117,7 @@ export class OvertimeController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CancelOvertimeDto,
   ) {
-    return this.overtimeService.requestCancellation(user, customerId, id, dto);
+    return this.overtimeService.cancel(user, customerId, id, dto);
   }
 
   @Patch(':id/cancellation-decision')

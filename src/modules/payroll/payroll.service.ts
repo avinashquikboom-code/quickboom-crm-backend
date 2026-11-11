@@ -1,6 +1,17 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { agreedMonthlySalary, countPayableAttendance, lopDeduction, settleMonthlySalary } from './salary-calculation';
+import { agreedMonthlySalary, countPayableAttendance, lateMarkDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
+
+function otHours(rows: Array<{ totalMinutes?: number | null; approvedMinutes?: number | null; actualMinutes?: number | null }> | undefined, kind: 'actual' | 'approved' | 'payable') {
+  const minutes = (rows || []).reduce((sum, row) => {
+    const actual = Number(row.actualMinutes) || 0;
+    const approved = Number(row.approvedMinutes ?? row.totalMinutes ?? actual) || 0;
+    if (kind === 'actual') return sum + actual;
+    if (kind === 'approved') return sum + approved;
+    return sum + Math.min(actual, approved);
+  }, 0);
+  return Math.round((minutes / 60) * 100) / 100;
+}
 import { SalaryTargetService } from './salary-target.service';
 
 @Injectable()
@@ -237,6 +248,12 @@ export class PayrollService {
       registeredSalary: Number(pi?.registeredSalary || 0),
       belowTargetSalary: Number(pi?.belowTargetSalary || 0),
       targetStatus: pi?.targetStatus || null,
+      lateMarks: pi?.lateMarks ?? 0,
+      lateDeduction: Number(pi?.lateDeduction || 0),
+      otPayout: Number(pi?.overtime || 0),
+      otActualHours: otHours(pi?.overtimeRequests, 'actual'),
+      otApprovedHours: otHours(pi?.overtimeRequests, 'approved'),
+      otPayableHours: otHours(pi?.overtimeRequests, 'payable'),
       remainingAmount: Math.max(0, Number(pi?.monthlyTarget || 0) - Number(pi?.achievedAmount || 0)),
       achievementPercent: Number(pi?.monthlyTarget) > 0 ? Math.round((Number(pi.achievedAmount || 0) / Number(pi.monthlyTarget)) * 10000) / 100 : 0,
     };
@@ -337,6 +354,7 @@ export class PayrollService {
               employeeId: emp.id,
               status: 'APPROVED',
               deletedAt: null,
+              actualEndAt: { not: null },
               overtimeDate: { gte: periodStart, lte: periodEnd },
               OR: [
                 { payrollStatus: 'READY_FOR_PAYROLL' },
@@ -420,7 +438,9 @@ export class PayrollService {
         const profTax = structure?.professionalTax ?? 0;
         const tds = structure?.tds ?? 0;
         const otherDeductions = structure?.otherDeductions ?? 0;
-        const statutory = pf + esi + profTax + tds + otherDeductions + loanDeduction;
+        const lateMarks = attendances.filter((row) => row.isLate || Number(row.lateMinutes) > 0).length;
+        const lateDeduction = lateMarkDeduction(monthlySalary, lateMarks, Number(salaryPolicy?.lateArrivalDeductionPct) || 0);
+        const statutory = pf + esi + profTax + tds + otherDeductions + loanDeduction + lateDeduction;
         const extraOvertime = overtimeRequestIds.length ? Math.max(0, overtime - structureOvertime) : 0;
         const settlement = settleMonthlySalary({
           monthlySalary,
@@ -462,6 +482,8 @@ export class PayrollService {
           paidLeaveDays: attendance.paidLeaveDays,
           unpaidLeaveDays: attendance.unpaidLeaveDays,
           wfhDays: wfhCount,
+          lateMarks,
+          lateDeduction,
           compensationMode: targetPay ? 'TARGET' : 'FIXED',
           monthlyTarget: targetPay?.monthlyTarget || 0,
           achievedAmount: targetPay?.achievedAmount || 0,
@@ -1003,6 +1025,7 @@ export class PayrollService {
           payrollItem: {
             include: {
               payroll: true,
+              overtimeRequests: { where: { deletedAt: null, actualEndAt: { not: null } }, select: { totalMinutes: true, approvedMinutes: true, actualMinutes: true } },
             },
           },
         },
@@ -1048,6 +1071,7 @@ export class PayrollService {
         payrollItem: {
           include: {
             payroll: true,
+            overtimeRequests: { where: { deletedAt: null, actualEndAt: { not: null } }, select: { totalMinutes: true, approvedMinutes: true, actualMinutes: true } },
           },
         },
       },

@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { OvertimeService } from './overtime.service';
+import { payableOvertimeMinutes } from './overtime.calculator';
 import { PrismaService } from '../../prisma/prisma.service';
 
 describe('OvertimeService', () => {
@@ -31,6 +32,11 @@ describe('OvertimeService', () => {
       providers: [OvertimeService, { provide: PrismaService, useValue: prisma }],
     }).compile();
     service = module.get(OvertimeService);
+  });
+
+  it('pays only the shorter of the worked time and the approved time', () => {
+    expect(payableOvertimeMinutes(105, 120)).toBe(105);
+    expect(payableOvertimeMinutes(150, 120)).toBe(120);
   });
 
   it('does not approve a request that is no longer pending', async () => {

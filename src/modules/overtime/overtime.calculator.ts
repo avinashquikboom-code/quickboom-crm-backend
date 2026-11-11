@@ -48,6 +48,13 @@ export function overtimeAmount(minutes: number, hourlyRate: number, multiplier: 
   return Math.round(amount * 100) / 100;
 }
 
+/** Payable time cannot exceed the admin-approved duration. */
+export function payableOvertimeMinutes(actualMinutes: number, approvedMinutes: number) {
+  const actual = Math.max(0, Math.round(Number(actualMinutes) || 0));
+  const approved = Math.max(0, Math.round(Number(approvedMinutes) || 0));
+  return Math.min(actual, approved);
+}
+
 export function rangesOverlap(startA: Date, endA: Date, startB: Date, endB: Date) {
   return startA.getTime() < endB.getTime() && startB.getTime() < endA.getTime();
 }

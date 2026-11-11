@@ -1,4 +1,4 @@
-import { agreedMonthlySalary, countPayableAttendance, eligibleTargetSalary, lopDeduction, settleMonthlySalary } from './salary-calculation';
+import { agreedMonthlySalary, countPayableAttendance, eligibleTargetSalary, lateMarkDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
 
 describe('fixed monthly salary', () => {
   const salary = { basicSalary: 15000, grossSalary: 15000 };
@@ -16,6 +16,12 @@ describe('fixed monthly salary', () => {
       expect(attendance.lopDays).toBe(0);
       expect(settleMonthlySalary({ monthlySalary: agreedMonthlySalary(salary), lopDays: attendance.lopDays }).net).toBe(15000);
     }
+  });
+
+  it('applies the configured late-mark percent once per late day and ignores a zero policy', () => {
+    expect(lateMarkDeduction(18000, 1, 25)).toBe(150);
+    expect(lateMarkDeduction(18000, 2, 25)).toBe(300);
+    expect(lateMarkDeduction(18000, 4, 0)).toBe(0);
   });
 
   it('deducts two unpaid days with a 30-day divisor', () => {

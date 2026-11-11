@@ -1274,7 +1274,11 @@ export class LeadService {
       );
     }
     if (stage.customerId == null) {
-      throw new BadRequestException(`"${stage.name}" is a shared default stage. Deactivate it instead of deleting it.`);
+      const tenantId = Number(customerId);
+      if (!Number.isInteger(tenantId) || tenantId <= 0) {
+        throw new BadRequestException(`"${stage.name}" is a shared default stage. Deactivate it instead of deleting it.`);
+      }
+      return this.leadRepository.retireSharedStage(tenantId, stage);
     }
     return this.leadRepository.deleteStage(id);
   }
