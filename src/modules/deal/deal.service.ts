@@ -528,7 +528,31 @@ export class DealService {
     if (stage._count.deals > 0) {
       throw new BadRequestException(`"${stage.name}" is used by ${stage._count.deals} deal${stage._count.deals === 1 ? '' : 's'}. Reassign those deals to another deal stage, or deactivate this stage. Deals are not deleted.`);
     }
-    await this.prisma.pipelineStage.delete({ where: { id: stage.id } });
+    if (typeof this.prisma.deal?.count === 'function') {
+      const archived = await this.prisma.deal.count({
+        where: { customerId: tenantId, stageId: stage.id, deletedAt: { not: null } },
+      });
+      if (archived > 0) {
+        const other = await this.prisma.pipelineStage.findFirst({
+          where: { pipelineId: stage.pipelineId, id: { not: stage.id } },
+          orderBy: { order: 'asc' },
+        });
+        if (!other) {
+          throw new BadRequestException(`"${stage.name}" is still linked to ${archived} removed deal${archived === 1 ? '' : 's'}. Add another deal stage before deleting this one. Deals are not deleted.`);
+        }
+        await this.prisma.deal.updateMany({
+          where: { customerId: tenantId, stageId: stage.id, deletedAt: { not: null } },
+          data: { stageId: other.id },
+        });
+      }
+    }
+    try {
+      await this.prisma.pipelineStage.delete({ where: { id: stage.id } });
+    } catch (error: any) {
+      throw new BadRequestException(error?.code === 'P2003'
+        ? `"${stage.name}" is still linked to existing deals. Move those deals to another deal stage first. Deals are not deleted.`
+        : (error?.message || `"${stage.name}" could not be deleted.`));
+    }
     return { deleted: true, id: stage.id };
   }
 

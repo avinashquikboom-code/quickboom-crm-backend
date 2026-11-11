@@ -34,6 +34,15 @@ export function eligibleTargetSalary(input: {
   };
 }
 
+/** One late mark deducts the configured percent of one salary day. A zero policy adds nothing. */
+export function lateMarkDeduction(monthlySalary: number, lateMarks: number, deductionPercent: number) {
+  const salary = Math.max(0, Number(monthlySalary) || 0);
+  const marks = Math.max(0, Math.round(Number(lateMarks) || 0));
+  const percent = Math.max(0, Number(deductionPercent) || 0);
+  if (salary <= 0 || marks <= 0 || percent <= 0) return 0;
+  return Math.round((salary / SALARY_DAY_DIVISOR) * (percent / 100) * marks);
+}
+
 export function lopDeduction(monthlySalary: number, lopDays: number) {
   if (monthlySalary <= 0 || lopDays <= 0) return 0;
   return Math.round((monthlySalary / SALARY_DAY_DIVISOR) * lopDays);

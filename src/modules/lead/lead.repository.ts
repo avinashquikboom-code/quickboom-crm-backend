@@ -2774,13 +2774,16 @@ export class LeadRepository {
     const isAdmin = isUserAdmin(user);
 
     let targetCustomerId: number | null = null;
-    if (hasCustomer) {
-      const customerCount = typeof this.prisma.leadStage?.count === 'function'
-        ? await this.prisma.leadStage.count({
-            where: { customerId: numCustomerId, deletedAt: null },
-          })
-        : 0;
-      if (customerCount > 0) {
+    if (hasCustomer && typeof this.prisma.leadStage?.count === 'function') {
+      const liveCount = await this.prisma.leadStage.count({
+        where: { customerId: numCustomerId, deletedAt: null },
+      });
+      const retiredCount = liveCount > 0
+        ? 0
+        : await this.prisma.leadStage.count({
+            where: { customerId: numCustomerId, deletedAt: { not: null } },
+          });
+      if (liveCount > 0 || retiredCount > 0) {
         targetCustomerId = numCustomerId;
       }
     }
@@ -2941,6 +2944,32 @@ export class LeadRepository {
     });
   }
 
+  async retireSharedStage(customerId: number, stage: { key: string; name: string; color?: string; bgColor?: string; borderColor?: string; sortOrder?: number }) {
+    const existing = await this.prisma.leadStage.findFirst({
+      where: { customerId, key: stage.key },
+    });
+    if (existing?.deletedAt) return existing;
+    if (existing) {
+      return this.prisma.leadStage.update({
+        where: { id: existing.id },
+        data: { deletedAt: new Date(), isActive: false },
+      });
+    }
+    return this.prisma.leadStage.create({
+      data: {
+        customerId,
+        name: stage.name,
+        key: stage.key,
+        color: stage.color || '#0284C7',
+        bgColor: stage.bgColor || '#E0F2FE',
+        borderColor: stage.borderColor || '#BAE6FD',
+        sortOrder: stage.sortOrder ?? 0,
+        isActive: false,
+        deletedAt: new Date(),
+      },
+    });
+  }
+
   async countLeadsForStage(stageId: number | string, statusKey?: string, customerId?: number | string) {
     const numStageId = Number(stageId);
     const tenantId = Number(customerId);
@@ -3065,7 +3094,7 @@ export class LeadRepository {
 
     const existingCount = typeof this.prisma.leadStage?.count === 'function'
       ? await this.prisma.leadStage.count({
-          where: { customerId, deletedAt: null },
+          where: { customerId },
         })
       : 0;
 

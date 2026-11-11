@@ -1933,6 +1933,8 @@ model PayrollItem {
   paidLeaveDays    Int          @default(0)
   unpaidLeaveDays  Int          @default(0)
   wfhDays          Int          @default(0)
+  lateMarks        Int          @default(0)
+  lateDeduction    Float        @default(0)
   compensationMode String       @default("FIXED")
   monthlyTarget    Float        @default(0)
   achievedAmount   Float        @default(0)
