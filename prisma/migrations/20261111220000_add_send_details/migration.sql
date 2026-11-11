@@ -108,14 +108,14 @@ END $$;
 
 -- AddForeignKey
 DO $$ BEGIN
-    ALTER TABLE "send_details_deliveries" ADD CONSTRAINT "send_details_deliveries_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "leads"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE "send_details_deliveries" ADD CONSTRAINT "send_details_deliveries_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "Lead"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
 -- AddForeignKey
 DO $$ BEGIN
-    ALTER TABLE "send_details_deliveries" ADD CONSTRAINT "send_details_deliveries_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+    ALTER TABLE "send_details_deliveries" ADD CONSTRAINT "send_details_deliveries_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
