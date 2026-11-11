@@ -15,6 +15,8 @@ import { DealService } from './deal.service';
 import { CreateDealDto, UpdateDealDto, UpdateDealStageDto } from './dto/deal.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -121,6 +123,18 @@ export class DealController {
     return this.dealService.deleteStage(customerId, id);
   }
 
+  @Post('bulk-delete')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'DEALS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Soft delete several deals in the current tenant' })
+  bulkDelete(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Body() body: { ids?: Array<number | string> },
+  ) {
+    return this.dealService.bulkDelete(customerId, body?.ids || [], user);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get deal details by ID' })
   async findOne(@CurrentCustomer() customerId: string, @Param('id') id: string) {
@@ -148,8 +162,10 @@ export class DealController {
   }
 
   @Delete(':id')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions({ module: 'DEALS', action: 'DELETE' })
   @ApiOperation({ summary: 'Soft delete deal' })
-  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.dealService.delete(customerId, id);
+  async remove(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Param('id') id: string) {
+    return this.dealService.delete(customerId, id, user);
   }
 }
