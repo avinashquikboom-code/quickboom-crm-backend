@@ -213,3 +213,4 @@ export function renderSalaryReportPdf(data: SalaryReportData): Promise<Buffer> {
     doc.end();
   });
 }
+

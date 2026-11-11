@@ -83,3 +83,4 @@ export class RetryReportDeliveryDto {
   @IsIn(['EMAIL', 'WHATSAPP', 'ALL'])
   channel?: 'EMAIL' | 'WHATSAPP' | 'ALL';
 }
+
