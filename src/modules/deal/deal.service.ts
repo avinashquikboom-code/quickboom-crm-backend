@@ -604,14 +604,155 @@ export class DealService {
     await this.prisma.pipelineStage.updateMany({ where: { pipelineId, order: { gte: order }, ...(ignoreId ? { id: { not: ignoreId } } : {}) }, data: { order: { increment: 1 } } });
   }
 
-  async delete(customerId: number | string, id: number | string) {
-    const numCustomerId = Number(customerId);
-    const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+  async delete(customerId: number | string, id: number | string, user?: any) {
+    const tenantId = this.requireTenant(customerId);
+    const numId = this.requireDealId(id);
+    const deal = await this.prisma.deal.findFirst({
+      where: { id: numId, customerId: tenantId, deletedAt: null },
+      select: { id: true, title: true },
+    });
+    if (!deal) throw new NotFoundException(`Deal with ID ${id} not found`);
 
-    return this.prisma.deal.update({
-      where: { id: numId },
+    const updated = await this.prisma.deal.updateMany({
+      where: { id: numId, customerId: tenantId, deletedAt: null },
       data: { deletedAt: new Date() },
     });
+    if (!updated.count) throw new NotFoundException(`Deal with ID ${id} not found`);
+    await this.writeDealAudit(tenantId, user, 'DELETE', [deal], 'DELETE');
+    return { deleted: true, id: numId, title: deal.title };
+  }
+
+  async bulkDelete(customerId: number | string, ids: Array<number | string>, user?: any) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Deal IDs array must not be empty.');
+    }
+    const tenantId = this.requireTenant(customerId);
+    const failures: Array<{ id: number | string; message: string }> = [];
+    const uniqueIds: number[] = [];
+    const seen = new Set<number>();
+    for (const raw of ids) {
+      const numId = Number(raw);
+      if (!Number.isInteger(numId) || numId <= 0) {
+        failures.push({ id: raw, message: 'Deal ID must be a positive number.' });
+        continue;
+      }
+      if (seen.has(numId)) continue;
+      seen.add(numId);
+      uniqueIds.push(numId);
+    }
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid deal IDs provided.');
+    }
+
+    const rows = await this.prisma.deal.findMany({
+      where: { id: { in: uniqueIds }, customerId: tenantId },
+      select: { id: true, title: true, deletedAt: true },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const eligible: Array<{ id: number; title: string }> = [];
+    for (const id of uniqueIds) {
+      const deal = byId.get(id);
+      if (!deal) {
+        failures.push({ id, message: 'Deal not found or does not belong to your company.' });
+        continue;
+      }
+      if (deal.deletedAt) {
+        failures.push({ id, message: `"${deal.title}" is already deleted.` });
+        continue;
+      }
+      eligible.push({ id: deal.id, title: deal.title });
+    }
+
+    let deletedIds: number[] = [];
+    if (eligible.length) {
+      const deletedAt = new Date();
+      const eligibleIds = eligible.map((deal) => deal.id);
+      const apply = async (db: { deal: { updateMany: Function; findMany: Function } }) => {
+        await db.deal.updateMany({
+          where: { id: { in: eligibleIds }, customerId: tenantId, deletedAt: null },
+          data: { deletedAt },
+        });
+        const remaining = await db.deal.findMany({
+          where: { id: { in: eligibleIds }, customerId: tenantId, deletedAt: null },
+          select: { id: true },
+        });
+        return new Set(remaining.map((row: { id: number }) => row.id));
+      };
+      const missed = typeof this.prisma.$transaction === 'function'
+        ? await this.prisma.$transaction((tx) => apply(tx))
+        : await apply(this.prisma);
+      deletedIds = eligible.filter((deal) => !missed.has(deal.id)).map((deal) => deal.id);
+      for (const deal of eligible) {
+        if (missed.has(deal.id)) failures.push({ id: deal.id, message: `"${deal.title}" could not be deleted.` });
+      }
+      await this.writeDealAudit(
+        tenantId,
+        user,
+        'BULK_DELETE',
+        eligible.filter((deal) => deletedIds.includes(deal.id)),
+        'POST',
+      );
+    }
+
+    const success = deletedIds.length;
+    const failed = failures.length;
+    return {
+      total: uniqueIds.length + failures.filter((item) => !uniqueIds.includes(Number(item.id))).length,
+      success,
+      failed,
+      deletedIds,
+      failures,
+      message: failed
+        ? `${success} deal${success === 1 ? '' : 's'} deleted, ${failed} failed.`
+        : `${success} deal${success === 1 ? '' : 's'} deleted.`,
+    };
+  }
+
+  private requireTenant(customerId: number | string) {
+    const tenantId = Number(customerId);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      throw new BadRequestException('A workspace is required to delete deals.');
+    }
+    return tenantId;
+  }
+
+  private requireDealId(id: number | string) {
+    const numId = Number(id);
+    if (!Number.isInteger(numId) || numId <= 0) {
+      throw new BadRequestException('Deal ID must be a positive number.');
+    }
+    return numId;
+  }
+
+  private async writeDealAudit(
+    customerId: number,
+    user: any,
+    action: string,
+    deals: Array<{ id: number; title?: string }>,
+    method: string,
+  ) {
+    if (!deals.length || typeof this.prisma.auditLog?.create !== 'function') return;
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId,
+          userId: user?.id ? Number(user.id) : null,
+          userName: [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email || 'User',
+          userRole: user?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action,
+          module: 'CRM',
+          description: `${deals.length} deal${deals.length === 1 ? '' : 's'} soft-deleted. Linked leads, customers, employees, quotations, and visits were kept.`,
+          entityType: 'Deal',
+          entityId: deals.map((deal) => deal.id).join(','),
+          endpoint: action === 'DELETE' ? `/deals/${deals[0].id}` : '/deals/bulk-delete',
+          method,
+          status: 'SUCCESS',
+          details: { ids: deals.map((deal) => deal.id), titles: deals.map((deal) => deal.title) },
+        },
+      });
+    } catch {
+      // Audit history is recorded when the table is available. Deletion itself already completed.
+    }
   }
 }
