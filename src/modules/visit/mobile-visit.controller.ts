@@ -4,11 +4,17 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
 import { VisitStatus, LeadStatus } from '@prisma/client';
@@ -19,6 +25,7 @@ import { CrmCategory } from '../../common/decorators/crm-category.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 /**
@@ -34,6 +41,7 @@ export class MobileVisitController {
   constructor(
     private readonly visitService: VisitService,
     private readonly prisma: PrismaService,
+    private readonly s3Service: S3Service,
   ) {}
 
   private isVisitorEmployee(employee: any, user: any): boolean {
@@ -481,10 +489,18 @@ export class MobileVisitController {
             city: true,
             value: true,
             category: true,
+            source: true,
             status: true,
+            latitude: true,
+            longitude: true,
             employeeId: true,
             stage: { select: { key: true, name: true } },
+            images: { select: { id: true, url: true, caption: true, isPrimary: true }, orderBy: { createdAt: 'desc' } },
           },
+        },
+        photos: {
+          orderBy: { createdAt: 'desc' },
+          include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } },
         },
       },
     });
@@ -577,6 +593,7 @@ export class MobileVisitController {
       company: visit.company,
       contact: visit.contact,
       deal: visit.deal,
+      photos: (visit.photos || []).map((photo) => this.presentPhoto(photo)),
       createdAt: visit.createdAt,
       updatedAt: visit.updatedAt,
     };
@@ -891,6 +908,94 @@ export class MobileVisitController {
     }
 
     return updated;
+  }
+
+  private presentPhoto(photo: any) {
+    const employee = photo.employee;
+    const name = employee ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim() : '';
+    return {
+      id: photo.id,
+      visitId: photo.visitId,
+      leadId: photo.leadId,
+      employeeId: photo.employeeId,
+      url: photo.url,
+      fileName: photo.fileName,
+      mimeType: photo.mimeType,
+      size: photo.size,
+      source: photo.source,
+      createdAt: photo.createdAt,
+      uploadedBy: name || null,
+      employeeCode: employee?.employeeCode || null,
+    };
+  }
+
+  @Post(':id/photos')
+  @UseInterceptors(FileInterceptor('image', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  @ApiOperation({ summary: 'Upload a photo for a visit assigned to the authenticated employee' })
+  async addPhoto(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id') id: string,
+    @Query('source') source: string | undefined,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('Choose a JPG, PNG, or WebP image.');
+    const ext = String(file.originalname || '').split('.').pop()?.toLowerCase();
+    const mimeByExt: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+    if (!file.mimetype || file.mimetype === 'application/octet-stream') {
+      file.mimetype = mimeByExt[ext || ''] || '';
+    }
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowed.includes(String(file.mimetype || '').toLowerCase())) {
+      throw new BadRequestException('Use a JPG, JPEG, PNG, or WebP image.');
+    }
+    if (file.size > 10 * 1024 * 1024) throw new BadRequestException('Image must be 10MB or smaller.');
+
+    const visit = await this.prisma.visit.findUnique({
+      where: { id: Number(id) },
+      include: { lead: { select: { id: true, employeeId: true } } },
+    });
+    if (!visit || Number.isNaN(Number(id))) throw new NotFoundException(`Visit with ID ${id} not found`);
+    if (Number(customerId) && visit.customerId !== Number(customerId)) {
+      throw new ForbiddenException('This visit belongs to another company.');
+    }
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        customerId: Number(customerId),
+        OR: [
+          { userId: user?.id },
+          { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
+        ],
+      },
+      include: { designation: true },
+    });
+    if (!employee) throw new ForbiddenException('Employee profile not found');
+    this.assertVisitorAssignment(visit, employee, user, customerId);
+    const isAssigned = !visit.employeeId || visit.employeeId === employee.id || visit.lead?.employeeId === employee.id;
+    if (!isUserSuperAdmin(user) && !isAssigned) {
+      throw new ForbiddenException('You do not have permission to add a photo to another employee\'s visit.');
+    }
+
+    const uploaded = await this.s3Service.uploadFile(file, `visits/${visit.customerId}/${visit.id}`);
+    const photoSource = String(source || '').toUpperCase() === 'CAMERA' ? 'CAMERA' : 'GALLERY';
+    const photo = await this.prisma.visitPhoto.create({
+      data: {
+        customerId: visit.customerId,
+        visitId: visit.id,
+        leadId: visit.leadId,
+        employeeId: employee.id,
+        url: uploaded.imageUrl,
+        key: uploaded.imageKey,
+        fileName: file.originalname || null,
+        mimeType: file.mimetype,
+        size: file.size,
+        source: photoSource,
+      },
+      include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } },
+    });
+    const presented = this.presentPhoto(photo);
+    return { success: true, visitId: visit.id, photos: [presented] };
   }
 }
 
