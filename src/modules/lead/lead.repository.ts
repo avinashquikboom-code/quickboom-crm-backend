@@ -2757,9 +2757,11 @@ export class LeadRepository {
     }
 
     const where: any = {
-      customerId: targetCustomerId,
       deletedAt: null,
       ...(includeInactive ? {} : { isActive: true }),
+      ...(targetCustomerId == null
+        ? { customerId: null }
+        : { OR: [{ customerId: targetCustomerId }, { customerId: null }] }),
     };
 
     const leadWhere: any = {
@@ -2778,7 +2780,7 @@ export class LeadRepository {
       }
     }
 
-    return this.prisma.leadStage.findMany({
+    const rows = await this.prisma.leadStage.findMany({
       where,
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       include: {
@@ -2797,6 +2799,11 @@ export class LeadRepository {
         },
       },
     });
+    if (targetCustomerId == null) return rows;
+    const ownedKeys = new Set(
+      rows.filter((row) => row.customerId === targetCustomerId).map((row) => row.key),
+    );
+    return rows.filter((row) => row.customerId === targetCustomerId || !ownedKeys.has(row.key));
   }
 
   async findStageById(id: number | string) {
