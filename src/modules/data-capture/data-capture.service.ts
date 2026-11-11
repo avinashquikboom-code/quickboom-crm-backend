@@ -7,6 +7,7 @@ import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
+import { googlePhotoResource, isPlaceholderPhoto } from './google-photo';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadService } from '../lead/lead.service';
 import {
@@ -259,57 +260,70 @@ export class DataCaptureService implements OnModuleInit {
       res.status(400).send('Photo reference or URL is required');
       return;
     }
+    if (isPlaceholderPhoto(rawRef)) {
+      res.status(404).json({ success: false, message: 'Photo unavailable' });
+      return;
+    }
 
-    // Direct CDN URL (lh3.googleusercontent.com, googleapis, etc.)
     if (
-      rawRef.startsWith('https://lh3.googleusercontent.com') ||
-      rawRef.startsWith('http://lh3.googleusercontent.com')
+      (rawRef.startsWith('https://lh3.googleusercontent.com') || rawRef.startsWith('http://lh3.googleusercontent.com')) &&
+      !isPlaceholderPhoto(rawRef)
     ) {
       res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800');
       res.redirect(302, rawRef);
       return;
     }
 
-    // Extract photo resource name if googleapis URL was passed
-    let targetPhotoName = rawRef;
-    if (rawRef.includes('places.googleapis.com')) {
-      const match = rawRef.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/);
-      if (match) {
-        targetPhotoName = match[1];
-      }
-    }
-
-    const h = maxHeight && !isNaN(Number(maxHeight)) ? Math.min(Math.max(Number(maxHeight), 50), 1600) : 800;
-    const w = maxWidth && !isNaN(Number(maxWidth)) ? Math.min(Math.max(Number(maxWidth), 50), 1600) : 800;
+    const targetPhotoName = googlePhotoResource(rawRef);
+    const h = maxHeight && !isNaN(Number(maxHeight)) ? Math.min(Math.max(Number(maxHeight), 50), 1600) : 400;
+    const w = maxWidth && !isNaN(Number(maxWidth)) ? Math.min(Math.max(Number(maxWidth), 50), 1600) : 400;
 
     const mapsConfig = await this.integrationSettingsService.getGoogleMapsConfig();
     const apiKey = mapsConfig?.apiKey;
+    const usableKey = Boolean(apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE' && apiKey !== 'AIzaSyFakeKey');
 
-    if (apiKey && apiKey !== 'YOUR_GOOGLE_MAPS_API_KEY_HERE' && apiKey !== 'AIzaSyFakeKey') {
+    if (usableKey && targetPhotoName) {
       try {
-        const photoUrl = `https://places.googleapis.com/v1/${targetPhotoName}/media?maxHeightPx=${h}&maxWidthPx=${w}&skipHttpRedirect=true&key=${apiKey}`;
-        const resp = await axios.get(photoUrl, { timeout: 8000 });
-        const cdnUri = resp.data?.photoUri;
-        if (cdnUri) {
+        const lookup = await axios.get(
+          `https://places.googleapis.com/v1/${targetPhotoName}/media`,
+          { timeout: 12000, headers: { 'X-Goog-Api-Key': apiKey }, params: { maxHeightPx: h, maxWidthPx: w, skipHttpRedirect: true }, validateStatus: () => true },
+        );
+        const photoUri = lookup.data?.photoUri;
+        if (lookup.status < 300 && typeof photoUri === 'string' && photoUri.startsWith('https://')) {
+          this.logger.log(`[LEAD_IMAGE] photo resource resolved status=${lookup.status}`);
           res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800');
-          res.redirect(302, cdnUri);
+          res.redirect(302, photoUri);
           return;
         }
+        this.logger.warn(`[LEAD_IMAGE] photo lookup status=${lookup.status} hasUri=${Boolean(photoUri)}`);
       } catch (err: any) {
         this.logger.warn(`[Google Places Photo Proxy] Live resolution failed: ${err.message}`);
       }
-    }
-
-    // Valid external HTTP URL fallback
-    if (rawRef.startsWith('http://') || rawRef.startsWith('https://')) {
-      if (!rawRef.includes('AIzaSyFakeKey') && !rawRef.includes('places.googleapis.com') && !rawRef.includes('unsplash.com')) {
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        res.redirect(302, rawRef);
-        return;
+      try {
+        const image = await axios.get(
+          `https://places.googleapis.com/v1/${targetPhotoName}/media`,
+          { timeout: 15000, responseType: 'stream', headers: { 'X-Goog-Api-Key': apiKey }, params: { maxHeightPx: h, maxWidthPx: w }, maxRedirects: 5, validateStatus: () => true },
+        );
+        const type = String(image.headers['content-type'] || '');
+        if (image.status < 300 && type.startsWith('image/')) {
+          res.setHeader('Content-Type', type);
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          image.data.pipe(res);
+          return;
+        }
+        image.data?.resume?.();
+        this.logger.warn(`[LEAD_IMAGE] photo bytes status=${image.status} type=${type || 'none'}`);
+      } catch (err: any) {
+        this.logger.warn(`[Google Places Photo Proxy] Image stream failed: ${err.message}`);
       }
     }
 
-    // When live resolution is unavailable, do NOT redirect to fake dummy/placeholder images
+    if ((rawRef.startsWith('http://') || rawRef.startsWith('https://')) && !isPlaceholderPhoto(rawRef) && !rawRef.includes('places.googleapis.com') && !rawRef.includes('AIzaSy')) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.redirect(302, rawRef);
+      return;
+    }
+
     res.status(404).json({ success: false, message: 'Photo unavailable' });
   }
 
@@ -1096,13 +1110,8 @@ export class DataCaptureService implements OnModuleInit {
     const { googlePhotos } = this.normalizeStoredPhotos(photosField);
     const urls: string[] = [];
     for (const photo of googlePhotos) {
-      const name = String(photo?.name || '');
-      const url = String(photo?.url || '');
-      if (/^places\/[^/]+\/photos\/(?!\d{1,3}$)[^/?&]+$/.test(name)) {
-        urls.push(`/api/v1/data-capture/photo?ref=${encodeURIComponent(name)}`);
-      } else if (url.startsWith('/api/v1/data-capture/photo')) {
-        urls.push(url);
-      }
+      const resource = googlePhotoResource(String(photo?.name || '')) || googlePhotoResource(String(photo?.url || ''));
+      if (resource) urls.push(`/api/v1/data-capture/photo?ref=${encodeURIComponent(resource)}`);
     }
     return [...new Set(urls)];
   }
