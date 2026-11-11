@@ -147,6 +147,11 @@ export class OvertimeQueryDto {
   @IsIn(PAYROLL)
   payrollStatus?: string;
 
+  @ApiPropertyOptional({ enum: ['mine', 'team'] })
+  @IsOptional()
+  @IsIn(['mine', 'team'])
+  scope?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)

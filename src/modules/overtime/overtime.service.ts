@@ -4,9 +4,11 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OvertimeNoticeService } from './overtime-notice.service';
 import {
   hourlyRateFromSalary,
   istDateTime,
@@ -42,7 +44,10 @@ const requestInclude = {
 
 @Injectable()
 export class OvertimeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notices?: OvertimeNoticeService,
+  ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
     const parsed = Number(customerId);
@@ -263,13 +268,16 @@ export class OvertimeService {
       return row;
     });
     if (autoApprove) return this.approve(user, numCustomerId, created.id, { approvedMinutes: created.totalMinutes });
+    await this.notices?.publish(numCustomerId, created.id, 'SUBMITTED');
     return this.findOne(user, numCustomerId, created.id);
   }
 
   async approve(user: any, customerId: number | string | undefined, id: number, dto: ApproveOvertimeDto) {
-    this.assertReviewer(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
-    return this.prisma.$transaction(async (tx) => {
+    const existing = await this.prisma.overtimeRequest.findFirst({ where: { id, customerId: numCustomerId, deletedAt: null }, select: { employeeId: true } });
+    if (!existing) throw new NotFoundException('Overtime request was not found.');
+    await this.assertCanReview(user, numCustomerId, existing.employeeId);
+    const result = await this.prisma.$transaction(async (tx) => {
       const current = await tx.overtimeRequest.findFirst({ where: { id, customerId: numCustomerId, deletedAt: null }, include: requestInclude });
       if (!current) throw new NotFoundException('Overtime request was not found.');
       if (current.status !== 'PENDING') throw new ConflictException('Only a pending overtime request can be approved.');
@@ -299,28 +307,20 @@ export class OvertimeService {
       });
       await this.audit(tx, numCustomerId, user, 'APPROVE', id, 'Overtime request approved');
       const row = await tx.overtimeRequest.findFirst({ where: { id }, include: requestInclude });
-      if (row?.employee?.userId) {
-        await tx.notification.create({
-          data: {
-            customerId: numCustomerId,
-            userId: row.employee.userId,
-            title: 'Overtime approved',
-            message: `Your overtime on ${String(row.overtimeDate).slice(0, 10)} from ${row.startTime} to ${row.endTime} is approved.`,
-            type: 'OVERTIME_APPROVED',
-            data: { overtimeRequestId: row.id },
-          },
-        }).catch(() => undefined);
-      }
       return this.present(row, rules);
     });
+    await this.notices?.publish(numCustomerId, id, 'APPROVED');
+    return result;
   }
 
   async reject(user: any, customerId: number | string | undefined, id: number, dto: RejectOvertimeDto) {
-    this.assertReviewer(user);
     if (!dto.rejectionReason?.trim()) throw new BadRequestException('A rejection reason is required.');
     const numCustomerId = await this.resolveCustomerId(customerId);
+    const existing = await this.prisma.overtimeRequest.findFirst({ where: { id, customerId: numCustomerId, deletedAt: null }, select: { employeeId: true } });
+    if (!existing) throw new NotFoundException('Overtime request was not found.');
+    await this.assertCanReview(user, numCustomerId, existing.employeeId);
     const actor = this.actor(user);
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updatedCount = await tx.overtimeRequest.updateMany({
         where: { id, customerId: numCustomerId, status: 'PENDING', deletedAt: null },
         data: {
@@ -342,6 +342,8 @@ export class OvertimeService {
       const row = await tx.overtimeRequest.findFirst({ where: { id }, include: requestInclude });
       return this.present(row, await this.rules(numCustomerId));
     });
+    await this.notices?.publish(numCustomerId, id, 'REJECTED');
+    return result;
   }
 
   async start(user: any, customerId: number | string | undefined, id: number) {
@@ -435,6 +437,7 @@ export class OvertimeService {
       data: { customerId: numCustomerId, overtimeRequestId: id, action: 'CANCEL', fromStatus: current.status, toStatus: 'CANCELLED', actorId: actor.id, actorName: actor.name, notes: dto.managerNotes?.trim() || null },
     });
     await this.audit(this.prisma, numCustomerId, user, 'CANCEL', id, 'Overtime request cancelled');
+    await this.notices?.publish(numCustomerId, id, 'CANCELLED');
     return this.findOne(user, numCustomerId, id);
   }
 
@@ -481,11 +484,13 @@ export class OvertimeService {
   }
 
   async decideCancellation(user: any, customerId: number | string | undefined, id: number, dto: { decision: 'APPROVE' | 'REJECT'; remarks?: string }) {
-    this.assertReviewer(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
+    const existing = await this.prisma.overtimeRequest.findFirst({ where: { id, customerId: numCustomerId, deletedAt: null }, select: { employeeId: true } });
+    if (!existing) throw new NotFoundException('Overtime request was not found.');
+    await this.assertCanReview(user, numCustomerId, existing.employeeId);
     const actor = this.actor(user);
     const approve = dto.decision === 'APPROVE';
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const current = await tx.overtimeRequest.findFirst({ where: { id, customerId: numCustomerId, deletedAt: null }, include: requestInclude });
       if (!current) throw new NotFoundException('Overtime request was not found.');
       if (current.status !== 'CANCELLATION_REQUESTED') throw new ConflictException('This overtime request is not waiting for a cancellation decision.');
@@ -514,11 +519,45 @@ export class OvertimeService {
       }
       return this.present(row, await this.rules(numCustomerId));
     });
+    if (approve) await this.notices?.publish(numCustomerId, id, 'CANCELLED');
+    return result;
+  }
+
+  private async assertCanReview(user: any, customerId: number, employeeId: number) {
+    if (!this.isEmployee(user)) return;
+    const reviewerId = await this.ownEmployeeId(user, customerId);
+    if (reviewerId === employeeId) throw new ForbiddenException('You cannot review your own overtime request.');
+    const target = await this.prisma.employee.findFirst({ where: { id: employeeId, customerId }, select: { managerId: true } });
+    if (target?.managerId === reviewerId) return;
+    const leading = await this.prisma.team.findFirst({ where: { customerId, leaderId: reviewerId, members: { some: { employeeId } } }, select: { id: true } });
+    if (!leading) throw new ForbiddenException('You can review overtime only for your team.');
+  }
+
+  async notificationHistory(user: any, customerId: number | string | undefined) {
+    if (this.isEmployee(user)) throw new ForbiddenException('Overtime notification history is available to HR and admins.');
+    return this.notices?.list(await this.resolveCustomerId(customerId)) || [];
+  }
+
+  async retryNotification(user: any, customerId: number | string | undefined, id: number) {
+    if (this.isEmployee(user)) throw new ForbiddenException('Overtime notification retries are available to HR and admins.');
+    if (!this.notices) return { success: false, message: 'Overtime notifications are unavailable.' };
+    return this.notices.retry(await this.resolveCustomerId(customerId), id);
   }
 
   private async whereFor(user: any, customerId: number, query: OvertimeQueryDto): Promise<Prisma.OvertimeRequestWhereInput> {
     const where: Prisma.OvertimeRequestWhereInput = { customerId, deletedAt: null };
-    if (this.isEmployee(user)) where.employeeId = await this.ownEmployeeId(user, customerId);
+    if (this.isEmployee(user)) {
+      const reviewerId = await this.ownEmployeeId(user, customerId);
+      if (query.scope === 'team') {
+        const team = await this.prisma.employee.findMany({
+          where: { customerId, OR: [{ managerId: reviewerId }, { teamMembers: { some: { team: { leaderId: reviewerId } } } }] },
+          select: { id: true },
+        });
+        where.employeeId = { in: team.map((row) => row.id) };
+      } else {
+        where.employeeId = reviewerId;
+      }
+    }
     if (query.departmentId || query.designationId) {
       where.employee = {
         departmentId: query.departmentId ? Number(query.departmentId) : undefined,

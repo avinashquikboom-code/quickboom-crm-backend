@@ -22,6 +22,7 @@ import {
 } from './dto/policy.dto';
 import { AttendanceStatus, RequestStatus, Prisma } from '@prisma/client';
 import { NotificationService } from '../notification/notification.service';
+import { HrmReportsService } from '../hrm-reports/hrm-reports.service';
 
 @Injectable()
 export class LeaveService {
@@ -30,6 +31,7 @@ export class LeaveService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly hrmReports?: HrmReportsService,
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
@@ -857,6 +859,10 @@ export class LeaveService {
         });
     }
 
+    this.hrmReports?.enqueueLeaveDecision(numCustomerId, { ...result.data, status: 'APPROVED', leaveType: { name: result.balance?.leaveType } }, `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'HR').catch((err) => {
+      this.logger.error(`Failed to queue leave approval notice: ${err?.message}`);
+    });
+
     return result;
   }
 
@@ -917,6 +923,10 @@ export class LeaveService {
           this.logger.error(`Failed to send leave rejection push notification: ${err?.message}`);
         });
     }
+
+    this.hrmReports?.enqueueLeaveDecision(numCustomerId, { ...result.data, status: 'REJECTED' }, `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'HR').catch((err) => {
+      this.logger.error(`Failed to queue leave rejection notice: ${err?.message}`);
+    });
 
     return result;
   }

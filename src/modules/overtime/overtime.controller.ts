@@ -40,6 +40,18 @@ export class OvertimeController {
     return this.overtimeService.updateSettings(customerId, dto);
   }
 
+  @Get('notifications')
+  @ApiOperation({ summary: 'Overtime notification delivery history' })
+  notifications(@CurrentUser() user: any, @CurrentCustomer() customerId: number | string | undefined) {
+    return this.overtimeService.notificationHistory(user, customerId);
+  }
+
+  @Post('notifications/:id/retry')
+  @ApiOperation({ summary: 'Retry one failed overtime notification channel' })
+  retryNotification(@CurrentUser() user: any, @CurrentCustomer() customerId: number | string | undefined, @Param('id', ParseIntPipe) id: number) {
+    return this.overtimeService.retryNotification(user, customerId, id);
+  }
+
   @Get()
   @ApiOperation({ summary: 'List overtime requests' })
   findAll(@CurrentUser() user: any, @CurrentCustomer() customerId: number | string | undefined, @Query() query: OvertimeQueryDto) {
