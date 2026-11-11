@@ -28,6 +28,26 @@ const SOCIAL_PROFILE_KEYS: Array<[string, string]> = [
   ['other', 'OTHER'],
 ];
 
+function normalizeSocialLink(key: string, value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (raw.startsWith('@')) {
+    const handle = raw.slice(1).replace(/^@+/, '');
+    if (!handle) return '';
+    const hosts: Record<string, string> = {
+      instagram: 'https://instagram.com/',
+      facebook: 'https://facebook.com/',
+      linkedin: 'https://www.linkedin.com/in/',
+      twitter: 'https://x.com/',
+      x: 'https://x.com/',
+      youtube: 'https://youtube.com/@',
+      tiktok: 'https://www.tiktok.com/@',
+    };
+    const prefix = hosts[key.toLowerCase()];
+    if (prefix) return safeHttpUrl(`${prefix}${handle}`);
+  }
+  return safeHttpUrl(raw);
+}
+
 function safeHttpUrl(value: unknown): string {
   const raw = String(value ?? '').trim();
   if (!raw || raw === 'N/A' || raw.toLowerCase() === 'null' || raw.toLowerCase() === 'undefined') return '';
@@ -1030,7 +1050,7 @@ export class LeadRepository {
             employee: { select: { id: true, firstName: true, lastName: true } },
             convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             socialProfiles: true,
-            images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }], take: 1 },
+            images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }], take: 4 },
           visits: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1,
             include: { employee: { select: { id: true, firstName: true, lastName: true } } } },
           },
@@ -1150,7 +1170,7 @@ export class LeadRepository {
   }
 
   private leadPhotoEntries(lead: any): Array<{ url: string; source: string; attributions: string[] }> {
-    const uploaded = (Array.isArray(lead?.images) ? lead.images : [])
+    const uploaded = (Array.isArray(lead?.images) ? [...lead.images].sort((a, b) => Number(Boolean(b?.isPrimary)) - Number(Boolean(a?.isPrimary))) : [])
       .map((image) => image?.url)
       .filter((url) => typeof url === 'string' && (/^https?:\/\//i.test(url) || url.startsWith('/api/v1/data-capture/photo')))
       .map((url) => ({ url, source: String(url).includes('/data-capture/photo') ? 'GOOGLE_PLACES' : 'UPLOAD', attributions: [] as string[] }));
@@ -1557,8 +1577,10 @@ export class LeadRepository {
       }
     }
     Object.keys(mappedSocial).forEach((key) => {
-      if (key !== 'website' && !safeHttpUrl(mappedSocial[key])) delete mappedSocial[key];
-      else if (key !== 'website') mappedSocial[key] = safeHttpUrl(mappedSocial[key]);
+      if (key === 'website') return;
+      const normalized = normalizeSocialLink(key, mappedSocial[key]);
+      if (!normalized) delete mappedSocial[key];
+      else mappedSocial[key] = normalized;
     });
     delete mappedSocial.website;
     const finalSocialMedia = Object.keys(mappedSocial).length > 0 ? mappedSocial : null;
