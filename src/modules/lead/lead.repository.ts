@@ -3073,6 +3073,36 @@ export class LeadRepository {
   }
 
   /**
+   * The lead pipeline needs a New stage even when the workspace already has other lead stages.
+   * A deal stage named New is a different record and is not shown on the lead pipeline.
+   * An inactive lead stage stays inactive. A previously deleted New stage is not recreated.
+   */
+  async ensureNewLeadStage(customerId: number | null) {
+    if (!customerId || typeof this.prisma.leadStage?.findFirst !== 'function' || typeof this.prisma.leadStage?.create !== 'function') return;
+    const live = await this.prisma.leadStage.findFirst({
+      where: { deletedAt: null, key: 'NEW', OR: [{ customerId }, { customerId: null }] },
+    });
+    if (live) return;
+    const retired = await this.prisma.leadStage.findFirst({
+      where: { customerId, key: 'NEW', deletedAt: { not: null } },
+    });
+    if (retired) return;
+    await this.prisma.leadStage.create({
+      data: {
+        customerId,
+        name: 'New',
+        key: 'NEW',
+        sortOrder: 1,
+        color: '#0284C7',
+        bgColor: '#E0F2FE',
+        borderColor: '#BAE6FD',
+        isActive: true,
+        isSystem: true,
+      },
+    });
+  }
+
+  /**
    * Seed the 12 default lead stages for a customer if they don't already have any.
    * Idempotent — safe to call multiple times.
    */
