@@ -102,6 +102,12 @@ export class DealController {
     return this.dealService.updateStageDefinition(customerId, id, body);
   }
 
+  @Post('stages/:id/reassign')
+  @ApiOperation({ summary: 'Move deals to another deal stage, then delete the source stage' })
+  reassignStage(@CurrentCustomer() customerId: string, @Param('id') id: string, @Body() body: { targetStageId?: number | string }) {
+    return this.dealService.reassignAndDeleteStage(customerId, id, body?.targetStageId as any);
+  }
+
   @Delete('stages/:id')
   @ApiOperation({ summary: 'Delete an unused deal pipeline stage' })
   deleteStage(@CurrentCustomer() customerId: string, @Param('id') id: string) {

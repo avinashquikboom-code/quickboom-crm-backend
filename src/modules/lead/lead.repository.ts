@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CheckDuplicateDto,
@@ -2829,10 +2829,20 @@ export class LeadRepository {
       },
     });
     if (targetCustomerId == null) return rows;
+    const retired = await this.prisma.leadStage.findMany({
+      where: { customerId: targetCustomerId, deletedAt: { not: null } },
+      select: { key: true },
+    });
+    const retiredKeys = new Set(
+      retired.map((row) => String(row.key).replace(/__deleted_\d+$/, '')),
+    );
     const ownedKeys = new Set(
       rows.filter((row) => row.customerId === targetCustomerId).map((row) => row.key),
     );
-    return rows.filter((row) => row.customerId === targetCustomerId || !ownedKeys.has(row.key));
+    return rows.filter((row) => {
+      if (row.customerId === targetCustomerId) return true;
+      return !ownedKeys.has(row.key) && !retiredKeys.has(row.key);
+    });
   }
 
   async findStageById(id: number | string) {
@@ -2857,6 +2867,21 @@ export class LeadRepository {
   async createStage(customerId: number | string | undefined, data: any) {
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
     const key = data.name.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const live = await this.prisma.leadStage.findFirst({
+      where: { customerId: numCustomerId, key, deletedAt: null },
+    });
+    if (live) {
+      throw new BadRequestException('A lead stage with this name already exists for this workspace.');
+    }
+    const retired = await this.prisma.leadStage.findFirst({
+      where: { customerId: numCustomerId, key, deletedAt: { not: null } },
+    });
+    if (retired) {
+      await this.prisma.leadStage.update({
+        where: { id: retired.id },
+        data: { key: `${key}__deleted_${retired.id}` },
+      });
+    }
     return this.prisma.leadStage.create({
       data: {
         name: data.name.trim(),
@@ -2916,16 +2941,61 @@ export class LeadRepository {
     });
   }
 
-  async countLeadsForStage(stageId: number | string, statusKey?: string) {
+  async countLeadsForStage(stageId: number | string, statusKey?: string, customerId?: number | string) {
     const numStageId = Number(stageId);
+    const tenantId = Number(customerId);
+    const validStatus = statusKey && (Object.values(LeadStatus) as string[]).includes(statusKey);
     const where: any = {
       deletedAt: null,
+      ...(Number.isInteger(tenantId) && tenantId > 0 ? { customerId: tenantId } : {}),
       OR: [
         { stageId: numStageId },
-        ...(statusKey ? [{ status: statusKey as any }] : []),
+        ...(validStatus ? [{ stageId: null, status: statusKey as LeadStatus }] : []),
       ],
     };
     return this.prisma.lead.count({ where });
+  }
+
+  async unassignedStatusCounts(customerId?: number | string) {
+    const tenantId = Number(customerId);
+    if (!Number.isInteger(tenantId) || tenantId <= 0 || typeof this.prisma.lead?.groupBy !== 'function') return {} as Record<string, number>;
+    const rows = await this.prisma.lead.groupBy({
+      by: ['status'],
+      where: { customerId: tenantId, deletedAt: null, stageId: null },
+      _count: { _all: true },
+    });
+    return Object.fromEntries(rows.map((row: { status: string; _count: { _all: number } }) => [row.status, row._count._all]));
+  }
+
+  async reassignAndDeleteStage(customerId: number | string, sourceId: number | string, targetId: number | string) {
+    const tenantId = Number(customerId);
+    const source = await this.findStageById(sourceId);
+    const target = await this.findStageById(targetId);
+    if (!source || !target) throw new Error('Stage not found');
+    if (Number(source.id) === Number(target.id)) throw new Error('Choose a different lead stage.');
+    if (source.customerId != null && Number(source.customerId) !== tenantId) throw new Error('This stage belongs to another workspace.');
+    if (target.customerId != null && Number(target.customerId) !== tenantId) throw new Error('A lead stage cannot be reassigned to a deal stage or another workspace.');
+    const validTarget = (Object.values(LeadStatus) as string[]).includes(target.key);
+    const validSource = (Object.values(LeadStatus) as string[]).includes(source.key);
+    const where: any = {
+      deletedAt: null,
+      customerId: tenantId,
+      OR: [
+        { stageId: Number(source.id) },
+        ...(validSource ? [{ stageId: null, status: source.key as LeadStatus }] : []),
+      ],
+    };
+    const move = this.prisma.lead.updateMany({
+      where,
+      data: { stageId: Number(target.id), ...(validTarget ? { status: target.key as LeadStatus } : {}) },
+    });
+    const remove = this.prisma.leadStage.update({
+      where: { id: Number(source.id) },
+      data: { deletedAt: new Date() },
+    });
+    if (typeof this.prisma.$transaction === 'function') return this.prisma.$transaction([move, remove]);
+    await move;
+    return remove;
   }
 
   /**

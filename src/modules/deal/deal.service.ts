@@ -506,11 +506,27 @@ export class DealService {
     });
   }
 
+  async reassignAndDeleteStage(customerId: number | string, id: number | string, targetStageId: number | string) {
+    const tenantId = this.requireCustomer(customerId);
+    const source = await this.stageInTenant(tenantId, Number(id));
+    const target = await this.stageInTenant(tenantId, Number(targetStageId));
+    if (source.id === target.id) throw new BadRequestException('Choose a different deal stage.');
+    if (source.pipelineId !== target.pipelineId) throw new BadRequestException('A deal stage cannot be reassigned to a lead stage.');
+    const moved = source._count.deals;
+    const work = [
+      this.prisma.deal.updateMany({ where: { customerId: tenantId, stageId: source.id, deletedAt: null }, data: { stageId: target.id } }),
+      this.prisma.pipelineStage.delete({ where: { id: source.id } }),
+    ];
+    if (typeof this.prisma.$transaction === 'function') await this.prisma.$transaction(work);
+    else { await work[0]; await work[1]; }
+    return { deleted: true, id: source.id, reassigned: moved };
+  }
+
   async deleteStage(customerId: number | string, id: number | string) {
     const tenantId = this.requireCustomer(customerId);
     const stage = await this.stageInTenant(tenantId, Number(id));
     if (stage._count.deals > 0) {
-      throw new BadRequestException(`"${stage.name}" is used by ${stage._count.deals} deal${stage._count.deals === 1 ? '' : 's'}. Deactivate it instead of deleting it.`);
+      throw new BadRequestException(`"${stage.name}" is used by ${stage._count.deals} deal${stage._count.deals === 1 ? '' : 's'}. Reassign those deals to another deal stage, or deactivate this stage. Deals are not deleted.`);
     }
     await this.prisma.pipelineStage.delete({ where: { id: stage.id } });
     return { deleted: true, id: stage.id };

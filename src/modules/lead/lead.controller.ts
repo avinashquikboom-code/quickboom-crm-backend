@@ -133,6 +133,17 @@ export class LeadController {
     return this.leadService.updateStage(customerId, user, id, dto);
   }
 
+  @Post('stages/:id/reassign')
+  @CrmCategory('BPO')
+  @ApiOperation({ summary: 'Move leads to another lead stage, then delete the source stage' })
+  async reassignStage(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Body() body: { targetStageId?: number | string },
+  ) {
+    return this.leadService.reassignAndDeleteStage(customerId, id, body?.targetStageId as any);
+  }
+
   @Delete('stages/:id')
   @CrmCategory('BPO')
   @ApiOperation({ summary: 'Delete lead stage if no leads are assigned' })
