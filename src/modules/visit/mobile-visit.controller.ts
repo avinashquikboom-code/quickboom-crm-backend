@@ -4,11 +4,17 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { VisitService } from './visit.service';
 import { VisitStatus, LeadStatus } from '@prisma/client';
@@ -19,6 +25,7 @@ import { CrmCategory } from '../../common/decorators/crm-category.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 
 /**
@@ -34,6 +41,7 @@ export class MobileVisitController {
   constructor(
     private readonly visitService: VisitService,
     private readonly prisma: PrismaService,
+    private readonly s3Service: S3Service,
   ) {}
 
   private isVisitorEmployee(employee: any, user: any): boolean {
@@ -481,9 +489,13 @@ export class MobileVisitController {
             city: true,
             value: true,
             category: true,
+            source: true,
             status: true,
+            latitude: true,
+            longitude: true,
             employeeId: true,
             stage: { select: { key: true, name: true } },
+            images: { select: { id: true, url: true, caption: true, isPrimary: true }, orderBy: { createdAt: 'desc' } },
           },
         },
       },
@@ -891,6 +903,57 @@ export class MobileVisitController {
     }
 
     return updated;
+  }
+
+  @Post(':id/photos')
+  @UseInterceptors(FileInterceptor('image', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  @ApiOperation({ summary: 'Upload a photo for a visit assigned to the authenticated employee' })
+  async addPhoto(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('Choose a JPG, PNG, or WebP image.');
+    const ext = String(file.originalname || '').split('.').pop()?.toLowerCase();
+    const mimeByExt: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+    if (!file.mimetype || file.mimetype === 'application/octet-stream') {
+      file.mimetype = mimeByExt[ext || ''] || 'image/jpeg';
+    }
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.mimetype.toLowerCase())) {
+      throw new BadRequestException('Use a JPG, JPEG, PNG, or WebP image.');
+    }
+
+    const visit = await this.prisma.visit.findUnique({
+      where: { id: Number(id) },
+      include: { lead: { select: { id: true, employeeId: true } } },
+    });
+    if (!visit) throw new NotFoundException(`Visit with ID ${id} not found`);
+
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        customerId: Number(customerId),
+        OR: [
+          { userId: user?.id },
+          { email: { equals: user?.email?.trim()?.toLowerCase(), mode: 'insensitive' } },
+        ],
+      },
+      include: { designation: true },
+    });
+    if (!employee) throw new ForbiddenException('Employee profile not found');
+    this.assertVisitorAssignment(visit, employee, user, customerId);
+    const isAssigned = !visit.employeeId || visit.employeeId === employee.id || visit.lead?.employeeId === employee.id;
+    if (!isUserSuperAdmin(user) && !isAssigned) {
+      throw new ForbiddenException('You do not have permission to add a photo to another employee\'s visit.');
+    }
+    if (!visit.leadId) throw new BadRequestException('This visit is not linked to a lead, so a photo cannot be saved.');
+
+    const uploaded = await this.s3Service.uploadFile(file, `leads/${visit.customerId}/${visit.leadId}`);
+    const image = await this.prisma.leadImage.create({
+      data: { leadId: visit.leadId, url: uploaded.imageUrl, key: uploaded.imageKey, isPrimary: false },
+    });
+    return image;
   }
 }
 
