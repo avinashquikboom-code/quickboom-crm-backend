@@ -430,6 +430,7 @@ model Lead {
   socialMedia          Json?
   socialProfiles       LeadSocialProfile[]
   images               LeadImage[]
+  visitPhotos          VisitPhoto[]
   commissions          Commission[]
 
   @@index([customerId])
@@ -1261,6 +1262,7 @@ model Employee {
   tasks                    Task[]
   teamMembers              TeamMember[]
   visits                   Visit[]
+  visitPhotos              VisitPhoto[]
   works                    Work[]                   @relation("AssignedEmployeeWorks")
   editedWorks              Work[]                   @relation("AssignedEditorWorks")
   workTasks                WorkTask[]
@@ -1799,6 +1801,7 @@ model Visit {
   deal             Deal?       @relation(fields: [dealId], references: [id])
   employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   lead             Lead?       @relation(fields: [leadId], references: [id])
+  photos           VisitPhoto[]
 
   @@index([customerId])
   @@index([employeeId])
@@ -1808,6 +1811,30 @@ model Visit {
   @@index([dealId])
   @@index([completedById])
   @@index([scheduledById])
+}
+
+model VisitPhoto {
+  id         Int       @id @default(autoincrement())
+  customerId Int
+  visitId    Int
+  leadId     Int?
+  employeeId Int?
+  url        String
+  key        String?
+  fileName   String?
+  mimeType   String?
+  size       Int?
+  source     String?
+  createdAt  DateTime  @default(now())
+  visit      Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  lead       Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([visitId])
+  @@index([leadId])
+  @@index([employeeId])
+  @@map("visit_photos")
 }
 
 model SalaryStructure {

@@ -158,6 +158,7 @@ export class VisitService {
           contact: { select: { id: true, firstName: true, lastName: true, phone: true } },
           deal: { select: { id: true, title: true, amount: true } },
           lead: { select: { id: true, title: true } },
+          photos: { orderBy: { createdAt: 'desc' }, include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } } },
         },
       }),
       this.prisma.visit.count({ where }),
@@ -252,6 +253,7 @@ export class VisitService {
         contact: true,
         deal: true,
         lead: true,
+        photos: { orderBy: { createdAt: 'desc' }, include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } } },
       },
     });
 

@@ -498,6 +498,10 @@ export class MobileVisitController {
             images: { select: { id: true, url: true, caption: true, isPrimary: true }, orderBy: { createdAt: 'desc' } },
           },
         },
+        photos: {
+          orderBy: { createdAt: 'desc' },
+          include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } },
+        },
       },
     });
 
@@ -589,6 +593,7 @@ export class MobileVisitController {
       company: visit.company,
       contact: visit.contact,
       deal: visit.deal,
+      photos: (visit.photos || []).map((photo) => this.presentPhoto(photo)),
       createdAt: visit.createdAt,
       updatedAt: visit.updatedAt,
     };
@@ -905,6 +910,25 @@ export class MobileVisitController {
     return updated;
   }
 
+  private presentPhoto(photo: any) {
+    const employee = photo.employee;
+    const name = employee ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim() : '';
+    return {
+      id: photo.id,
+      visitId: photo.visitId,
+      leadId: photo.leadId,
+      employeeId: photo.employeeId,
+      url: photo.url,
+      fileName: photo.fileName,
+      mimeType: photo.mimeType,
+      size: photo.size,
+      source: photo.source,
+      createdAt: photo.createdAt,
+      uploadedBy: name || null,
+      employeeCode: employee?.employeeCode || null,
+    };
+  }
+
   @Post(':id/photos')
   @UseInterceptors(FileInterceptor('image', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
   @ApiOperation({ summary: 'Upload a photo for a visit assigned to the authenticated employee' })
@@ -912,24 +936,29 @@ export class MobileVisitController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
+    @Query('source') source: string | undefined,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     if (!file) throw new BadRequestException('Choose a JPG, PNG, or WebP image.');
     const ext = String(file.originalname || '').split('.').pop()?.toLowerCase();
     const mimeByExt: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
     if (!file.mimetype || file.mimetype === 'application/octet-stream') {
-      file.mimetype = mimeByExt[ext || ''] || 'image/jpeg';
+      file.mimetype = mimeByExt[ext || ''] || '';
     }
     const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.mimetype.toLowerCase())) {
+    if (!allowed.includes(String(file.mimetype || '').toLowerCase())) {
       throw new BadRequestException('Use a JPG, JPEG, PNG, or WebP image.');
     }
+    if (file.size > 10 * 1024 * 1024) throw new BadRequestException('Image must be 10MB or smaller.');
 
     const visit = await this.prisma.visit.findUnique({
       where: { id: Number(id) },
       include: { lead: { select: { id: true, employeeId: true } } },
     });
-    if (!visit) throw new NotFoundException(`Visit with ID ${id} not found`);
+    if (!visit || Number.isNaN(Number(id))) throw new NotFoundException(`Visit with ID ${id} not found`);
+    if (Number(customerId) && visit.customerId !== Number(customerId)) {
+      throw new ForbiddenException('This visit belongs to another company.');
+    }
 
     const employee = await this.prisma.employee.findFirst({
       where: {
@@ -947,13 +976,26 @@ export class MobileVisitController {
     if (!isUserSuperAdmin(user) && !isAssigned) {
       throw new ForbiddenException('You do not have permission to add a photo to another employee\'s visit.');
     }
-    if (!visit.leadId) throw new BadRequestException('This visit is not linked to a lead, so a photo cannot be saved.');
 
-    const uploaded = await this.s3Service.uploadFile(file, `leads/${visit.customerId}/${visit.leadId}`);
-    const image = await this.prisma.leadImage.create({
-      data: { leadId: visit.leadId, url: uploaded.imageUrl, key: uploaded.imageKey, isPrimary: false },
+    const uploaded = await this.s3Service.uploadFile(file, `visits/${visit.customerId}/${visit.id}`);
+    const photoSource = String(source || '').toUpperCase() === 'CAMERA' ? 'CAMERA' : 'GALLERY';
+    const photo = await this.prisma.visitPhoto.create({
+      data: {
+        customerId: visit.customerId,
+        visitId: visit.id,
+        leadId: visit.leadId,
+        employeeId: employee.id,
+        url: uploaded.imageUrl,
+        key: uploaded.imageKey,
+        fileName: file.originalname || null,
+        mimeType: file.mimetype,
+        size: file.size,
+        source: photoSource,
+      },
+      include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } },
     });
-    return image;
+    const presented = this.presentPhoto(photo);
+    return { success: true, visitId: visit.id, photos: [presented] };
   }
 }
 
