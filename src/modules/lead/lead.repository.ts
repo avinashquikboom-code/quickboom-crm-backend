@@ -892,7 +892,8 @@ export class LeadRepository {
         andConditions.push({
           OR: [
             { employeeId: Number(empId) },
-            ...(user.id ? [{ assignedToId: user.id }] : []),
+            { assignedToId: Number(empId) },
+            ...(user.id ? [{ assignedToId: user.id }, { createdById: user.id }] : []),
             { visits: { some: { scheduledById: Number(empId) } } },
             ...(user.id ? [{ visits: { some: { scheduledById: user.id } } }] : []),
           ],
@@ -1027,14 +1028,18 @@ export class LeadRepository {
     let stageCounts: Array<{ status: string | null; stageId: number | null; count: number }> | undefined;
 
     if (options.includeCounts && typeof this.prisma.lead.groupBy === 'function') {
-      const countWhere = { ...where, AND: andConditions.filter((condition) => !pipelineFilters.includes(condition)) };
-      if (!countWhere.AND.length) delete countWhere.AND;
-      const grouped = await this.prisma.lead.groupBy({
-        by: ['status', 'stageId'],
-        where: countWhere,
-        _count: { _all: true },
-      });
-      stageCounts = grouped.map((row) => ({ status: row.status, stageId: row.stageId, count: row._count._all }));
+      try {
+        const countWhere = { ...where, AND: andConditions.filter((condition) => !pipelineFilters.includes(condition)) };
+        if (!countWhere.AND.length) delete countWhere.AND;
+        const grouped = await this.prisma.lead.groupBy({
+          by: ['status', 'stageId'],
+          where: countWhere,
+          _count: { _all: true },
+        });
+        stageCounts = grouped.map((row) => ({ status: row.status, stageId: row.stageId, count: row._count._all }));
+      } catch (countErr: any) {
+        this.logger.warn(`Lead stage counts failed: ${countErr?.message || countErr}`);
+      }
     }
 
     try {
@@ -2812,25 +2817,34 @@ export class LeadRepository {
       }
     }
 
-    const rows = await this.prisma.leadStage.findMany({
+    const stageQuery = {
       where,
-      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-      include: {
-        emailTemplate: {
-          select: { id: true, name: true, key: true, subject: true },
-        },
-        whatsappTemplate: {
-          select: { id: true, name: true, templateName: true, language: true, status: true, body: true },
-        },
-        _count: {
-          select: {
-            leads: {
-              where: leadWhere,
+      orderBy: [{ sortOrder: 'asc' as const }, { id: 'asc' as const }],
+    };
+    let rows;
+    try {
+      rows = await this.prisma.leadStage.findMany({
+        ...stageQuery,
+        include: {
+          emailTemplate: {
+            select: { id: true, name: true, key: true, subject: true },
+          },
+          whatsappTemplate: {
+            select: { id: true, name: true, templateName: true, language: true, status: true, body: true },
+          },
+          _count: {
+            select: {
+              leads: {
+                where: leadWhere,
+              },
             },
           },
         },
-      },
-    });
+      });
+    } catch (stageErr: any) {
+      this.logger.warn(`findStages detail query failed: ${stageErr?.message || stageErr}`);
+      rows = await this.prisma.leadStage.findMany(stageQuery);
+    }
     if (targetCustomerId == null) return rows;
     const retired = await this.prisma.leadStage.findMany({
       where: { customerId: targetCustomerId, deletedAt: { not: null } },

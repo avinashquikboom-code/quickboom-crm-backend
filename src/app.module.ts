@@ -55,6 +55,7 @@ import { MasterModule } from './modules/master/master.module';
 import { MetaTemplateModule } from './modules/meta-template/meta-template.module';
 import { CommissionModule } from './modules/commission/commission.module';
 import { GeneralSettingsModule } from './modules/general-settings/general-settings.module';
+import { SendDetailsModule } from './modules/send-details/send-details.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -117,6 +118,8 @@ import { AppController } from './app.controller';
     MasterModule,
     MetaTemplateModule,
     CommissionModule,
+    GeneralSettingsModule,
+    SendDetailsModule,
   ],
   controllers: [AppController],
   providers: [
