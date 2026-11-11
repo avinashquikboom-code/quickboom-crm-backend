@@ -74,6 +74,18 @@ export class OvertimeController {
     return this.overtimeService.findOne(user, customerId, id);
   }
 
+  @Post(':id/start')
+  @ApiOperation({ summary: 'Start an approved overtime window using the server time' })
+  start(@CurrentUser() user: any, @CurrentCustomer() customerId: number | string | undefined, @Param('id', ParseIntPipe) id: number) {
+    return this.overtimeService.start(user, customerId, id);
+  }
+
+  @Post(':id/end')
+  @ApiOperation({ summary: 'End an in-progress overtime window using the server time' })
+  end(@CurrentUser() user: any, @CurrentCustomer() customerId: number | string | undefined, @Param('id', ParseIntPipe) id: number) {
+    return this.overtimeService.end(user, customerId, id);
+  }
+
   @Patch(':id/approve')
   @ApiOperation({ summary: 'Approve a pending overtime request and calculate compensation' })
   approve(
