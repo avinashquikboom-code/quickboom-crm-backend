@@ -1,3 +1,5 @@
+const REMOVED_DEAL_STAGE = '__removed_deals__';
+
 const DEAL_STAGE_SPECS = [
   { name: 'New', order: 1, probability: 10 },
   { name: 'Contacted', order: 2, probability: 20 },
@@ -449,8 +451,25 @@ export class DealService {
       where: { id: stageId, pipeline: { customerId, deletedAt: null } },
       include: { _count: { select: { deals: { where: { deletedAt: null } } } } },
     });
-    if (!stage) throw new NotFoundException('Deal stage not found');
+    if (!stage || stage.name === REMOVED_DEAL_STAGE) throw new NotFoundException('Deal stage not found');
     return stage;
+  }
+
+  private async holdRemovedDeals(pipelineId: number) {
+    const existing = await this.prisma.pipelineStage.findFirst({
+      where: { pipelineId, name: REMOVED_DEAL_STAGE },
+    });
+    if (existing) return existing;
+    return this.prisma.pipelineStage.create({
+      data: {
+        pipelineId,
+        name: REMOVED_DEAL_STAGE,
+        order: 9999,
+        probability: 0,
+        isActive: false,
+        description: 'Keeps removed deals after their stage is deleted.',
+      },
+    });
   }
 
   async getStage(customerId: number | string, id: number | string) {
@@ -465,7 +484,7 @@ export class DealService {
     const tenantId = this.requireCustomer(customerId);
     const pipeline = await this.pipelineFor(tenantId);
     const stages = await this.prisma.pipelineStage.findMany({
-      where: { pipelineId: pipeline.id, ...(activeOnly ? { isActive: true } : {}) },
+      where: { pipelineId: pipeline.id, name: { not: REMOVED_DEAL_STAGE }, ...(activeOnly ? { isActive: true } : {}) },
       orderBy: [{ order: 'asc' }, { id: 'asc' }],
       include: { _count: { select: { deals: { where: { deletedAt: null } } } } },
     });
@@ -545,15 +564,13 @@ export class DealService {
       });
       if (archived > 0) {
         const other = await this.prisma.pipelineStage.findFirst({
-          where: { pipelineId: stage.pipelineId, id: { not: stage.id } },
+          where: { pipelineId: stage.pipelineId, id: { not: stage.id }, name: { not: REMOVED_DEAL_STAGE } },
           orderBy: { order: 'asc' },
         });
-        if (!other) {
-          throw new BadRequestException(`"${stage.name}" is still linked to ${archived} removed deal${archived === 1 ? '' : 's'}. Add another deal stage before deleting this one. Deals are not deleted.`);
-        }
+        const target = other || await this.holdRemovedDeals(stage.pipelineId);
         await this.prisma.deal.updateMany({
           where: { customerId: tenantId, stageId: stage.id, deletedAt: { not: null } },
-          data: { stageId: other.id },
+          data: { stageId: target.id },
         });
       }
     }

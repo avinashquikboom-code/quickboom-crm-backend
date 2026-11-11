@@ -40,6 +40,25 @@ describe('DealService stage management', () => {
     }));
   });
 
+  it('moves removed deals off the last stage and still deletes that stage', async () => {
+    prisma.pipelineStage.findFirst
+      .mockResolvedValueOnce({ id: 4, name: 'New', pipelineId: 3, _count: { deals: 0 } })
+      .mockResolvedValueOnce(null);
+    (prisma as any).deal = {
+      count: jest.fn().mockResolvedValue(4),
+      updateMany: jest.fn().mockResolvedValue({ count: 4 }),
+    };
+    prisma.pipelineStage.create.mockResolvedValue({ id: 90, name: '__removed_deals__' });
+
+    await expect(service.deleteStage(9, 4)).resolves.toEqual({ deleted: true, id: 4 });
+
+    expect((prisma as any).deal.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { customerId: 9, stageId: 4, deletedAt: { not: null } },
+      data: { stageId: 90 },
+    }));
+    expect(prisma.pipelineStage.delete).toHaveBeenCalledWith({ where: { id: 4 } });
+  });
+
   it('rejects a duplicate stage name in the same pipeline', async () => {
     prisma.pipeline.findFirst.mockResolvedValue({ id: 1, stages: [{ id: 2, name: 'Won', order: 1 }] });
     prisma.pipelineStage.findMany.mockResolvedValue([{ id: 2, name: 'Won' }]);
