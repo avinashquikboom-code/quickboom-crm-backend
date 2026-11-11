@@ -15,6 +15,7 @@ import {
 } from './dto/lead.dto';
 import { LeadStatus, Prisma, VisitStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
+import { googlePhotoResource, isPlaceholderPhoto } from '../data-capture/google-photo';
 
 const SOCIAL_PROFILE_KEYS: Array<[string, string]> = [
   ['instagram', 'INSTAGRAM'],
@@ -1112,8 +1113,7 @@ export class LeadRepository {
   }
 
   private isRealPhotoResource(name: string): boolean {
-    const match = String(name || '').match(/^places\/[^/]+\/photos\/([^/?&]+)$/);
-    return Boolean(match && !/^\d{1,3}$/.test(match[1]));
+    return Boolean(googlePhotoResource(name));
   }
 
   private photoAttributions(item: any): string[] {
@@ -1146,14 +1146,17 @@ export class LeadRepository {
     const photos: Array<{ url: string; attributions: string[] }> = [];
     const add = (value: string, attributions: string[] = []) => {
       const raw = value.trim();
-      if (!raw) return;
+      if (!raw || isPlaceholderPhoto(raw)) return;
+      const resource = googlePhotoResource(raw);
       let url = '';
-      if (raw.startsWith('/api/v1/data-capture/photo')) url = raw;
-      else {
-        const resource = raw.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/)?.[1] || '';
-        if (this.isRealPhotoResource(resource)) url = this.photoProxyPath(resource);
-        else if (raw.startsWith('https://lh3.googleusercontent.com') || raw.startsWith('http://lh3.googleusercontent.com')) url = this.photoProxyPath(raw);
+      if (resource) url = this.photoProxyPath(resource);
+      else if (raw.startsWith('/api/v1/data-capture/photo')) {
+        let decoded = raw;
+        try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
+        if (!isPlaceholderPhoto(decoded)) url = raw;
       }
+      else if (/^https?:\/\/lh3\.googleusercontent\.com\//i.test(raw)) url = this.photoProxyPath(raw);
+      else if (/^https?:\/\//i.test(raw) && !raw.includes('places.googleapis.com')) url = raw;
       if (url && !photos.some((photo) => photo.url === url)) photos.push({ url, attributions });
     };
     for (const item of list) {
@@ -1190,11 +1193,11 @@ export class LeadRepository {
     ];
     if (!or.length) return;
     const customerIds = [...new Set(leads.map((lead) => Number(lead.customerId)).filter((id) => Number.isInteger(id) && id > 0))];
-    let places: Array<{ customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown }> = [];
+    let places: Array<{ customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown; rawData?: any }> = [];
     try {
       places = await this.prisma.dataCapturePlace.findMany({
         where: { deletedAt: null, ...(customerIds.length ? { customerId: { in: customerIds } } : {}), OR: or },
-        select: { customerId: true, importedLeadId: true, googlePlaceId: true, photos: true },
+        select: { customerId: true, importedLeadId: true, googlePlaceId: true, photos: true, rawData: true },
       });
     } catch (error: any) {
       this.logger.warn(`Lead photo lookup skipped: ${error?.message || error}`);
@@ -1205,8 +1208,12 @@ export class LeadRepository {
       const owned = places.filter((place) => sameCustomer(place) && Number(place.importedLeadId) === Number(lead.id));
       const samePlace = places.filter((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
       const ranked = [...owned, ...samePlace.filter((place) => !owned.includes(place))];
-      const match = ranked.find((place) => this.photoProxyUrls(place.photos).length) || ranked[0];
-      lead.placePhotos = match ? this.photoProxyUrls(match.photos) : [];
+      const photoField = (place: { photos?: unknown; rawData?: any }) => place.photos ?? place.rawData?.photos ?? place.rawData?.googlePhotos;
+      const match = ranked.find((place) => this.photoProxyUrls(photoField(place)).length) || ranked[0];
+      lead.placePhotos = match ? this.photoProxyUrls(photoField(match)) : [];
+      if (lead.googlePlaceId && !lead.placePhotos.length && !(Array.isArray(lead.images) && lead.images.length)) {
+        this.logger.warn(`[LEAD_IMAGE] id=${lead.id} name=${lead.companyName || lead.title || ''} source=none url=missing`);
+      }
     }
   }
 
