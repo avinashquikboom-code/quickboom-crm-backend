@@ -457,7 +457,8 @@ export class DealService {
     const tenantId = this.requireCustomer(customerId);
     const stageId = Number(id);
     if (!Number.isInteger(stageId) || stageId <= 0) throw new BadRequestException('Stage ID must be a positive number.');
-    return this.stageInTenant(tenantId, stageId);
+    const stage = await this.stageInTenant(tenantId, stageId);
+    return { ...stage, dealsCount: stage._count?.deals ?? 0 };
   }
 
   async listStages(customerId: number | string, activeOnly = false) {
@@ -468,7 +469,10 @@ export class DealService {
       orderBy: [{ order: 'asc' }, { id: 'asc' }],
       include: { _count: { select: { deals: { where: { deletedAt: null } } } } },
     });
-    return { pipelineId: pipeline.id, stages };
+    return {
+      pipelineId: pipeline.id,
+      stages: stages.map((stage) => ({ ...stage, dealsCount: stage._count?.deals ?? 0 })),
+    };
   }
 
   async createStage(customerId: number | string, dto: { name: string; order?: number; probability?: number; description?: string; color?: string; isActive?: boolean }) {
@@ -521,7 +525,7 @@ export class DealService {
     if (source.pipelineId !== target.pipelineId) throw new BadRequestException('A deal stage cannot be reassigned to a lead stage.');
     const moved = source._count.deals;
     const work = [
-      this.prisma.deal.updateMany({ where: { customerId: tenantId, stageId: source.id, deletedAt: null }, data: { stageId: target.id } }),
+      this.prisma.deal.updateMany({ where: { customerId: tenantId, stageId: source.id }, data: { stageId: target.id } }),
       this.prisma.pipelineStage.delete({ where: { id: source.id } }),
     ];
     if (typeof this.prisma.$transaction === 'function') await this.prisma.$transaction(work);
