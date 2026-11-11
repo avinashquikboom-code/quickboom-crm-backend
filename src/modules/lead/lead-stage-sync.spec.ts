@@ -364,6 +364,21 @@ describe('Lead Stage / Status Synchronization Tests', () => {
       expect(deactivatedStage?.isActive).toBe(false);
     });
 
+    it('returns one lead stage for the current workspace', async () => {
+      const stage = await controller.getStage('1', 2);
+      expect(stage).toMatchObject({ id: 2, name: 'Contacted', key: 'CONTACTED' });
+    });
+
+    it('does not return a lead stage that belongs to another workspace', async () => {
+      const created = await controller.createStage('1', { id: 1, role: 'SUPER_ADMIN' }, {
+        name: 'Private Stage',
+        color: '#111111',
+        sortOrder: 40,
+        isActive: true,
+      });
+      await expect(controller.getStage('2', created.id)).rejects.toThrow(/another workspace/);
+    });
+
     it('Safely guards against deleting a stage when leads are assigned', async () => {
       // In the mock table, NEW has 3 leads assigned
       await expect(

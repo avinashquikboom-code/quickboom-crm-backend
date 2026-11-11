@@ -23,6 +23,15 @@ describe('DealService stage management', () => {
     expect(prisma.pipelineStage.delete).not.toHaveBeenCalled();
   });
 
+  it('returns one deal stage for the current tenant', async () => {
+    prisma.pipelineStage.findFirst.mockResolvedValue({ id: 5, name: 'New', _count: { deals: 0 } });
+    await expect(service.getStage(9, 5)).resolves.toMatchObject({ id: 5, name: 'New' });
+  });
+
+  it('rejects an invalid deal stage id', async () => {
+    await expect(service.getStage(9, 'stage-5')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('scopes stage lookup to the current tenant', async () => {
     prisma.pipelineStage.findFirst.mockResolvedValue(null);
     await expect(service.deleteStage(9, 4)).rejects.toBeInstanceOf(NotFoundException);
