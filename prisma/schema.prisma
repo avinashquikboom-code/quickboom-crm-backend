@@ -121,6 +121,9 @@ model Customer {
   commissions              Commission[]
   salaryTargetPolicies     SalaryTargetPolicy[]
   salaryTargetReviews      SalaryTargetReview[]
+  sendDetailsDocuments     SendDetailsDocument[]
+  sendDetailsConfigs       SendDetailsConfig[]
+  sendDetailsDeliveries    SendDetailsDelivery[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -279,6 +282,7 @@ model User {
   createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
   createdMarketingVideos  MarketingVideo[]  @relation("CreatedMarketingVideos")
   emailLogs               EmailLog[]
+  sendDetailsDeliveries   SendDetailsDelivery[]
 
   @@index([customerId])
   @@index([email])
@@ -432,6 +436,7 @@ model Lead {
   images               LeadImage[]
   visitPhotos          VisitPhoto[]
   commissions          Commission[]
+  sendDetailsDeliveries SendDetailsDelivery[]
 
   @@index([customerId])
   @@index([status])
@@ -3703,4 +3708,86 @@ model Commission {
   @@index([status])
   @@index([createdAt])
   @@map("commissions")
+}
+
+model SendDetailsDocument {
+  id          Int       @id @default(autoincrement())
+  customerId  Int
+  category    String
+  title       String
+  description String?
+  fileUrl     String
+  fileName    String?
+  fileSize    Int?
+  fileType    String?   @default("application/pdf")
+  version     String?   @default("1.0")
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([category])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("send_details_documents")
+}
+
+model SendDetailsConfig {
+  id                   Int      @id @default(autoincrement())
+  customerId           Int      @unique
+  triggerStageKey      String   @default("DETAILS_SENT")
+  isAutomationEnabled  Boolean  @default(true)
+  whatsappEnabled      Boolean  @default(true)
+  emailEnabled         Boolean  @default(true)
+  whatsappTemplateName String?  @default("lead_stage_details_sent")
+  emailSubject         String?  @default("Company Details & Information")
+  emailBody            String?
+  activeCategories     Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  customer             Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("send_details_configs")
+}
+
+model SendDetailsDelivery {
+  id                 Int      @id @default(autoincrement())
+  customerId         Int
+  leadId             Int
+  userId             Int?
+  previousStage      String?
+  newStage           String?
+  triggerType        String   @default("AUTOMATIC")
+  idempotencyKey     String?  @unique
+  channels           Json?
+  documentIds        Json?
+  documentsSummary   Json?
+  recipientPhone     String?
+  recipientEmail     String?
+  whatsappStatus     String   @default("PENDING")
+  whatsappMessageId  String?
+  whatsappError      String?
+  emailStatus        String   @default("PENDING")
+  emailMessageId     String?
+  emailError         String?
+  overallStatus      String   @default("PENDING")
+  retryCount         Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lead               Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([leadId])
+  @@index([overallStatus])
+  @@index([createdAt])
+  @@map("send_details_deliveries")
 }

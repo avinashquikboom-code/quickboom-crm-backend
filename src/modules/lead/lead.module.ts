@@ -9,9 +9,17 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { LeadLimitModule } from '../lead-limit/lead-limit.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { S3Module } from '../s3/s3.module';
+import { SendDetailsModule } from '../send-details/send-details.module';
 
 @Module({
-  imports: [SubscriptionModule, PrismaModule, forwardRef(() => LeadLimitModule), WhatsappModule, S3Module],
+  imports: [
+    SubscriptionModule,
+    PrismaModule,
+    forwardRef(() => LeadLimitModule),
+    WhatsappModule,
+    S3Module,
+    forwardRef(() => SendDetailsModule),
+  ],
   controllers: [LeadController],
   providers: [LeadService, LeadRepository, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],
   exports: [LeadService, LeadRepository],

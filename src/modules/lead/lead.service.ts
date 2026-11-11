@@ -46,6 +46,7 @@ import {
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import { S3Service } from '../s3/s3.service';
+import { SendDetailsService } from '../send-details/send-details.service';
 
 function maskEmail(email: string): string {
   if (!email || !email.includes('@')) return '***';
@@ -74,6 +75,7 @@ export class LeadService {
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly s3Service?: S3Service,
+    @Optional() private readonly sendDetailsService?: SendDetailsService,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
@@ -1728,6 +1730,28 @@ export class LeadService {
           message: 'WhatsApp delivery failed',
         };
       }
+
+      // Automatic Send Details Package delivery if transitioned to DETAILS_SENT stage
+      const normNew = (newStageName || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const isDetailsSentStage =
+        normNew === 'DETAILSSENT' ||
+        normNew.includes('DETAILSSENT') ||
+        resolvedStatus === 'DETAILS_SENT' ||
+        (updatedLead.stage?.key || '').toUpperCase() === 'DETAILS_SENT';
+
+      if (isDetailsSentStage && this.sendDetailsService) {
+        this.sendDetailsService
+          .triggerAutomaticSendDetails(
+            Number(customerId),
+            updatedLead,
+            previousStageName,
+            newStageName,
+            userId ? Number(userId) : undefined,
+          )
+          .catch((err) => {
+            this.logger.error(`[SEND_DETAILS] Automatic delivery failed for Lead #${id}: ${err?.message}`, err?.stack);
+          });
+      }
     }
 
     const effectiveNewStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
@@ -1991,6 +2015,28 @@ export class LeadService {
           error: whatsappSettled.reason?.message || 'WhatsApp delivery failed',
           message: 'WhatsApp delivery failed',
         };
+      }
+
+      // Automatic Send Details Package delivery if transitioned to DETAILS_SENT stage
+      const normNew = (newStageName || '').trim().toUpperCase().replace(/[\s_-]+/g, '');
+      const isDetailsSentStage =
+        normNew === 'DETAILSSENT' ||
+        normNew.includes('DETAILSSENT') ||
+        resolvedStatus === 'DETAILS_SENT' ||
+        (updatedLead.stage?.key || '').toUpperCase() === 'DETAILS_SENT';
+
+      if (isDetailsSentStage && this.sendDetailsService) {
+        this.sendDetailsService
+          .triggerAutomaticSendDetails(
+            Number(customerId),
+            updatedLead,
+            previousStageName,
+            newStageName,
+            userId ? Number(userId) : undefined,
+          )
+          .catch((err) => {
+            this.logger.error(`[SEND_DETAILS] Automatic delivery failed for Lead #${id}: ${err?.message}`, err?.stack);
+          });
       }
     }
 
