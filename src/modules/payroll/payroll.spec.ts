@@ -225,4 +225,21 @@ describe('PayrollService (HRM Payroll)', () => {
       expect(prisma.salarySlip.create).toHaveBeenCalled();
     });
   });
+
+  describe('payPayrollItem', () => {
+    it('marks one payroll item paid without disbursing the batch', async () => {
+      const item = { ...mockPayroll.items[0], payroll: { year: 2026, month: 8 }, reimbursement: 0, loanDeduction: 0 };
+      prisma.payrollItem.findFirst = jest.fn().mockResolvedValue(item);
+      prisma.payrollItem.update = jest.fn().mockResolvedValue({ ...item, status: 'PAID' });
+      prisma.payrollItem.count = jest.fn().mockResolvedValue(1);
+      prisma.salarySlip.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      prisma.$transaction = jest.fn(async (fn) => fn(prisma));
+
+      const result = await service.payPayrollItem(3, 1);
+
+      expect(result.success).toBe(true);
+      expect(prisma.payrollItem.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { status: 'PAID' } });
+      expect(prisma.payroll.update).not.toHaveBeenCalled();
+    });
+  });
 });

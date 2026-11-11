@@ -72,6 +72,18 @@ export class PayrollController {
     });
   }
 
+  @Post('items/:id/pay')
+  @ApiOperation({ summary: 'Mark one payroll item as paid' })
+  async payItem(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Param('id') id: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? currentCustomer : (user?.customerId || currentCustomer);
+    return this.payrollService.payPayrollItem(customerId, id);
+  }
+
   @Post('disburse')
   @ApiOperation({ summary: 'Disburse payroll to employee bank accounts' })
   async disburse(
