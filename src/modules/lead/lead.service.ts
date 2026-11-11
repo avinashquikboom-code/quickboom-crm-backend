@@ -1240,6 +1240,40 @@ export class LeadService {
       .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }
 
+  async getStage(customerId: number | string | undefined, id: number | string) {
+    const stageId = Number(id);
+    if (!Number.isInteger(stageId) || stageId <= 0) throw new BadRequestException('Stage ID must be a positive number.');
+    const tenantId = Number(customerId);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) throw new ForbiddenException('This stage belongs to another workspace.');
+    const stage = await this.leadRepository.findStageById(stageId);
+    if (!stage) throw new NotFoundException(`Stage with ID ${stageId} not found`);
+    if (stage.customerId != null && Number(stage.customerId) !== tenantId) {
+      throw new ForbiddenException('This stage belongs to another workspace.');
+    }
+    const leadsCount = await this.leadRepository.countLeadsForStage(stageId, stage.key, tenantId);
+    return {
+      id: stage.id,
+      key: stage.key,
+      name: stage.name,
+      label: stage.name,
+      color: stage.color,
+      bgColor: stage.bgColor,
+      borderColor: stage.borderColor,
+      sortOrder: stage.sortOrder,
+      isActive: stage.isActive,
+      isSystem: stage.isSystem ?? false,
+      customerId: stage.customerId,
+      leadsCount,
+      emailEnabled: stage.emailEnabled !== undefined ? Boolean(stage.emailEnabled) : true,
+      emailTemplateId: stage.emailTemplateId ?? null,
+      emailTemplate: stage.emailTemplate ?? null,
+      whatsappEnabled: stage.whatsappEnabled !== undefined ? Boolean(stage.whatsappEnabled) : true,
+      whatsappTemplateId: stage.whatsappTemplateId ?? null,
+      whatsappTemplate: stage.whatsappTemplate ?? null,
+      createdAt: stage.createdAt,
+    };
+  }
+
   async createStage(customerId: number | string | undefined, user: any, dto: CreateLeadStageDto) {
     return this.leadRepository.createStage(customerId, dto);
   }

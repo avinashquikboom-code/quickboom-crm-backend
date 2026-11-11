@@ -99,6 +99,15 @@ export class LeadController {
     return this.leadService.getStages(customerId, shouldInclude, user);
   }
 
+  @Get('stages/:id')
+  @ApiOperation({ summary: 'Get one lead stage for the current workspace' })
+  async getStage(
+    @CurrentCustomer() customerId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.leadService.getStage(customerId, id);
+  }
+
   @Post('stages')
   @CrmCategory('BPO')
   @ApiOperation({ summary: 'Create a new lead stage' })

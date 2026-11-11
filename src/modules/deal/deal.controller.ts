@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -82,6 +83,12 @@ export class DealController {
   @ApiQuery({ name: 'active', required: false })
   listStages(@CurrentCustomer() customerId: string, @Query('active') active?: string) {
     return this.dealService.listStages(customerId, active === 'true');
+  }
+
+  @Get('stages/:id')
+  @ApiOperation({ summary: 'Get one deal pipeline stage for the current tenant' })
+  getStage(@CurrentCustomer() customerId: string, @Param('id', ParseIntPipe) id: number) {
+    return this.dealService.getStage(customerId, id);
   }
 
   @Post('stages')

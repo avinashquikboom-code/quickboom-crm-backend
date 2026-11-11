@@ -453,6 +453,13 @@ export class DealService {
     return stage;
   }
 
+  async getStage(customerId: number | string, id: number | string) {
+    const tenantId = this.requireCustomer(customerId);
+    const stageId = Number(id);
+    if (!Number.isInteger(stageId) || stageId <= 0) throw new BadRequestException('Stage ID must be a positive number.');
+    return this.stageInTenant(tenantId, stageId);
+  }
+
   async listStages(customerId: number | string, activeOnly = false) {
     const tenantId = this.requireCustomer(customerId);
     const pipeline = await this.pipelineFor(tenantId);
