@@ -1057,6 +1057,7 @@ export class LeadRepository {
             convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
             socialProfiles: true,
             images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }], take: 4 },
+            visitPhotos: { select: { url: true }, orderBy: { createdAt: 'desc' }, take: 1 },
           visits: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1,
             include: { employee: { select: { id: true, firstName: true, lastName: true } } } },
           },
@@ -1078,6 +1079,8 @@ export class LeadRepository {
               createdBy: { select: { id: true, firstName: true, lastName: true } },
               employee: { select: { id: true, firstName: true, lastName: true } },
               convertedByEmployee: { select: { id: true, firstName: true, lastName: true } },
+              images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }], take: 4 },
+              visitPhotos: { select: { url: true }, orderBy: { createdAt: 'desc' }, take: 1 },
               visits: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 1, include: {employee: {select: {id:true, firstName:true, lastName:true}}} },
             },
           }),
@@ -1177,32 +1180,47 @@ export class LeadRepository {
     return photos;
   }
 
+  private usablePhotoUrl(value: unknown): string {
+    const url = String(value || '').trim();
+    if (!url || isPlaceholderPhoto(url)) return '';
+    if (/^https?:\/\//i.test(url) || url.startsWith('/')) return url;
+    return '';
+  }
+
   private leadPhotoEntries(lead: any): Array<{ url: string; source: string; attributions: string[] }> {
     const uploaded = (Array.isArray(lead?.images) ? [...lead.images].sort((a, b) => Number(Boolean(b?.isPrimary)) - Number(Boolean(a?.isPrimary))) : [])
-      .map((image) => image?.url)
-      .filter((url) => typeof url === 'string' && (/^https?:\/\//i.test(url) || url.startsWith('/api/v1/data-capture/photo')))
+      .map((image) => this.usablePhotoUrl(image?.url))
+      .filter((url) => url)
       .map((url) => ({ url, source: String(url).includes('/data-capture/photo') ? 'GOOGLE_PLACES' : 'UPLOAD', attributions: [] as string[] }));
     const google = (Array.isArray(lead?.placePhotos) ? lead.placePhotos : [])
-      .filter((photo) => photo?.url && !uploaded.some((image) => image.url === photo.url))
-      .map((photo) => ({ url: photo.url, source: 'GOOGLE_PLACES', attributions: Array.isArray(photo.attributions) ? photo.attributions : [] }));
-    return [...uploaded, ...google];
+      .map((photo) => ({ url: this.usablePhotoUrl(photo?.url), attributions: Array.isArray(photo?.attributions) ? photo.attributions : [] }))
+      .filter((photo) => photo.url && !uploaded.some((image) => image.url === photo.url))
+      .map((photo) => ({ url: photo.url, source: 'GOOGLE_PLACES', attributions: photo.attributions }));
+    const seen = new Set([...uploaded, ...google].map((photo) => photo.url));
+    const visits = (Array.isArray(lead?.visitPhotos) ? lead.visitPhotos : [])
+      .map((photo) => this.usablePhotoUrl(photo?.url))
+      .filter((url) => url && !seen.has(url))
+      .map((url) => ({ url, source: 'VISIT', attributions: [] as string[] }));
+    return [...uploaded, ...google, ...visits];
   }
 
   private async attachPlacePhotos(leads: any[]) {
     if (!leads.length || typeof this.prisma.dataCapturePlace?.findMany !== 'function') return;
     const ids = leads.map((lead) => Number(lead.id)).filter((id) => Number.isInteger(id) && id > 0);
     const placeIds = [...new Set(leads.map((lead) => lead.googlePlaceId).filter((id) => id && !String(id).startsWith('custom_')))];
+    const sourceIds = [...new Set(leads.map((lead) => Number(lead.sourceRecordId)).filter((id) => Number.isInteger(id) && id > 0))];
     const or = [
       ...(ids.length ? [{ importedLeadId: { in: ids } }] : []),
       ...(placeIds.length ? [{ googlePlaceId: { in: placeIds } }] : []),
+      ...(sourceIds.length ? [{ id: { in: sourceIds } }] : []),
     ];
     if (!or.length) return;
     const customerIds = [...new Set(leads.map((lead) => Number(lead.customerId)).filter((id) => Number.isInteger(id) && id > 0))];
-    let places: Array<{ customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown; rawData?: any }> = [];
+    let places: Array<{ id?: number | null; customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown; rawData?: any }> = [];
     try {
       places = await this.prisma.dataCapturePlace.findMany({
         where: { deletedAt: null, ...(customerIds.length ? { customerId: { in: customerIds } } : {}), OR: or },
-        select: { customerId: true, importedLeadId: true, googlePlaceId: true, photos: true, rawData: true },
+        select: { id: true, customerId: true, importedLeadId: true, googlePlaceId: true, photos: true, rawData: true },
       });
     } catch (error: any) {
       this.logger.warn(`Lead photo lookup skipped: ${error?.message || error}`);
@@ -1212,7 +1230,8 @@ export class LeadRepository {
       const sameCustomer = (place: { customerId?: number | null }) => !lead.customerId || Number(place.customerId) === Number(lead.customerId);
       const owned = places.filter((place) => sameCustomer(place) && Number(place.importedLeadId) === Number(lead.id));
       const samePlace = places.filter((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
-      const ranked = [...owned, ...samePlace.filter((place) => !owned.includes(place))];
+      const sourcePlace = places.filter((place) => sameCustomer(place) && Number(place.id) === Number(lead.sourceRecordId));
+      const ranked = [...owned, ...samePlace.filter((place) => !owned.includes(place)), ...sourcePlace.filter((place) => !owned.includes(place) && !samePlace.includes(place))];
       const photoField = (place: { photos?: unknown; rawData?: any }) => place.photos ?? place.rawData?.photos ?? place.rawData?.googlePhotos;
       const match = ranked.find((place) => this.photoProxyUrls(photoField(place)).length) || ranked[0];
       lead.placePhotos = match ? this.photoProxyUrls(photoField(match)) : [];
@@ -1731,6 +1750,7 @@ export class LeadRepository {
           },
           socialProfiles: true,
           images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
+          visitPhotos: { select: { url: true }, orderBy: { createdAt: 'desc' }, take: 4 },
           convertedCustomer: {
             select: { id: true, name: true, companyName: true, email: true, phone: true, isActive: true },
           },
@@ -1781,6 +1801,7 @@ export class LeadRepository {
           },
           socialProfiles: true,
           images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
+          visitPhotos: { select: { url: true }, orderBy: { createdAt: 'desc' }, take: 4 },
         },
       });
       if (fallbackResult) {
