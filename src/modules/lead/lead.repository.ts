@@ -2146,11 +2146,17 @@ export class LeadRepository {
     if (!resolvedStageId && this.prisma.leadStage) {
       const matchStage = await this.prisma.leadStage.findFirst({
         where: {
-          key: toStatus,
           deletedAt: null,
-          OR: [
-            ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
-            { customerId: null },
+          AND: [
+            { OR: [
+              ...(toStatus === LeadStatus.VISIT_SCHEDULED || (toStatus as string) === 'VISIT_SCHEDULED'
+                ? [{ key: { in: ['VISIT_SCHEDULED', 'VISIT'] } }, { name: { equals: 'Visit Scheduled', mode: 'insensitive' as const } }]
+                : [{ key: toStatus }]),
+            ] },
+            { OR: [
+              ...(!isNaN(numCustomerId) && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
+              { customerId: null },
+            ] },
           ],
         },
         orderBy: { customerId: 'desc' },
@@ -2600,7 +2606,7 @@ export class LeadRepository {
               OR: [
                 { key: 'VISIT_SCHEDULED' },
                 { key: 'VISIT' },
-                { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+                { name: { equals: 'Visit Scheduled', mode: 'insensitive' as const } },
               ],
             },
             {

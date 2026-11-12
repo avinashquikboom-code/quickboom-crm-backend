@@ -271,6 +271,16 @@ describe('SendDetailsService', () => {
     expect(rows[0].whatsappError).toContain('Could not load');
   });
 
+  it('retries WhatsApp only and preserves sent email', async () => {
+    mockPrisma.sendDetailsDelivery.findFirst.mockResolvedValue({ id: 10, leadId: 100, customerId: 1, whatsappStatus: 'FAILED', emailStatus: 'SENT', emailMessageId: 'email_already_sent', documentIds: [1], channels: ['WHATSAPP', 'EMAIL'] });
+    mockPrisma.sendDetailsDelivery.findUnique.mockResolvedValue({ id: 10, whatsappStatus: 'FAILED', emailStatus: 'SENT', channels: ['WHATSAPP', 'EMAIL'] });
+    mockPrisma.sendDetailsDocument.findMany.mockResolvedValue([{ id: 1, category: SendDetailsCategory.COMPANY_PROFILE, title: 'Company Profile', fileUrl: 'https://cdn/doc1.pdf', fileName: 'profile.pdf' }]);
+    const result: any = await service.retryDelivery(1, 10, 5, { channel: 'WHATSAPP' });
+    expect(mockWhatsapp.sendDocumentMessage).toHaveBeenCalledTimes(1);
+    expect(mockEmail.sendEmail).not.toHaveBeenCalled();
+    expect(result.emailStatus).toBe('SENT');
+  });
+
   it('records the provider reason when the WhatsApp document is not confirmed', async () => {
     mockWhatsapp.sendDocumentMessage.mockResolvedValue({
       success: false,
