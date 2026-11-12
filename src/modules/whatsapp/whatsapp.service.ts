@@ -1151,8 +1151,10 @@ export class WhatsappService {
     filename: string;
     caption?: string;
     stageName?: string;
+    /** Package delivery must not report success from a text fallback or a response without a message id. */
+    requireDocument?: boolean;
   }): Promise<WhatsAppSendResult> {
-    const { to, pdfBuffer, pdfUrl, filename, caption, stageName } = params;
+    const { to, pdfBuffer, pdfUrl, filename, caption, stageName, requireDocument } = params;
     const normalizedTo = this.normalizePhoneNumber(to);
     if (!normalizedTo) {
       return { success: false, error: 'INVALID_PHONE', reason: 'NO_PHONE' };
@@ -1195,10 +1197,17 @@ export class WhatsappService {
         };
         const response = await axios.post(url, payload, { headers, timeout: 15000 });
         const messageId = response.data?.messages?.[0]?.id;
+        if (!messageId) {
+          return { success: false, error: 'WhatsApp accepted the document request but did not return a message id.', reason: 'NO_MESSAGE_ID' };
+        }
         this.logger.log(`[WHATSAPP_DOCUMENT_SUCCESS] Sent ${filename} to ${this.maskPhone(normalizedTo)}: id=${messageId}`);
         return { success: true, messageId };
       } catch (err: any) {
-        this.logger.warn(`[WHATSAPP_DOCUMENT_LINK_FAIL] ${err?.message}`);
+        const reason = this.graphErrorMessage(err);
+        this.logger.warn(`[WHATSAPP_DOCUMENT_LINK_FAIL] ${reason}`);
+        if (requireDocument && !pdfBuffer?.length) {
+          return { success: false, error: reason, reason: 'DOCUMENT_LINK_FAILED', message: reason };
+        }
       }
     }
 
@@ -1234,20 +1243,40 @@ export class WhatsappService {
           };
           const sendRes = await axios.post(url, payload, { headers, timeout: 15000 });
           const messageId = sendRes.data?.messages?.[0]?.id;
+          if (!messageId) {
+            return {
+              success: false,
+              error: `WhatsApp media was uploaded, but the document message did not return a message id.`,
+              reason: 'MESSAGE_AFTER_UPLOAD_FAILED',
+              mediaId: String(mediaId),
+            };
+          }
           this.logger.log(`[WHATSAPP_DOCUMENT_MEDIA_SUCCESS] Uploaded & sent ${filename} to ${this.maskPhone(normalizedTo)}: id=${messageId}`);
-          return { success: true, messageId };
+          return { success: true, messageId, mediaId: String(mediaId) };
         }
+        return { success: false, error: 'WhatsApp media upload did not return a media id.', reason: 'MEDIA_UPLOAD_FAILED' };
       } catch (uploadErr: any) {
-        this.logger.warn(`[WHATSAPP_MEDIA_UPLOAD_FAIL] ${uploadErr?.message}`);
+        const reason = this.graphErrorMessage(uploadErr);
+        this.logger.warn(`[WHATSAPP_MEDIA_UPLOAD_FAIL] ${reason}`);
+        if (requireDocument) {
+          return { success: false, error: reason, reason: 'MEDIA_UPLOAD_FAILED', message: reason };
+        }
       }
     }
 
     // 3. Fallback: deliver caption as text message so customer receives timely notification
-    if (caption) {
+    if (caption && !requireDocument) {
       return this.sendMessage(normalizedTo, caption, stageName);
     }
 
-    return { success: false, error: 'DOCUMENT_SEND_FAILED', reason: 'MEDIA_UNAVAILABLE' };
+    return { success: false, error: 'WhatsApp document was not sent.', reason: 'MEDIA_UNAVAILABLE' };
+  }
+
+  private graphErrorMessage(err: any): string {
+    const fbError = err?.response?.data?.error;
+    const code = fbError?.code;
+    const message = fbError?.message || err?.message || 'WhatsApp request failed';
+    return code ? `(#${code}) ${message}` : String(message);
   }
 
   /**

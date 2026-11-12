@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import axios from 'axios';
 import { SendDetailsService } from './send-details.service';
+
+jest.mock('axios');
 import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
@@ -67,9 +70,10 @@ describe('SendDetailsService', () => {
       },
     };
 
+    (axios.get as jest.Mock).mockResolvedValue({ status: 200, data: Buffer.from('%PDF-1.4 test') });
     mockWhatsapp = {
       sendLeadStageMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'wa_msg_123' }),
-      sendDocumentMessage: jest.fn().mockResolvedValue({ success: true }),
+      sendDocumentMessage: jest.fn().mockResolvedValue({ success: true, messageId: 'wa_doc_123' }),
     };
 
     mockEmail = {
@@ -114,8 +118,9 @@ describe('SendDetailsService', () => {
     };
 
     const result: any = await service.triggerAutomaticSendDetails(1, lead, 'CONTACTED', 'Details Sent', 10);
-    expect(result.overallStatus).toBe('SENT');
-    expect(mockWhatsapp.sendLeadStageMessage).toHaveBeenCalled();
+    expect(result.overallStatus).toBe('COMPLETED');
+    expect(mockWhatsapp.sendDocumentMessage).toHaveBeenCalled();
+    expect(result.whatsappMessageId).toBe('wa_doc_123');
     expect(mockEmail.sendEmail).toHaveBeenCalled();
     expect(mockLeadRepo.logTimeline).toHaveBeenCalledWith(
       100,
@@ -148,8 +153,9 @@ describe('SendDetailsService', () => {
 
     const result: any = await service.triggerAutomaticSendDetails(1, lead, 'CONTACTED', 'Details Sent', 10);
     expect(result.whatsappStatus).toBe('SENT');
-    expect(result.emailStatus).toBe('FAILED');
-    expect(result.overallStatus).toBe('PARTIAL');
+    expect(result.emailStatus).toBe('SKIPPED');
+    expect(result.emailError).toBe('Email skipped – Lead email address is missing.');
+    expect(result.overallStatus).toBe('PARTIALLY_COMPLETED');
   });
 
   it('supports manual dispatch with custom channels', async () => {
@@ -158,8 +164,53 @@ describe('SendDetailsService', () => {
       customNote: 'Special pricing for your team',
     });
 
-    expect(mockWhatsapp.sendLeadStageMessage).toHaveBeenCalled();
+    expect(mockWhatsapp.sendDocumentMessage).toHaveBeenCalled();
     expect(mockEmail.sendEmail).not.toHaveBeenCalled();
     expect(result.triggerType).toBe('MANUAL');
+  });
+
+  it('keeps a sent WhatsApp message and retries only the failed email', async () => {
+    mockPrisma.sendDetailsDelivery.findFirst.mockResolvedValue({
+      id: 10,
+      leadId: 100,
+      customerId: 1,
+      whatsappStatus: 'SENT',
+      whatsappMessageId: 'wa_doc_123',
+      emailStatus: 'FAILED',
+      emailError: 'SMTP Email Integration is not configured.',
+      documentIds: [1],
+      channels: ['WHATSAPP', 'EMAIL'],
+    });
+    mockPrisma.sendDetailsDelivery.findUnique.mockResolvedValue({
+      id: 10,
+      whatsappStatus: 'SENT',
+      whatsappMessageId: 'wa_doc_123',
+      emailStatus: 'FAILED',
+      channels: ['WHATSAPP', 'EMAIL'],
+    });
+    mockPrisma.sendDetailsDocument.findMany.mockResolvedValue([
+      { id: 1, category: SendDetailsCategory.COMPANY_PROFILE, title: 'Company Profile', fileUrl: 'https://cdn/doc1.pdf', fileName: 'profile.pdf' },
+    ]);
+
+    const result: any = await service.retryDelivery(1, 10, 5, { channel: 'ALL' });
+
+    expect(mockWhatsapp.sendDocumentMessage).not.toHaveBeenCalled();
+    expect(mockEmail.sendEmail).toHaveBeenCalledTimes(1);
+    expect(result.whatsappStatus).toBe('SENT');
+    expect(result.whatsappMessageId).toBe('wa_doc_123');
+    expect(result.emailStatus).toBe('SENT');
+  });
+
+  it('records the provider reason when the WhatsApp document is not confirmed', async () => {
+    mockWhatsapp.sendDocumentMessage.mockResolvedValue({
+      success: false,
+      error: '(#100) Tried accessing nonexisting field (whatsapp_business_account)',
+      message: '(#100) Tried accessing nonexisting field (whatsapp_business_account)',
+    });
+    const lead = { id: 100, customerId: 1, firstName: 'Ada', phone: '+919876543210', email: 'ada@example.com' };
+    const result: any = await service.triggerAutomaticSendDetails(1, lead, 'NEW', 'Details Sent', 10);
+    expect(result.whatsappStatus).toBe('FAILED');
+    expect(result.whatsappError).toContain('(#100)');
+    expect(result.overallStatus).not.toBe('COMPLETED');
   });
 });
