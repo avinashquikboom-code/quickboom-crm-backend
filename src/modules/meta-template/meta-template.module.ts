@@ -9,7 +9,9 @@ import { WhatsAppCampaignService } from './whatsapp-campaign.service';
 
 @Module({
   imports: [PrismaModule, IntegrationSettingsModule, WhatsappModule],
-  controllers: [MetaTemplateController, WhatsAppCampaignController],
+  // Campaign controller must register before MetaTemplateController so
+  // GET /templates/meta/campaigns is not captured by @Get(':id').
+  controllers: [WhatsAppCampaignController, MetaTemplateController],
   providers: [MetaTemplateService, WhatsAppCampaignService],
   exports: [MetaTemplateService, WhatsAppCampaignService],
 })

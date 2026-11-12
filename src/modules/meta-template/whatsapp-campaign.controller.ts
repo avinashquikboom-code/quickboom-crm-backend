@@ -6,7 +6,9 @@ import { WhatsAppCampaignService } from './whatsapp-campaign.service';
 import { CreateWhatsAppCampaignDto, QueryWhatsAppCampaignDto } from './dto/whatsapp-campaign.dto';
 
 @ApiTags('WhatsApp Campaigns')
-@Controller(['templates/meta/campaigns', 'whatsapp/campaigns'])
+// Primary routes live on MetaTemplateController (@Get('campaigns') before :id).
+// Alias path for integrations that mount campaigns separately.
+@Controller('whatsapp/campaigns')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class WhatsAppCampaignController {
