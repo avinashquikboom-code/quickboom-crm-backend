@@ -2712,6 +2712,7 @@ export class AuthService {
     }
 
     const desigUpper = (desigName || '').toUpperCase();
+    const roleNamesUpper = roleNames.map((name) => String(name || '').trim().toUpperCase());
     const isVisitorDesignation = Boolean(
       desigUpper && (
         desigUpper.includes('VISITOR') ||
@@ -2719,7 +2720,7 @@ export class AuthService {
         desigUpper.includes('FIELD VISIT') ||
         desigUpper.includes('FIELD OFFICER')
       )
-    );
+    ) || roleNamesUpper.some((name) => name.includes('VISITOR') || name === 'VISIT');
 
     if (isVisitorDesignation) {
       // Visitors only view, start (check-in), and complete assigned visits.
@@ -2755,6 +2756,9 @@ export class AuthService {
           desigUpper.includes('CONSULTANT')
         )) ||
         user.employee?.designation?.crmMobileAccess === true ||
+        roleNamesUpper.some((name) =>
+          name.includes('TELECALL') || name.includes('TELESALES') || name.includes('TELESELL') || name.includes('BPO'),
+        ) ||
         permissionsMap.has('LEADS:VIEW') ||
         permissionsMap.has('LEADS:CREATE') ||
         permissionsMap.has('LEADS:CHANGE_STAGE') ||
