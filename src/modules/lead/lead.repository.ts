@@ -3441,6 +3441,32 @@ export class LeadRepository {
     });
   }
 
+  public isTelecallerOrBpoStaff(user: any): boolean {
+    if (!user) return false;
+    if (this.isVisitorEmployee(user)) return false;
+    const cat = String(user.crmCategory || user.employee?.crmCategory || '').trim().toUpperCase();
+    if (cat === 'BPO') return true;
+    const rawRole = String(user.role || user.roleType || '').trim().toUpperCase();
+    if (rawRole.includes('BPO')) return true;
+    const tele =
+      rawRole.includes('TELECALL') ||
+      rawRole.includes('TELE_CALL') ||
+      rawRole.includes('TELESALES') ||
+      rawRole.includes('TELE_SALES');
+    if (tele) return true;
+    const desig = (
+      user.employee?.designation?.name ||
+      user.designation?.name ||
+      user.employee?.designationName ||
+      ''
+    )
+      .toString()
+      .trim()
+      .toUpperCase();
+    if (desig.includes('BPO') || desig.includes('TELECALL') || desig.includes('TELESALES')) return true;
+    return false;
+  }
+
   public isVisitorEmployee(user: any): boolean {
     if (!user) return false;
     const rawDesig = user.employee?.designation || user.designation;
