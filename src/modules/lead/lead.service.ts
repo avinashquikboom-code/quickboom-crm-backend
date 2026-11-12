@@ -1756,7 +1756,7 @@ export class LeadService {
 
     const effectiveNewStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
     let customerConversion: any = null;
-    if (this.isWonOrConvertedStage(updatedLead.status, effectiveNewStageName, updatedLead.stage?.key || updatedLead.stage?.name)) {
+    if (this.isStrictWonStage(updatedLead.status, updatedLead.stage?.name || effectiveNewStageName, updatedLead.stage?.key)) {
       customerConversion = await this.handleLeadWonCustomerConversion(
         customerId,
         updatedLead,
@@ -1914,17 +1914,19 @@ export class LeadService {
       this.logger.log(`[LEAD_AUTOMATION] triggered=false leadId=${id} reason="Stage not changed"`);
     }
 
-    await this.leadRepository.updateStatus(
-      customerId,
-      id,
-      lead.status,
-      resolvedStatus,
-      userId,
-      dto.notes,
-      resolvedStageId,
-      lead.stageId,
-      stageName,
-    );
+    if (isStageChanged) {
+      await this.leadRepository.updateStatus(
+        customerId,
+        id,
+        lead.status,
+        resolvedStatus,
+        userId,
+        dto.notes,
+        resolvedStageId,
+        lead.stageId,
+        stageName,
+      );
+    }
 
     const updatedLead = await this.getLeadById(customerId, id);
 
@@ -2041,7 +2043,7 @@ export class LeadService {
     }
 
     let customerConversion: any = null;
-    if (this.isWonOrConvertedStage(resolvedStatus, newStageName, stageName || updatedLead.stage?.key || updatedLead.stage?.name)) {
+    if (this.isStrictWonStage(updatedLead.status || resolvedStatus, updatedLead.stage?.name || newStageName, updatedLead.stage?.key)) {
       customerConversion = await this.handleLeadWonCustomerConversion(
         customerId,
         updatedLead,
@@ -2064,6 +2066,19 @@ export class LeadService {
    * Helper to detect if a given stage name, key, or status represents a WON / CONVERTED state.
    * Completely dynamic - no hardcoded stage IDs.
    */
+  isStrictWonStage(
+    resolvedStatus?: string | null,
+    stageName?: string | null,
+    stageKey?: string | null,
+  ): boolean {
+    const norm = (val?: string | null) => (val || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const key = norm(stageKey);
+    const name = norm(stageName);
+    const status = norm(resolvedStatus);
+    if (key === 'WON' || name === 'WON') return true;
+    return !key && !name && status === 'WON';
+  }
+
   isWonOrConvertedStage(
     resolvedStatus?: string | null,
     stageName?: string | null,
@@ -2117,6 +2132,9 @@ export class LeadService {
     error?: string;
   }> {
     try {
+      if (!this.isStrictWonStage(updatedLead?.status, newStageName || updatedLead?.stage?.name, updatedLead?.stage?.key)) {
+        return { success: false, error: 'Only a lead in the WON stage can be converted to a customer.' };
+      }
       this.logger.log(`[LEAD_WON_CONVERSION] Starting conversion for Lead #${updatedLead.id} (Stage: ${newStageName})`);
 
       if (!this.prisma?.customer || !this.prisma?.user) {

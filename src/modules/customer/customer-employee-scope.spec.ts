@@ -51,9 +51,9 @@ describe('CustomerService — Employee Scoping & CRM Filter Tests (Tests 1–10)
     leads: [
       {
         id: 501,
-        status: 'FOLLOW_UP',
+        status: 'WON',
         nextFollowUpDate: new Date(Date.now() + 86400000), // tomorrow
-        stage: { id: 3, name: 'Follow-up', key: 'FOLLOW_UP' },
+        stage: { id: 12, name: 'Won', key: 'WON' },
         reminders: [],
       },
     ],
@@ -77,9 +77,9 @@ describe('CustomerService — Employee Scoping & CRM Filter Tests (Tests 1–10)
     leads: [
       {
         id: 502,
-        status: 'CONTACTED',
+        status: 'WON',
         nextFollowUpDate: null, // NO next call
-        stage: { id: 2, name: 'Contacted', key: 'CONTACTED' },
+        stage: { id: 12, name: 'Won', key: 'WON' },
         reminders: [],
       },
     ],
@@ -103,9 +103,9 @@ describe('CustomerService — Employee Scoping & CRM Filter Tests (Tests 1–10)
     leads: [
       {
         id: 503,
-        status: 'NEW',
+        status: 'WON',
         nextFollowUpDate: null,
-        stage: { id: 1, name: 'New', key: 'NEW' },
+        stage: { id: 12, name: 'Won', key: 'WON' },
         reminders: [],
       },
     ],

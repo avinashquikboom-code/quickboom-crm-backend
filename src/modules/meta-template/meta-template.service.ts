@@ -468,18 +468,9 @@ export class MetaTemplateService {
       );
     }
 
-    let resolvedWabaId = wabaId;
-    if (!resolvedWabaId && phoneNumberId) {
-      try {
-        const lookupVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
-        const phoneLookup = await axios.get(`https://graph.facebook.com/${lookupVersion}/${phoneNumberId}?fields=whatsapp_business_account`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-          timeout: 10000,
-        });
-        resolvedWabaId = phoneLookup.data?.whatsapp_business_account?.id || '';
-      } catch (err: any) {
-        this.logger.warn(`[MetaTemplateService] Could not resolve WABA ID from phoneNumberId: ${err?.message}`);
-      }
+    const resolvedWabaId = wabaId;
+    if (!resolvedWabaId) {
+      this.logger.warn('[MetaTemplateService] WhatsApp Business Account ID is not configured. Set the WABA ID in Settings → Integrations → WhatsApp.');
     }
 
     const targetAccount = resolvedWabaId || phoneNumberId;

@@ -152,6 +152,22 @@ export function formatCallTime(d: Date, originalTimeStr?: string | null): string
   return `${hStr}:${m} ${meridiem}`;
 }
 
+/** Pipeline stage WON is the only stage that makes a lead eligible for Customers. */
+export function leadStageIsWon(lead: any): boolean {
+  if (!lead || lead.deletedAt) return false;
+  const key = String(lead.stage?.key || '').trim().toUpperCase();
+  const name = String(lead.stage?.name || '').trim().toLowerCase();
+  const status = String(lead.status || '').trim().toUpperCase();
+  if (lead.stage) return key === 'WON' || name === 'won';
+  return status === 'WON' || status === 'CONVERTED';
+}
+
+export function customerOriginIsWon(customer: any): boolean {
+  const origin = customer?.originLead && !customer.originLead.deletedAt ? customer.originLead : null;
+  const linked = origin || (Array.isArray(customer?.leads) ? customer.leads.find((lead: any) => lead && !lead.deletedAt) : null);
+  return leadStageIsWon(linked);
+}
+
 export function extractUpcomingCall(
   c: any,
   now: Date = new Date(),
@@ -253,7 +269,7 @@ export function extractUpcomingCall(
               notes: l.workNotes || undefined,
             });
           }
-        } else if (!isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled && !isLeadWon) {
+        } else if (!isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled) {
           const callTypeTitle = (isFinalCallCompleted || isFinalCallCancelled)
             ? 'Next Call'
             : isFollowUpStage
@@ -283,7 +299,7 @@ export function extractUpcomingCall(
         (isFinalCallCompleted || isFinalCallCancelled) &&
         (!l.finalCallDate || new Date(l.nextCallDate).getTime() <= new Date(l.finalCallDate).getTime());
 
-      if (nextCallAt > now && !isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled && !isLeadWon) {
+      if (nextCallAt > now && !isDateCompletedFinalCall && !isLeadCallCompleted && !isLeadCallCancelled) {
         const callTypeTitle = (isFinalCallCompleted || isFinalCallCancelled)
           ? 'Next Call'
           : isFollowUpStage
@@ -1000,6 +1016,7 @@ export class CustomerService {
     const companyId = user?.customerId || user?.employee?.customerId;
     const isSuperAdmin = isUserSuperAdmin(user);
     const isPrivilegedAdmin = isSuperAdmin || isUserAdmin(user);
+    const wonCustomersOnly = !isSuperAdmin;
 
     let effectiveEmployeeId = employeeId;
     if (!effectiveEmployeeId && user?.id && !isPrivilegedAdmin) {
@@ -1303,8 +1320,9 @@ export class CustomerService {
     const activeCustomerIds: number[] = [];
     const inactiveCustomerIds: number[] = [];
     const completedCustomerIds: number[] = [];
+    const countableCustomers = wonCustomersOnly ? allCustomersForCounts.filter((customer) => customerOriginIsWon(customer)) : allCustomersForCounts;
 
-    for (const c of allCustomersForCounts) {
+    for (const c of countableCustomers) {
       // Priority 1: ACTIVE (valid, actually activated purchased plan)
       const activeSub = c.subscriptions?.find(
         (s: any) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= now),
@@ -1429,6 +1447,7 @@ export class CustomerService {
         }
 
         for (const l of leads) {
+          if (wonCustomersOnly && !leadStageIsWon(l)) continue;
           // If already converted to or linked with a Customer, skip to prevent duplicates
           if (l.convertedCustomer || convertedLeadIds.has(l.id)) {
             this.logger.log(
@@ -1579,7 +1598,8 @@ export class CustomerService {
       },
     });
 
-    let formatted = items.map((c) => {
+    const visibleItems = wonCustomersOnly ? items.filter((customer) => customerOriginIsWon(customer)) : items;
+    let formatted = visibleItems.map((c) => {
       const primaryUser = (c as any).users?.[0];
       // Find latest valid active subscription strictly
       const activeSub =
@@ -2080,6 +2100,10 @@ export class CustomerService {
       },
     });
 
+    if (customer && !customer.deletedAt && !isUserSuperAdmin(user) && ((customer as any).originLead || (customer as any).leads?.length) && !customerOriginIsWon(customer)) {
+      throw new NotFoundException(`Customer #${id} not found.`);
+    }
+
     if (!customer || customer.deletedAt) {
       if (this.prisma.lead) {
         const lead = await this.prisma.lead.findFirst({
@@ -2091,6 +2115,9 @@ export class CustomerService {
           },
         });
         if (lead) {
+          if (!isUserSuperAdmin(user) && !leadStageIsWon(lead)) {
+            throw new NotFoundException(`Customer #${id} not found.`);
+          }
           const empId = user?.employeeId || user?.employee?.id;
           const uId = user?.id || user?.sub;
           const isPrivileged = isUserSuperAdmin(user) || isUserAdmin(user);

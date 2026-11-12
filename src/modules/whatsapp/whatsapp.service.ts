@@ -416,13 +416,12 @@ export class WhatsappService {
     try {
       const resourceRes = await axios.get(resourceUrl, {
         headers,
-        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status,whatsapp_business_account' },
+        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status' },
         timeout: 8000,
       });
       const verifiedName = resourceRes?.data?.verified_name || 'Verified Account';
-      const liveWabaId = resourceRes?.data?.whatsapp_business_account?.id;
-      if (liveWabaId && !configuredWabaId) {
-        this.logger.debug(`[WHATSAPP DEBUG] Discovered live WABA ID: ${liveWabaId}`);
+      if (!configuredWabaId) {
+        this.logger.warn('[WHATSAPP DEBUG] WhatsApp Business Account ID is not configured. The phone number check does not return a WABA ID.');
       }
       this.logger.log(
         `[WHATSAPP DEBUG] Pre-flight phone number check SUCCEEDED for Phone Number ID: ${phoneNumberId} (verified name: ${verifiedName}). Token: ${maskAccessToken(apiKey)}`

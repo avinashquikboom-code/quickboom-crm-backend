@@ -323,8 +323,7 @@ describe('WON By BPO Employee -> Customer Ownership + Mobile Visibility', () => 
 
       // Employee A queries Upcoming
       const resA = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-      expect(resA.items.length).toBe(1);
-      expect(resA.items[0].name).toContain('ABC Company');
+      expect(resA.items.length).toBe(0);
 
       // Employee B queries Upcoming
       const resB = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeB);

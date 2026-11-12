@@ -199,9 +199,12 @@ export class DataCaptureService implements OnModuleInit {
       if (typeof item === 'string') {
         const trimmed = item.trim();
         if (trimmed.length > 0) {
-          const resourceMatch = trimmed.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/);
+          let decoded = trimmed;
+          try { decoded = decodeURIComponent(trimmed); } catch { decoded = trimmed; }
+          const resource = googlePhotoResource(decoded) || googlePhotoResource(trimmed);
+          const resourceMatch = resource ? [resource] : decoded.match(/(places\/[^/?&]+\/photos\/[^/?&]+)/);
           if (trimmed.includes('places.googleapis.com') || resourceMatch) {
-            const name = resourceMatch ? resourceMatch[1] : `places/photo/${googlePhotos.length + 1}`;
+            const name = resource || (resourceMatch ? resourceMatch[1] : `places/photo/${googlePhotos.length + 1}`);
             const safeUrl = `/api/v1/data-capture/photo?ref=${encodeURIComponent(name)}`;
             photos.push(safeUrl);
             googlePhotos.push({ name, url: safeUrl });
@@ -291,7 +294,7 @@ export class DataCaptureService implements OnModuleInit {
         const photoUri = lookup.data?.photoUri;
         if (lookup.status < 300 && typeof photoUri === 'string' && photoUri.startsWith('https://')) {
           this.logger.log(`[LEAD_IMAGE] photo resource resolved status=${lookup.status}`);
-          res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800');
+          res.setHeader('Cache-Control', 'private, max-age=300');
           res.redirect(302, photoUri);
           return;
         }
@@ -307,7 +310,7 @@ export class DataCaptureService implements OnModuleInit {
         const type = String(image.headers['content-type'] || '');
         if (image.status < 300 && type.startsWith('image/')) {
           res.setHeader('Content-Type', type);
-          res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('Cache-Control', 'private, max-age=300');
           image.data.pipe(res);
           return;
         }
@@ -1114,6 +1117,49 @@ export class DataCaptureService implements OnModuleInit {
       if (resource) urls.push(`/api/v1/data-capture/photo?ref=${encodeURIComponent(resource)}`);
     }
     return [...new Set(urls)];
+  }
+
+  private async ensureGooglePlacePhotos(place: any) {
+    const placeId = String(place?.googlePlaceId || '').trim().replace(/^places\//, '');
+    if (!place?.id || !placeId || placeId.startsWith('custom_') || placeId === 'N/A') return place;
+    if (this.persistablePhotoUrls(place.photos).length) return place;
+    let apiKey = '';
+    try {
+      const config = await this.integrationSettingsService.getGoogleMapsConfig();
+      if (!config?.isEnabled || !config.apiKey) {
+        this.logger.warn('[LEAD_IMAGE] photoFetchStatus=skipped reason=maps_not_configured');
+        return place;
+      }
+      apiKey = config.apiKey;
+    } catch {
+      this.logger.warn('[LEAD_IMAGE] photoFetchStatus=skipped reason=maps_not_configured');
+      return place;
+    }
+    try {
+      const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+        headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
+        timeout: 12000,
+        validateStatus: () => true,
+      });
+      if (response.status === 429) {
+        this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=quota`);
+        return place;
+      }
+      if (response.status >= 400) {
+        this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed status=${response.status}`);
+        return place;
+      }
+      const photos = this.resolveGooglePhotos({ id: placeId, photos: response.data?.photos }, apiKey).map((photo) => photo.url);
+      this.logger.log(`[LEAD_IMAGE] placeId=${placeId} photoAvailable=${photos.length > 0}`);
+      this.logger.log(`[LEAD_IMAGE] photoFetchStatus=${photos.length ? 'success' : 'empty'}`);
+      if (!photos.length) return place;
+      this.logger.log('[LEAD_IMAGE] imageSource=google_places');
+      await this.prisma.dataCapturePlace.update({ where: { id: place.id }, data: { photos } });
+      place.photos = photos;
+    } catch {
+      this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed`);
+    }
+    return place;
   }
 
   private async copyCapturePhotosToLead(tx: any, leadId: number, photosField: any) {
@@ -2229,6 +2275,7 @@ export class DataCaptureService implements OnModuleInit {
         await this.refreshReferencePlaces([dbPlace]);
         dbPlace = await this.prisma.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } }) || dbPlace;
       }
+      dbPlace = await this.ensureGooglePlacePhotos(dbPlace);
       const googleReference = Boolean(dbPlace.googlePlaceId) || /GOOGLE/i.test(dbPlace.source || '');
 
       // 2. Authoritative field mapping from candidate and dbPlace (Sections 4, 5, 6, 7, 8)
