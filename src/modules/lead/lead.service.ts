@@ -1563,6 +1563,12 @@ export class LeadService {
       if (!isTargetVisitDone) {
         throw new ForbiddenException('Visitor employee can only update leads to Visit Done stage.');
       }
+    } else if (
+      isStageChanged &&
+      this.isVisitDoneStage(resolvedStatus, stageName, undefined) &&
+      !(await this.leadRepository.isVisitorUser(user))
+    ) {
+      throw new ForbiddenException('Only a visitor employee can mark a lead as Visit Done.');
     }
 
     await this.leadRepository.update(customerId, id, sanitizedDto as any);
@@ -1844,8 +1850,14 @@ export class LeadService {
       throw new BadRequestException('Either stageId or status must be provided.');
     }
 
-    // Visitor permission enforcement: Visitor can only transition a Visit Scheduled lead to VISIT_DONE
-    if (await this.leadRepository.isVisitorUser(user)) {
+    // Visit Done is reserved for the visitor employee assigned to the field visit.
+    const movingToVisitDone = this.isVisitDoneStage(resolvedStatus, stageName, targetStageKey);
+    const actorIsVisitor = await this.leadRepository.isVisitorUser(user);
+    if (movingToVisitDone && !actorIsVisitor) {
+      throw new ForbiddenException('Only a visitor employee can mark a lead as Visit Done.');
+    }
+
+    if (actorIsVisitor) {
       const current = normalizeLeadStatus(lead.stage?.key || lead.status);
       const target = normalizeLeadStatus(targetStageKey || resolvedStatus);
       if (!['VISIT_SCHEDULED', 'VISIT'].includes(current) || target !== 'VISIT_DONE') {
@@ -2077,6 +2089,15 @@ export class LeadService {
     const status = norm(resolvedStatus);
     if (key === 'WON' || name === 'WON') return true;
     return !key && !name && status === 'WON';
+  }
+
+  isVisitDoneStage(
+    resolvedStatus?: string | null,
+    stageName?: string | null,
+    stageKey?: string | null,
+  ): boolean {
+    const norm = (val?: string | null) => (val || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    return [norm(stageKey), norm(stageName), norm(resolvedStatus)].includes('VISIT_DONE');
   }
 
   isWonOrConvertedStage(
@@ -3488,6 +3509,9 @@ export class LeadService {
     dto: ManageVisitDto, user?: any,
   ) {
     const lead = await this.getLeadById(customerId, leadId, user);
+    if (dto.action === 'COMPLETE' && !(await this.leadRepository.isVisitorUser(user))) {
+      throw new ForbiddenException('Only a visitor employee can mark a visit as done.');
+    }
     if (await this.leadRepository.isVisitorUser(user)) {
       if (dto.action === 'SCHEDULE' || dto.employeeId != null) {
         throw new ForbiddenException('Visitors cannot schedule visits or reassign visitors.');
