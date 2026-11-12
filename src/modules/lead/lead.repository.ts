@@ -2578,7 +2578,6 @@ export class LeadRepository {
             },
           });
 
-      // Assign the visitor without moving the pipeline stage. Stage changes go through updateStatus.
       const leadAssignedEmpId = targetEmpId;
       if (leadAssignedEmpId) {
         await this.prisma.lead.update({
@@ -2593,6 +2592,43 @@ export class LeadRepository {
         `Field Visit Scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'} - ${dto.purpose || 'Client Demo'}`,
         { visitId: savedVisit.id, location: dto.location, employeeId: targetEmpId, scheduledBy: savedVisit.scheduledBy },
       );
+
+      const visitScheduledStage = await this.prisma.leadStage.findFirst({
+        where: {
+          AND: [
+            {
+              OR: [
+                { key: 'VISIT_SCHEDULED' },
+                { key: 'VISIT' },
+                { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+              ],
+            },
+            {
+              OR: [{ customerId: effectiveCustomerId }, { customerId: null }],
+            },
+          ],
+          deletedAt: null,
+        },
+        orderBy: { customerId: 'desc' },
+      });
+
+      const currentKey = normalizeLeadStatus(String(lead.status || ''));
+      const alreadyVisitScheduled =
+        currentKey === 'VISIT_SCHEDULED' ||
+        currentKey === 'VISIT' ||
+        (visitScheduledStage?.id != null && lead.stageId === visitScheduledStage.id);
+
+      if (!alreadyVisitScheduled) {
+        await this.updateStatus(
+          effectiveCustomerId,
+          numLeadId,
+          lead.status as LeadStatus,
+          LeadStatus.VISIT_SCHEDULED,
+          numUserId,
+          `Field visit scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'}`,
+          visitScheduledStage?.id,
+        );
+      }
     } else if (dto.action === 'START') {
       const visit = await this.prisma.visit.findFirst({
         where: { leadId: numLeadId, customerId: effectiveCustomerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] } },

@@ -120,21 +120,42 @@ describe('pipeline stage and Visitor assignment contract', () => {
     await f.service.manageVisit(7,5,21,{action:'COMPLETE'},visitor);
     expect(persist).toHaveBeenCalledWith(7,5,21,{action:'COMPLETE'});
   });
-  it('persists the selected Visitor without changing the pipeline stage',async()=>{
+  it('persists the selected Visitor and moves the lead to Visit Scheduled',async()=>{
     const f=fixture();
     f.prisma.$transaction=jest.fn(async callback=>callback(f.prisma));
     f.prisma.lead.findUnique=jest.fn(async()=>f.leads[0]);
-    f.prisma.lead.update=jest.fn(async({data})=>Object.assign(f.leads[0],data,{stage:scheduled}));
+    f.prisma.$transaction = jest.fn(async (cb) => cb(f.prisma));
+    f.prisma.lead.update=jest.fn(async({data,where})=>{
+      const lead = f.leads.find(l => l.id === where?.id) || f.leads[0];
+      Object.assign(lead, data);
+      if (data?.stageId === scheduled.id) {
+        lead.stageId = scheduled.id;
+        lead.status = 'VISIT_SCHEDULED';
+        lead.stage = scheduled;
+      }
+      return lead;
+    });
+    f.prisma.lead.updateMany = jest.fn(async ({ data }) => {
+      Object.assign(f.leads[0], data);
+      if (data?.stageId === scheduled.id) {
+        f.leads[0].stageId = scheduled.id;
+        f.leads[0].status = 'VISIT_SCHEDULED';
+        f.leads[0].stage = scheduled;
+      }
+      return { count: 1 };
+    });
     f.prisma.lead.findFirst=jest.fn(async()=>({...f.leads[0],visits:f.visits}));
     f.prisma.leadActivityTimeline={create:jest.fn(async()=>({id:1}))};
+    f.prisma.leadActivity={create:jest.fn(async()=>({id:1}))};
+    f.prisma.leadStatusHistory={create:jest.fn(async()=>({id:1}))};
     f.prisma.visit.create=jest.fn(async({data})=>{const saved={...data,id:99};f.visits.push(saved);return saved;});
     const result=await f.repository.manageVisit(7,1,1,{action:'SCHEDULE',employeeId:31,date:'2026-11-01',time:'10:30 AM'});
-    expect(f.prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(f.prisma.$transaction.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(f.visits[0].employeeId).toBe(31);
     expect(f.visits[0].time).toBe('10:30 AM');
-    expect(f.leads[0].stageId).toBe(stages[0].id);
-    expect(f.leads[0].status).toBe('NEW');
     expect((f.leads[0] as any).employeeId).toBe(31);
+    expect(f.leads[0].stageId).toBe(scheduled.id);
+    expect(f.leads[0].status).toBe('VISIT_SCHEDULED');
     expect(result!.assignedVisitorId).toBe(31);
   });
 
