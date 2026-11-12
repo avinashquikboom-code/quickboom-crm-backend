@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
@@ -8,6 +8,8 @@ import { EmailTemplateService, renderEmailTemplate } from '../email/email-templa
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { NotificationService } from '../notification/notification.service';
 import { generateCalendarAppointmentPdfBuffer } from '../../common/utils/calendar-pdf.util';
+import { LeadRepository } from '../lead/lead.repository';
+import { LeadService } from '../lead/lead.service';
 
 @Injectable()
 export class VisitService {
@@ -19,6 +21,8 @@ export class VisitService {
     @Optional() private readonly emailTemplateService?: EmailTemplateService,
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly leadRepository?: LeadRepository,
+    @Optional() @Inject(forwardRef(() => LeadService)) private readonly leadService?: LeadService,
   ) {}
 
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
@@ -300,7 +304,11 @@ export class VisitService {
     };
   }
 
-  async create(customerId: number | string | undefined, dto: CreateVisitDto) {
+  async create(
+    customerId: number | string | undefined,
+    dto: CreateVisitDto,
+    actingUserId?: number | string,
+  ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
     // Fallback employee if not specified
@@ -332,91 +340,132 @@ export class VisitService {
       employeeId = emp.id;
     }
 
-    const visit = await this.prisma.visit.create({
-      data: {
-        customerId: numCustomerId,
-        employeeId: employeeId,
-        companyId: dto.companyId ? Number(dto.companyId) : undefined,
-        contactId: dto.contactId ? Number(dto.contactId) : undefined,
-        dealId: dto.dealId ? Number(dto.dealId) : undefined,
-        leadId: dto.leadId ? Number(dto.leadId) : undefined,
-        customerName: dto.customerName,
-        purpose: dto.purpose,
-        visitType: dto.visitType || 'CLIENT_MEETING',
-        date: new Date(dto.date),
-        time: dto.time || '10:00 AM',
-        location: dto.location,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        status: dto.status || VisitStatus.SCHEDULED,
-        notes: dto.notes,
-        outcome: dto.outcome,
-        nextFollowUpDate: dto.nextFollowUpDate ? new Date(dto.nextFollowUpDate) : undefined,
-        scheduledBy: dto.scheduledBy,
-        scheduledById: dto.scheduledById ? Number(dto.scheduledById) : undefined,
-        completedBy: dto.completedBy,
-        completedById: dto.completedById ? Number(dto.completedById) : undefined,
-        startedAt: dto.startedAt ? new Date(dto.startedAt) : undefined,
-      },
-      include: {
-        employee: true,
-        company: true,
-        contact: true,
-        deal: true,
-      },
-    });
+    const visitData = {
+      customerId: numCustomerId,
+      employeeId: employeeId,
+      companyId: dto.companyId ? Number(dto.companyId) : undefined,
+      contactId: dto.contactId ? Number(dto.contactId) : undefined,
+      dealId: dto.dealId ? Number(dto.dealId) : undefined,
+      leadId: dto.leadId ? Number(dto.leadId) : undefined,
+      customerName: dto.customerName,
+      purpose: dto.purpose,
+      visitType: dto.visitType || 'CLIENT_MEETING',
+      date: new Date(dto.date),
+      time: dto.time || '10:00 AM',
+      location: dto.location,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      status: dto.status || VisitStatus.SCHEDULED,
+      notes: dto.notes,
+      outcome: dto.outcome,
+      nextFollowUpDate: dto.nextFollowUpDate ? new Date(dto.nextFollowUpDate) : undefined,
+      scheduledBy: dto.scheduledBy,
+      scheduledById: dto.scheduledById ? Number(dto.scheduledById) : (actingUserId ? Number(actingUserId) : undefined),
+      completedBy: dto.completedBy,
+      completedById: dto.completedById ? Number(dto.completedById) : undefined,
+      startedAt: dto.startedAt ? new Date(dto.startedAt) : undefined,
+    };
 
-    // If linked to a lead, sync the lead stage to VISIT_SCHEDULED and assign employee
-    if (dto.leadId) {
-      try {
-        const numLeadId = Number(dto.leadId);
-        const visitScheduledStage = await this.prisma.leadStage.findFirst({
+    const visitInclude = {
+      employee: true,
+      company: true,
+      contact: true,
+      deal: true,
+    };
+
+    let visit: any;
+    let linkedLead: any = null;
+    let syncResult: 'MOVED' | 'SKIPPED' | 'NO_STAGE' | null = null;
+    let leadBefore: any = null;
+
+    if (dto.leadId && this.leadRepository) {
+      const numLeadId = Number(dto.leadId);
+      leadBefore = await this.prisma.lead.findUnique({
+        where: { id: numLeadId },
+        include: { stage: true },
+      });
+      const leadEmpId = leadBefore?.employeeId || visitData.scheduledById || employeeId;
+      const syncUserId = visitData.scheduledById ? Number(visitData.scheduledById) : 0;
+      const notes = `Field visit scheduled for ${dto.date ? String(dto.date).split('T')[0] : 'today'} at ${dto.time || '10:00 AM'} — ${dto.purpose || 'Client Visit'}`;
+
+      const txResult = await this.prisma.$transaction(async (tx) => {
+        const txRepo = new LeadRepository(tx as PrismaService);
+        const savedVisit = await tx.visit.create({
+          data: visitData,
+          include: visitInclude,
+        });
+
+        if (leadEmpId) {
+          await tx.lead.update({
+            where: { id: numLeadId },
+            data: { employeeId: Number(leadEmpId) },
+          });
+        }
+
+        const existingScheduled = await tx.visit.findFirst({
           where: {
-            AND: [
-              {
-                OR: [
-                  { key: 'VISIT_SCHEDULED' },
-                  { key: 'VISIT' },
-                  { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-                ],
-              },
-              {
-                OR: [
-                  ...(numCustomerId && numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
-                  { customerId: null },
-                ],
-              },
-            ],
-            deletedAt: null,
-          },
-          orderBy: { customerId: 'desc' },
-        });
-
-        const currentLead = await this.prisma.lead.findUnique({
-          where: { id: numLeadId },
-          select: { employeeId: true },
-        });
-        const leadEmpId = currentLead?.employeeId || dto.scheduledById || employeeId;
-
-        await this.prisma.lead.update({
-          where: { id: numLeadId },
-          data: {
-            status: 'VISIT_SCHEDULED',
-            ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
-            ...(leadEmpId ? { employeeId: Number(leadEmpId) } : {}),
+            leadId: numLeadId,
+            customerId: numCustomerId,
+            status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+            id: { not: savedVisit.id },
           },
         });
+        if (existingScheduled) {
+          await tx.visit.update({
+            where: { id: existingScheduled.id },
+            data: { status: 'CANCELLED' },
+          });
+        }
 
-        await this.prisma.leadActivityTimeline.create({
+        await tx.leadActivityTimeline.create({
           data: {
             leadId: numLeadId,
             action: 'VISIT_SCHEDULED',
-            description: `Field Visit Scheduled for ${dto.date ? String(dto.date).split('T')[0] : 'today'} at ${dto.time || '10:00 AM'} - ${dto.purpose || 'Client Visit'}`,
-            metadata: { visitId: visit.id, employeeId, location: dto.location },
+            description: notes,
+            metadata: { visitId: savedVisit.id, employeeId, location: dto.location },
           },
-        }).catch(() => {});
-      } catch (leadSyncErr: any) {
-        this.logger.warn(`Could not sync lead stage on visit create: ${leadSyncErr?.message}`);
+        }).catch(() => null);
+
+        const stageSync = await txRepo.transitionLeadToVisitScheduledAfterVisit(
+          numCustomerId,
+          numLeadId,
+          syncUserId,
+          notes,
+          { inlineTransaction: true },
+        );
+
+        const lead = await txRepo.findOne(numCustomerId, numLeadId);
+        return { visit: savedVisit, stageSync, lead };
+      });
+
+      visit = txResult.visit;
+      syncResult = txResult.stageSync;
+      linkedLead = txResult.lead;
+    } else {
+      visit = await this.prisma.visit.create({
+        data: visitData,
+        include: visitInclude,
+      });
+      if (dto.leadId && !this.leadRepository) {
+        this.logger.warn('[VISIT_CREATE] LeadRepository unavailable — lead stage was not updated.');
+      }
+    }
+
+    if (dto.leadId && leadBefore) {
+      const numLeadId = Number(dto.leadId);
+      const syncUserId = visitData.scheduledById ? Number(visitData.scheduledById) : 0;
+      if (syncResult === 'NO_STAGE') {
+        this.logger.error(
+          `[VISIT_CREATE] Visit #${visit.id} saved for lead #${numLeadId} but Visit Scheduled stage is not configured for tenant ${numCustomerId}.`,
+        );
+      } else if (syncResult === 'MOVED' && this.leadService) {
+        await this.leadService
+          .syncStageAutomationsAfterVisitSchedule(numCustomerId, numLeadId, syncUserId, {
+            stageId: leadBefore.stageId,
+            stageName: leadBefore.stage?.name,
+            status: leadBefore.status,
+          })
+          .catch((err) => this.logger.warn(`[VISIT_CREATE] Stage automation notify failed: ${err?.message}`));
       }
     }
 
@@ -427,7 +476,7 @@ export class VisitService {
       this.logger.warn(`Non-fatal: Calendar appointment communications notice: ${commErr?.message}`);
     }
 
-    return visit;
+    return linkedLead ? { ...visit, lead: linkedLead, leadStageSynced: syncResult === 'MOVED' } : visit;
   }
 
   /**

@@ -3,6 +3,8 @@ import {
   leadStageMatchWhere,
   stripUnresolvedTemplatePlaceholders,
   buildStageAutomationIdempotencyKey,
+  isLeadAlreadyOnVisitScheduledStage,
+  shouldAdvanceLeadToVisitScheduled,
 } from './lead-stage-automation.util';
 
 describe('lead-stage-automation.util', () => {
@@ -43,6 +45,26 @@ describe('lead-stage-automation.util', () => {
 
   it('strips unresolved placeholders', () => {
     expect(stripUnresolvedTemplatePlaceholders('Hi {{lead_name}}, welcome!')).toBe('Hi , welcome!');
+  });
+
+  it('does not treat legacy status alone as already on Visit Scheduled', () => {
+    expect(
+      shouldAdvanceLeadToVisitScheduled(
+        { id: 2, sortOrder: 3 },
+        { id: 6, sortOrder: 6 },
+      ),
+    ).toBe(true);
+    expect(isLeadAlreadyOnVisitScheduledStage({ stageId: 6 }, { id: 6 })).toBe(true);
+    expect(isLeadAlreadyOnVisitScheduledStage({ stageId: 2 }, { id: 6 })).toBe(false);
+  });
+
+  it('does not downgrade leads past Visit Scheduled in pipeline order', () => {
+    expect(
+      shouldAdvanceLeadToVisitScheduled(
+        { id: 8, sortOrder: 10 },
+        { id: 6, sortOrder: 6 },
+      ),
+    ).toBe(false);
   });
 
   it('builds stable idempotency keys', () => {
