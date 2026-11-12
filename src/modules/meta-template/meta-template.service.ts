@@ -470,14 +470,15 @@ export class MetaTemplateService {
 
     const resolvedWabaId = wabaId;
     if (!resolvedWabaId) {
-      this.logger.warn('[MetaTemplateService] WhatsApp Business Account ID is not configured. Set the WABA ID in Settings → Integrations → WhatsApp.');
+      throw new BadRequestException(
+        'WhatsApp Business Account ID (WABA ID) is required to sync message templates from Meta. ' +
+          'Configure the WABA ID in Settings → Integrations → WhatsApp (do not use Phone Number ID for template sync).',
+      );
     }
 
-    const targetAccount = resolvedWabaId || phoneNumberId;
-    if (!targetAccount) {
-      throw new BadRequestException(
-        'WhatsApp Business Account ID (WABA ID) or Phone Number ID is missing in Settings → Integrations → WhatsApp.',
-      );
+    const targetAccount = resolvedWabaId;
+    if (!phoneNumberId) {
+      this.logger.warn('[MetaTemplateService] Phone Number ID is missing; template sync uses WABA only.');
     }
 
     const apiVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
