@@ -390,6 +390,8 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.ATTENDANCE.view).toBe(true);
       expect(result.effectivePermissions.ATTENDANCE.create).toBe(false);
       expect(result.effectivePermissions.ADMIN?.view ?? false).toBe(false);
+      expect(result.crmCategory).toBe('BPO');
+      expect(result.isCrmEligible).toBe(true);
     });
 
     it('does not grant visit creation to a Visitor role with unrelated partial permissions', async () => {
@@ -410,6 +412,8 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.VISITS.create).toBe(false);
       expect(result.effectivePermissions.VISITS.view).toBe(true);
       expect(result.effectivePermissions.VISITS.complete).toBe(true);
+      expect(result.crmCategory).toBe('VISITOR');
+      expect(result.isCrmEligible).toBe(false);
     });
   });
 });

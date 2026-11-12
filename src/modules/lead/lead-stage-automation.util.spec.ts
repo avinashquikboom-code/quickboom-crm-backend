@@ -6,6 +6,7 @@ import {
   isLeadAlreadyOnVisitScheduledStage,
   isLeadEligibleForVisitorVisitDoneTransition,
   shouldAdvanceLeadToVisitScheduled,
+  shouldMoveLeadToVisitScheduledOnExplicitSchedule,
 } from './lead-stage-automation.util';
 
 describe('lead-stage-automation.util', () => {
@@ -57,6 +58,25 @@ describe('lead-stage-automation.util', () => {
     ).toBe(true);
     expect(isLeadAlreadyOnVisitScheduledStage({ stageId: 6 }, { id: 6 })).toBe(true);
     expect(isLeadAlreadyOnVisitScheduledStage({ stageId: 2 }, { id: 6 })).toBe(false);
+  });
+
+  it('explicit visit schedule moves leads from later pipeline stages (e.g. Final Call)', () => {
+    const visitScheduled = { id: 6, sortOrder: 6 };
+    expect(
+      shouldMoveLeadToVisitScheduledOnExplicitSchedule(
+        { stageId: 10, status: 'FINAL_CALL', stage: { id: 10, key: 'FINAL_CALL' } },
+        visitScheduled,
+      ),
+    ).toBe(true);
+  });
+
+  it('explicit visit schedule does not move Won/Lost leads', () => {
+    expect(
+      shouldMoveLeadToVisitScheduledOnExplicitSchedule(
+        { stageId: 12, status: 'WON', stage: { id: 12, key: 'WON' } },
+        { id: 6 },
+      ),
+    ).toBe(false);
   });
 
   it('does not downgrade leads past Visit Scheduled in pipeline order', () => {

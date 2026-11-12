@@ -29,7 +29,7 @@ import {
 } from './dto/auth.dto';
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
-import { CrmEmployeeCategory } from '../../common/crm/crm-employee-category';
+import { CrmEmployeeCategory, classifyCrmEmployee } from '../../common/crm/crm-employee-category';
 import { assertCrmAppEmployee, crmCategoryForEmployee } from '../../common/crm/crm-app-access';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
@@ -2905,7 +2905,18 @@ export class AuthService {
     }
 
     const permissionKeys = permissions.map((p) => toPermissionKey(p.module, p.action));
-    const crmCategory = this.crmCategoryFor(user.employee);
+    const employeeCategory = this.crmCategoryFor(user.employee);
+    const crmCategory = isVisitorDesignation
+      ? 'VISITOR'
+      : employeeCategory !== 'NONE'
+        ? employeeCategory
+        : classifyCrmEmployee({
+            departmentName: user.employee?.department?.name,
+            departmentCode: user.employee?.department?.code,
+            designationName: user.employee?.designation?.name,
+            designationCode: user.employee?.designation?.code,
+            roles: roleNames,
+          });
     const isCrmEligible = crmCategory === 'BPO';
 
     return {

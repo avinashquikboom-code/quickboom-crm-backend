@@ -125,6 +125,41 @@ export function isLeadEligibleForVisitorVisitDoneTransition(
   return false;
 }
 
+function isLeadTerminalForVisitScheduling(
+  lead?: {
+    status?: string | null;
+    stage?: { key?: string; name?: string } | null;
+  } | null,
+): boolean {
+  if (!lead) return false;
+  if (isVisitDoneToken(lead.stage?.key) || isVisitDoneToken(lead.status)) return true;
+  const tokens = [
+    normalizeStageToken(lead.stage?.key),
+    normalizeStageToken(lead.status),
+    normalizeStageToken(lead.stage?.name),
+  ];
+  return tokens.some((t) => t === 'WON' || t === 'LOST' || t === 'CANCELLED');
+}
+
+/**
+ * When an employee explicitly schedules a field visit, move onto Visit Scheduled
+ * unless the lead is already there or in a terminal stage (Won / Lost / Visit Done).
+ * Unlike sort-order heuristics, this allows moving from later stages (e.g. Final Call).
+ */
+export function shouldMoveLeadToVisitScheduledOnExplicitSchedule(
+  lead: {
+    stageId?: number | null;
+    status?: string | null;
+    stage?: { id?: number; key?: string; name?: string } | null;
+  },
+  visitScheduledStage: { id: number } | null | undefined,
+): boolean {
+  if (!visitScheduledStage?.id) return false;
+  if (isLeadAlreadyOnVisitScheduledStage(lead, visitScheduledStage)) return false;
+  if (isLeadTerminalForVisitScheduling(lead)) return false;
+  return true;
+}
+
 /** Do not downgrade leads that have already progressed past Visit Scheduled in pipeline order. */
 export function shouldAdvanceLeadToVisitScheduled(
   currentStage: { id?: number | null; sortOrder?: number | null } | null | undefined,

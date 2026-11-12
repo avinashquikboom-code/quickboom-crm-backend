@@ -21,7 +21,7 @@ import { googlePhotoResource, isPlaceholderPhoto } from '../data-capture/google-
 import {
   isLeadAlreadyOnVisitScheduledStage,
   isLeadOnVisitDoneStage,
-  shouldAdvanceLeadToVisitScheduled,
+  shouldMoveLeadToVisitScheduledOnExplicitSchedule,
   visitDoneStageWhere,
   visitScheduledStageWhere,
 } from './lead-stage-automation.util';
@@ -2565,9 +2565,9 @@ export class LeadRepository {
       return 'SKIPPED';
     }
 
-    if (!shouldAdvanceLeadToVisitScheduled(lead.stage, visitScheduledStage)) {
+    if (!shouldMoveLeadToVisitScheduledOnExplicitSchedule(lead, visitScheduledStage)) {
       this.logger.log(
-        `[VISIT_STAGE_SYNC] Lead #${numLeadId} remains on stage "${lead.stage?.name || lead.status}" (pipeline order ≥ Visit Scheduled).`,
+        `[VISIT_STAGE_SYNC] Lead #${numLeadId} not moved to Visit Scheduled (already scheduled, terminal stage, or stage missing). Current: "${lead.stage?.name || lead.status}".`,
       );
       return 'SKIPPED';
     }
