@@ -789,7 +789,16 @@ export class MobileVisitController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id') id: string,
-    @Body() body: { notes?: string; outcome?: string; nextFollowUpDate?: string; rating?: number; feedback?: string; latitude?: number; longitude?: number },
+    @Body() body: {
+      notes?: string;
+      outcome?: string;
+      nextFollowUpDate?: string;
+      rating?: number;
+      feedback?: string;
+      signature?: Array<{ x: number; y: number } | null>;
+      latitude?: number;
+      longitude?: number;
+    },
   ) {
     const numId = Number(id);
     const visit = await this.prisma.visit.findUnique({
@@ -799,6 +808,21 @@ export class MobileVisitController {
 
     if (!visit) {
       throw new NotFoundException(`Visit with ID ${id} not found`);
+    }
+
+    if (body?.rating != null && (!Number.isInteger(body.rating) || body.rating < 1 || body.rating > 5)) {
+      throw new BadRequestException('Customer rating must be an integer from 1 to 5.');
+    }
+
+    if (body?.signature != null) {
+      if (!Array.isArray(body.signature) || body.signature.length > 500) {
+        throw new BadRequestException('Signature must contain at most 500 normalized points.');
+      }
+      const invalidPoint = body.signature.some((point) =>
+        point !== null &&
+        (!Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1),
+      );
+      if (invalidPoint) throw new BadRequestException('Signature points must be normalized between 0 and 1.');
     }
 
     if (visit.status === VisitStatus.COMPLETED) {
@@ -915,6 +939,7 @@ export class MobileVisitController {
                 customerReview: {
                   rating: body?.rating ?? null,
                   feedback: body?.feedback ?? null,
+                  signature: body?.signature ?? null,
                 },
                 completedById: employee?.id || null,
                 completedByName: actingEmpName || null,

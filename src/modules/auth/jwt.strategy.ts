@@ -370,6 +370,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     const desigUpper = (desigName || '').toUpperCase();
+    const roleNamesUpper = (user.userRoles || [])
+      .map((ur: any) => String(ur.role?.name || ur.role?.type || '').trim().toUpperCase());
     const isVisitorDesignation = Boolean(
       desigUpper && (
         desigUpper.includes('VISITOR') ||
@@ -377,7 +379,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         desigUpper.includes('FIELD VISIT') ||
         desigUpper.includes('FIELD OFFICER')
       )
-    );
+    ) || roleNamesUpper.some((name: string) => name.includes('VISITOR') || name === 'VISIT');
 
     if (isVisitorDesignation) {
       // Visitors only view, start (check-in), and complete assigned visits.
@@ -413,6 +415,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           desigUpper.includes('CONSULTANT')
         )) ||
         user.employee?.designation?.crmMobileAccess === true ||
+        roleNamesUpper.some((name: string) =>
+          name.includes('TELECALL') || name.includes('TELESALES') || name.includes('TELESELL') || name.includes('BPO'),
+        ) ||
         permissionsMap.has('LEADS:VIEW') ||
         permissionsMap.has('LEADS:CREATE') ||
         permissionsMap.has('LEADS:CHANGE_STAGE') ||

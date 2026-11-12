@@ -3046,6 +3046,10 @@ export class EmployeeService {
       (r) => !['CUSTOMER', 'EMPLOYEE', 'Employee', 'employee'].includes(r),
     );
     const roleName = desigName || userRoleNames[0] || 'TELECALLER';
+    const hasTelecallerRole = userRoleNames.some((name) => {
+      const upper = String(name || '').trim().toUpperCase();
+      return upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO');
+    });
 
     // 2. Query matching Role from DB for this customer/global to load role defaults
     const rolePermissionsSet = new Set<string>();
@@ -3179,7 +3183,7 @@ export class EmployeeService {
         desigUpper.includes('FIELD VISIT') ||
         desigUpper.includes('FIELD OFFICER')
       )
-    );
+    ) || userRoleNames.some((name) => String(name || '').trim().toUpperCase().includes('VISITOR'));
 
     if (isVisitorDesignation) {
       // Visitors only view, start (check-in), and complete assigned visits.
@@ -3209,6 +3213,7 @@ export class EmployeeService {
           desigUpper.includes('CONSULTANT')
         )) ||
         employee.designation?.crmMobileAccess === true ||
+        hasTelecallerRole ||
         rolePermissionsSet.has('LEADS:VIEW') ||
         rolePermissionsSet.has('LEADS:CREATE') ||
         rolePermissionsSet.has('LEADS:CHANGE_STAGE') ||

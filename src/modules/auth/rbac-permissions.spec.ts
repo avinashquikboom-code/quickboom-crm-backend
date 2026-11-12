@@ -368,5 +368,48 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.VISITS.create).toBe(true);
       expect(result.permissions.some((p: any) => p.module === 'VISITS' && p.action === 'CREATE')).toBe(true);
     });
+
+    it('adds Telecaller visit scheduling when the database role has unrelated partial permissions', async () => {
+      const mockTelecaller = {
+        id: 27,
+        email: 'telecaller-partial@company.com',
+        employee: { id: 27, designation: { name: 'Employee' } },
+        userRoles: [{
+          role: {
+            name: 'TELECALLER',
+            type: 'CUSTOM',
+            rolePermissions: [{ permission: { module: 'ATTENDANCE', action: 'VIEW' } }],
+          },
+        }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(27, mockTelecaller);
+      expect(result.effectivePermissions.VISITS.create).toBe(true);
+      expect(result.effectivePermissions.VISITS.view).toBe(true);
+      expect(result.effectivePermissions.LEADS.schedule_visit).toBe(true);
+      expect(result.effectivePermissions.ATTENDANCE.view).toBe(true);
+      expect(result.effectivePermissions.ATTENDANCE.create).toBe(false);
+      expect(result.effectivePermissions.ADMIN?.view ?? false).toBe(false);
+    });
+
+    it('does not grant visit creation to a Visitor role with unrelated partial permissions', async () => {
+      const mockVisitor = {
+        id: 28,
+        email: 'visitor-partial@company.com',
+        employee: { id: 28, designation: { name: 'Employee' } },
+        userRoles: [{
+          role: {
+            name: 'VISITOR',
+            type: 'CUSTOM',
+            rolePermissions: [{ permission: { module: 'ATTENDANCE', action: 'VIEW' } }],
+          },
+        }],
+      };
+
+      const result = await authService.resolveUserEffectivePermissions(28, mockVisitor);
+      expect(result.effectivePermissions.VISITS.create).toBe(false);
+      expect(result.effectivePermissions.VISITS.view).toBe(true);
+      expect(result.effectivePermissions.VISITS.complete).toBe(true);
+    });
   });
 });
