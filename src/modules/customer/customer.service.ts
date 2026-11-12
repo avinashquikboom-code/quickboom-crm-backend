@@ -168,6 +168,14 @@ export function customerOriginIsWon(customer: any): boolean {
   return leadStageIsWon(linked);
 }
 
+/** A lead-backed customer is listed only while that lead is WON. Accounts with no lead stay visible to super admin. */
+export function customerListed(customer: any, requireWonOrigin: boolean): boolean {
+  const origin = customer?.originLead && !customer.originLead.deletedAt ? customer.originLead : null;
+  const linked = origin || (Array.isArray(customer?.leads) ? customer.leads.find((lead: any) => lead && !lead.deletedAt) : null);
+  if (!linked) return !requireWonOrigin;
+  return leadStageIsWon(linked);
+}
+
 export function extractUpcomingCall(
   c: any,
   now: Date = new Date(),
@@ -1320,7 +1328,7 @@ export class CustomerService {
     const activeCustomerIds: number[] = [];
     const inactiveCustomerIds: number[] = [];
     const completedCustomerIds: number[] = [];
-    const countableCustomers = wonCustomersOnly ? allCustomersForCounts.filter((customer) => customerOriginIsWon(customer)) : allCustomersForCounts;
+    const countableCustomers = allCustomersForCounts.filter((customer) => customerListed(customer, wonCustomersOnly));
 
     for (const c of countableCustomers) {
       // Priority 1: ACTIVE (valid, actually activated purchased plan)
@@ -1422,9 +1430,14 @@ export class CustomerService {
           leadAndConditions.push({ OR: stageConditions });
         }
 
-        if (leadAndConditions.length > 0) {
-          leadWhere.AND = leadAndConditions;
-        }
+        leadAndConditions.push({
+          OR: [
+            { stage: { key: 'WON', deletedAt: null } },
+            { stage: { name: { equals: 'Won', mode: 'insensitive' }, deletedAt: null } },
+            { stageId: null, status: { in: ['WON', 'CONVERTED'] } },
+          ],
+        });
+        leadWhere.AND = leadAndConditions;
 
         const leads = await this.prisma.lead.findMany({
           where: leadWhere,
@@ -1447,7 +1460,7 @@ export class CustomerService {
         }
 
         for (const l of leads) {
-          if (wonCustomersOnly && !leadStageIsWon(l)) continue;
+          if (!leadStageIsWon(l)) continue;
           // If already converted to or linked with a Customer, skip to prevent duplicates
           if (l.convertedCustomer || convertedLeadIds.has(l.id)) {
             this.logger.log(
@@ -1598,7 +1611,7 @@ export class CustomerService {
       },
     });
 
-    const visibleItems = wonCustomersOnly ? items.filter((customer) => customerOriginIsWon(customer)) : items;
+    const visibleItems = items.filter((customer) => customerListed(customer, wonCustomersOnly));
     let formatted = visibleItems.map((c) => {
       const primaryUser = (c as any).users?.[0];
       // Find latest valid active subscription strictly
@@ -2100,7 +2113,7 @@ export class CustomerService {
       },
     });
 
-    if (customer && !customer.deletedAt && !isUserSuperAdmin(user) && ((customer as any).originLead || (customer as any).leads?.length) && !customerOriginIsWon(customer)) {
+    if (customer && !customer.deletedAt && ((customer as any).originLead || (customer as any).leads?.length) && !customerOriginIsWon(customer)) {
       throw new NotFoundException(`Customer #${id} not found.`);
     }
 
@@ -2115,7 +2128,7 @@ export class CustomerService {
           },
         });
         if (lead) {
-          if (!isUserSuperAdmin(user) && !leadStageIsWon(lead)) {
+          if (!leadStageIsWon(lead)) {
             throw new NotFoundException(`Customer #${id} not found.`);
           }
           const empId = user?.employeeId || user?.employee?.id;

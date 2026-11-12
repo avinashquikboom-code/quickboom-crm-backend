@@ -66,4 +66,41 @@ describe('Customers are visible only for WON leads', () => {
     expect(res.items.map((item) => item.companyName || item.name)).toContain('Valaji Boutique');
     expect(res.items.some((item) => item.companyName === 'New Shop' || item.name === 'New Shop')).toBe(false);
   });
+
+  it('hides a Final Call customer and still lists a tenant with no lead for a super admin', async () => {
+    const tenant = { id: 1, name: 'Tenant Co', companyName: 'Tenant Co', isActive: true, subscriptions: [], works: [], tasks: [], leads: [], users: [], commissions: [], _count: {} };
+    const finalCallCustomer = {
+      id: 2,
+      name: 'Final Call Shop',
+      companyName: 'Final Call Shop',
+      isActive: false,
+      subscriptions: [],
+      works: [],
+      tasks: [],
+      leads: [{ id: 70, status: 'FINAL_CALL', stage: { key: 'FINAL_CALL', name: 'Final Call' }, reminders: [] }],
+      users: [],
+      commissions: [],
+      _count: {},
+    };
+    const prisma: any = {
+      customer: { findMany: jest.fn().mockResolvedValue([tenant, finalCallCustomer]) },
+      lead: { findMany: jest.fn().mockResolvedValue([{ id: 80, companyName: 'Still Final', status: 'FINAL_CALL', stage: { key: 'FINAL_CALL', name: 'Final Call' }, reminders: [] }]) },
+      leadStage: { findMany: jest.fn().mockResolvedValue([{ id: 9, key: 'WON', name: 'Won' }]) },
+      employee: { findFirst: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        CustomerService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: ScheduleService, useValue: {} },
+        { provide: QBIdGenerator, useValue: { generateQbId: () => 'QB-1' } },
+        { provide: WorkService, useValue: {} },
+      ],
+    }).compile();
+    const service = moduleRef.get(CustomerService);
+    const res = await service.findAll({ status: 'ALL' }, { id: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] });
+    expect(res.items.map((item) => item.companyName)).toContain('Tenant Co');
+    expect(res.items.map((item) => item.companyName)).not.toContain('Final Call Shop');
+    expect(res.items.map((item) => item.companyName)).not.toContain('Still Final');
+  });
 });
