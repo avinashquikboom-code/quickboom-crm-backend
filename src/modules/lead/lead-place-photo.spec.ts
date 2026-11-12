@@ -48,6 +48,25 @@ describe('Google Places lead photos', () => {
     expect(created[0].url).not.toContain('server-key');
   });
 
+  it('recovers uploaded photos from an older linked capture with an empty photos array', async () => {
+    const imported = { ...lead, images: [], placePhotos: [] };
+    prisma.dataCapturePlace.findMany.mockResolvedValueOnce([
+      { customerId: 1, importedLeadId: lead.id, photos: [], rawData: {
+        photos: [{ secure_url: 'https://cdn.example.test/store.webp' }],
+        images: ['/uploads/entrance.jpg'],
+      } },
+      { customerId: 2, importedLeadId: lead.id, photos: ['https://cdn.example.test/other.jpg'] },
+    ]);
+    const repository = new LeadRepository(prisma, integrationSettings as any);
+    await (repository as any).attachPlacePhotos([imported]);
+
+    expect(imported.placePhotos).toEqual([
+      { url: 'https://cdn.example.test/store.webp', attributions: [] },
+      { url: '/uploads/entrance.jpg', attributions: [] },
+    ]);
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
   it('leaves a manual lead without a place id untouched', async () => {
     const manual = { id: 4, customerId: 1, companyName: 'Manual Shop', images: [] };
     const repository = new LeadRepository(prisma, integrationSettings as any);

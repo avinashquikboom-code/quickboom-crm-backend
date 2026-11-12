@@ -1185,20 +1185,20 @@ export class DataCaptureService implements OnModuleInit {
     });
   }
 
-  private persistablePhotoUrls(photosField: any): string[] {
-    const { googlePhotos } = this.normalizeStoredPhotos(photosField);
-    const urls: string[] = [];
-    for (const photo of googlePhotos) {
-      const resource = googlePhotoResource(String(photo?.name || '')) || googlePhotoResource(String(photo?.url || ''));
-      if (resource) urls.push(`/api/v1/data-capture/photo?ref=${encodeURIComponent(resource)}`);
-    }
-    return [...new Set(urls)];
+  private capturePhotoUrls(place: { photos?: unknown; rawData?: any }): string[] {
+    const { photos } = this.mergeStoredPhotos(
+      place.photos, place.rawData?.photos, place.rawData?.googlePhotos, place.rawData?.images,
+    );
+    return photos.filter((url) =>
+      !isPlaceholderPhoto(url) &&
+      (/^https?:\/\//i.test(url) || /^\/(?:uploads\/|api\/v1\/data-capture\/photo\?)/.test(url)),
+    );
   }
 
   private async ensureGooglePlacePhotos(place: any) {
     const placeId = String(place?.googlePlaceId || '').trim().replace(/^places\//, '');
     if (!place?.id || !placeId || placeId.startsWith('custom_') || placeId === 'N/A') return place;
-    if (this.persistablePhotoUrls(place.photos).length) return place;
+    if (this.capturePhotoUrls(place).length) return place;
     let apiKey = '';
     try {
       const config = await this.integrationSettingsService.getGoogleMapsConfig();
@@ -1239,9 +1239,9 @@ export class DataCaptureService implements OnModuleInit {
     return place;
   }
 
-  private async copyCapturePhotosToLead(tx: any, leadId: number, photosField: any) {
+  private async copyCapturePhotosToLead(tx: any, leadId: number, place: { photos?: unknown; rawData?: any }) {
     if (!leadId || typeof tx.leadImage?.create !== 'function') return;
-    const urls = this.persistablePhotoUrls(photosField);
+    const urls = this.capturePhotoUrls(place);
     if (!urls.length) return;
     const existing = typeof tx.leadImage.findMany === 'function'
       ? await tx.leadImage.findMany({ where: { leadId }, select: { url: true } })
@@ -1250,7 +1250,7 @@ export class DataCaptureService implements OnModuleInit {
     for (const url of urls) {
       if (saved.has(url)) continue;
       await tx.leadImage.create({
-        data: { leadId, url, isPrimary: saved.size === 0, caption: 'Google Maps' },
+        data: { leadId, url, isPrimary: saved.size === 0, caption: url.startsWith('/api/v1/data-capture/photo?') ? 'Google Maps' : 'Data Capture' },
       });
       saved.add(url);
     }
@@ -2475,7 +2475,7 @@ export class DataCaptureService implements OnModuleInit {
               isImported: true, importedLeadId: matchedLead.id,
               status: currentPlace?.importedLeadId === matchedLead.id && currentPlace?.status === 'LEAD_CREATED' ? 'LEAD_CREATED' : 'DUPLICATE',
             } });
-            await this.copyCapturePhotosToLead(tx, matchedLead.id, dbPlace.photos);
+            await this.copyCapturePhotosToLead(tx, matchedLead.id, dbPlace);
             return { ...matchedLead, alreadyExists: true };
           }
           // Resolve initial stage: 'NEW'
@@ -2610,7 +2610,7 @@ export class DataCaptureService implements OnModuleInit {
             });
           }
 
-          await this.copyCapturePhotosToLead(tx, created.id, dbPlace.photos);
+          await this.copyCapturePhotosToLead(tx, created.id, dbPlace);
           return created;
         },
         { timeout: 15000, maxWait: 15000 },
