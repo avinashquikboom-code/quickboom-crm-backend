@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
 import { LeadRepository } from '../lead/lead.repository';
+import { S3Service } from '../s3/s3.service';
 import { SendDetailsCategory } from './dto/send-details.dto';
 
 describe('SendDetailsService', () => {
@@ -15,6 +16,7 @@ describe('SendDetailsService', () => {
   let mockWhatsapp: any;
   let mockEmail: any;
   let mockLeadRepo: any;
+  let mockS3: any;
 
   beforeEach(async () => {
     let deliveryState: any = null;
@@ -28,6 +30,7 @@ describe('SendDetailsService', () => {
         ]),
         findFirst: jest.fn().mockResolvedValue({ id: 1, title: 'Doc 1' }),
         update: jest.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       sendDetailsConfig: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -84,6 +87,11 @@ describe('SendDetailsService', () => {
       logTimeline: jest.fn().mockResolvedValue({ id: 99 }),
     };
 
+    mockS3 = {
+      getPresignedUrl: jest.fn().mockImplementation((url: string) => Promise.resolve(url || null)),
+      readPrivateObject: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 test')),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SendDetailsService,
@@ -91,6 +99,7 @@ describe('SendDetailsService', () => {
         { provide: WhatsappService, useValue: mockWhatsapp },
         { provide: EmailService, useValue: mockEmail },
         { provide: LeadRepository, useValue: mockLeadRepo },
+        { provide: S3Service, useValue: mockS3 },
       ],
     }).compile();
 
@@ -199,6 +208,67 @@ describe('SendDetailsService', () => {
     expect(result.whatsappStatus).toBe('SENT');
     expect(result.whatsappMessageId).toBe('wa_doc_123');
     expect(result.emailStatus).toBe('SENT');
+  });
+
+  it('rejects manual send when a selected document is not uploaded', async () => {
+    mockPrisma.sendDetailsDocument.findMany.mockResolvedValue([
+      {
+        id: 1,
+        category: SendDetailsCategory.COMPANY_PROFILE,
+        title: 'Company Profile',
+        fileUrl: 'https://storage.qbapp.online/documents/company_profile.pdf',
+        fileName: 'profile.pdf',
+      },
+    ]);
+
+    await expect(
+      service.sendManual(1, 100, 5, {
+        channels: ['EMAIL'],
+        documentIds: [1],
+      }),
+    ).rejects.toThrow(/not been uploaded/i);
+  });
+
+  it('does not mark email as sent when an attachment could not be loaded', async () => {
+    mockPrisma.sendDetailsDocument.findMany.mockResolvedValue([
+      {
+        id: 1,
+        category: SendDetailsCategory.COMPANY_PROFILE,
+        title: 'Company Profile',
+        fileUrl: '',
+        fileName: 'profile.pdf',
+      },
+    ]);
+
+    await expect(
+      service.sendManual(1, 100, 5, {
+        channels: ['EMAIL'],
+        documentIds: [1],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('sanitizes stale email errors in history when email already succeeded', async () => {
+    mockPrisma.sendDetailsDelivery.findMany.mockResolvedValue([
+      {
+        id: 77,
+        customerId: 1,
+        leadId: 100,
+        whatsappStatus: 'FAILED',
+        whatsappError: 'Could not load 5 selected PDF(s)',
+        emailStatus: 'SENT',
+        emailError: 'Document "Company Profile" has not been uploaded',
+        emailMessageId: 'email_msg_ok',
+        channels: { selected: ['WHATSAPP', 'EMAIL'] },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+
+    const rows: any[] = await service.getDeliveryHistory(1);
+    expect(rows[0].emailError).toBeNull();
+    expect(rows[0].emailResult.error).toBeNull();
+    expect(rows[0].whatsappError).toContain('Could not load');
   });
 
   it('records the provider reason when the WhatsApp document is not confirmed', async () => {

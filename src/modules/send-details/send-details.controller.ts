@@ -79,6 +79,17 @@ export class SendDetailsController {
     return this.sendDetailsService.updateDocument(cid, id, dto);
   }
 
+  @Get('admin/send-details/documents/:id/preview')
+  @ApiOperation({ summary: 'Get a short-lived presigned URL to preview a company document' })
+  async getDocumentPreview(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const cid = Number(customerId || user?.customerId);
+    return this.sendDetailsService.getDocumentPreviewUrl(cid, id);
+  }
+
   @Delete('admin/send-details/documents/:id')
   @ApiOperation({ summary: 'Delete a Send Details document' })
   async deleteDocument(
@@ -98,7 +109,7 @@ export class SendDetailsController {
     }),
   )
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload a document attachment for Send Details (PDF, Doc, Image)' })
+  @ApiOperation({ summary: 'Upload a company document PDF for Send Details (private S3 or local fallback)' })
   async uploadDocumentFile(
     @CurrentCustomer() customerId: string,
     @CurrentUser() user: any,
@@ -109,15 +120,20 @@ export class SendDetailsController {
     }
 
     const cid = Number(customerId || user?.customerId);
-    let fileUrl: string;
 
     try {
-      // 1. Attempt S3 upload
-      const s3Result = await this.s3Service.uploadFile(file, `send-details/${cid}`);
-      fileUrl = s3Result.imageUrl;
+      return await this.s3Service.uploadPrivatePdfFile(file, `send-details/${cid}`);
     } catch (s3Error: any) {
-      this.logger.warn(`[SEND_DETAILS] S3 upload failed or unavailable: ${s3Error?.message}. Using local storage.`);
-      // 2. Local fallback
+      if (s3Error instanceof BadRequestException) {
+        throw s3Error;
+      }
+      this.logger.warn(`[SEND_DETAILS] Private S3 PDF upload failed: ${s3Error?.message}. Using local storage.`);
+
+      const mime = (file.mimetype || '').toLowerCase();
+      if (mime !== 'application/pdf') {
+        throw new BadRequestException('Only PDF files are allowed for company documents.');
+      }
+
       const uploadsDir = path.join(process.cwd(), 'uploads', 'send-details', String(cid));
       if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true });
@@ -128,15 +144,14 @@ export class SendDetailsController {
       const filePath = path.join(uploadsDir, filename);
 
       fs.writeFileSync(filePath, file.buffer);
-      fileUrl = `/uploads/send-details/${cid}/${filename}`;
-    }
 
-    return {
-      fileUrl,
-      fileName: file.originalname,
-      fileSize: file.size,
-      fileType: file.mimetype,
-    };
+      return {
+        fileUrl: `/uploads/send-details/${cid}/${filename}`,
+        fileName: file.originalname,
+        fileSize: file.size,
+        fileType: 'application/pdf',
+      };
+    }
   }
 
   @Get('admin/send-details/config')
