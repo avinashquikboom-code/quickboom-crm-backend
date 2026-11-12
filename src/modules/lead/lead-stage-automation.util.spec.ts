@@ -4,6 +4,7 @@ import {
   stripUnresolvedTemplatePlaceholders,
   buildStageAutomationIdempotencyKey,
   isLeadAlreadyOnVisitScheduledStage,
+  isLeadEligibleForVisitorVisitDoneTransition,
   shouldAdvanceLeadToVisitScheduled,
 } from './lead-stage-automation.util';
 
@@ -65,6 +66,44 @@ describe('lead-stage-automation.util', () => {
         { id: 6, sortOrder: 6 },
       ),
     ).toBe(false);
+  });
+
+  it('allows visitor completion when stageId is Visit Scheduled even if legacy status lags', () => {
+    const visitScheduled = { id: 6, sortOrder: 6 };
+    expect(
+      isLeadEligibleForVisitorVisitDoneTransition(
+        { stageId: 6, status: 'NEW', stage: { id: 6, key: 'VISIT_SCHEDULED', sortOrder: 6 } },
+        visitScheduled,
+      ),
+    ).toBe(true);
+  });
+
+  it('allows visitor completion on legacy status mismatch (VISIT_SCHEDULED status, earlier stageId)', () => {
+    expect(
+      isLeadEligibleForVisitorVisitDoneTransition(
+        { stageId: 2, status: 'VISIT_SCHEDULED', stage: { id: 2, key: 'NEW', sortOrder: 2 } },
+        { id: 6, sortOrder: 6 },
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects visitor completion when lead is already Visit Done', () => {
+    expect(
+      isLeadEligibleForVisitorVisitDoneTransition(
+        { stageId: 7, status: 'VISIT_DONE', stage: { id: 7, key: 'VISIT_DONE' } },
+        { id: 6, sortOrder: 6 },
+      ),
+    ).toBe(false);
+  });
+
+  it('allows completion with active scheduled visit when pipeline is not past Visit Scheduled', () => {
+    expect(
+      isLeadEligibleForVisitorVisitDoneTransition(
+        { stageId: 2, status: 'NEW', stage: { id: 2, key: 'NEW', sortOrder: 2 } },
+        { id: 6, sortOrder: 6 },
+        { hasActiveScheduledVisit: true },
+      ),
+    ).toBe(true);
   });
 
   it('builds stable idempotency keys', () => {

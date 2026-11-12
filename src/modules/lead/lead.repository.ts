@@ -20,7 +20,9 @@ import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { googlePhotoResource, isPlaceholderPhoto } from '../data-capture/google-photo';
 import {
   isLeadAlreadyOnVisitScheduledStage,
+  isLeadOnVisitDoneStage,
   shouldAdvanceLeadToVisitScheduled,
+  visitDoneStageWhere,
   visitScheduledStageWhere,
 } from './lead-stage-automation.util';
 
@@ -2585,8 +2587,60 @@ export class LeadRepository {
     return 'MOVED';
   }
 
+  async resolveVisitDoneLeadStage(customerId: number) {
+    return this.prisma.leadStage.findFirst({
+      where: visitDoneStageWhere(customerId),
+      orderBy: [{ customerId: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  /**
+   * Moves a lead onto the configured Visit Done stage after a field visit is completed.
+   */
+  async transitionLeadToVisitDoneAfterVisit(
+    customerId: number | string,
+    leadId: number | string,
+    userId: number | string,
+    notes: string,
+    options?: { inlineTransaction?: boolean },
+  ): Promise<'MOVED' | 'SKIPPED' | 'NO_STAGE'> {
+    const numLeadId = Number(leadId);
+    const effectiveCustomerId = Number(customerId);
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: numLeadId },
+      include: { stage: true },
+    });
+    if (!lead) return 'SKIPPED';
+
+    const visitDoneStage = await this.resolveVisitDoneLeadStage(effectiveCustomerId);
+    if (!visitDoneStage) {
+      this.logger.error(
+        `[VISIT_DONE_SYNC] No active Visit Done lead stage for customerId=${effectiveCustomerId}. Configure Admin → Master → Stage Management.`,
+      );
+      return 'NO_STAGE';
+    }
+
+    if (isLeadOnVisitDoneStage(lead, visitDoneStage)) {
+      return 'SKIPPED';
+    }
+
+    await this.updateStatus(
+      effectiveCustomerId,
+      numLeadId,
+      lead.status as LeadStatus,
+      LeadStatus.VISIT_DONE,
+      userId,
+      notes,
+      visitDoneStage.id,
+      lead.stageId,
+      visitDoneStage.name,
+      Boolean(options?.inlineTransaction),
+    );
+    return 'MOVED';
+  }
+
   async manageVisit(customerId: number | string, leadId: number | string, userId: number | string, dto: ManageVisitDto, inTransaction = false) {
-    if (dto.action === 'SCHEDULE' && !inTransaction) {
+    if ((dto.action === 'SCHEDULE' || dto.action === 'COMPLETE') && !inTransaction) {
       return this.prisma.$transaction(async tx =>
         new LeadRepository(tx as PrismaService).manageVisit(customerId, leadId, userId, dto, true),
       );
@@ -2722,35 +2776,12 @@ export class LeadRepository {
         });
       }
 
-      const visitDoneStage = await this.prisma.leadStage.findFirst({
-        where: {
-          AND: [
-            {
-              OR: [
-                { key: 'VISIT_DONE' },
-                { name: { equals: 'Visit Done', mode: 'insensitive' } },
-              ],
-            },
-            {
-              OR: [
-                { customerId: effectiveCustomerId },
-                { customerId: null },
-              ],
-            },
-          ],
-          deletedAt: null,
-        },
-        orderBy: { customerId: 'desc' },
-      });
-
-      await this.updateStatus(
+      await this.transitionLeadToVisitDoneAfterVisit(
         effectiveCustomerId,
         numLeadId,
-        lead.status,
-        LeadStatus.VISIT_DONE,
         numUserId,
         `Visit completed: ${dto.summary || 'Successful discussion'}`,
-        visitDoneStage?.id,
+        { inlineTransaction: inTransaction },
       );
 
       await this.logTimeline(

@@ -41,6 +41,90 @@ export function isLeadAlreadyOnVisitScheduledStage(
   return Number(lead.stageId) === Number(visitScheduledStage.id);
 }
 
+export function visitDoneStageWhere(customerId?: number | string | null): Record<string, unknown> {
+  return {
+    deletedAt: null,
+    isActive: true,
+    AND: [
+      {
+        OR: [
+          { key: 'VISIT_DONE' },
+          { name: { equals: 'Visit Done', mode: 'insensitive' } },
+        ],
+      },
+      tenantLeadStageScope(customerId),
+    ],
+  };
+}
+
+function isVisitScheduledToken(value?: string | null): boolean {
+  const token = normalizeStageToken(value);
+  return token === 'VISIT_SCHEDULED' || token === 'VISIT' || token === 'VISITSCHEDULED';
+}
+
+function isVisitDoneToken(value?: string | null): boolean {
+  const token = normalizeStageToken(value);
+  return token === 'VISIT_DONE' || token === 'VISITDONE' || token === 'VISIT_COMPLETED';
+}
+
+/** Lead is already on Visit Done (no further visitor completion transition). */
+export function isLeadOnVisitDoneStage(
+  lead?: {
+    stageId?: number | null;
+    status?: string | null;
+    stage?: { id?: number; key?: string; name?: string } | null;
+  } | null,
+  visitDoneStage?: { id: number } | null,
+): boolean {
+  if (!lead) return false;
+  if (visitDoneStage?.id != null && lead.stageId != null && Number(lead.stageId) === Number(visitDoneStage.id)) {
+    return true;
+  }
+  if (isVisitDoneToken(lead.stage?.key) || isVisitDoneToken(lead.status)) return true;
+  const name = (lead.stage?.name || '').toLowerCase();
+  return name.includes('visit done') || name.includes('visit completed');
+}
+
+/**
+ * Whether a visitor may complete an assigned visit (VISIT_SCHEDULED → VISIT_DONE).
+ * Prefers stageId / stage.key; falls back to legacy status when pipeline fields are out of sync.
+ */
+export function isLeadEligibleForVisitorVisitDoneTransition(
+  lead?: {
+    stageId?: number | null;
+    status?: string | null;
+    stage?: { id?: number; key?: string; name?: string; sortOrder?: number | null } | null;
+  } | null,
+  visitScheduledStage?: { id: number; sortOrder?: number | null } | null,
+  options?: { hasActiveScheduledVisit?: boolean },
+): boolean {
+  if (!lead) return Boolean(options?.hasActiveScheduledVisit);
+  if (isVisitDoneToken(lead.stage?.key) || isVisitDoneToken(lead.status)) return false;
+
+  if (isLeadAlreadyOnVisitScheduledStage(lead, visitScheduledStage)) return true;
+  if (isVisitScheduledToken(lead.stage?.key)) return true;
+
+  const stageName = (lead.stage?.name || '').toLowerCase();
+  if (stageName.includes('visit scheduled') || stageName === 'visit') return true;
+
+  // Legacy: status says visit scheduled but stageId still points at an earlier stage.
+  if (isVisitScheduledToken(lead.status) && !isVisitDoneToken(lead.stage?.key) && !isVisitDoneToken(lead.status)) {
+    return true;
+  }
+
+  if (options?.hasActiveScheduledVisit) {
+    if (isVisitDoneToken(lead.stage?.key) || isVisitDoneToken(lead.status)) return false;
+    const currentOrder = lead.stage?.sortOrder;
+    const scheduledOrder = visitScheduledStage?.sortOrder;
+    if (scheduledOrder != null && currentOrder != null && currentOrder > scheduledOrder) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 /** Do not downgrade leads that have already progressed past Visit Scheduled in pipeline order. */
 export function shouldAdvanceLeadToVisitScheduled(
   currentStage: { id?: number | null; sortOrder?: number | null } | null | undefined,
