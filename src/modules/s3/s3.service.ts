@@ -459,6 +459,48 @@ export class S3Service {
     return { success: true, bucket, region };
   }
 
+  /**
+   * Upload a tenant company document (PDF) to private S3 storage.
+   * Returns an opaque storage reference (s3key:...) — never a public URL.
+   */
+  async uploadPrivatePdfFile(
+    file: Express.Multer.File,
+    folder: string,
+  ): Promise<{ fileUrl: string; fileName: string; fileSize: number; fileType: string }> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('File is required for upload');
+    }
+
+    const mime = (file.mimetype || '').toLowerCase();
+    if (mime !== 'application/pdf') {
+      throw new BadRequestException(
+        `Invalid document format "${file.mimetype}". Only PDF files are allowed for company documents.`,
+      );
+    }
+
+    const maxSizeBytes = 25 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      throw new BadRequestException(
+        `PDF size exceeds maximum limit of 25MB (file size: ${(file.size / (1024 * 1024)).toFixed(2)}MB)`,
+      );
+    }
+
+    const uniqueId = crypto.randomBytes(8).toString('hex');
+    const sanitizedName = (file.originalname || 'document.pdf')
+      .replace(/[^a-zA-Z0-9.-]/g, '_')
+      .toLowerCase();
+    const key = `${folder}/${Date.now()}-${uniqueId}-${sanitizedName}`;
+
+    await this.uploadPrivatePdf(file.buffer, key);
+
+    return {
+      fileUrl: `s3key:${key}`,
+      fileName: file.originalname || sanitizedName,
+      fileSize: file.size,
+      fileType: 'application/pdf',
+    };
+  }
+
   async uploadPrivatePdf(buffer: Buffer, key: string): Promise<{ key: string }> {
     if (!buffer?.length) throw new BadRequestException('PDF buffer is required');
     const { client, bucket } = await this.resolveS3Client(true);

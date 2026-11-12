@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
 import { LeadRepository } from '../lead/lead.repository';
+import { S3Service } from '../s3/s3.service';
 import {
   CreateSendDetailsDocumentDto,
   UpdateSendDetailsDocumentDto,
@@ -19,13 +20,200 @@ import {
 @Injectable()
 export class SendDetailsService {
   private readonly logger = new Logger(SendDetailsService.name);
+  private readonly PLACEHOLDER_URL_PATTERN = /storage\.qbapp\.online\/documents\//i;
+  private readonly MISSING_DOCS_MESSAGE =
+    'Some selected company documents have not been uploaded. Please upload the missing documents in Send Details Settings.';
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsappService: WhatsappService,
     private readonly emailService: EmailService,
     private readonly leadRepository: LeadRepository,
+    private readonly s3Service: S3Service,
   ) {}
+
+  isDocumentUploaded(document: { fileUrl?: string | null }): boolean {
+    const fileUrl = String(document?.fileUrl || '').trim();
+    if (!fileUrl) return false;
+    if (this.PLACEHOLDER_URL_PATTERN.test(fileUrl)) return false;
+    return true;
+  }
+
+  private resolveStorageRef(fileUrl: string): string {
+    const trimmed = String(fileUrl || '').trim();
+    if (trimmed.startsWith('s3key:')) {
+      return trimmed.slice('s3key:'.length);
+    }
+    return trimmed;
+  }
+
+  private async repairPlaceholderDocuments(customerId: number) {
+    await this.prisma.sendDetailsDocument.updateMany({
+      where: {
+        customerId,
+        deletedAt: null,
+        OR: [{ fileUrl: { contains: 'storage.qbapp.online/documents/' } }, { fileUrl: { contains: 'storage.qbapp.online/documents' } }],
+      },
+      data: {
+        fileUrl: '',
+        fileName: null,
+        fileSize: null,
+      },
+    });
+  }
+
+  private buildMissingDocumentsPayload(documents: any[]) {
+    const missing = documents.filter((doc) => !this.isDocumentUploaded(doc));
+    return {
+      code: 'SEND_DETAILS_DOCUMENTS_MISSING',
+      message: this.MISSING_DOCS_MESSAGE,
+      missingDocuments: missing.map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        category: doc.category,
+        fileName: doc.fileName,
+      })),
+      settingsPath: '/admin/crm/send-details',
+    };
+  }
+
+  assertSelectedDocumentsUploaded(documents: any[]) {
+    if (!documents.some((doc) => !this.isDocumentUploaded(doc))) return;
+    throw new BadRequestException(this.buildMissingDocumentsPayload(documents));
+  }
+
+  private formatMissingDocumentsError(documents: any[]): string {
+    const names = documents
+      .filter((doc) => !this.isDocumentUploaded(doc))
+      .map((doc) => doc.title || doc.fileName || `Document #${doc.id}`);
+    if (!names.length) return '';
+    return `${this.MISSING_DOCS_MESSAGE} Missing: ${names.join(', ')}.`;
+  }
+
+  /** Never expose stale validation errors on channels that already succeeded. */
+  private publicChannelError(status?: string | null, error?: string | null): string | null {
+    const normalized = String(status || '').toUpperCase();
+    if (normalized === 'SENT') return null;
+    const trimmed = String(error || '').trim();
+    return trimmed || null;
+  }
+
+  private summarizeDocumentChannelError(errors: string[]): string {
+    if (!errors.length) return 'Document delivery failed.';
+    if (errors.length === 1) return errors[0];
+    const titles = errors
+      .map((entry) => {
+        const match = entry.match(/Document "([^"]+)"/);
+        return match?.[1] || null;
+      })
+      .filter(Boolean) as string[];
+    if (titles.length) {
+      return `Could not load ${titles.length} selected PDF(s): ${titles.join(', ')}. Upload valid PDFs in Send Details Settings.`;
+    }
+    return errors[0].length > 220 ? `${errors[0].slice(0, 217)}...` : errors[0];
+  }
+
+  /**
+   * Validates every selected document can be retrieved and is a readable PDF before a channel sends.
+   */
+  private async validateReadableDocumentsForChannel(
+    documents: any[],
+  ): Promise<{ ok: true; files: Array<{ document: any; buffer: Buffer; filename: string }> } | { ok: false; error: string; details: string[] }> {
+    const metadataMissing = this.formatMissingDocumentsError(documents);
+    if (metadataMissing) {
+      return { ok: false, error: metadataMissing, details: [metadataMissing] };
+    }
+
+    const details: string[] = [];
+    const files: Array<{ document: any; buffer: Buffer; filename: string }> = [];
+    const maxBytes = 25 * 1024 * 1024;
+
+    for (const document of documents) {
+      const loaded = await this.loadDocumentFile(document);
+      if ('error' in loaded) {
+        details.push(loaded.error);
+        continue;
+      }
+      if (!loaded.buffer?.length) {
+        details.push(`Document "${document.title}" is empty.`);
+        continue;
+      }
+      if (loaded.buffer.length > maxBytes) {
+        details.push(`Document "${document.title}" exceeds the 25MB attachment limit.`);
+        continue;
+      }
+      const header = loaded.buffer.subarray(0, 5).toString('utf8');
+      if (header !== '%PDF-') {
+        details.push(`Document "${document.title}" is not a valid PDF file.`);
+        continue;
+      }
+      files.push({ document, buffer: loaded.buffer, filename: loaded.filename });
+    }
+
+    if (details.length) {
+      return { ok: false, error: this.summarizeDocumentChannelError(details), details };
+    }
+    if (!files.length) {
+      return { ok: false, error: 'No readable documents were available for this delivery.', details: [] };
+    }
+    return { ok: true, files };
+  }
+
+  async getDocumentPreviewUrl(customerId: number, documentId: number) {
+    const doc = await this.prisma.sendDetailsDocument.findFirst({
+      where: { id: documentId, customerId, deletedAt: null },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    if (!this.isDocumentUploaded(doc)) {
+      throw new BadRequestException('Document has not been uploaded yet.');
+    }
+
+    const fileUrl = String(doc.fileUrl || '').trim();
+    if (fileUrl.startsWith('/uploads/')) {
+      const apiHost = (
+        process.env.API_BASE_URL ||
+        process.env.APP_URL ||
+        (process.env.NODE_ENV === 'production' ? 'https://api.qbapp.online' : 'http://localhost:3000')
+      ).replace(/\/+$/, '');
+      return {
+        previewUrl: `${apiHost}${fileUrl}`,
+        expiresIn: null,
+        fileName: doc.fileName,
+      };
+    }
+
+    const presigned = await this.s3Service.getPresignedUrl(this.resolveStorageRef(fileUrl), 3600);
+    if (!presigned) {
+      throw new BadRequestException('Could not generate a preview URL for this document.');
+    }
+    return { previewUrl: presigned, expiresIn: 3600, fileName: doc.fileName };
+  }
+
+  private async mapDocumentForResponse(doc: any) {
+    const uploaded = this.isDocumentUploaded(doc);
+    let previewUrl: string | null = null;
+    if (uploaded) {
+      const fileUrl = String(doc.fileUrl || '').trim();
+      if (fileUrl.startsWith('/uploads/')) {
+        const apiHost = (
+          process.env.API_BASE_URL ||
+          process.env.APP_URL ||
+          (process.env.NODE_ENV === 'production' ? 'https://api.qbapp.online' : 'http://localhost:3000')
+        ).replace(/\/+$/, '');
+        previewUrl = `${apiHost}${fileUrl}`;
+      } else {
+        previewUrl = await this.s3Service.getPresignedUrl(this.resolveStorageRef(fileUrl), 3600);
+      }
+    }
+
+    return {
+      ...doc,
+      isUploaded: uploaded,
+      uploadStatus: uploaded ? 'UPLOADED' : 'MISSING',
+      previewUrl,
+      uploadedAt: uploaded ? doc.updatedAt : null,
+    };
+  }
 
   /**
    * Initializes default documents for a customer if none exist yet.
@@ -49,9 +237,9 @@ export class SendDetailsService {
             category: item.category,
             title: `${compName} - ${item.title}`,
             description: item.description,
-            fileUrl: `https://storage.qbapp.online/documents/${item.category.toLowerCase()}.pdf`,
-            fileName: `${item.title.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`,
-            fileSize: 1024 * 1024, // 1MB nominal placeholder
+            fileUrl: '',
+            fileName: null,
+            fileSize: null,
             fileType: 'application/pdf',
             version: '1.0',
             isActive: true,
@@ -67,10 +255,12 @@ export class SendDetailsService {
    */
   async getDocuments(customerId: number) {
     await this.ensureDefaultDocuments(customerId);
-    return this.prisma.sendDetailsDocument.findMany({
+    await this.repairPlaceholderDocuments(customerId);
+    const rows = await this.prisma.sendDetailsDocument.findMany({
       where: { customerId, deletedAt: null },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
     });
+    return Promise.all(rows.map((doc) => this.mapDocumentForResponse(doc)));
   }
 
   /**
@@ -85,7 +275,7 @@ export class SendDetailsService {
         description: dto.description,
         fileUrl: dto.fileUrl,
         fileName: dto.fileName || `${dto.title}.pdf`,
-        fileSize: dto.fileSize || 1024 * 512,
+        fileSize: dto.fileSize ?? null,
         fileType: dto.fileType || 'application/pdf',
         version: dto.version || '1.0',
         isActive: dto.isActive !== undefined ? dto.isActive : true,
@@ -266,6 +456,8 @@ export class SendDetailsService {
       });
     }
 
+    this.assertSelectedDocumentsUploaded(documents);
+
     return this.executeDelivery({
       customerId,
       lead,
@@ -392,22 +584,31 @@ export class SendDetailsService {
             return;
           }
           try {
+            const readable = await this.validateReadableDocumentsForChannel(documents);
+            if (readable.ok === false) {
+              emailResult = { status: 'FAILED', error: readable.error };
+              return;
+            }
+
             const subject = config.emailSubject || `${companyName} - Complete Business & Service Details`;
 
-            const docListHtml = documents
-              .map(
-                (d) => `
+            const docListHtml = await Promise.all(
+              documents.map(async (d) => {
+                const downloadUrl =
+                  (await this.s3Service.getPresignedUrl(this.resolveStorageRef(String(d.fileUrl || '')), 86400)) ||
+                  String(d.fileUrl || '');
+                return `
               <li style="margin-bottom: 12px; padding: 10px; background: #f8fafc; border-radius: 6px; border-left: 4px solid #4F46E5;">
                 <strong style="color: #1e293b;">${d.title}</strong>
                 ${d.description ? `<p style="margin: 4px 0 6px 0; color: #64748b; font-size: 13px;">${d.description}</p>` : ''}
                 <div>
-                  <a href="${d.fileUrl}" target="_blank" style="display: inline-block; padding: 6px 14px; background: #4F46E5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 600;">
+                  <a href="${downloadUrl}" target="_blank" style="display: inline-block; padding: 6px 14px; background: #4F46E5; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 600;">
                     View / Download ${d.fileName || 'PDF'}
                   </a>
                 </div>
-              </li>`,
-              )
-              .join('');
+              </li>`;
+              }),
+            ).then((items) => items.join(''));
 
             const htmlBody = `
               <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 24px; color: #334155;">
@@ -434,13 +635,10 @@ export class SendDetailsService {
               </div>
             `;
 
-            const attachments: Array<{ filename: string; content: Buffer }> = [];
-            const missingFiles: string[] = [];
-            for (const document of documents) {
-              const loaded = await this.loadDocumentFile(document);
-              if ('buffer' in loaded) attachments.push({ filename: loaded.filename, content: loaded.buffer });
-              else missingFiles.push(loaded.error);
-            }
+            const attachments = readable.files.map((file) => ({
+              filename: file.filename,
+              content: file.buffer,
+            }));
 
             const emailRes = await this.emailService.sendEmail(
               {
@@ -458,7 +656,7 @@ export class SendDetailsService {
               emailResult = {
                 status: 'SENT',
                 messageId: emailRes.messageId,
-                error: missingFiles.length ? missingFiles.join(' ') : null,
+                error: null,
               };
             }
           } catch (err: any) {
@@ -476,36 +674,67 @@ export class SendDetailsService {
       whatsappResult = {
         status: this.asStatus(delivery.whatsappStatus),
         messageId: delivery.whatsappMessageId,
-        error: delivery.whatsappError,
+        error: this.publicChannelError(delivery.whatsappStatus, delivery.whatsappError),
       };
     }
-    if (!channels.includes('EMAIL') && existingDeliveryId && delivery && leadEmail) {
+    if (!channels.includes('EMAIL') && existingDeliveryId && delivery) {
       emailResult = {
         status: this.asStatus(delivery.emailStatus),
         messageId: delivery.emailMessageId,
-        error: delivery.emailError,
+        error: this.publicChannelError(delivery.emailStatus, delivery.emailError),
       };
     }
 
     await Promise.allSettled(tasks);
 
-    const overallStatus = this.overallStatus(whatsappResult.status, emailResult.status);
+    const resolvedWhatsappStatus = channels.includes('WHATSAPP')
+      ? whatsappResult.status
+      : this.asStatus(delivery?.whatsappStatus);
+    const resolvedEmailStatus = channels.includes('EMAIL') ? emailResult.status : this.asStatus(delivery?.emailStatus);
 
-    // Update delivery record
+    const overallStatus = this.overallStatus(resolvedWhatsappStatus, resolvedEmailStatus);
+
+    const updateData: Record<string, any> = {
+      channels: this.nextChannelMeta(delivery, channels, whatsappResult, emailResult, Boolean(existingDeliveryId)) as any,
+      overallStatus,
+      retryCount: existingDeliveryId ? { increment: 1 } : 0,
+    };
+
+    if (channels.includes('WHATSAPP')) {
+      updateData.whatsappStatus = whatsappResult.status;
+      updateData.whatsappMessageId = whatsappResult.messageId || delivery.whatsappMessageId || null;
+      updateData.whatsappError = this.publicChannelError(whatsappResult.status, whatsappResult.error);
+    }
+    if (channels.includes('EMAIL')) {
+      updateData.emailStatus = emailResult.status;
+      updateData.emailMessageId = emailResult.messageId || delivery.emailMessageId || null;
+      updateData.emailError = this.publicChannelError(emailResult.status, emailResult.error);
+    }
+
     const updatedDelivery = await this.prisma.sendDetailsDelivery.update({
       where: { id: delivery.id },
-      data: {
-        whatsappStatus: whatsappResult.status,
-        whatsappMessageId: whatsappResult.messageId || delivery.whatsappMessageId || null,
-        whatsappError: whatsappResult.status === 'SENT' ? null : (whatsappResult.error || null),
-        emailStatus: emailResult.status,
-        emailMessageId: emailResult.messageId || delivery.emailMessageId || null,
-        emailError: emailResult.error || null,
-        channels: this.nextChannelMeta(delivery, channels, whatsappResult, emailResult, Boolean(existingDeliveryId)) as any,
-        overallStatus,
-        retryCount: existingDeliveryId ? { increment: 1 } : 0,
-      },
+      data: updateData,
     });
+
+    const responseDelivery = {
+      ...delivery,
+      ...updatedDelivery,
+      whatsappStatus: resolvedWhatsappStatus,
+      emailStatus: resolvedEmailStatus,
+      whatsappMessageId: channels.includes('WHATSAPP')
+        ? whatsappResult.messageId || delivery.whatsappMessageId || null
+        : delivery.whatsappMessageId,
+      emailMessageId: channels.includes('EMAIL')
+        ? emailResult.messageId || delivery.emailMessageId || null
+        : delivery.emailMessageId,
+      whatsappError: channels.includes('WHATSAPP')
+        ? this.publicChannelError(whatsappResult.status, whatsappResult.error)
+        : this.publicChannelError(delivery.whatsappStatus, delivery.whatsappError),
+      emailError: channels.includes('EMAIL')
+        ? this.publicChannelError(emailResult.status, emailResult.error)
+        : this.publicChannelError(delivery.emailStatus, delivery.emailError),
+      overallStatus,
+    };
 
     // Record timeline event on the lead
     const actionLabel = triggerType === 'AUTOMATIC' ? 'AUTO_SEND_DETAILS' : 'MANUAL_SEND_DETAILS';
@@ -515,7 +744,7 @@ export class SendDetailsService {
       actionLabel,
       `Business details package dispatched (${overallStatus}). ${channelStatuses}. Documents: ${documents.length}`,
       {
-        deliveryId: updatedDelivery.id,
+        deliveryId: responseDelivery.id,
         channels,
         documents: documentsSummary,
         whatsappResult,
@@ -524,7 +753,7 @@ export class SendDetailsService {
       },
     );
 
-    return updatedDelivery;
+    return responseDelivery;
   }
 
   /**
@@ -575,6 +804,10 @@ export class SendDetailsService {
       where: { id: { in: docIds }, customerId, deletedAt: null },
     });
 
+    if (channelsToRetry.length) {
+      this.assertSelectedDocumentsUploaded(documents);
+    }
+
     return this.executeDelivery({
       customerId,
       lead,
@@ -602,16 +835,33 @@ export class SendDetailsService {
         user: { select: { id: true, firstName: true, lastName: true } },
       },
     });
-    return rows.map((row) => {
-      const meta = this.readMeta(row.channels);
-      return {
-        ...row,
-        channels: meta.selected,
-        whatsappRetryCount: meta.whatsappRetryCount,
-        emailRetryCount: meta.emailRetryCount,
-        attempts: meta.attempts,
-      };
-    });
+    return rows.map((row) => this.mapDeliveryHistoryRow(row));
+  }
+
+  private mapDeliveryHistoryRow(row: any) {
+    const meta = this.readMeta(row.channels);
+    const whatsappError = this.publicChannelError(row.whatsappStatus, row.whatsappError);
+    const emailError = this.publicChannelError(row.emailStatus, row.emailError);
+
+    return {
+      ...row,
+      whatsappError,
+      emailError,
+      whatsappResult: {
+        status: row.whatsappStatus,
+        messageId: row.whatsappMessageId,
+        error: whatsappError,
+      },
+      emailResult: {
+        status: row.emailStatus,
+        messageId: row.emailMessageId,
+        error: emailError,
+      },
+      channels: meta.selected,
+      whatsappRetryCount: meta.whatsappRetryCount,
+      emailRetryCount: meta.emailRetryCount,
+      attempts: meta.attempts,
+    };
   }
 
   private asStatus(value?: string | null): 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED' {
@@ -676,24 +926,60 @@ export class SendDetailsService {
     const title = document?.title || 'Document';
     const filename = document?.fileName || `${title}.pdf`;
     const fileUrl = String(document?.fileUrl || '').trim();
-    if (!fileUrl) return { error: `Document "${title}" has no file.` };
+    if (!fileUrl || this.PLACEHOLDER_URL_PATTERN.test(fileUrl)) {
+      return {
+        error: `Document "${title}" has not been uploaded. Add the PDF in Send Details before sending.`,
+      };
+    }
+
+    if (fileUrl.startsWith('s3key:') || (!fileUrl.startsWith('http') && !fileUrl.startsWith('/uploads/'))) {
+      try {
+        const key = this.resolveStorageRef(fileUrl);
+        const buffer = await this.s3Service.readPrivateObject(key);
+        return this.finalizeLoadedPdfBuffer(buffer, title, filename);
+      } catch (err: any) {
+        return { error: `Could not load "${title}" from storage: ${err?.message || 'unknown error'}.` };
+      }
+    }
+
     if (fileUrl.startsWith('/uploads/')) {
       const fullPath = path.join(process.cwd(), fileUrl.replace(/^\/+/, ''));
       if (!fs.existsSync(fullPath)) return { error: `Document file is missing: ${title}.` };
-      return { buffer: fs.readFileSync(fullPath), filename };
+      const buffer = fs.readFileSync(fullPath);
+      return this.finalizeLoadedPdfBuffer(buffer, title, filename);
     }
-    if (/storage\.qbapp\.online\/documents\//i.test(fileUrl)) {
-      return { error: `Document "${title}" has not been uploaded. Add the PDF in Send Details before sending.` };
-    }
+
     try {
-      const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 8000, maxContentLength: 16 * 1024 * 1024, validateStatus: () => true });
+      const response = await axios.get(fileUrl, {
+        responseType: 'arraybuffer',
+        timeout: 12000,
+        maxContentLength: 25 * 1024 * 1024,
+        validateStatus: () => true,
+      });
       if (response.status >= 400 || !response.data?.byteLength) {
         return { error: `Could not download "${title}" (HTTP ${response.status}).` };
       }
-      return { buffer: Buffer.from(response.data), filename };
+      return this.finalizeLoadedPdfBuffer(Buffer.from(response.data), title, filename);
     } catch {
       return { error: `Could not download "${title}".` };
     }
+  }
+
+  private finalizeLoadedPdfBuffer(
+    buffer: Buffer,
+    title: string,
+    filename: string,
+  ): { buffer: Buffer; filename: string } | { error: string } {
+    if (!buffer?.length) {
+      return { error: `Document "${title}" is empty.` };
+    }
+    if (buffer.length > 25 * 1024 * 1024) {
+      return { error: `Document "${title}" exceeds the 25MB attachment limit.` };
+    }
+    if (buffer.subarray(0, 5).toString('utf8') !== '%PDF-') {
+      return { error: `Document "${title}" is not a valid PDF file.` };
+    }
+    return { buffer, filename };
   }
 
   private providerReason(result: any): string {
@@ -716,16 +1002,22 @@ export class SendDetailsService {
     const failures: string[] = [];
     let messageId: string | null = null;
 
-    for (const document of pending) {
-      const loaded = await this.loadDocumentFile(document);
-      if ('error' in loaded) {
-        failures.push(loaded.error);
-        continue;
+    if (pending.length) {
+      const readable = await this.validateReadableDocumentsForChannel(pending);
+      if (readable.ok === false) {
+        return {
+          status: 'FAILED',
+          error: readable.error,
+          sentDocumentIds,
+        };
       }
-      const sent = await this.whatsappService.sendDocumentMessage({
+
+      for (const file of readable.files) {
+        const document = file.document;
+        const sent = await this.whatsappService.sendDocumentMessage({
         to: params.leadPhone,
-        pdfBuffer: loaded.buffer,
-        filename: loaded.filename,
+        pdfBuffer: file.buffer,
+        filename: file.filename,
         caption: params.customNote || `${params.companyName}: ${document.title}`,
         stageName: 'Details Sent',
         requireDocument: true,
@@ -740,6 +1032,7 @@ export class SendDetailsService {
         return { status: 'SKIPPED', error: this.providerReason(sent), sentDocumentIds, messageId };
       } else {
         failures.push(`${document.title}: ${this.providerReason(sent)}`);
+      }
       }
     }
 
