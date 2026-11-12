@@ -22,8 +22,8 @@ import {
   isLeadAlreadyOnVisitScheduledStage,
   isLeadOnVisitDoneStage,
   shouldMoveLeadToVisitScheduledOnExplicitSchedule,
-  visitDoneStageWhere,
-  visitScheduledStageWhere,
+  visitDoneStageCandidateWhere,
+  visitScheduledStageCandidateWhere,
 } from './lead-stage-automation.util';
 
 const SOCIAL_PROFILE_KEYS: Array<[string, string]> = [
@@ -940,7 +940,16 @@ export class LeadRepository {
         const canonical = normalizeLeadStatus(status) === 'VISIT' ? 'VISIT_SCHEDULED' : normalizeLeadStatus(status);
         stage = await this.prisma.leadStage.findFirst({
           where: { deletedAt: null, AND: [
-            { OR: [{ key: status }, { key: canonical }, ...(canonical === 'VISIT_SCHEDULED' ? [{key:'VISIT'}] : [])] },
+            { OR: [
+              { key: status },
+              { key: canonical },
+              ...(canonical === 'VISIT_SCHEDULED'
+                ? [
+                    { key: { in: ['VISIT_SCHEDULED', 'VISIT_SCHEDULE', 'SCHEDULE_VISIT', 'VISIT'] } },
+                    { name: { in: ['Visit Scheduled', 'Visit Schedule', 'Schedule Visit'], mode: 'insensitive' as const } },
+                  ]
+                : []),
+            ] },
             { OR: [{ customerId: numCustomerId }, { customerId: null }] },
           ] }, orderBy: { customerId: 'desc' },
         });
@@ -2151,14 +2160,23 @@ export class LeadRepository {
     }
 
     let resolvedStageId = stageId ? Number(stageId) : undefined;
-    if (!resolvedStageId && this.prisma.leadStage) {
+    if (!resolvedStageId && toStatus === LeadStatus.VISIT_SCHEDULED) {
+      const stage = await this.resolveVisitScheduledLeadStage(numCustomerId);
+      resolvedStageId = stage?.id;
+    } else if (!resolvedStageId && toStatus === LeadStatus.VISIT_DONE) {
+      const stage = await this.resolveVisitDoneLeadStage(numCustomerId);
+      resolvedStageId = stage?.id;
+    } else if (!resolvedStageId && this.prisma.leadStage) {
       const matchStage = await this.prisma.leadStage.findFirst({
         where: {
           deletedAt: null,
           AND: [
             { OR: [
               ...(toStatus === LeadStatus.VISIT_SCHEDULED || (toStatus as string) === 'VISIT_SCHEDULED'
-                ? [{ key: { in: ['VISIT_SCHEDULED', 'VISIT'] } }, { name: { equals: 'Visit Scheduled', mode: 'insensitive' as const } }]
+                ? [
+                    { key: { in: ['VISIT_SCHEDULED', 'VISIT_SCHEDULE', 'SCHEDULE_VISIT', 'VISIT'] } },
+                    { name: { in: ['Visit Scheduled', 'Visit Schedule', 'Schedule Visit'], mode: 'insensitive' as const } },
+                  ]
                 : [{ key: toStatus }]),
             ] },
             { OR: [
@@ -2528,9 +2546,20 @@ export class LeadRepository {
   }
 
   async resolveVisitScheduledLeadStage(customerId: number) {
+    const orderBy = [{ sortOrder: 'asc' as const }, { id: 'asc' as const }];
+    const candidate = visitScheduledStageCandidateWhere();
+    const tenantId = Number(customerId);
+    if (Number.isInteger(tenantId) && tenantId > 0) {
+      const tenantStage = await this.prisma.leadStage.findFirst({
+        where: { ...candidate, customerId: tenantId },
+        orderBy,
+      });
+      if (tenantStage) return tenantStage;
+    }
+
     return this.prisma.leadStage.findFirst({
-      where: visitScheduledStageWhere(customerId),
-      orderBy: [{ customerId: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+      where: { ...candidate, customerId: null },
+      orderBy,
     });
   }
 
@@ -2588,9 +2617,20 @@ export class LeadRepository {
   }
 
   async resolveVisitDoneLeadStage(customerId: number) {
+    const orderBy = [{ sortOrder: 'asc' as const }, { id: 'asc' as const }];
+    const candidate = visitDoneStageCandidateWhere();
+    const tenantId = Number(customerId);
+    if (Number.isInteger(tenantId) && tenantId > 0) {
+      const tenantStage = await this.prisma.leadStage.findFirst({
+        where: { ...candidate, customerId: tenantId },
+        orderBy,
+      });
+      if (tenantStage) return tenantStage;
+    }
+
     return this.prisma.leadStage.findFirst({
-      where: visitDoneStageWhere(customerId),
-      orderBy: [{ customerId: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+      where: { ...candidate, customerId: null },
+      orderBy,
     });
   }
 
@@ -2721,13 +2761,18 @@ export class LeadRepository {
         { visitId: savedVisit.id, location: dto.location, employeeId: targetEmpId, scheduledBy: savedVisit.scheduledBy },
       );
 
-      await this.transitionLeadToVisitScheduledAfterVisit(
+      const stageSync = await this.transitionLeadToVisitScheduledAfterVisit(
         effectiveCustomerId,
         numLeadId,
         numUserId,
         `Field visit scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'}`,
         { inlineTransaction: inTransaction },
       );
+      if (stageSync === 'NO_STAGE') {
+        throw new BadRequestException(
+          'Visit could not be scheduled because this workspace has no active Visit Schedule pipeline stage.',
+        );
+      }
     } else if (dto.action === 'START') {
       const visit = await this.prisma.visit.findFirst({
         where: { leadId: numLeadId, customerId: effectiveCustomerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] } },

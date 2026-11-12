@@ -14,20 +14,38 @@ export function tenantLeadStageScope(customerId?: number | string | null): Recor
   return { customerId: null };
 }
 
+/** Candidate stage without tenant scope, for deterministic tenant-first lookup. */
+export function visitScheduledStageCandidateWhere(): Record<string, unknown> {
+  return {
+    deletedAt: null,
+    isActive: true,
+    OR: [
+      { key: { in: ['VISIT_SCHEDULED', 'VISIT_SCHEDULE', 'SCHEDULE_VISIT', 'VISIT'] } },
+      { name: { in: ['Visit Scheduled', 'Visit Schedule', 'Schedule Visit'], mode: 'insensitive' } },
+    ],
+  };
+}
+
+export function visitDoneStageCandidateWhere(): Record<string, unknown> {
+  return {
+    deletedAt: null,
+    isActive: true,
+    OR: [
+      { key: 'VISIT_DONE' },
+      { name: { equals: 'Visit Done', mode: 'insensitive' } },
+    ],
+  };
+}
+
 /** Prisma WHERE for resolving a pipeline stage by name/key within a tenant. */
 /** Active tenant-scoped Visit Scheduled stage (Lead pipeline only — resolved from DB). */
 export function visitScheduledStageWhere(customerId?: number | string | null): Record<string, unknown> {
+  const candidate = visitScheduledStageCandidateWhere();
   return {
     deletedAt: null,
     isActive: true,
     AND: [
-      {
-        OR: [
-          { key: 'VISIT_SCHEDULED' },
-          { key: 'VISIT' },
-          { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-        ],
-      },
+      { OR: candidate.OR },
       tenantLeadStageScope(customerId),
     ],
   };
@@ -42,24 +60,33 @@ export function isLeadAlreadyOnVisitScheduledStage(
 }
 
 export function visitDoneStageWhere(customerId?: number | string | null): Record<string, unknown> {
+  const candidate = visitDoneStageCandidateWhere();
   return {
     deletedAt: null,
     isActive: true,
     AND: [
-      {
-        OR: [
-          { key: 'VISIT_DONE' },
-          { name: { equals: 'Visit Done', mode: 'insensitive' } },
-        ],
-      },
+      { OR: candidate.OR },
       tenantLeadStageScope(customerId),
     ],
   };
 }
 
-function isVisitScheduledToken(value?: string | null): boolean {
+export function isVisitScheduledStageToken(value?: string | null): boolean {
   const token = normalizeStageToken(value);
-  return token === 'VISIT_SCHEDULED' || token === 'VISIT' || token === 'VISITSCHEDULED';
+  return [
+    'VISIT_SCHEDULED',
+    'VISIT_SCHEDULE',
+    'SCHEDULE_VISIT',
+    'VISIT',
+    'VISITSCHEDULED',
+    'VISITSCHEDULE',
+    'SCHEDULEVISIT',
+  ].includes(token);
+}
+
+export function canonicalLeadStageToken(value?: string | null): string {
+  const token = normalizeStageToken(value);
+  return isVisitScheduledStageToken(token) ? 'VISIT_SCHEDULED' : token;
 }
 
 function isVisitDoneToken(value?: string | null): boolean {
@@ -102,13 +129,16 @@ export function isLeadEligibleForVisitorVisitDoneTransition(
   if (isVisitDoneToken(lead.stage?.key) || isVisitDoneToken(lead.status)) return false;
 
   if (isLeadAlreadyOnVisitScheduledStage(lead, visitScheduledStage)) return true;
-  if (isVisitScheduledToken(lead.stage?.key)) return true;
+  if (
+    isVisitScheduledStageToken(lead.stage?.key) ||
+    isVisitScheduledStageToken(lead.stage?.name)
+  ) return true;
 
   const stageName = (lead.stage?.name || '').toLowerCase();
   if (stageName.includes('visit scheduled') || stageName === 'visit') return true;
 
   // Legacy: status says visit scheduled but stageId still points at an earlier stage.
-  if (isVisitScheduledToken(lead.status) && !isVisitDoneToken(lead.stage?.key) && !isVisitDoneToken(lead.status)) {
+  if (isVisitScheduledStageToken(lead.status) && !isVisitDoneToken(lead.stage?.key) && !isVisitDoneToken(lead.status)) {
     return true;
   }
 
