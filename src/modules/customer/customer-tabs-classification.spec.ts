@@ -77,8 +77,8 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     customerService = module.get<CustomerService>(CustomerService);
   });
 
-  // TEST 1: Lead: ABC, Stage: New, Plan: None -> Expected: Inactive
-  it('TEST 1: Lead ABC in New stage with no plan is classified as INACTIVE', async () => {
+  // TEST 1: Lead: ABC, Stage: New, Plan: None -> Not shown in Customers
+  it('TEST 1: Lead ABC in New stage with no plan is not listed in Customers', async () => {
     const leadNew = {
       id: 101,
       companyName: 'ABC Company',
@@ -93,9 +93,7 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     mockPrisma.lead.findMany.mockResolvedValue([leadNew]);
 
     const resInactive = await customerService.findAll({ status: 'INACTIVE' }, userEmployeeA);
-    expect(resInactive.items.length).toBe(1);
-    expect(resInactive.items[0].leadId).toBe('101');
-    expect(resInactive.items[0].customerStatus).toBe('INACTIVE');
+    expect(resInactive.items.length).toBe(0);
 
     const resUpcoming = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
     expect(resUpcoming.items.length).toBe(0);
@@ -104,8 +102,8 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     expect(resActive.items.length).toBe(0);
   });
 
-  // TEST 2: Lead: ABC, Stage: Follow-up, Plan: None -> Expected: Upcoming
-  it('TEST 2: Lead ABC in Follow-up stage with no plan is classified as UPCOMING', async () => {
+  // TEST 2: Follow-up leads are not Customers Upcoming (FINAL_CALL only)
+  it('TEST 2: Lead in Follow-up stage is not listed in Customers', async () => {
     const leadFollowUp = {
       id: 102,
       companyName: 'ABC Company',
@@ -120,10 +118,7 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     mockPrisma.lead.findMany.mockResolvedValue([leadFollowUp]);
 
     const resUpcoming = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-    expect(resUpcoming.items.length).toBe(1);
-    expect(resUpcoming.items[0].leadId).toBe('102');
-    expect(resUpcoming.items[0].customerStatus).toBe('UPCOMING');
-    expect(resUpcoming.items[0].hasUpcomingCall).toBe(true);
+    expect(resUpcoming.items.length).toBe(0);
 
     const resActive = await customerService.findAll({ status: 'ACTIVE' }, userEmployeeA);
     expect(resActive.items.length).toBe(0);
@@ -173,9 +168,9 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
         },
       ],
       works: [],
-      leads: [],
+      leads: [{ id: 501, status: 'WON', stage: { key: 'WON', name: 'Won' }, reminders: [] }],
       tasks: [],
-      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+      _count: { users: 1, leads: 1, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
     };
 
     mockPrisma.customer.findMany.mockResolvedValue([custPendingPlan]);
@@ -207,9 +202,9 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
         },
       ],
       works: [],
-      leads: [],
+      leads: [{ id: 502, status: 'WON', stage: { key: 'WON', name: 'Won' }, reminders: [] }],
       tasks: [],
-      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+      _count: { users: 1, leads: 1, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
     };
 
     mockPrisma.customer.findMany.mockResolvedValue([custActivePlan]);
@@ -225,32 +220,23 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     expect(resUpcoming.items.length).toBe(0);
   });
 
-  // TEST 6 & 7: Follow-up -> Final Call (remains Upcoming), Final Call -> Won (removed from Upcoming)
-  it('TEST 6 & 7: Follow-up remains Upcoming in Final Call; leaves Upcoming on Won', async () => {
-    const leadFollowUp = {
+  // TEST 6 & 7: Final Call -> Upcoming, WON customer -> Inactive (not Upcoming)
+  it('TEST 6 & 7: Final Call is Upcoming; WON converted customer leaves Upcoming for Inactive', async () => {
+    const leadFinalCall = {
       id: 104,
       companyName: 'Progression Corp',
-      status: 'FOLLOW_UP',
-      stageId: 20,
-      stage: { id: 20, key: 'FOLLOW_UP', name: 'Follow-Up' },
+      status: 'FINAL_CALL',
+      stageId: 25,
+      stage: { id: 25, key: 'FINAL_CALL', name: 'Final Call' },
       employeeId: 1,
       reminders: [],
     };
     mockPrisma.customer.findMany.mockResolvedValue([]);
-    mockPrisma.lead.findMany.mockResolvedValue([leadFollowUp]);
-
-    // 1. Follow-up
-    const res1 = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-    expect(res1.items.length).toBe(1);
-    expect(res1.items[0].leadId).toBe('104');
-
-    // 2. Transition to Final Call
-    const leadFinalCall = { ...leadFollowUp, status: 'FINAL_CALL', stageId: 25, stage: { id: 25, key: 'FINAL_CALL', name: 'Final Call' } };
     mockPrisma.lead.findMany.mockResolvedValue([leadFinalCall]);
-    const res2 = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-    expect(res2.items.length).toBe(1); // Remains in Upcoming
+    const resFinal = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
+    expect(resFinal.items.length).toBe(1);
+    expect(resFinal.items[0].leadId).toBe('104');
 
-    // 3. Transition to Won (with converted customer record)
     const convertedCust = {
       id: 601,
       name: 'Progression Corp',
@@ -258,17 +244,20 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
       isActive: true,
       assignedEmployeeId: 1,
       leadId: 104,
-      subscriptions: [], // No active plan yet
+      subscriptions: [],
       works: [],
-      leads: [],
+      leads: [{ id: 104, status: 'WON', stage: { key: 'WON', name: 'Won' }, reminders: [] }],
       tasks: [],
-      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+      _count: { users: 1, leads: 1, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
     };
     mockPrisma.customer.findMany.mockResolvedValue([convertedCust]);
     mockPrisma.lead.findMany.mockResolvedValue([]);
 
-    const res3 = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
-    expect(res3.items.length).toBe(0); // Removed from Upcoming
+    const resUpcoming = await customerService.findAll({ status: 'UPCOMING' }, userEmployeeA);
+    expect(resUpcoming.items.length).toBe(0);
+    const resInactive = await customerService.findAll({ status: 'INACTIVE' }, userEmployeeA);
+    expect(resInactive.items.length).toBe(1);
+    expect(resInactive.items[0].customerStatus).toBe('INACTIVE');
   });
 
   // TEST 8: Plan successfully activated -> Active
@@ -288,9 +277,9 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
         },
       ],
       works: [],
-      leads: [],
+      leads: [{ id: 104, status: 'WON', stage: { key: 'WON', name: 'Won' }, reminders: [] }],
       tasks: [],
-      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+      _count: { users: 1, leads: 1, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
     };
     mockPrisma.customer.findMany.mockResolvedValue([customerWithNewActivePlan]);
     mockPrisma.lead.findMany.mockResolvedValue([]);
@@ -302,14 +291,13 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     expect(res.items[0].customerStatus).toBe('ACTIVE');
   });
 
-  // TEST 9: Employee A has Follow-up Lead; Employee B cannot see Employee A Upcoming Lead
-  it('TEST 9: Employee A sees their Upcoming Lead; Employee B cannot see Employee A Lead', async () => {
+  it('TEST 9: Employee A sees their Final Call Upcoming lead; Employee B cannot', async () => {
     const leadEmpA = {
       id: 201,
       companyName: 'Alpha Lead',
-      status: 'FOLLOW_UP',
-      stageId: 20,
-      stage: { id: 20, key: 'FOLLOW_UP', name: 'Follow-Up' },
+      status: 'FINAL_CALL',
+      stageId: 25,
+      stage: { id: 25, key: 'FINAL_CALL', name: 'Final Call' },
       employeeId: 1, // Employee A
       reminders: [],
     };
@@ -329,8 +317,7 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
     expect(resB.items.length).toBe(0);
   });
 
-  // TEST 10: Two active plans + three Follow-up + one normal no-plan record -> All = 6, Active = 2, Upcoming = 3, Inactive = 1
-  it('TEST 10: Two active plans + three Follow-up + one normal no-plan record gives All=6, Active=2, Upcoming=3, Inactive=1', async () => {
+  it('TEST 10: Two active + three Final Call + one WON inactive gives All=6 counts', async () => {
     // 2 Customers with active plans
     const custActive1 = {
       id: 701,
@@ -340,9 +327,9 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
       assignedEmployeeId: 1,
       subscriptions: [{ status: 'ACTIVE', endDate: new Date('2027-01-01'), plan: { id: 1, name: 'Plan 1', code: 'P1' } }],
       works: [],
-      leads: [],
+      leads: [{ id: 1, status: 'WON', stage: { key: 'WON', name: 'Won' }, reminders: [] }],
       tasks: [],
-      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+      _count: { users: 1, leads: 1, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
     };
     const custActive2 = {
       id: 702,
@@ -352,35 +339,33 @@ describe('CUSTOMER TABS — ACTIVE / INACTIVE / UPCOMING BUSINESS LOGIC', () => 
       assignedEmployeeId: 1,
       subscriptions: [{ status: 'ACTIVE', endDate: new Date('2027-01-01'), plan: { id: 2, name: 'Plan 2', code: 'P2' } }],
       works: [],
-      leads: [],
+      leads: [{ id: 2, status: 'WON', stage: { key: 'WON', name: 'Won' }, reminders: [] }],
       tasks: [],
-      _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
+      _count: { users: 1, leads: 1, deals: 0, contacts: 0, tasks: 0, tickets: 0 },
     };
 
-    // 3 Follow-up Leads
-    const followUpLeads = [1, 2, 3].map((idx) => ({
+    const finalCallLeads = [1, 2, 3].map((idx) => ({
       id: 800 + idx,
-      companyName: `Follow-up Prospect ${idx}`,
-      status: 'FOLLOW_UP',
-      stageId: 20,
-      stage: { id: 20, key: 'FOLLOW_UP', name: 'Follow-Up' },
+      companyName: `Final Call Prospect ${idx}`,
+      status: 'FINAL_CALL',
+      stageId: 25,
+      stage: { id: 25, key: 'FINAL_CALL', name: 'Final Call' },
       employeeId: 1,
       reminders: [],
     }));
 
-    // 1 Normal no-plan record (Lead in NEW stage)
-    const normalNoPlanLead = {
+    const wonInactiveLead = {
       id: 900,
-      companyName: 'New Normal Prospect',
-      status: 'NEW',
-      stageId: 1,
-      stage: { id: 1, key: 'NEW', name: 'New' },
+      companyName: 'Won No Plan',
+      status: 'WON',
+      stageId: 26,
+      stage: { id: 26, key: 'WON', name: 'Won' },
       employeeId: 1,
       reminders: [],
     };
 
     mockPrisma.customer.findMany.mockResolvedValue([custActive1, custActive2]);
-    mockPrisma.lead.findMany.mockResolvedValue([...followUpLeads, normalNoPlanLead]);
+    mockPrisma.lead.findMany.mockResolvedValue([...finalCallLeads, wonInactiveLead]);
 
     const resultAll = await customerService.findAll({ status: 'ALL' }, userEmployeeA);
     expect(resultAll.meta.counts.all).toBe(6);

@@ -44,6 +44,7 @@ describe('Lead Pipeline Filter Counts & Employee Isolation (E2E / Unit)', () => 
 
   it('1. Empty Employee: Employee B with zero assigned leads receives 0 counts across all stages', async () => {
     mockPrisma.leadStage.findMany.mockImplementation((args: any) => {
+      if (args.select?.key) return []; // Retired tenant-stage keys.
       // leadWhere inside _count.select.leads.where must have strict employeeId isolation
       const leadWhere = args.include._count.select.leads.where;
       expect(leadWhere.employeeId).toBe(employeeB.employee.id);
@@ -65,6 +66,7 @@ describe('Lead Pipeline Filter Counts & Employee Isolation (E2E / Unit)', () => 
 
   it('2. Employee with Leads: Employee A receives exactly their assigned counts (All 23, New 17)', async () => {
     mockPrisma.leadStage.findMany.mockImplementation((args: any) => {
+      if (args.select?.key) return []; // Retired tenant-stage keys.
       const leadWhere = args.include._count.select.leads.where;
       expect(leadWhere.employeeId).toBe(employeeA.employee.id);
       expect(leadWhere.OR).toBeUndefined();
@@ -87,6 +89,7 @@ describe('Lead Pipeline Filter Counts & Employee Isolation (E2E / Unit)', () => 
 
   it('3. Admin sees company-wide stage counts without employee isolation restriction', async () => {
     mockPrisma.leadStage.findMany.mockImplementation((args: any) => {
+      if (args.select?.key) return []; // Retired tenant-stage keys.
       const leadWhere = args.include._count.select.leads.where;
       // Admin should NOT have leadWhere.OR restriction
       expect(leadWhere.OR).toBeUndefined();
