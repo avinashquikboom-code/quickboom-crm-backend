@@ -1,9 +1,14 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { LeadStatus, Prisma } from '@prisma/client';
 import { CreateWhatsAppCampaignDto, QueryWhatsAppCampaignDto } from './dto/whatsapp-campaign.dto';
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+
+function isLeadStatus(value: string): value is LeadStatus {
+  return Object.values(LeadStatus).some((status) => status === value);
+}
 
 @Injectable()
 export class WhatsAppCampaignService {
@@ -233,14 +238,23 @@ export class WhatsAppCampaignService {
     }
 
     const filter = dto.audienceFilter || {};
+    const rawStatus = filter.status ? String(filter.status).trim().toUpperCase() : undefined;
+    let status: LeadStatus | undefined;
+    if (rawStatus) {
+      if (!isLeadStatus(rawStatus)) {
+        throw new BadRequestException(`Unsupported lead status: ${rawStatus}`);
+      }
+      status = rawStatus;
+    }
+    const where: Prisma.LeadWhereInput = {
+      customerId,
+      deletedAt: null,
+      phone: { not: null },
+      ...(status ? { status } : {}),
+      ...(filter.stageId ? { stageId: Number(filter.stageId) } : {}),
+    };
     const leads = await this.prisma.lead.findMany({
-      where: {
-        customerId,
-        deletedAt: null,
-        phone: { not: null },
-        ...(filter.status ? { status: String(filter.status).toUpperCase() } : {}),
-        ...(filter.stageId ? { stageId: Number(filter.stageId) } : {}),
-      },
+      where,
       select: { phone: true },
       take: 500,
     });
