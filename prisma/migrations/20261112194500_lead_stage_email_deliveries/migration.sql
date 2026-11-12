@@ -40,12 +40,12 @@ END $$;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'lead_stage_email_deliveries_leadId_fkey') THEN
-    ALTER TABLE "lead_stage_email_deliveries" ADD CONSTRAINT "lead_stage_email_deliveries_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "leads"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    ALTER TABLE "lead_stage_email_deliveries" ADD CONSTRAINT "lead_stage_email_deliveries_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "Lead"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'lead_stage_email_deliveries_userId_fkey') THEN
-    ALTER TABLE "lead_stage_email_deliveries" ADD CONSTRAINT "lead_stage_email_deliveries_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+    ALTER TABLE "lead_stage_email_deliveries" ADD CONSTRAINT "lead_stage_email_deliveries_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
   END IF;
 END $$;
