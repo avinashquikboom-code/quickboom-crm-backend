@@ -1171,9 +1171,11 @@ export class LeadRepository {
         return [photosField];
       }
     }
-    if (Array.isArray(photosField.googlePhotos)) return photosField.googlePhotos;
-    if (Array.isArray(photosField.photos)) return photosField.photos;
-    return [];
+    if (typeof photosField !== 'object') return [];
+    if (Array.isArray(photosField.googlePhotos) || Array.isArray(photosField.photos)) {
+      return [...this.photoList(photosField.photos), ...this.photoList(photosField.googlePhotos)];
+    }
+    return [photosField];
   }
 
   private photoProxyUrls(photosField: any): Array<{ url: string; attributions: string[] }> {
@@ -1192,6 +1194,7 @@ export class LeadRepository {
       }
       else if (/^https?:\/\/lh3\.googleusercontent\.com\//i.test(raw)) url = this.photoProxyPath(raw);
       else if (/^https?:\/\//i.test(raw) && !raw.includes('places.googleapis.com')) url = raw;
+      else if (raw.startsWith('/uploads/')) url = raw;
       if (url && !photos.some((photo) => photo.url === url)) photos.push({ url, attributions });
     };
     for (const item of list) {
@@ -1202,7 +1205,7 @@ export class LeadRepository {
       const name = String(item?.name || item?.photoReference || item?.photo_reference || '');
       const attributions = this.photoAttributions(item);
       if (this.isRealPhotoResource(name)) add(name, attributions);
-      else add(String(item?.url || ''), attributions);
+      else add(String(item?.url || item?.secure_url || item?.photoUrl || item?.imageUrl || ''), attributions);
     }
     return photos;
   }
@@ -1260,9 +1263,11 @@ export class LeadRepository {
       const samePlace = places.filter((place) => sameCustomer(place) && place.googlePlaceId && place.googlePlaceId === lead.googlePlaceId);
       const sourcePlace = places.filter((place) => sameCustomer(place) && Number(place.id) === Number(lead.sourceRecordId));
       const ranked = [...owned, ...samePlace.filter((place) => !owned.includes(place)), ...sourcePlace.filter((place) => !owned.includes(place) && !samePlace.includes(place))];
-      const photoField = (place: { photos?: unknown; rawData?: any }) => place.photos ?? place.rawData?.photos ?? place.rawData?.googlePhotos;
-      const match = ranked.find((place) => this.photoProxyUrls(photoField(place)).length) || ranked[0];
-      lead.placePhotos = match ? this.photoProxyUrls(photoField(match)) : [];
+      const photos = ranked.flatMap((place) =>
+        [place.photos, place.rawData?.photos, place.rawData?.googlePhotos, place.rawData?.images]
+          .flatMap((field) => this.photoProxyUrls(field)),
+      );
+      lead.placePhotos = [...new Map(photos.map((photo) => [photo.url, photo])).values()];
     }
     if (!hydrateLive) {
       if (!this.placePhotoJob) {

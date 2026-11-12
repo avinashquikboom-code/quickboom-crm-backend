@@ -118,6 +118,20 @@ describe('DataCaptureService', () => {
     expect(mockIntegrationSettingsService.getGoogleMapsConfig).not.toHaveBeenCalled();
   });
 
+  it('copies saved capture uploads and Google photo references onto the lead', async () => {
+    const upload = '/uploads/storefront.webp';
+    const resource = 'places/ChIJtest/photos/current';
+    const tx = { leadImage: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() } };
+    await service['copyCapturePhotosToLead'](tx, 37, {
+      photos: [upload],
+      rawData: { googlePhotos: [{ name: resource }], images: [upload] },
+    });
+    expect(tx.leadImage.create.mock.calls.map(([entry]) => entry.data)).toEqual([
+      { leadId: 37, url: upload, isPrimary: true, caption: 'Data Capture' },
+      { leadId: 37, url: '/api/v1/data-capture/photo?ref=' + encodeURIComponent(resource), isPrimary: false, caption: 'Google Maps' },
+    ]);
+  });
+
   describe('listPlaces with status=ALL and source=ALL (Requirements 8, 9, 17, 25)', () => {
     it('omits customerId from where clause when customerId is undefined (Super Admin context) and filters out ALL', async () => {
       mockPrisma.dataCapturePlace.count.mockResolvedValue(2);
