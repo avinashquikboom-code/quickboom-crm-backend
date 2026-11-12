@@ -4,12 +4,14 @@ import { IntegrationSettingsModule } from '../integration-settings/integration-s
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { MetaTemplateController } from './meta-template.controller';
 import { MetaTemplateService } from './meta-template.service';
+import { WhatsAppCampaignController } from './whatsapp-campaign.controller';
+import { WhatsAppCampaignService } from './whatsapp-campaign.service';
 
 @Module({
   imports: [PrismaModule, IntegrationSettingsModule, WhatsappModule],
-  controllers: [MetaTemplateController],
-  providers: [MetaTemplateService],
-  exports: [MetaTemplateService],
+  controllers: [MetaTemplateController, WhatsAppCampaignController],
+  providers: [MetaTemplateService, WhatsAppCampaignService],
+  exports: [MetaTemplateService, WhatsAppCampaignService],
 })
 export class MetaTemplateModule {}
 

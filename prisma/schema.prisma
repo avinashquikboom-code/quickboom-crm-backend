@@ -117,6 +117,7 @@ model Customer {
   emailTemplates           EmailTemplate[]
   emailLogs                EmailLog[]
   metaTemplates            MetaTemplate[]
+  whatsappCampaigns        WhatsAppCampaign[]
   commissionConfigs        CommissionConfig[]
   commissions              Commission[]
   salaryTargetPolicies     SalaryTargetPolicy[]
@@ -3614,6 +3615,7 @@ model MetaTemplate {
   rejectionReason    String?
   isLocalActive      Boolean   @default(true)
   isSystem           Boolean   @default(false)
+  source             String    @default("META_SYNC") // META_SYNC | QB_SINGLE | QB_CAMPAIGN
   lastSyncedAt       DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -3621,14 +3623,69 @@ model MetaTemplate {
 
   customer           Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   leadStages         LeadStage[]
+  whatsappCampaigns  WhatsAppCampaign[]
 
   @@index([templateName])
   @@index([key])
   @@index([customerId])
   @@index([status])
   @@index([isLocalActive])
+  @@index([source])
   @@index([deletedAt])
   @@map("meta_templates")
+}
+
+model WhatsAppCampaign {
+  id               Int       @id @default(autoincrement())
+  customerId       Int
+  name             String
+  status           String    @default("DRAFT") // DRAFT | SCHEDULED | RUNNING | COMPLETED | FAILED | CANCELLED | PAUSED
+  metaTemplateId   Int
+  variableMapping  Json?
+  audienceType     String    @default("LEAD_FILTER") // LEAD_FILTER | MANUAL
+  audienceFilter   Json?
+  manualRecipients Json?
+  recipientCount   Int       @default(0)
+  sentCount        Int       @default(0)
+  deliveredCount   Int       @default(0)
+  failedCount      Int       @default(0)
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  lastError        String?   @db.Text
+  createdById      Int?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  metaTemplate     MetaTemplate   @relation(fields: [metaTemplateId], references: [id], onDelete: Restrict)
+  recipients       WhatsAppCampaignRecipient[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([metaTemplateId])
+  @@map("whatsapp_campaigns")
+}
+
+model WhatsAppCampaignRecipient {
+  id           Int       @id @default(autoincrement())
+  campaignId   Int
+  phone        String
+  leadId       Int?
+  status       String    @default("PENDING") // PENDING | SENT | DELIVERED | FAILED | SKIPPED
+  messageId    String?
+  error        String?   @db.Text
+  sentAt       DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  campaign     WhatsAppCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([phone])
+  @@map("whatsapp_campaign_recipients")
 }
 
 enum CommissionType {

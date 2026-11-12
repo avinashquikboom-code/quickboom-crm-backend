@@ -133,6 +133,15 @@ export class MetaTemplateService {
       where.language = query.language;
     }
 
+    const rawSource = query.source || query.templateType || query.type;
+    if (rawSource && rawSource !== 'ALL') {
+      const normalized = String(rawSource).toUpperCase();
+      if (normalized === 'SINGLE') where.source = 'QB_SINGLE';
+      else if (normalized === 'CAMPAIGN') where.source = 'QB_CAMPAIGN';
+      else if (normalized === 'SYNCED') where.source = 'META_SYNC';
+      else where.source = normalized;
+    }
+
     const effectiveActive = query.isLocalActive !== undefined && query.isLocalActive !== null && query.isLocalActive !== ''
       ? query.isLocalActive
       : query.isActive;
@@ -279,6 +288,77 @@ export class MetaTemplateService {
     };
   }
 
+  private buildMetaGraphComponents(dto: CreateMetaTemplateDto) {
+    const components: any[] = [];
+    const headerType = (dto.headerType || 'NONE').toUpperCase();
+    if (headerType && headerType !== 'NONE') {
+      const header: any = { type: 'HEADER', format: headerType };
+      if (headerType === 'TEXT') {
+        if (!dto.headerContent?.trim()) {
+          throw new BadRequestException('Header text is required when header type is TEXT.');
+        }
+        header.text = dto.headerContent.trim();
+      }
+      components.push(header);
+    }
+    components.push({ type: 'BODY', text: dto.body.trim() });
+    if (dto.footer?.trim()) components.push({ type: 'FOOTER', text: dto.footer.trim() });
+    if (Array.isArray(dto.buttons) && dto.buttons.length) {
+      components.push({ type: 'BUTTONS', buttons: dto.buttons });
+    }
+    return components;
+  }
+
+  private async resolveWhatsAppCredentials(customerId?: number | string | null) {
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    const creds = config?.credentials || {};
+    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const { token: apiKey } = resolveCleanAccessToken(rawApiKey);
+    const wabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
+    const apiVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
+    return { config, apiKey, wabaId, apiVersion };
+  }
+
+  private async submitTemplateToMeta(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
+    const { config, apiKey, wabaId, apiVersion } = await this.resolveWhatsAppCredentials(customerId);
+    if (config?.isEnabled === false) {
+      throw new BadRequestException('WhatsApp integration is disabled. Enable it before submitting templates to Meta.');
+    }
+    if (!apiKey || !wabaId) {
+      throw new BadRequestException('WhatsApp / Meta credentials are not configured (access token and WABA ID required).');
+    }
+
+    const templateName = (dto.templateName || dto.name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_')
+      .replace(/[^a-z0-9_]/g, '');
+    const payload = {
+      name: templateName,
+      language: dto.language || 'en_US',
+      category: (dto.category || 'UTILITY').toUpperCase(),
+      components: this.buildMetaGraphComponents(dto),
+    };
+
+    try {
+      const response = await axios.post(
+        `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates`,
+        payload,
+        { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 20000 },
+      );
+      const data = response.data || {};
+      return {
+        templateName,
+        metaTemplateId: data.id ? String(data.id) : null,
+        status: String(data.status || 'PENDING').toUpperCase(),
+        raw: data,
+      };
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.error?.message || err?.message || 'Meta template submission failed';
+      throw new BadRequestException(`Meta API validation error: ${errMsg}`);
+    }
+  }
+
   /**
    * Creates a new Meta template.
    */
@@ -330,16 +410,26 @@ export class MetaTemplateService {
         ? dto.isLocalActive
         : true;
 
+    const submitToMeta = dto.submitToMeta !== false;
+    let metaSubmission: { templateName: string; metaTemplateId: string | null; status: string; raw?: any } | null = null;
+    if (submitToMeta) {
+      metaSubmission = await this.submitTemplateToMeta(dto, customerId);
+    }
+
+    const resolvedTemplateName = metaSubmission?.templateName || rawTemplateName;
+    const resolvedStatus = metaSubmission?.status || (dto.status || 'PENDING').toUpperCase();
+    const resolvedMetaId = metaSubmission?.metaTemplateId || dto.metaTemplateId || null;
+
     return this.prisma.metaTemplate.create({
       data: {
         customerId: parsedCustId,
         name: effectiveName,
-        templateName: rawTemplateName,
+        templateName: resolvedTemplateName,
         key: dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null,
         language: dto.language || 'en_US',
         category: (dto.category || 'UTILITY').toUpperCase(),
-        status: (dto.status || 'APPROVED').toUpperCase(),
-        metaTemplateId: dto.metaTemplateId || null,
+        status: resolvedStatus,
+        metaTemplateId: resolvedMetaId,
         headerType: dto.headerType || 'NONE',
         headerContent: dto.headerContent || null,
         body: rawBody,
@@ -348,6 +438,7 @@ export class MetaTemplateService {
         variables,
         isLocalActive: effectiveIsLocalActive,
         isSystem: false,
+        source: submitToMeta ? 'QB_SINGLE' : 'QB_SINGLE',
       },
     });
   }
@@ -596,6 +687,7 @@ export class MetaTemplateService {
             variables,
             isLocalActive: status === 'APPROVED',
             isSystem: false,
+            source: 'META_SYNC',
             lastSyncedAt: new Date(),
           },
         });
