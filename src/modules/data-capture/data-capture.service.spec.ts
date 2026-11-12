@@ -97,6 +97,27 @@ describe('DataCaptureService', () => {
     }
   });
 
+  it('returns saved upload URLs after update, list refresh and reopening a Google-linked capture', async () => {
+    const url = 'https://cdn.example.test/uploads/storefront.webp';
+    const record = {
+      id: 37, customerId: 1, businessName: 'Storefront',
+      googlePlaceId: 'ChIJtest', photos: [], rawData: {},
+    };
+    mockPrisma.dataCapturePlace.findFirst.mockResolvedValueOnce(record).mockResolvedValueOnce(record);
+    mockPrisma.dataCapturePlace.update.mockImplementationOnce(async ({ data }) => {
+      record.photos = data.photos;
+      return record;
+    });
+    mockPrisma.dataCapturePlace.findMany.mockResolvedValueOnce([record]);
+    mockPrisma.dataCapturePlace.count.mockResolvedValueOnce(1);
+    expect((await service.updatePlace(1, 37, {
+      photos: [], googlePhotos: [{ url }],
+    })).photos).toEqual([url]);
+    expect((await service.listPlaces(1, { page: 1, limit: 20 })).data[0].photos).toEqual([url]);
+    expect((await service.getPlaceById(1, 37)).photos).toEqual([url]);
+    expect(mockIntegrationSettingsService.getGoogleMapsConfig).not.toHaveBeenCalled();
+  });
+
   describe('listPlaces with status=ALL and source=ALL (Requirements 8, 9, 17, 25)', () => {
     it('omits customerId from where clause when customerId is undefined (Super Admin context) and filters out ALL', async () => {
       mockPrisma.dataCapturePlace.count.mockResolvedValue(2);

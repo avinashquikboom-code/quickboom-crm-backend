@@ -163,6 +163,16 @@ export class DataCaptureService implements OnModuleInit {
   /**
    * Helper to normalize raw or stored photos into structured GooglePlacePhoto objects and URL array.
    */
+  private mergeStoredPhotos(...fields: unknown[]): { googlePhotos: GooglePlacePhoto[]; photos: string[] } {
+    const byUrl = new Map<string, GooglePlacePhoto>();
+    for (const field of fields) {
+      for (const photo of this.normalizeStoredPhotos(field).googlePhotos) {
+        if (!byUrl.has(photo.url)) byUrl.set(photo.url, photo);
+      }
+    }
+    return { googlePhotos: [...byUrl.values()], photos: [...byUrl.keys()] };
+  }
+
   private normalizeStoredPhotos(photosField: any): { googlePhotos: GooglePlacePhoto[]; photos: string[] } {
     if (!photosField) {
       return { googlePhotos: [], photos: [] };
@@ -188,6 +198,8 @@ export class DataCaptureService implements OnModuleInit {
         list = photosField.googlePhotos;
       } else if (Array.isArray(photosField.photos)) {
         list = photosField.photos;
+      } else {
+        list = [photosField];
       }
     }
 
@@ -219,7 +231,8 @@ export class DataCaptureService implements OnModuleInit {
           }
         }
       } else if (typeof item === 'object') {
-        let url = item.url ? String(item.url).trim() : '';
+        const sourceUrl = item.url || item.secure_url || item.photoUrl || item.imageUrl;
+        let url = typeof sourceUrl === 'string' ? sourceUrl.trim() : '';
         let name = item.name || item.photoReference || item.photo_reference
           ? String(item.name || item.photoReference || item.photo_reference).trim()
           : undefined;
@@ -403,7 +416,10 @@ export class DataCaptureService implements OnModuleInit {
           try {
             await this.prisma.dataCapturePlace.update({
               where: { id: place.id },
-              data: { photos: storedPhotos.map((photo) => photo.name || photo.url) },
+              data: { photos: [
+                ...this.normalizeStoredPhotos(place.photos).photos.filter((url) => !googlePhotoResource(url)),
+                ...storedPhotos.map((photo) => photo.name || photo.url),
+              ] },
             });
           } catch (error: any) {
             this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoCacheStatus=failed reason=${error?.message || 'unknown'}`);
@@ -1214,8 +1230,9 @@ export class DataCaptureService implements OnModuleInit {
       this.logger.log(`[LEAD_IMAGE] photoFetchStatus=${photos.length ? 'success' : 'empty'}`);
       if (!photos.length) return place;
       this.logger.log('[LEAD_IMAGE] imageSource=google_places');
-      await this.prisma.dataCapturePlace.update({ where: { id: place.id }, data: { photos } });
-      place.photos = photos;
+      const merged = this.mergeStoredPhotos(place.photos, photos).googlePhotos;
+      await this.prisma.dataCapturePlace.update({ where: { id: place.id }, data: { photos: merged.map((photo) => ({ ...photo })) } });
+      place.photos = merged;
     } catch {
       this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed`);
     }
@@ -1255,8 +1272,8 @@ export class DataCaptureService implements OnModuleInit {
   private async refreshReferencePlaces(records: any[]) {
     const stale = records.filter((place) => place.googlePlaceId && (!place.businessName || place.rawData?.googleReferenceOnly));
     if (!stale.length) return records;
-    const config = await this.integrationSettingsService.getGoogleMapsConfig();
-    if (!config.isEnabled || !config.apiKey) {
+    const config = await this.integrationSettingsService.getGoogleMapsConfig().catch(() => null);
+    if (!config?.isEnabled || !config.apiKey) {
       this.logger.warn('[Google Places API] Stored places have no business name and Google Maps is not configured.');
       return records;
     }
@@ -1289,8 +1306,8 @@ export class DataCaptureService implements OnModuleInit {
           longitude: live.location?.longitude ?? null,
           googleMapsUrl: live.googleMapsUri || place.googleMapsUrl || null,
           businessStatus: live.businessStatus || place.businessStatus || 'OPERATIONAL',
-          photos: photos.length ? photos : undefined,
-          rawData: { ...location, openingHours: live.regularOpeningHours?.weekdayDescriptions || null, attributions: live.attributions || [] },
+          photos: photos.length ? this.mergeStoredPhotos(place.photos, place.rawData?.photos, place.rawData?.googlePhotos, photos).googlePhotos.map((photo) => ({ ...photo })) : undefined,
+          rawData: { ...place.rawData, googleReferenceOnly: false, ...location, openingHours: live.regularOpeningHours?.weekdayDescriptions || null, attributions: live.attributions || [] },
         };
         await this.prisma.dataCapturePlace.update({ where: { id: place.id }, data });
         Object.assign(place, data);
@@ -1414,8 +1431,8 @@ export class DataCaptureService implements OnModuleInit {
 
       const records = await this.refreshReferencePlaces(stored);
       const data: CapturedPlace[] = records.map((p) => {
-        const { googlePhotos: normGP, photos: normPhotoUrls } = this.normalizeStoredPhotos(
-          (p as any).photos || (p as any).rawData?.photos || (p as any).rawData?.googlePhotos,
+        const { googlePhotos: normGP, photos: normPhotoUrls } = this.mergeStoredPhotos(
+          p.photos, (p.rawData as any)?.photos, (p.rawData as any)?.googlePhotos,
         );
 
         this.logger.debug(
@@ -1513,35 +1530,15 @@ export class DataCaptureService implements OnModuleInit {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
-    if (place.googlePlaceId) {
-      const config = await this.integrationSettingsService.getGoogleMapsConfig();
-      if (!config.isEnabled || !config.apiKey) throw new BadRequestException('Google Maps integration is not configured.');
-      let live: any;
-      try {
-        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(place.googlePlaceId)}`, {
-          headers: { 'X-Goog-Api-Key': config.apiKey,
-            'X-Goog-FieldMask': 'id,displayName,formattedAddress,internationalPhoneNumber,websiteUri,primaryTypeDisplayName,googleMapsUri,attributions' },
-          timeout: 10000,
-        });
-        live = response.data;
-      } catch { throw new BadRequestException('Live Google Maps details are unavailable. Please retry.'); }
-      return {
-        id: place.id, provider: 'GOOGLE_PLACES', source: 'GOOGLE_PLACES', googlePlaceId: place.googlePlaceId,
-        businessName: live.displayName?.text || '', address: live.formattedAddress,
-        phone: live.internationalPhoneNumber, website: live.websiteUri,
-        category: live.primaryTypeDisplayName?.text, googleMapsUrl: live.googleMapsUri,
-        rawData: { attributions: live.attributions || [] },
-        capturedAt: place.createdAt, customerId: String(numCustomerId),
-        isImported: place.isImported, importedLeadId: place.importedLeadId || undefined,
-        status: place.status || 'CAPTURED',
-      };
-    }
+    // Saved records and their photos remain available during a Places outage.
+    // Only incomplete references need a live lookup.
+    await this.refreshReferencePlaces([place]);
 
     // Run duplicate detection against CRM entities (Lead, Company, Contact)
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
 
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
-      (place as any).photos || (place as any).rawData?.photos || (place as any).rawData?.googlePhotos,
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.mergeStoredPhotos(
+      place.photos, (place.rawData as any)?.photos, (place.rawData as any)?.googlePhotos,
     );
 
     this.logger.debug(
@@ -1624,8 +1621,8 @@ export class DataCaptureService implements OnModuleInit {
       ...(resolvedEmail ? { email: resolvedEmail } : {}),
     };
 
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.normalizeStoredPhotos(
-      dto.photos || dto.googlePhotos || mergedRawData.photos || mergedRawData.googlePhotos
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.mergeStoredPhotos(
+      dto.photos, dto.googlePhotos, mergedRawData.photos, mergedRawData.googlePhotos
     );
 
     const place = await this.prisma.dataCapturePlace.create({
@@ -1715,7 +1712,7 @@ export class DataCaptureService implements OnModuleInit {
 
     let updatedPhotosField: any = undefined;
     if (dto.photos !== undefined || dto.googlePhotos !== undefined) {
-      const { googlePhotos: inGP, photos: inUrls } = this.normalizeStoredPhotos(dto.photos || dto.googlePhotos);
+      const { googlePhotos: inGP, photos: inUrls } = this.mergeStoredPhotos(dto.photos, dto.googlePhotos);
       updatedPhotosField = inGP.length > 0 ? inGP : (inUrls.length > 0 ? inUrls : null);
     }
 
