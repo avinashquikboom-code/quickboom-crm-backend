@@ -1105,7 +1105,7 @@ export class LeadRepository {
 
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
-      await this.attachPlacePhotos(data);
+      await this.attachPlacePhotos(data, false);
       await this.resolveMissingLeadVisitedAndWonEmployees(data);
       if (options.followUps) await this.attachFollowUpContext(data);
     }
@@ -1210,7 +1210,9 @@ export class LeadRepository {
     return [...uploaded, ...google, ...visits];
   }
 
-  private async attachPlacePhotos(leads: any[]) {
+  private placePhotoJob: Promise<void> | null = null;
+
+  private async attachPlacePhotos(leads: any[], hydrateLive = true) {
     if (!leads.length || typeof this.prisma.dataCapturePlace?.findMany !== 'function') return;
     const ids = leads.map((lead) => Number(lead.id)).filter((id) => Number.isInteger(id) && id > 0);
     const placeIds = [...new Set(leads.map((lead) => lead.googlePlaceId).filter((id) => id && !String(id).startsWith('custom_')))];
@@ -1240,6 +1242,16 @@ export class LeadRepository {
       const photoField = (place: { photos?: unknown; rawData?: any }) => place.photos ?? place.rawData?.photos ?? place.rawData?.googlePhotos;
       const match = ranked.find((place) => this.photoProxyUrls(photoField(place)).length) || ranked[0];
       lead.placePhotos = match ? this.photoProxyUrls(photoField(match)) : [];
+    }
+    if (!hydrateLive) {
+      if (!this.placePhotoJob) {
+        this.placePhotoJob = this.hydrateMissingPlacePhotos(leads).catch(() => {
+          this.logger.warn('[LEAD_IMAGE] photoFetchStatus=failed');
+        }).finally(() => {
+          this.placePhotoJob = null;
+        });
+      }
+      return;
     }
     await this.hydrateMissingPlacePhotos(leads);
     for (const lead of leads) {
