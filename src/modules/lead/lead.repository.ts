@@ -1248,11 +1248,11 @@ export class LeadRepository {
     ];
     if (!or.length) return;
     const customerIds = [...new Set(leads.map((lead) => Number(lead.customerId)).filter((id) => Number.isInteger(id) && id > 0))];
-    let places: Array<{ id?: number | null; customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown; rawData?: any }> = [];
+    let places: Array<{ id?: number | null; customerId?: number | null; importedLeadId?: number | null; googlePlaceId?: string | null; photos?: unknown; rawData?: any; createdAt?: Date }> = [];
     try {
       places = await this.prisma.dataCapturePlace.findMany({
         where: { deletedAt: null, ...(customerIds.length ? { customerId: { in: customerIds } } : {}), OR: or },
-        select: { id: true, customerId: true, importedLeadId: true, googlePlaceId: true, photos: true, rawData: true },
+        select: { id: true, customerId: true, importedLeadId: true, googlePlaceId: true, photos: true, rawData: true, createdAt: true },
       });
     } catch (error: any) {
       this.logger.warn(`Lead photo lookup skipped: ${error?.message || error}`);
@@ -1267,6 +1267,11 @@ export class LeadRepository {
         [place.photos, place.rawData?.photos, place.rawData?.googlePhotos, place.rawData?.images]
           .flatMap((field) => this.photoProxyUrls(field)),
       );
+      const linked = owned.length ? owned : sourcePlace.length ? sourcePlace : samePlace;
+      const captureTimes = linked
+        .map((place) => new Date(place.rawData?.capturedAt ?? place.createdAt ?? NaN).getTime())
+        .filter(Number.isFinite);
+      if (captureTimes.length) lead.capturedAt = new Date(Math.max(...captureTimes)).toISOString();
       lead.placePhotos = [...new Map(photos.map((photo) => [photo.url, photo])).values()];
     }
     if (!hydrateLive) {

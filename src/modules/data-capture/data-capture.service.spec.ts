@@ -39,6 +39,12 @@ describe('DataCaptureService', () => {
     customer: {
       findFirst: jest.fn().mockResolvedValue({ id: 1, name: 'QuikBoom Enterprise', isActive: true }),
     },
+    $transaction: jest.fn(async (fn: any) => fn({
+      leadImage: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockResolvedValue({ id: 1 }),
+      },
+    })),
   };
 
   const mockConfigService = {
@@ -95,6 +101,28 @@ describe('DataCaptureService', () => {
     } finally {
       get.mockRestore();
     }
+  });
+
+  it('syncs new capture photos onto an imported lead after update', async () => {
+    const leadId = 91;
+    const url = 'https://cdn.example.test/uploads/new-photo.webp';
+    const record = {
+      id: 55,
+      customerId: 1,
+      businessName: 'Storefront',
+      importedLeadId: leadId,
+      photos: [],
+      rawData: { capturedAt: '2026-11-12T10:00:00.000Z' },
+    };
+    mockPrisma.dataCapturePlace.findFirst.mockResolvedValueOnce(record);
+    mockPrisma.dataCapturePlace.update.mockImplementationOnce(async ({ data }) => ({
+      ...record,
+      photos: data.photos,
+      rawData: data.rawData,
+    }));
+    await service.updatePlace(1, 55, { photos: [url] });
+
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
   });
 
   it('returns saved upload URLs after update, list refresh and reopening a Google-linked capture', async () => {

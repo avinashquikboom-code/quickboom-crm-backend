@@ -1,3 +1,4 @@
+import { S3Service } from '../s3/s3.service';
 import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import PDFDocument = require('pdfkit');
 import { RecordCreatedFrom } from '@prisma/client';
@@ -558,6 +559,7 @@ export class DataCaptureService implements OnModuleInit {
     @Optional()
     @Inject(forwardRef(() => LeadService))
     private readonly leadService?: LeadService,
+    @Optional() private readonly s3Service?: S3Service,
   ) {}
 
   async onModuleInit() {
@@ -1125,7 +1127,7 @@ export class DataCaptureService implements OnModuleInit {
       id: p.id,
       status: p.status || 'CAPTURED',
       createdFrom: resolvedCreatedFrom,
-      capturedAt: p.createdAt,
+      capturedAt: this.captureTimestamp(p),
       rawData: { attributions: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.attributions || [] },
     }));
 
@@ -1197,7 +1199,7 @@ export class DataCaptureService implements OnModuleInit {
 
   private async ensureGooglePlacePhotos(place: any) {
     const placeId = String(place?.googlePlaceId || '').trim().replace(/^places\//, '');
-    if (!place?.id || !placeId || placeId.startsWith('custom_') || placeId === 'N/A') return place;
+    if (!place?.id || !placeId || /^(custom_|manual_)/i.test(placeId) || placeId === 'N/A') return place;
     if (this.capturePhotoUrls(place).length) return place;
     let apiKey = '';
     try {
@@ -1237,6 +1239,13 @@ export class DataCaptureService implements OnModuleInit {
       this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed`);
     }
     return place;
+  }
+
+  async syncCapturePhotosToLead(leadId: number, place: { photos?: unknown; rawData?: any }) {
+    if (!leadId || !place) return;
+    await this.prisma.$transaction(async (tx) => {
+      await this.copyCapturePhotosToLead(tx, leadId, place);
+    });
   }
 
   private async copyCapturePhotosToLead(tx: any, leadId: number, place: { photos?: unknown; rawData?: any }) {
@@ -1467,7 +1476,7 @@ export class DataCaptureService implements OnModuleInit {
           rawData: p.rawData || undefined,
           isImported: p.isImported,
           importedLeadId: p.importedLeadId || undefined,
-          capturedAt: p.createdAt,
+          capturedAt: this.captureTimestamp(p),
           updatedAt: p.updatedAt,
           customerId: String(p.customerId),
           extractionJobId: p.jobId || undefined,
@@ -1573,7 +1582,7 @@ export class DataCaptureService implements OnModuleInit {
       rawData: place.rawData || undefined,
       isImported: place.isImported,
       importedLeadId: place.importedLeadId || undefined,
-      capturedAt: place.createdAt,
+      capturedAt: this.captureTimestamp(place),
       updatedAt: place.updatedAt,
       customerId: String(place.customerId),
       extractionJobId: place.jobId || undefined,
@@ -1587,6 +1596,22 @@ export class DataCaptureService implements OnModuleInit {
   /**
    * Create a manual Data Capture prospect record
    */
+  private captureTimestamp(place: { rawData?: unknown; createdAt: Date }): Date {
+    const rawData = place.rawData as { capturedAt?: unknown } | null;
+    const value = typeof rawData?.capturedAt === 'string' ? Date.parse(rawData.capturedAt) : NaN;
+    return Number.isFinite(value) ? new Date(value) : place.createdAt;
+  }
+
+  async uploadCapturePhoto(customerId: string, file?: Express.Multer.File) {
+    const tenantId = this.requireTenant(customerId);
+    if (!file || !['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      throw new BadRequestException('Choose a JPG, PNG, or WebP image.');
+    }
+    if (!this.s3Service) throw new BadRequestException('Image storage is not configured.');
+    const { imageUrl } = await this.s3Service.uploadFile(file, `data-capture/${tenantId}`);
+    return { url: imageUrl };
+  }
+
   async createPlace(
     customerId: string | number | undefined,
     userId: string | number,
@@ -1610,8 +1635,20 @@ export class DataCaptureService implements OnModuleInit {
 
     const resolvedEmail = dto.email?.trim() || dto.emailAddress?.trim() || undefined;
 
+    const suppliedCaptureTime = dto.rawData?.capturedAt;
+    const captureTime = typeof suppliedCaptureTime === 'string' ? new Date(suppliedCaptureTime) : null;
+    const capturedAt = captureTime && Number.isFinite(captureTime.getTime()) && captureTime.getTime() <= Date.now()
+      ? captureTime.toISOString()
+      : new Date().toISOString();
+
+    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.mergeStoredPhotos(
+      dto.photos, dto.googlePhotos, dto.rawData?.photos, dto.rawData?.googlePhotos,
+    );
+
     const mergedRawData = {
       ...(dto.rawData && typeof dto.rawData === 'object' ? dto.rawData : {}),
+      capturedAt,
+      ...(placePhotoUrls.length ? { photos: placePhotoUrls } : {}),
       ...(dto.firstName ? { firstName: dto.firstName.trim() } : {}),
       ...(dto.first_name ? { first_name: dto.first_name.trim() } : {}),
       ...(dto.lastName ? { lastName: dto.lastName.trim() } : {}),
@@ -1620,10 +1657,6 @@ export class DataCaptureService implements OnModuleInit {
       ...(resolvedPhone ? { phone: resolvedPhone, mobile: resolvedPhone } : {}),
       ...(resolvedEmail ? { email: resolvedEmail } : {}),
     };
-
-    const { googlePhotos: placeGP, photos: placePhotoUrls } = this.mergeStoredPhotos(
-      dto.photos, dto.googlePhotos, mergedRawData.photos, mergedRawData.googlePhotos
-    );
 
     const place = await this.prisma.dataCapturePlace.create({
       data: {
@@ -1676,7 +1709,7 @@ export class DataCaptureService implements OnModuleInit {
       rawData: place.rawData || undefined,
       isImported: place.isImported,
       importedLeadId: place.importedLeadId || undefined,
-      capturedAt: place.createdAt,
+      capturedAt: this.captureTimestamp(place),
       updatedAt: place.updatedAt,
       customerId: String(place.customerId),
       duplicateMatches,
@@ -1711,9 +1744,31 @@ export class DataCaptureService implements OnModuleInit {
     }
 
     let updatedPhotosField: any = undefined;
+    let mergedPhotoUrls: string[] = [];
     if (dto.photos !== undefined || dto.googlePhotos !== undefined) {
-      const { googlePhotos: inGP, photos: inUrls } = this.mergeStoredPhotos(dto.photos, dto.googlePhotos);
+      const { googlePhotos: inGP, photos: inUrls } = this.mergeStoredPhotos(
+        existing.photos,
+        (existing.rawData as any)?.photos,
+        dto.photos,
+        dto.googlePhotos,
+      );
+      mergedPhotoUrls = inUrls;
       updatedPhotosField = inGP.length > 0 ? inGP : (inUrls.length > 0 ? inUrls : null);
+    }
+
+    const existingRaw = existing.rawData && typeof existing.rawData === 'object' ? { ...(existing.rawData as object) } : {};
+    let rawDataPatch: any = undefined;
+    if (dto.rawData !== undefined || updatedPhotosField !== undefined) {
+      const preservedCaptureAt = (existingRaw as { capturedAt?: string }).capturedAt
+        || this.captureTimestamp(existing).toISOString();
+      rawDataPatch = {
+        ...existingRaw,
+        ...(dto.rawData && typeof dto.rawData === 'object' ? dto.rawData : {}),
+        capturedAt: typeof (dto.rawData as any)?.capturedAt === 'string'
+          ? (dto.rawData as any).capturedAt
+          : preservedCaptureAt,
+        ...(mergedPhotoUrls.length ? { photos: mergedPhotoUrls } : {}),
+      };
     }
 
     const updated = await this.prisma.dataCapturePlace.update({
@@ -1736,11 +1791,19 @@ export class DataCaptureService implements OnModuleInit {
         status: dto.status !== undefined ? dto.status.toUpperCase() : undefined,
         notes: dto.notes !== undefined ? dto.notes : undefined,
         isImported: dto.isImported !== undefined ? dto.isImported : undefined,
-        rawData: dto.rawData !== undefined ? dto.rawData : undefined,
+        rawData: rawDataPatch,
         photos: updatedPhotosField as any,
         socialMedia: (dto.socialMedia !== undefined ? dto.socialMedia : undefined) as any,
       },
     });
+
+    if (updated.importedLeadId) {
+      try {
+        await this.syncCapturePhotosToLead(updated.importedLeadId, updated);
+      } catch (err: any) {
+        this.logger.warn(`[LEAD_IMAGE] sync after capture update failed for lead ${updated.importedLeadId}: ${err?.message || err}`);
+      }
+    }
 
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || updated.customerId, updated);
     const { googlePhotos: updatedGP, photos: updatedPhotoUrls } = this.normalizeStoredPhotos(updated.photos);
@@ -1768,7 +1831,7 @@ export class DataCaptureService implements OnModuleInit {
       rawData: updated.rawData || undefined,
       isImported: updated.isImported,
       importedLeadId: updated.importedLeadId || undefined,
-      capturedAt: updated.createdAt,
+      capturedAt: this.captureTimestamp(updated),
       updatedAt: updated.updatedAt,
       customerId: String(updated.customerId),
       extractionJobId: updated.jobId || undefined,
@@ -2829,7 +2892,7 @@ export class DataCaptureService implements OnModuleInit {
           status: p.status || 'CAPTURED',
           isImported: p.isImported,
           importedLeadId: p.importedLeadId || undefined,
-          capturedAt: p.createdAt,
+          capturedAt: this.captureTimestamp(p),
           updatedAt: p.updatedAt,
           customerId: String(p.customerId),
           capturedBy: String(j.userId),
@@ -2897,7 +2960,7 @@ export class DataCaptureService implements OnModuleInit {
           status: p.status || 'CAPTURED',
           isImported: p.isImported,
           importedLeadId: p.importedLeadId || undefined,
-          capturedAt: p.createdAt,
+          capturedAt: this.captureTimestamp(p),
           updatedAt: p.updatedAt,
           customerId: String(p.customerId),
           capturedBy: String(job.userId),
@@ -3233,7 +3296,7 @@ export class DataCaptureService implements OnModuleInit {
           status: place.status,
           outcome: this.placeOutcome(place),
           importedLeadId: place.importedLeadId,
-          capturedAt: place.createdAt,
+          capturedAt: this.captureTimestamp(place),
         })),
         places: undefined,
       },

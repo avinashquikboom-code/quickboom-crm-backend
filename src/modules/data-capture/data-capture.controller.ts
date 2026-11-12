@@ -1,5 +1,9 @@
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import {
   Controller,
+  UploadedFile,
+  UseInterceptors,
   Post,
   Get,
   Patch,
@@ -256,6 +260,16 @@ export class DataCaptureController {
    * POST /api/v1/data-capture
    * Manually create a Data Capture record
    */
+  @Post('photos')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
+  @UseInterceptors(FileInterceptor('image', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  uploadPhoto(
+    @CurrentCustomer() customerId: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.dataCaptureService.uploadCapturePhoto(customerId, file);
+  }
+
   @Post()
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'CREATE' })
   @ApiOperation({ summary: 'Manually create a new Data Capture record' })

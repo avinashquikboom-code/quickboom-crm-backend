@@ -51,7 +51,8 @@ describe('Google Places lead photos', () => {
   it('recovers uploaded photos from an older linked capture with an empty photos array', async () => {
     const imported = { ...lead, images: [], placePhotos: [] };
     prisma.dataCapturePlace.findMany.mockResolvedValueOnce([
-      { customerId: 1, importedLeadId: lead.id, photos: [], rawData: {
+      { customerId: 1, importedLeadId: lead.id, photos: [], createdAt: new Date('2026-11-12T17:00:00Z'), rawData: {
+        capturedAt: '2026-11-12T16:00:00.000Z',
         photos: [{ secure_url: 'https://cdn.example.test/store.webp' }],
         images: ['/uploads/entrance.jpg'],
       } },
@@ -60,6 +61,7 @@ describe('Google Places lead photos', () => {
     const repository = new LeadRepository(prisma, integrationSettings as any);
     await (repository as any).attachPlacePhotos([imported]);
 
+    expect(imported).toHaveProperty('capturedAt', '2026-11-12T16:00:00.000Z');
     expect(imported.placePhotos).toEqual([
       { url: 'https://cdn.example.test/store.webp', attributions: [] },
       { url: '/uploads/entrance.jpg', attributions: [] },
