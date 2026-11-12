@@ -614,7 +614,7 @@ export class LeadController {
 
   @Post(':id/plan-proposals/preference')
   @CrmCategory('BPO')
-  @RequirePermissions({ module: 'PROPOSALS', action: 'EDIT' })
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Record customer plan preference and requirements before sending proposals' })
   async setPlanProposalPreference(
     @CurrentCustomer() customerId: string,
@@ -634,7 +634,7 @@ export class LeadController {
 
   @Post(':id/plan-proposals/default/send')
   @CrmCategory('BPO')
-  @RequirePermissions({ module: 'PROPOSALS', action: 'CREATE' })
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Send default plan proposal via email and WhatsApp' })
   async sendDefaultPlanProposal(
     @CurrentCustomer() customerId: string,
@@ -646,7 +646,7 @@ export class LeadController {
 
   @Post(':id/plan-proposals/custom')
   @CrmCategory('BPO')
-  @RequirePermissions({ module: 'PROPOSALS', action: 'CREATE' })
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Create and optionally send a customized plan proposal' })
   async createCustomPlanProposal(
     @CurrentCustomer() customerId: string,
@@ -659,7 +659,7 @@ export class LeadController {
 
   @Post(':id/plan-proposals/:proposalId/send')
   @CrmCategory('BPO')
-  @RequirePermissions({ module: 'PROPOSALS', action: 'CREATE' })
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Send a drafted plan proposal version' })
   async sendPlanProposalDraft(
     @CurrentCustomer() customerId: string,
@@ -672,7 +672,7 @@ export class LeadController {
 
   @Post(':id/plan-proposals/:proposalId/resend')
   @CrmCategory('BPO')
-  @RequirePermissions({ module: 'PROPOSALS', action: 'EDIT' })
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Resend plan proposal on failed email or WhatsApp channels' })
   async resendPlanProposal(
     @CurrentCustomer() customerId: string,
