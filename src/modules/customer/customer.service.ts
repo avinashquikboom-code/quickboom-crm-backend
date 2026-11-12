@@ -520,6 +520,31 @@ export class CustomerService {
   /**
    * Maps an unconverted CRM Lead to the unified Customer Card format for Upcoming / All tabs
    */
+  /** One row per lead/customer — same set used for tab counts and listings. */
+  private deduplicateCustomerDirectory(items: any[]): any[] {
+    const seenLeadIds = new Set<string>();
+    const seenCustomerKeys = new Set<string>();
+    const unique: any[] = [];
+    for (const item of items) {
+      const leadId = item?.leadId != null ? String(item.leadId).trim() : '';
+      const custKey = item?.customerId
+        ? String(item.customerId).trim().toUpperCase()
+        : item?.id != null
+        ? `ID:${item.id}`
+        : '';
+      if (leadId && seenLeadIds.has(leadId)) continue;
+      if (custKey && seenCustomerKeys.has(custKey)) continue;
+      if (leadId) seenLeadIds.add(leadId);
+      if (custKey) seenCustomerKeys.add(custKey);
+      unique.push(item);
+    }
+    return unique;
+  }
+
+  private directoryBucket(item: any): string {
+    return String(item?.customerStatus || item?.status || '').trim().toUpperCase();
+  }
+
   public mapLeadToCustomerItem(l: any, upcomingCall: UpcomingCallInfo | null): any {
     const contactName = `${l.firstName || ''} ${l.lastName || ''}`.trim();
     const companyName = (l.companyName || '').trim();
@@ -1062,12 +1087,9 @@ export class CustomerService {
       where.NOT = SYSTEM_CUSTOMER_EXCLUSIONS;
     }
 
+  // Lifecycle tab status (ACTIVE/INACTIVE/UPCOMING) must not map to customer.isActive — applied after unified classification.
     if (query.isActive !== undefined) {
       where.isActive = query.isActive;
-    } else if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
-      if (query.status.toUpperCase() === 'INACTIVE') {
-        where.isActive = false;
-      }
     }
 
     if (query.source && query.source !== 'ALL' && query.source.trim() !== '') {
@@ -1505,19 +1527,6 @@ export class CustomerService {
       }
     }
 
-    if (query.status && query.status !== 'ALL' && query.status.trim() !== '') {
-      const targetStatus = query.status.trim().toUpperCase();
-      if (targetStatus === 'UPCOMING') {
-        where.id = { in: upcomingCustomerIds };
-      } else if (targetStatus === 'ACTIVE') {
-        where.id = { in: activeCustomerIds };
-      } else if (targetStatus === 'INACTIVE') {
-        where.id = { in: inactiveCustomerIds };
-      } else if (targetStatus === 'COMPLETED') {
-        where.id = { in: completedCustomerIds };
-      }
-    }
-
     const items = await this.prisma.customer.findMany({
       where,
       orderBy,
@@ -1874,44 +1883,40 @@ export class CustomerService {
     let finalItems: any[] = [];
     let effectiveTotal = 0;
 
-    const totalActive = activeCustomerIds.length + unconvertedActiveLeads.length;
-    const totalUpcoming = upcomingCustomerIds.length + unconvertedUpcomingLeads.length;
-    const totalInactive = inactiveCustomerIds.length + unconvertedInactiveLeads.length;
-    const totalAll = totalActive + totalUpcoming + totalInactive;
+    const unifiedDirectory = this.deduplicateCustomerDirectory([
+      ...formatted,
+      ...unconvertedUpcomingLeads,
+      ...unconvertedInactiveLeads,
+      ...unconvertedActiveLeads,
+    ]);
 
+    const totalActive = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'ACTIVE').length;
+    const totalUpcoming = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'UPCOMING').length;
+    const totalInactive = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'INACTIVE').length;
+    const totalAll = unifiedDirectory.length;
+
+    let filteredDirectory = unifiedDirectory;
     if (targetStatus === 'UPCOMING') {
-      const customerUpcoming = formatted.filter((item) => item.customerStatus === 'UPCOMING');
-      const combinedUpcoming = [...customerUpcoming, ...unconvertedUpcomingLeads];
-      // Sort upcoming items strictly by scheduled call date/time ascending
-      combinedUpcoming.sort((a, b) => {
+      filteredDirectory = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'UPCOMING');
+      filteredDirectory.sort((a, b) => {
         const timeA = a.upcomingCall?.scheduledAt ? new Date(a.upcomingCall.scheduledAt).getTime() : 0;
         const timeB = b.upcomingCall?.scheduledAt ? new Date(b.upcomingCall.scheduledAt).getTime() : 0;
         return timeA - timeB;
       });
-      effectiveTotal = combinedUpcoming.length;
-      finalItems = combinedUpcoming.slice(skip, skip + limit);
     } else if (targetStatus === 'ACTIVE') {
-      const customerActive = formatted.filter((item) => item.customerStatus === 'ACTIVE');
-      const combinedActive = [...customerActive, ...unconvertedActiveLeads];
-      effectiveTotal = combinedActive.length;
-      finalItems = combinedActive.slice(skip, skip + limit);
+      filteredDirectory = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'ACTIVE');
     } else if (targetStatus === 'INACTIVE') {
-      const customerInactive = formatted.filter((item) => item.customerStatus === 'INACTIVE');
-      const combinedInactive = [...customerInactive, ...unconvertedInactiveLeads];
-      effectiveTotal = combinedInactive.length;
-      finalItems = combinedInactive.slice(skip, skip + limit);
+      filteredDirectory = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'INACTIVE');
     } else if (targetStatus === 'COMPLETED') {
-      const completedItems = formatted.filter(
-        (item) => String(item.customerStatus || '').toUpperCase() === 'COMPLETED' || item.leadStatus === 'WON',
+      filteredDirectory = unifiedDirectory.filter(
+        (item) =>
+          this.directoryBucket(item) === 'COMPLETED' ||
+          String(item.leadStatus || '').toUpperCase() === 'WON',
       );
-      effectiveTotal = completedItems.length;
-      finalItems = completedItems.slice(skip, skip + limit);
-    } else {
-      // 'ALL' tab: all Active + all Upcoming + all Inactive
-      const combinedAll = [...formatted, ...unconvertedAllLeads];
-      effectiveTotal = combinedAll.length;
-      finalItems = combinedAll.slice(skip, skip + limit);
     }
+
+    effectiveTotal = filteredDirectory.length;
+    finalItems = filteredDirectory.slice(skip, skip + limit);
 
     const totalPages = Math.ceil(effectiveTotal / limit) || 1;
 
@@ -1952,7 +1957,7 @@ export class CustomerService {
     const safeFilter = query.status || 'ALL';
     const safeSearch = query.search ? query.search.trim().slice(0, 50) : '';
     this.logger.log(
-      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} count=${finalItems.length} total=${effectiveTotal} (customers=${formatted.length} unconvertedUpcomingLeads=${unconvertedUpcomingLeads.length})`,
+      `[CUSTOMERS] employeeId=${employeeId || 'none'} companyId=${companyId || 'none'} filter=${safeFilter} search=${safeSearch} page=${page} limit=${limit} counts={all:${totalAll},active:${totalActive},inactive:${totalInactive},upcoming:${totalUpcoming}} returned=${finalItems.length} totalForFilter=${effectiveTotal} directorySize=${unifiedDirectory.length}`,
     );
 
     for (const c of finalItems) {
