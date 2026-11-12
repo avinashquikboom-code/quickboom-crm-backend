@@ -2252,6 +2252,12 @@ export class WhatsappService {
 
     try {
       const mapped = status === 'read' ? 'READ' : status === 'delivered' ? 'DELIVERED' : status === 'failed' ? 'FAILED' : status === 'sent' ? 'SENT' : null;
+      if (mapped && this.prisma.leadStageWhatsAppDelivery?.updateMany) {
+        await this.prisma.leadStageWhatsAppDelivery.updateMany({
+          where: { metaMessageId: messageId },
+          data: { status: mapped, error: errorMessage || null, updatedAt: new Date() },
+        });
+      }
       if (mapped && this.prisma.hrmNotificationDelivery?.updateMany) {
         await this.prisma.hrmNotificationDelivery.updateMany({
           where: { providerMessageId: messageId, channel: 'WHATSAPP' },

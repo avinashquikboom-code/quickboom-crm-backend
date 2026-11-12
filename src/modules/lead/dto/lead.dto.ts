@@ -1104,6 +1104,10 @@ export class CreateLeadStageDto {
   @IsOptional()
   emailTemplateId?: number | null;
 
+  @ApiPropertyOptional({ description: 'Optional variable mapping for stage email template' })
+  @IsOptional()
+  emailVariableMapping?: Record<string, string>;
+
   @ApiPropertyOptional({ example: true, description: 'Whether automatic WhatsApp notification is enabled for this stage' })
   @IsBoolean()
   @IsOptional()
@@ -1113,6 +1117,10 @@ export class CreateLeadStageDto {
   @IsNumber()
   @IsOptional()
   whatsappTemplateId?: number | null;
+
+  @ApiPropertyOptional({ description: 'Optional variable mapping for stage WhatsApp template' })
+  @IsOptional()
+  whatsappVariableMapping?: Record<string, string>;
 }
 
 export class UpdateLeadStageDto extends PartialType(CreateLeadStageDto) {}
