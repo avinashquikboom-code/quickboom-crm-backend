@@ -15,6 +15,49 @@ export function tenantLeadStageScope(customerId?: number | string | null): Recor
 }
 
 /** Prisma WHERE for resolving a pipeline stage by name/key within a tenant. */
+/** Active tenant-scoped Visit Scheduled stage (Lead pipeline only — resolved from DB). */
+export function visitScheduledStageWhere(customerId?: number | string | null): Record<string, unknown> {
+  return {
+    deletedAt: null,
+    isActive: true,
+    AND: [
+      {
+        OR: [
+          { key: 'VISIT_SCHEDULED' },
+          { key: 'VISIT' },
+          { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
+        ],
+      },
+      tenantLeadStageScope(customerId),
+    ],
+  };
+}
+
+export function isLeadAlreadyOnVisitScheduledStage(
+  lead: { stageId?: number | null },
+  visitScheduledStage: { id: number } | null | undefined,
+): boolean {
+  if (!visitScheduledStage?.id || lead.stageId == null) return false;
+  return Number(lead.stageId) === Number(visitScheduledStage.id);
+}
+
+/** Do not downgrade leads that have already progressed past Visit Scheduled in pipeline order. */
+export function shouldAdvanceLeadToVisitScheduled(
+  currentStage: { id?: number | null; sortOrder?: number | null } | null | undefined,
+  visitScheduledStage: { id: number; sortOrder?: number | null } | null | undefined,
+): boolean {
+  if (!visitScheduledStage?.id) return false;
+  if (currentStage?.id != null && Number(currentStage.id) === Number(visitScheduledStage.id)) {
+    return false;
+  }
+  const currentOrder = currentStage?.sortOrder;
+  const targetOrder = visitScheduledStage.sortOrder;
+  if (currentOrder != null && targetOrder != null && currentOrder > targetOrder) {
+    return false;
+  }
+  return true;
+}
+
 export function leadStageMatchWhere(
   stageName: string,
   stageKey?: string | null,

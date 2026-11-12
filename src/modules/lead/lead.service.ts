@@ -3578,6 +3578,83 @@ export class LeadService {
     return this.leadRepository.logFollowUp(customerId, leadId, userId, dto);
   }
 
+  private async runStageAutomationsAfterTransition(
+    customerId: number | string,
+    updatedLead: any,
+    previousStageId: number | null | undefined,
+    previousStageName: string,
+    previousStatus: string | undefined,
+    userId?: number | string,
+  ) {
+    const newStageId = updatedLead.stageId ?? updatedLead.stage?.id ?? null;
+    const newStageName = updatedLead.stage?.name || String(updatedLead.status || '');
+    if (
+      !didLeadPipelineStageChange({
+        previousStageId,
+        nextStageId: newStageId,
+        previousStageName,
+        nextStageName: newStageName,
+        previousStatus,
+        nextStatus: updatedLead.status,
+      })
+    ) {
+      return;
+    }
+    await Promise.allSettled([
+      this.handleLeadStageChangeNotification(
+        customerId,
+        updatedLead,
+        previousStageName,
+        newStageName,
+        userId,
+        undefined,
+        undefined,
+        undefined,
+        'LEAD_STAGE_CHANGED',
+        newStageId ?? undefined,
+        previousStageId ?? undefined,
+      ).catch((err) => {
+        this.logger.warn(`[VISIT_SCHEDULE] Stage email automation failed: ${err?.message}`);
+        return null;
+      }),
+      this.handleLeadStageChangeWhatsappNotification(
+        customerId,
+        updatedLead,
+        previousStageName,
+        newStageName,
+        userId,
+        undefined,
+        undefined,
+        'LEAD_STAGE_CHANGED',
+        newStageId ?? undefined,
+        undefined,
+        previousStageId ?? undefined,
+      ).catch((err) => {
+        this.logger.warn(`[VISIT_SCHEDULE] Stage WhatsApp automation failed: ${err?.message}`);
+        return null;
+      }),
+    ]);
+  }
+
+  /** Used when a visit is created via POST /visits (admin) after the lead stage was synced. */
+  async syncStageAutomationsAfterVisitSchedule(
+    customerId: number | string,
+    leadId: number | string,
+    userId: number | string,
+    snapshot: { stageId?: number | null; stageName?: string; status?: string },
+  ) {
+    const updated = await this.getLeadById(customerId, leadId);
+    await this.runStageAutomationsAfterTransition(
+      customerId,
+      updated,
+      snapshot.stageId,
+      snapshot.stageName || String(snapshot.status || ''),
+      snapshot.status,
+      userId,
+    );
+    return updated;
+  }
+
   async manageVisit(
     customerId: number | string, leadId: number | string, userId: number | string,
     dto: ManageVisitDto, user?: any,
@@ -3614,7 +3691,24 @@ export class LeadService {
         throw new BadRequestException('Selected Visitor must be active, authorized and belong to this company.');
       }
     }
-    return this.leadRepository.manageVisit(customerId, leadId, userId, dto);
+
+    const previousStageId = lead.stageId ?? null;
+    const previousStageName = lead.stage?.name || String(lead.status || '');
+
+    const updated = await this.leadRepository.manageVisit(customerId, leadId, userId, dto);
+
+    if (updated && dto.action === 'SCHEDULE') {
+      await this.runStageAutomationsAfterTransition(
+        customerId,
+        updated,
+        previousStageId,
+        previousStageName,
+        lead.status,
+        userId,
+      );
+    }
+
+    return updated;
   }
 
   async createProposal(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateProposalDto) {

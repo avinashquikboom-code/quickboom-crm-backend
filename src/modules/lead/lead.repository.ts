@@ -18,6 +18,11 @@ import {
 import { LeadStatus, Prisma, VisitStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { googlePhotoResource, isPlaceholderPhoto } from '../data-capture/google-photo';
+import {
+  isLeadAlreadyOnVisitScheduledStage,
+  shouldAdvanceLeadToVisitScheduled,
+  visitScheduledStageWhere,
+} from './lead-stage-automation.util';
 
 const SOCIAL_PROFILE_KEYS: Array<[string, string]> = [
   ['instagram', 'INSTAGRAM'],
@@ -2133,6 +2138,7 @@ export class LeadRepository {
     stageId?: number,
     fromStageIdParam?: number | null,
     stageName?: string,
+    inlineTransaction = false,
   ) {
     const numId = Number(id);
     const numCustomerId = Number(customerId);
@@ -2228,7 +2234,9 @@ export class LeadRepository {
         },
       });
     };
-    if (typeof this.prisma.$transaction === 'function') {
+    if (inlineTransaction) {
+      await writeTransition(this.prisma);
+    } else if (typeof this.prisma.$transaction === 'function') {
       await this.prisma.$transaction((tx: any) => writeTransition(tx));
     } else {
       await writeTransition(this.prisma);
@@ -2517,6 +2525,66 @@ export class LeadRepository {
     return this.findOne(numCustomerId, numLeadId);
   }
 
+  async resolveVisitScheduledLeadStage(customerId: number) {
+    return this.prisma.leadStage.findFirst({
+      where: visitScheduledStageWhere(customerId),
+      orderBy: [{ customerId: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  /**
+   * Moves a lead onto the configured Visit Scheduled stage after a visit is saved.
+   * Uses stageId as source of truth (legacy status alone must not skip the transition).
+   */
+  async transitionLeadToVisitScheduledAfterVisit(
+    customerId: number | string,
+    leadId: number | string,
+    userId: number | string,
+    notes: string,
+    options?: { inlineTransaction?: boolean },
+  ): Promise<'MOVED' | 'SKIPPED' | 'NO_STAGE'> {
+    const numLeadId = Number(leadId);
+    const effectiveCustomerId = Number(customerId);
+    const lead = await this.prisma.lead.findUnique({
+      where: { id: numLeadId },
+      include: { stage: true },
+    });
+    if (!lead) return 'SKIPPED';
+
+    const visitScheduledStage = await this.resolveVisitScheduledLeadStage(effectiveCustomerId);
+    if (!visitScheduledStage) {
+      this.logger.error(
+        `[VISIT_STAGE_SYNC] No active Visit Scheduled lead stage for customerId=${effectiveCustomerId}. Configure Admin → Master → Stage Management.`,
+      );
+      return 'NO_STAGE';
+    }
+
+    if (isLeadAlreadyOnVisitScheduledStage(lead, visitScheduledStage)) {
+      return 'SKIPPED';
+    }
+
+    if (!shouldAdvanceLeadToVisitScheduled(lead.stage, visitScheduledStage)) {
+      this.logger.log(
+        `[VISIT_STAGE_SYNC] Lead #${numLeadId} remains on stage "${lead.stage?.name || lead.status}" (pipeline order ≥ Visit Scheduled).`,
+      );
+      return 'SKIPPED';
+    }
+
+    await this.updateStatus(
+      effectiveCustomerId,
+      numLeadId,
+      lead.status as LeadStatus,
+      LeadStatus.VISIT_SCHEDULED,
+      userId,
+      notes,
+      visitScheduledStage.id,
+      lead.stageId,
+      visitScheduledStage.name,
+      Boolean(options?.inlineTransaction),
+    );
+    return 'MOVED';
+  }
+
   async manageVisit(customerId: number | string, leadId: number | string, userId: number | string, dto: ManageVisitDto, inTransaction = false) {
     if (dto.action === 'SCHEDULE' && !inTransaction) {
       return this.prisma.$transaction(async tx =>
@@ -2599,42 +2667,13 @@ export class LeadRepository {
         { visitId: savedVisit.id, location: dto.location, employeeId: targetEmpId, scheduledBy: savedVisit.scheduledBy },
       );
 
-      const visitScheduledStage = await this.prisma.leadStage.findFirst({
-        where: {
-          AND: [
-            {
-              OR: [
-                { key: 'VISIT_SCHEDULED' },
-                { key: 'VISIT' },
-                { name: { equals: 'Visit Scheduled', mode: 'insensitive' as const } },
-              ],
-            },
-            {
-              OR: [{ customerId: effectiveCustomerId }, { customerId: null }],
-            },
-          ],
-          deletedAt: null,
-        },
-        orderBy: { customerId: 'desc' },
-      });
-
-      const currentKey = normalizeLeadStatus(String(lead.status || ''));
-      const alreadyVisitScheduled =
-        currentKey === 'VISIT_SCHEDULED' ||
-        currentKey === 'VISIT' ||
-        (visitScheduledStage?.id != null && lead.stageId === visitScheduledStage.id);
-
-      if (!alreadyVisitScheduled) {
-        await this.updateStatus(
-          effectiveCustomerId,
-          numLeadId,
-          lead.status as LeadStatus,
-          LeadStatus.VISIT_SCHEDULED,
-          numUserId,
-          `Field visit scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'}`,
-          visitScheduledStage?.id,
-        );
-      }
+      await this.transitionLeadToVisitScheduledAfterVisit(
+        effectiveCustomerId,
+        numLeadId,
+        numUserId,
+        `Field visit scheduled for ${dto.date || 'today'} at ${dto.time || '11:00 AM'}`,
+        { inlineTransaction: inTransaction },
+      );
     } else if (dto.action === 'START') {
       const visit = await this.prisma.visit.findFirst({
         where: { leadId: numLeadId, customerId: effectiveCustomerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] } },

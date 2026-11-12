@@ -85,8 +85,9 @@ export class VisitController {
   async create(
     @Body() dto: CreateVisitDto,
     @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser('id') userId: string,
   ) {
-    return this.visitService.create(customerId, dto);
+    return this.visitService.create(customerId, dto, userId);
   }
 
   @Patch(':id')

@@ -338,37 +338,88 @@ export class DataCaptureService implements OnModuleInit {
     photoIndex: number | undefined,
     res: Response,
   ): Promise<void> {
-    const numId = Number(placeIdOrGoogleId);
-    let place = !isNaN(numId)
+    const rawId = String(placeIdOrGoogleId || '').trim();
+    const numId = Number(rawId);
+    let place = Number.isInteger(numId) && numId > 0
       ? await this.prisma.dataCapturePlace.findFirst({
           where: { id: numId, deletedAt: null },
-          select: { id: true, businessName: true, category: true, photos: true, rawData: true },
+          select: { id: true, googlePlaceId: true, businessName: true, category: true, photos: true, rawData: true },
         })
       : null;
 
-    if (!place) {
+    if (!place && rawId) {
       place = await this.prisma.dataCapturePlace.findFirst({
-        where: { googlePlaceId: placeIdOrGoogleId, deletedAt: null },
-        select: { id: true, businessName: true, category: true, photos: true, rawData: true },
+        where: { googlePlaceId: rawId, deletedAt: null },
+        select: { id: true, googlePlaceId: true, businessName: true, category: true, photos: true, rawData: true },
       });
     }
 
-    if (!place) {
+    const placeId = String(place?.googlePlaceId || rawId).trim().replace(/^places\//, '');
+    if (!placeId || placeId.startsWith('custom_') || placeId === 'N/A') {
       res.status(404).send('Place not found');
       return;
     }
 
-    const { googlePhotos } = this.normalizeStoredPhotos(place.photos || (place.rawData as any)?.photos || (place.rawData as any)?.googlePhotos);
-    const idx = photoIndex && !isNaN(Number(photoIndex)) ? Number(photoIndex) : 0;
-    const selected = googlePhotos[idx] || googlePhotos[0];
+    let storedPhotos = place
+      ? this.normalizeStoredPhotos(place.photos || (place.rawData as any)?.photos || (place.rawData as any)?.googlePhotos).googlePhotos
+      : [];
 
-    if (selected?.url) {
-      return this.proxyPhoto(selected.url, 800, 800, res);
+    // Imported leads may retain their Google Place ID while the capture record
+    // has no photo (or has already been removed). Resolve the real Places photo
+    // resource on demand using the existing server-side Maps credentials.
+    if (!storedPhotos.length) {
+      try {
+        const config = await this.integrationSettingsService.getGoogleMapsConfig();
+        const apiKey = config?.apiKey?.trim();
+        if (
+          !config?.isEnabled ||
+          !apiKey ||
+          apiKey === 'YOUR_GOOGLE_MAPS_API_KEY_HERE' ||
+          apiKey === 'AIzaSyFakeKey'
+        ) {
+          this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=skipped reason=maps_not_configured`);
+          res.status(404).json({ success: false, message: 'Google Maps photo integration is not configured' });
+          return;
+        }
+        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+          headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
+          timeout: 12000,
+          validateStatus: () => true,
+        });
+        if (response.status >= 400) {
+          this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed status=${response.status}`);
+          res.status(response.status === 429 ? 429 : 404).json({ success: false, message: 'Google Places photo lookup failed' });
+          return;
+        }
+        storedPhotos = this.resolveGooglePhotos({ id: placeId, photos: response.data?.photos }, apiKey);
+        this.logger.log(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=${storedPhotos.length ? 'success' : 'empty'}`);
+        if (place && storedPhotos.length) {
+          try {
+            await this.prisma.dataCapturePlace.update({
+              where: { id: place.id },
+              data: { photos: storedPhotos.map((photo) => photo.name || photo.url) },
+            });
+          } catch (error: any) {
+            this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoCacheStatus=failed reason=${error?.message || 'unknown'}`);
+          }
+        }
+      } catch (error: any) {
+        this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed reason=${error?.message || 'unknown'}`);
+        res.status(502).json({ success: false, message: 'Google Places photo lookup failed' });
+        return;
+      }
     }
+
+    const idx = photoIndex !== undefined && Number.isInteger(Number(photoIndex)) ? Number(photoIndex) : 0;
+    const selected = storedPhotos[idx] || storedPhotos[0];
     if (selected?.name) {
       return this.proxyPhoto(selected.name, 800, 800, res);
     }
+    if (selected?.url) {
+      return this.proxyPhoto(selected.url, 800, 800, res);
+    }
 
+    this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoAvailable=false`);
     res.status(404).send('No photo available for this place');
   }
 
