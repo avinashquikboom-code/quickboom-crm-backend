@@ -120,7 +120,7 @@ describe('pipeline stage and Visitor assignment contract', () => {
     await f.service.manageVisit(7,5,21,{action:'COMPLETE'},visitor);
     expect(persist).toHaveBeenCalledWith(7,5,21,{action:'COMPLETE'});
   });
-  it('persists the selected Visitor and stage together in the scheduling transaction',async()=>{
+  it('persists the selected Visitor without changing the pipeline stage',async()=>{
     const f=fixture();
     f.prisma.$transaction=jest.fn(async callback=>callback(f.prisma));
     f.prisma.lead.findUnique=jest.fn(async()=>f.leads[0]);
@@ -132,8 +132,9 @@ describe('pipeline stage and Visitor assignment contract', () => {
     expect(f.prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(f.visits[0].employeeId).toBe(31);
     expect(f.visits[0].time).toBe('10:30 AM');
-    expect(f.leads[0].stageId).toBe(scheduled.id);
-    expect(f.leads[0].status).toBe('VISIT_SCHEDULED');
+    expect(f.leads[0].stageId).toBe(stages[0].id);
+    expect(f.leads[0].status).toBe('NEW');
+    expect((f.leads[0] as any).employeeId).toBe(31);
     expect(result!.assignedVisitorId).toBe(31);
   });
 

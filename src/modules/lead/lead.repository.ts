@@ -1033,6 +1033,7 @@ export class LeadRepository {
     const startedAt = Date.now();
     let stageCounts: Array<{ status: string | null; stageId: number | null; count: number }> | undefined;
 
+    const countsRequest = (async () => {
     if (options.includeCounts && typeof this.prisma.lead.groupBy === 'function') {
       try {
         const countWhere = { ...where, AND: andConditions.filter((condition) => !pipelineFilters.includes(condition)) };
@@ -1047,6 +1048,8 @@ export class LeadRepository {
         this.logger.warn(`Lead stage counts failed: ${countErr?.message || countErr}`);
       }
     }
+
+    })();
 
     try {
       [data, total] = await Promise.all([
@@ -1097,6 +1100,8 @@ export class LeadRepository {
         throw fallbackErr;
       }
     }
+
+    await countsRequest;
 
     // Safe diagnostic log (Section 9)
     this.logger.log(
@@ -2573,40 +2578,14 @@ export class LeadRepository {
             },
           });
 
-      // Find Visit Scheduled stage
-      const visitScheduledStage = await this.prisma.leadStage.findFirst({
-        where: {
-          AND: [
-            {
-              OR: [
-                { key: 'VISIT_SCHEDULED' },
-                { key: 'VISIT' },
-                { name: { equals: 'Visit Scheduled', mode: 'insensitive' } },
-              ],
-            },
-            {
-              OR: [
-                { customerId: effectiveCustomerId },
-                { customerId: null },
-              ],
-            },
-          ],
-          deletedAt: null,
-        },
-        orderBy: { customerId: 'desc' },
-      });
-
-      // Assign lead to the Field Visitor employee so their pipeline filter (employeeId) picks it up
+      // Assign the visitor without moving the pipeline stage. Stage changes go through updateStatus.
       const leadAssignedEmpId = targetEmpId;
-
-      await this.prisma.lead.update({
-        where: { id: numLeadId },
-        data: {
-          status: LeadStatus.VISIT_SCHEDULED,
-          ...(visitScheduledStage ? { stageId: visitScheduledStage.id } : {}),
-          ...(leadAssignedEmpId ? { employeeId: leadAssignedEmpId } : {}),
-        },
-      });
+      if (leadAssignedEmpId) {
+        await this.prisma.lead.update({
+          where: { id: numLeadId },
+          data: { employeeId: leadAssignedEmpId },
+        });
+      }
 
       await this.logTimeline(
         numLeadId,
