@@ -32,6 +32,7 @@ import {
   buildStageAutomationIdempotencyKey,
   validateTemplateVariableBag,
   didLeadPipelineStageChange,
+  isLeadEligibleForVisitorVisitDoneTransition,
   leadStageMatchWhere,
   tenantLeadStageScope,
 } from './lead-stage-automation.util';
@@ -1882,9 +1883,13 @@ export class LeadService {
     }
 
     if (actorIsVisitor) {
-      const current = normalizeLeadStatus(lead.stage?.key || lead.status);
       const target = normalizeLeadStatus(targetStageKey || resolvedStatus);
-      if (!['VISIT_SCHEDULED', 'VISIT'].includes(current) || target !== 'VISIT_DONE') {
+      const targetToken = String(target || '').toUpperCase();
+      if (targetToken !== 'VISIT_DONE' && target !== LeadStatus.VISIT_DONE) {
+        throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+      }
+      const visitScheduledStage = await this.leadRepository.resolveVisitScheduledLeadStage(Number(customerId));
+      if (!isLeadEligibleForVisitorVisitDoneTransition(lead, visitScheduledStage)) {
         throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
       }
     }
@@ -3675,8 +3680,27 @@ export class LeadService {
       if (dto.action === 'SCHEDULE' || dto.employeeId != null) {
         throw new ForbiddenException('Visitors cannot schedule visits or reassign visitors.');
       }
-      if (dto.action === 'COMPLETE' && !['VISIT_SCHEDULED', 'VISIT'].includes(normalizeLeadStatus(lead.stage?.key || lead.status))) {
-        throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+      if (dto.action === 'COMPLETE') {
+        const visitScheduledStage = await this.leadRepository.resolveVisitScheduledLeadStage(lead.customerId);
+        const activeVisit = await this.prisma.visit.findFirst({
+          where: {
+            leadId: Number(leadId),
+            customerId: lead.customerId,
+            status: { in: ['SCHEDULED', 'IN_PROGRESS'] },
+            employeeId: (await this.prisma.employee.findFirst({
+              where: { customerId: lead.customerId, userId: Number(userId) },
+              select: { id: true },
+            }))?.id,
+          },
+          select: { id: true },
+        });
+        if (
+          !isLeadEligibleForVisitorVisitDoneTransition(lead, visitScheduledStage, {
+            hasActiveScheduledVisit: Boolean(activeVisit),
+          })
+        ) {
+          throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+        }
       }
     }
     if (dto.action === 'SCHEDULE') {

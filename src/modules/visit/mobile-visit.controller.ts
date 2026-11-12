@@ -27,6 +27,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { LeadRepository } from '../lead/lead.repository';
+import {
+  isLeadEligibleForVisitorVisitDoneTransition,
+  visitScheduledStageWhere,
+} from '../lead/lead-stage-automation.util';
 
 /**
  * Mobile-specific visit endpoints for employee field-visit management.
@@ -796,6 +801,11 @@ export class MobileVisitController {
       throw new NotFoundException(`Visit with ID ${id} not found`);
     }
 
+    if (visit.status === VisitStatus.COMPLETED) {
+      const doneCustomerId = Number(customerId) || visit.customerId;
+      return this.visitService.findOne(doneCustomerId, id);
+    }
+
     const employee = await this.prisma.employee.findFirst({
       where: {
         customerId: Number(customerId),
@@ -820,11 +830,25 @@ export class MobileVisitController {
     }
 
     if (isVisitorUser) {
-      if (!['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) throw new ForbiddenException('Only an active assigned visit may be completed.');
+      if (!['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) {
+        throw new ForbiddenException('Only an active assigned visit may be completed.');
+      }
       if (visit.leadId) {
-        const lead = await this.prisma.lead.findFirst({where: {id:visit.leadId,customerId:employee!.customerId,deletedAt:null},include:{stage:true}});
-        const key = (lead?.stage?.key || lead?.status || '').toUpperCase();
-        if (!['VISIT_SCHEDULED','VISIT'].includes(key)) throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+        const lead = await this.prisma.lead.findFirst({
+          where: { id: visit.leadId, customerId: employee!.customerId, deletedAt: null },
+          include: { stage: true },
+        });
+        const visitScheduledStage = await this.prisma.leadStage.findFirst({
+          where: visitScheduledStageWhere(employee!.customerId),
+          orderBy: [{ customerId: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+        });
+        if (
+          !isLeadEligibleForVisitorVisitDoneTransition(lead, visitScheduledStage, {
+            hasActiveScheduledVisit: true,
+          })
+        ) {
+          throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+        }
       }
     }
 
@@ -841,71 +865,70 @@ export class MobileVisitController {
       finalNotes = finalNotes ? `${finalNotes}\n${reviewText}` : reviewText;
     }
 
-    const updated = await this.visitService.update(numCustomerId, id, {
-      status: VisitStatus.COMPLETED,
-      notes: finalNotes,
-      outcome: finalOutcome,
-      nextFollowUpDate: body?.nextFollowUpDate,
-      completedById: employee?.id || undefined,
-      completedBy: actingEmpName || undefined,
-      ...(body?.latitude != null ? { latitude: Number(body.latitude) } : {}),
-      ...(body?.longitude != null ? { longitude: Number(body.longitude) } : {}),
-    });
+    const completedAt = new Date();
+    const syncUserId = user?.id ? Number(user.id) : employee?.userId ? Number(employee.userId) : 0;
 
-    if (visit.leadId) {
-      try {
-        const visitDoneStage = await this.prisma.leadStage.findFirst({
-          where: {
-            AND: [
-              {
-                OR: [
-                  { key: 'VISIT_DONE' },
-                  { name: { equals: 'Visit Done', mode: 'insensitive' } },
-                ],
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const txRepo = new LeadRepository(tx as PrismaService);
+      const savedVisit = await tx.visit.update({
+        where: { id: numId },
+        data: {
+          status: VisitStatus.COMPLETED,
+          completedAt,
+          notes: finalNotes,
+          outcome: finalOutcome,
+          nextFollowUpDate: body?.nextFollowUpDate ? new Date(body.nextFollowUpDate) : undefined,
+          completedById: employee?.id || undefined,
+          completedBy: actingEmpName || undefined,
+          ...(body?.latitude != null ? { latitude: Number(body.latitude) } : {}),
+          ...(body?.longitude != null ? { longitude: Number(body.longitude) } : {}),
+        },
+        include: {
+          employee: true,
+          company: true,
+          contact: true,
+          deal: true,
+        },
+      });
+
+      if (visit.leadId) {
+        await txRepo.transitionLeadToVisitDoneAfterVisit(
+          numCustomerId,
+          visit.leadId,
+          syncUserId,
+          `Field visit completed: ${finalOutcome}`,
+          { inlineTransaction: true },
+        );
+
+        await tx.leadActivityTimeline
+          .create({
+            data: {
+              leadId: visit.leadId,
+              action: 'VISIT_COMPLETED',
+              description: `Field Visit Completed${actingEmpName ? ` by ${actingEmpName}` : ''}: ${finalOutcome} - ${body?.notes || ''}`.trim(),
+              metadata: {
+                visitId: visit.id,
+                outcome: finalOutcome,
+                notes: body?.notes,
+                rating: body?.rating,
+                feedback: body?.feedback,
+                customerReview: {
+                  rating: body?.rating ?? null,
+                  feedback: body?.feedback ?? null,
+                },
+                completedById: employee?.id || null,
+                completedByName: actingEmpName || null,
+                completedLatitude: body?.latitude ?? null,
+                completedLongitude: body?.longitude ?? null,
+                completedAt: completedAt.toISOString(),
               },
-              {
-                OR: [
-                  ...(numCustomerId > 0 ? [{ customerId: numCustomerId }] : []),
-                  { customerId: null },
-                ],
-              },
-            ],
-            deletedAt: null,
-          },
-          orderBy: { customerId: 'desc' },
-        });
-
-        await this.prisma.lead.update({
-          where: { id: visit.leadId },
-          data: {
-            status: 'VISIT_DONE',
-            ...(visitDoneStage ? { stageId: visitDoneStage.id } : {}),
-          },
-        });
-
-        await this.prisma.leadActivityTimeline.create({
-          data: {
-            leadId: visit.leadId,
-            action: 'VISIT_COMPLETED',
-            description: `Field Visit Completed${actingEmpName ? ` by ${actingEmpName}` : ''}: ${finalOutcome} - ${body?.notes || ''}`.trim(),
-            metadata: {
-              visitId: visit.id,
-              outcome: finalOutcome,
-              notes: body?.notes,
-              rating: body?.rating,
-              feedback: body?.feedback,
-              completedById: employee?.id || null,
-              completedByName: actingEmpName || null,
-              completedLatitude: body?.latitude || null,
-              completedLongitude: body?.longitude || null,
-              completedAt: new Date(),
             },
-          },
-        }).catch(() => {});
-      } catch (leadSyncErr: any) {
-        // Non-blocking timeline / stage update log
+          })
+          .catch(() => null);
       }
-    }
+
+      return savedVisit;
+    });
 
     return updated;
   }
