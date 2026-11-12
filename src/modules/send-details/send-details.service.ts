@@ -1,4 +1,7 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
+import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { EmailService } from '../email/email.service';
@@ -294,7 +297,7 @@ export class SendDetailsService {
     const { customerId, lead, documents, channels, triggerType, previousStage, newStage, userId, config, customNote, existingDeliveryId } = params;
 
     const leadPhone = (lead.phone || lead.mobile || '').trim();
-    const leadEmail = (lead.email || '').trim();
+    const leadEmail = this.validEmail(lead.email);
     const leadName = [lead.firstName, lead.lastName].filter(Boolean).join(' ') || lead.companyName || 'Valued Customer';
     const company = await this.prisma.customer.findUnique({
       where: { id: customerId },
@@ -341,7 +344,7 @@ export class SendDetailsService {
       });
     }
 
-    let whatsappResult: { status: 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED'; messageId?: string | null; error?: string | null } = {
+    let whatsappResult: { status: 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED'; messageId?: string | null; error?: string | null; sentDocumentIds?: number[] } = {
       status: channels.includes('WHATSAPP') ? 'PENDING' : 'SKIPPED',
     };
 
@@ -357,40 +360,23 @@ export class SendDetailsService {
       tasks.push(
         (async () => {
           if (!leadPhone) {
-            whatsappResult = { status: 'FAILED', error: 'No phone number configured on lead' };
+            whatsappResult = { status: 'FAILED', error: 'Invalid phone number. Add the lead phone with country code before retrying.' };
             return;
           }
           try {
-            // Build doc summary links text
-            const docLinksText = documents
-              .map((d, i) => `${i + 1}. *${d.title}*\n${d.fileUrl}`)
-              .join('\n\n');
-
-            const fallbackText = `Hello ${leadName},\n\nWe are pleased to share our business details with you from *${companyName}*:\n\n${docLinksText}\n\nPlease let us know if you have any questions!`;
-
-            const res = await this.whatsappService.sendLeadStageMessage({
-              to: leadPhone,
-              stageKey: 'DETAILS_SENT',
-              variables: {
-                leadName,
-                leadTitle: lead.companyName || leadName,
-                companyName,
-              },
-              fallbackText: customNote ? `${customNote}\n\n${fallbackText}` : fallbackText,
-              stageName: 'Details Sent',
+            whatsappResult = await this.deliverWhatsAppPackage({
+              leadPhone,
+              leadName,
+              companyName,
+              lead,
+              documents,
               customerId,
               userId,
+              customNote,
+              alreadySentIds: this.sentDocumentIds(delivery),
             });
-
-            if (res.success) {
-              whatsappResult = { status: 'SENT', messageId: res.messageId };
-            } else if (res.skipped) {
-              whatsappResult = { status: 'SKIPPED', error: res.reason || 'WhatsApp integration skipped' };
-            } else {
-              whatsappResult = { status: 'FAILED', error: res.error || res.reason || 'WhatsApp delivery failed' };
-            }
           } catch (err: any) {
-            this.logger.error(`[SEND_DETAILS] WhatsApp delivery error for lead #${lead.id}: ${err.message}`, err.stack);
+            this.logger.error(`[SEND_DETAILS] WhatsApp delivery error for lead #${lead.id}: ${err.message}`);
             whatsappResult = { status: 'FAILED', error: err.message };
           }
         })(),
@@ -402,7 +388,7 @@ export class SendDetailsService {
       tasks.push(
         (async () => {
           if (!leadEmail) {
-            emailResult = { status: 'FAILED', error: 'No email address configured on lead' };
+            emailResult = { status: 'SKIPPED', error: 'Email skipped – Lead email address is missing.' };
             return;
           }
           try {
@@ -448,11 +434,13 @@ export class SendDetailsService {
               </div>
             `;
 
-            // Prepare attachments from document URLs
-            const attachments = documents.map((d) => ({
-              filename: d.fileName || `${d.title}.pdf`,
-              path: d.fileUrl,
-            }));
+            const attachments: Array<{ filename: string; content: Buffer }> = [];
+            const missingFiles: string[] = [];
+            for (const document of documents) {
+              const loaded = await this.loadDocumentFile(document);
+              if ('buffer' in loaded) attachments.push({ filename: loaded.filename, content: loaded.buffer });
+              else missingFiles.push(loaded.error);
+            }
 
             const emailRes = await this.emailService.sendEmail(
               {
@@ -464,7 +452,15 @@ export class SendDetailsService {
               { customerId, id: userId },
             );
 
-            emailResult = { status: 'SENT', messageId: emailRes?.messageId || 'SENT' };
+            if (!emailRes?.messageId) {
+              emailResult = { status: 'FAILED', error: 'Email provider did not confirm the message.' };
+            } else {
+              emailResult = {
+                status: 'SENT',
+                messageId: emailRes.messageId,
+                error: missingFiles.length ? missingFiles.join(' ') : null,
+              };
+            }
           } catch (err: any) {
             this.logger.error(`[SEND_DETAILS] Email delivery error for lead #${lead.id}: ${err.message}`, err.stack);
             emailResult = { status: 'FAILED', error: err.message };
@@ -473,31 +469,39 @@ export class SendDetailsService {
       );
     }
 
+    if (!channels.includes('EMAIL') && !leadEmail) {
+      emailResult = { status: 'SKIPPED', error: 'Email skipped – Lead email address is missing.' };
+    }
+    if (!channels.includes('WHATSAPP') && existingDeliveryId && delivery) {
+      whatsappResult = {
+        status: this.asStatus(delivery.whatsappStatus),
+        messageId: delivery.whatsappMessageId,
+        error: delivery.whatsappError,
+      };
+    }
+    if (!channels.includes('EMAIL') && existingDeliveryId && delivery && leadEmail) {
+      emailResult = {
+        status: this.asStatus(delivery.emailStatus),
+        messageId: delivery.emailMessageId,
+        error: delivery.emailError,
+      };
+    }
+
     await Promise.allSettled(tasks);
 
-    // Determine overall status
-    let overallStatus: 'SENT' | 'PARTIAL' | 'FAILED' = 'FAILED';
-    const sentCount = (whatsappResult.status === 'SENT' ? 1 : 0) + (emailResult.status === 'SENT' ? 1 : 0);
-    const failedCount = (whatsappResult.status === 'FAILED' ? 1 : 0) + (emailResult.status === 'FAILED' ? 1 : 0);
-
-    if (sentCount > 0 && failedCount === 0) {
-      overallStatus = 'SENT';
-    } else if (sentCount > 0 && failedCount > 0) {
-      overallStatus = 'PARTIAL';
-    } else {
-      overallStatus = 'FAILED';
-    }
+    const overallStatus = this.overallStatus(whatsappResult.status, emailResult.status);
 
     // Update delivery record
     const updatedDelivery = await this.prisma.sendDetailsDelivery.update({
       where: { id: delivery.id },
       data: {
         whatsappStatus: whatsappResult.status,
-        whatsappMessageId: whatsappResult.messageId || null,
-        whatsappError: whatsappResult.error || null,
+        whatsappMessageId: whatsappResult.messageId || delivery.whatsappMessageId || null,
+        whatsappError: whatsappResult.status === 'SENT' ? null : (whatsappResult.error || null),
         emailStatus: emailResult.status,
-        emailMessageId: emailResult.messageId || null,
+        emailMessageId: emailResult.messageId || delivery.emailMessageId || null,
         emailError: emailResult.error || null,
+        channels: this.nextChannelMeta(delivery, channels, whatsappResult, emailResult, Boolean(existingDeliveryId)) as any,
         overallStatus,
         retryCount: existingDeliveryId ? { increment: 1 } : 0,
       },
@@ -544,10 +548,21 @@ export class SendDetailsService {
     const targetChannel = dto.channel || 'ALL';
 
     if (targetChannel === 'ALL' || targetChannel === 'WHATSAPP') {
-      if (delivery.whatsappStatus === 'FAILED') channelsToRetry.push('WHATSAPP');
+      if (delivery.whatsappStatus === 'FAILED' || (delivery.whatsappStatus === 'SKIPPED' && delivery.whatsappError)) {
+        channelsToRetry.push('WHATSAPP');
+      }
     }
     if (targetChannel === 'ALL' || targetChannel === 'EMAIL') {
-      if (delivery.emailStatus === 'FAILED') channelsToRetry.push('EMAIL');
+      const emailSkipped = delivery.emailStatus === 'SKIPPED' && Boolean(delivery.emailError);
+      if (delivery.emailStatus === 'FAILED' || emailSkipped) {
+        if (!this.validEmail(lead.email)) {
+          if (targetChannel === 'EMAIL' || channelsToRetry.length === 0) {
+            throw new BadRequestException('Email skipped – Lead email address is missing.');
+          }
+        } else {
+          channelsToRetry.push('EMAIL');
+        }
+      }
     }
 
     if (channelsToRetry.length === 0) {
@@ -579,7 +594,7 @@ export class SendDetailsService {
     const where: any = { customerId };
     if (leadId) where.leadId = leadId;
 
-    return this.prisma.sendDetailsDelivery.findMany({
+    const rows = await this.prisma.sendDetailsDelivery.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: 50,
@@ -587,5 +602,175 @@ export class SendDetailsService {
         user: { select: { id: true, firstName: true, lastName: true } },
       },
     });
+    return rows.map((row) => {
+      const meta = this.readMeta(row.channels);
+      return {
+        ...row,
+        channels: meta.selected,
+        whatsappRetryCount: meta.whatsappRetryCount,
+        emailRetryCount: meta.emailRetryCount,
+        attempts: meta.attempts,
+      };
+    });
+  }
+
+  private asStatus(value?: string | null): 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED' {
+    if (value === 'SENT' || value === 'FAILED' || value === 'SKIPPED' || value === 'PENDING') return value;
+    return 'FAILED';
+  }
+
+  private validEmail(value?: string | null): string {
+    const email = String(value || '').trim();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+  }
+
+  private overallStatus(whatsapp: string, email: string): 'COMPLETED' | 'PARTIALLY_COMPLETED' | 'FAILED' | 'PENDING' {
+    const statuses = [whatsapp, email];
+    if (statuses.some((status) => status === 'PENDING')) return 'PENDING';
+    const sent = statuses.filter((status) => status === 'SENT').length;
+    const failed = statuses.filter((status) => status === 'FAILED').length;
+    const skipped = statuses.filter((status) => status === 'SKIPPED').length;
+    if (sent > 0 && failed === 0 && skipped === 0) return 'COMPLETED';
+    if (sent > 0) return 'PARTIALLY_COMPLETED';
+    if (failed > 0) return 'FAILED';
+    return 'PENDING';
+  }
+
+  private readMeta(value: any) {
+    const empty = { selected: [] as string[], whatsappRetryCount: 0, emailRetryCount: 0, sentDocumentIds: [] as number[], attempts: [] as any[] };
+    if (Array.isArray(value)) return { ...empty, selected: value.map(String) };
+    if (!value || typeof value !== 'object') return empty;
+    return {
+      selected: Array.isArray(value.selected) ? value.selected.map(String) : empty.selected,
+      whatsappRetryCount: Number(value.whatsappRetryCount) || 0,
+      emailRetryCount: Number(value.emailRetryCount) || 0,
+      sentDocumentIds: Array.isArray(value.sentDocumentIds) ? value.sentDocumentIds.map(Number) : [],
+      attempts: Array.isArray(value.attempts) ? value.attempts.slice(-20) : [],
+    };
+  }
+
+  private sentDocumentIds(delivery: any): number[] {
+    return this.readMeta(delivery?.channels).sentDocumentIds;
+  }
+
+  private nextChannelMeta(delivery: any, channels: string[], whatsappResult: any, emailResult: any, isRetry: boolean) {
+    const meta = this.readMeta(delivery?.channels);
+    const selected = Array.from(new Set([...(meta.selected.length ? meta.selected : channels), ...channels]));
+    if (isRetry && channels.includes('WHATSAPP')) meta.whatsappRetryCount += 1;
+    if (isRetry && channels.includes('EMAIL')) meta.emailRetryCount += 1;
+    const sentDocumentIds = Array.from(new Set([...meta.sentDocumentIds, ...(whatsappResult.sentDocumentIds || [])]));
+    const attempts = [
+      ...meta.attempts,
+      ...channels.map((channel) => ({
+        at: new Date().toISOString(),
+        channel,
+        status: channel === 'WHATSAPP' ? whatsappResult.status : emailResult.status,
+        error: channel === 'WHATSAPP' ? whatsappResult.error || null : emailResult.error || null,
+        messageId: channel === 'WHATSAPP' ? whatsappResult.messageId || null : emailResult.messageId || null,
+      })),
+    ].slice(-20);
+    return { selected, whatsappRetryCount: meta.whatsappRetryCount, emailRetryCount: meta.emailRetryCount, sentDocumentIds, attempts };
+  }
+
+  private async loadDocumentFile(document: any): Promise<{ buffer: Buffer; filename: string } | { error: string }> {
+    const title = document?.title || 'Document';
+    const filename = document?.fileName || `${title}.pdf`;
+    const fileUrl = String(document?.fileUrl || '').trim();
+    if (!fileUrl) return { error: `Document "${title}" has no file.` };
+    if (fileUrl.startsWith('/uploads/')) {
+      const fullPath = path.join(process.cwd(), fileUrl.replace(/^\/+/, ''));
+      if (!fs.existsSync(fullPath)) return { error: `Document file is missing: ${title}.` };
+      return { buffer: fs.readFileSync(fullPath), filename };
+    }
+    if (/storage\.qbapp\.online\/documents\//i.test(fileUrl)) {
+      return { error: `Document "${title}" has not been uploaded. Add the PDF in Send Details before sending.` };
+    }
+    try {
+      const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 8000, maxContentLength: 16 * 1024 * 1024, validateStatus: () => true });
+      if (response.status >= 400 || !response.data?.byteLength) {
+        return { error: `Could not download "${title}" (HTTP ${response.status}).` };
+      }
+      return { buffer: Buffer.from(response.data), filename };
+    } catch {
+      return { error: `Could not download "${title}".` };
+    }
+  }
+
+  private providerReason(result: any): string {
+    return result?.message || result?.providerMessage || result?.details || result?.error || result?.reason || 'WhatsApp delivery failed';
+  }
+
+  private async deliverWhatsAppPackage(params: {
+    leadPhone: string;
+    leadName: string;
+    companyName: string;
+    lead: any;
+    documents: any[];
+    customerId: number;
+    userId?: number;
+    customNote?: string;
+    alreadySentIds: number[];
+  }): Promise<{ status: 'SENT' | 'FAILED' | 'SKIPPED'; messageId?: string | null; error?: string | null; sentDocumentIds?: number[] }> {
+    const pending = params.documents.filter((document) => !params.alreadySentIds.includes(Number(document.id)));
+    const sentDocumentIds = [...params.alreadySentIds];
+    const failures: string[] = [];
+    let messageId: string | null = null;
+
+    for (const document of pending) {
+      const loaded = await this.loadDocumentFile(document);
+      if ('error' in loaded) {
+        failures.push(loaded.error);
+        continue;
+      }
+      const sent = await this.whatsappService.sendDocumentMessage({
+        to: params.leadPhone,
+        pdfBuffer: loaded.buffer,
+        filename: loaded.filename,
+        caption: params.customNote || `${params.companyName}: ${document.title}`,
+        stageName: 'Details Sent',
+        requireDocument: true,
+      });
+      if (sent.error === 'INVALID_PHONE' || sent.reason === 'NO_PHONE') {
+        return { status: 'FAILED', error: 'Invalid phone number. Add the lead phone with country code before retrying.', sentDocumentIds };
+      }
+      if (sent.success && sent.messageId) {
+        messageId = sent.messageId;
+        sentDocumentIds.push(Number(document.id));
+      } else if (sent.skipped) {
+        return { status: 'SKIPPED', error: this.providerReason(sent), sentDocumentIds, messageId };
+      } else {
+        failures.push(`${document.title}: ${this.providerReason(sent)}`);
+      }
+    }
+
+    if (!params.documents.length) {
+      const template = await this.whatsappService.sendLeadStageMessage({
+        to: params.leadPhone,
+        stageKey: 'DETAILS_SENT',
+        variables: {
+          leadName: params.leadName,
+          leadTitle: params.lead.companyName || params.leadName,
+          companyName: params.companyName,
+        },
+        fallbackText: params.customNote || `Hello ${params.leadName}, ${params.companyName} shared the business details package.`,
+        stageName: 'Details Sent',
+        customerId: params.customerId,
+        userId: params.userId,
+      });
+      if (template.success && template.messageId) return { status: 'SENT', messageId: template.messageId, sentDocumentIds };
+      if (template.skipped) return { status: 'SKIPPED', error: this.providerReason(template), sentDocumentIds };
+      return { status: 'FAILED', error: this.providerReason(template), sentDocumentIds };
+    }
+
+    if ((messageId && failures.length === 0) || (pending.length === 0 && params.alreadySentIds.length > 0 && failures.length === 0)) {
+      return { status: 'SENT', messageId, sentDocumentIds };
+    }
+
+    return {
+      status: 'FAILED',
+      messageId,
+      error: failures.join(' ') || 'WhatsApp delivery failed',
+      sentDocumentIds,
+    };
   }
 }

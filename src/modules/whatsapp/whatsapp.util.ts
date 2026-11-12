@@ -4,6 +4,7 @@ export interface WhatsAppSendResult {
   success: boolean;
   provider?: string;
   messageId?: string;
+  mediaId?: string;
   /** Machine-readable error code (e.g. WHATSAPP_AUTH_ERROR, WHATSAPP_PERMISSION_ERROR, etc.) */
   errorCode?: string;
   /** HTTP status code from Meta or local check */

@@ -1289,12 +1289,16 @@ export class LeadRepository {
       this.logger.warn('[LEAD_IMAGE] photoFetchStatus=skipped reason=maps_not_configured');
       return;
     }
-    for (const lead of missing) {
+    await this.fetchPlacePhotos(missing, apiKey, now);
+  }
+
+  private async fetchPlacePhotos(leads: any[], apiKey: string, now: number) {
+    for (const lead of leads) {
       const placeId = String(lead.googlePlaceId).trim().replace(/^places\//, '');
       try {
         const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
           headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
-          timeout: 12000,
+          timeout: 8000,
           validateStatus: () => true,
         });
         if (response.status === 429) {
