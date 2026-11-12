@@ -5,6 +5,9 @@ import {
   buildStageAutomationIdempotencyKey,
   isLeadAlreadyOnVisitScheduledStage,
   isLeadEligibleForVisitorVisitDoneTransition,
+  isVisitScheduledStageToken,
+  canonicalLeadStageToken,
+  visitScheduledStageWhere,
   shouldAdvanceLeadToVisitScheduled,
   shouldMoveLeadToVisitScheduledOnExplicitSchedule,
 } from './lead-stage-automation.util';
@@ -60,6 +63,19 @@ describe('lead-stage-automation.util', () => {
     expect(isLeadAlreadyOnVisitScheduledStage({ stageId: 2 }, { id: 6 })).toBe(false);
   });
 
+  it('resolves tenant Visit Schedule aliases used by configured pipelines', () => {
+    const where = visitScheduledStageWhere(12) as any;
+    const match = where.AND[0].OR;
+    expect(match).toEqual(expect.arrayContaining([
+      { key: { in: ['VISIT_SCHEDULED', 'VISIT_SCHEDULE', 'SCHEDULE_VISIT', 'VISIT'] } },
+      { name: { in: ['Visit Scheduled', 'Visit Schedule', 'Schedule Visit'], mode: 'insensitive' } },
+    ]));
+    expect(where.AND).toContainEqual({ OR: [{ customerId: 12 }, { customerId: null }] });
+    expect(isVisitScheduledStageToken('VISIT_SCHEDULE')).toBe(true);
+    expect(isVisitScheduledStageToken('Visit Schedule')).toBe(true);
+    expect(canonicalLeadStageToken('Visit Schedule')).toBe('VISIT_SCHEDULED');
+  });
+
   it('explicit visit schedule moves leads from later pipeline stages (e.g. Final Call)', () => {
     const visitScheduled = { id: 6, sortOrder: 6 };
     expect(
@@ -94,6 +110,15 @@ describe('lead-stage-automation.util', () => {
       isLeadEligibleForVisitorVisitDoneTransition(
         { stageId: 6, status: 'NEW', stage: { id: 6, key: 'VISIT_SCHEDULED', sortOrder: 6 } },
         visitScheduled,
+      ),
+    ).toBe(true);
+  });
+
+  it('allows visitor completion from the configured Visit Schedule key', () => {
+    expect(
+      isLeadEligibleForVisitorVisitDoneTransition(
+        { stageId: 15, status: 'VISIT_SCHEDULED', stage: { id: 15, key: 'VISIT_SCHEDULE', name: 'Visit Schedule' } },
+        { id: 15 },
       ),
     ).toBe(true);
   });

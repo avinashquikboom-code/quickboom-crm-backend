@@ -46,6 +46,37 @@ function fixture() {
 }
 
 describe('pipeline stage and Visitor assignment contract', () => {
+  it('prefers the workspace Visit Schedule stage over a global default stage', async () => {
+    const f = fixture();
+    const globalDefault = {
+      id: 900,
+      customerId: null,
+      key: 'VISIT_SCHEDULED',
+      name: 'Visit Scheduled',
+      isActive: true,
+      deletedAt: null,
+      sortOrder: 6,
+    };
+    const workspaceStage = {
+      id: 901,
+      customerId: 7,
+      key: 'VISIT_SCHEDULE',
+      name: 'Visit Schedule',
+      isActive: true,
+      deletedAt: null,
+      sortOrder: 6,
+    };
+    f.prisma.leadStage.findFirst = jest.fn(async ({ where }) => {
+      if (where.customerId === 7) return workspaceStage;
+      if (where.customerId === null) return globalDefault;
+      return null;
+    });
+
+    await expect(f.repository.resolveVisitScheduledLeadStage(7)).resolves.toEqual(workspaceStage);
+    expect(f.prisma.leadStage.findFirst.mock.calls[0][0].where.customerId).toBe(7);
+    expect(f.prisma.leadStage.findFirst).toHaveBeenCalledTimes(1);
+  });
+
   it.each(stages)('uses configured stage ID for $key and never matches a different authoritative stage', async stage => {
     const f=fixture();
     const result=await f.repository.findAll(7,{stageId:stage.id,page:1,limit:50},admin);
@@ -120,43 +151,68 @@ describe('pipeline stage and Visitor assignment contract', () => {
     await f.service.manageVisit(7,5,21,{action:'COMPLETE'},visitor);
     expect(persist).toHaveBeenCalledWith(7,5,21,{action:'COMPLETE'});
   });
-  it('persists the selected Visitor and moves the lead to Visit Scheduled',async()=>{
+  it('schedules from Final Call into the tenant VISIT_SCHEDULE stage and records the transition',async()=>{
     const f=fixture();
+    const lead = f.leads[8]; // Final Call
+    const tenantVisitStage = {
+      ...scheduled,
+      id: 901,
+      key: 'VISIT_SCHEDULE',
+      name: 'Visit Schedule',
+      customerId: 7,
+    };
+    f.prisma.leadStage.findFirst = jest.fn(async ({ where }) =>
+      where.customerId === 7 ? tenantVisitStage : null,
+    );
     f.prisma.$transaction=jest.fn(async callback=>callback(f.prisma));
-    f.prisma.lead.findUnique=jest.fn(async()=>f.leads[0]);
+    f.prisma.lead.findUnique=jest.fn(async({where})=>f.leads.find(l=>l.id===where.id) || null);
     f.prisma.$transaction = jest.fn(async (cb) => cb(f.prisma));
     f.prisma.lead.update=jest.fn(async({data,where})=>{
-      const lead = f.leads.find(l => l.id === where?.id) || f.leads[0];
-      Object.assign(lead, data);
-      if (data?.stageId === scheduled.id) {
-        lead.stageId = scheduled.id;
-        lead.status = 'VISIT_SCHEDULED';
-        lead.stage = scheduled;
+      const updatedLead = f.leads.find(l => l.id === where?.id) || lead;
+      Object.assign(updatedLead, data);
+      if (data?.stageId === tenantVisitStage.id) {
+        updatedLead.stageId = tenantVisitStage.id;
+        updatedLead.status = 'VISIT_SCHEDULED';
+        updatedLead.stage = tenantVisitStage;
       }
-      return lead;
+      return updatedLead;
     });
-    f.prisma.lead.updateMany = jest.fn(async ({ data }) => {
-      Object.assign(f.leads[0], data);
-      if (data?.stageId === scheduled.id) {
-        f.leads[0].stageId = scheduled.id;
-        f.leads[0].status = 'VISIT_SCHEDULED';
-        f.leads[0].stage = scheduled;
+    f.prisma.lead.updateMany = jest.fn(async ({ data, where }) => {
+      const updatedLead = f.leads.find(l => l.id === where?.id) || lead;
+      Object.assign(updatedLead, data);
+      if (data?.stageId === tenantVisitStage.id) {
+        updatedLead.stageId = tenantVisitStage.id;
+        updatedLead.status = 'VISIT_SCHEDULED';
+        updatedLead.stage = tenantVisitStage;
       }
       return { count: 1 };
     });
-    f.prisma.lead.findFirst=jest.fn(async()=>({...f.leads[0],visits:f.visits}));
+    f.prisma.lead.findFirst=jest.fn(async({where})=>{
+      const found = f.leads.find(l => l.id === where?.id) || lead;
+      return {...found,visits:f.visits};
+    });
     f.prisma.leadActivityTimeline={create:jest.fn(async()=>({id:1}))};
     f.prisma.leadActivity={create:jest.fn(async()=>({id:1}))};
-    f.prisma.leadStatusHistory={create:jest.fn(async()=>({id:1}))};
+    f.prisma.leadStatusHistory={create:jest.fn(async({data})=>({id:1,...data}))};
     f.prisma.visit.create=jest.fn(async({data})=>{const saved={...data,id:99};f.visits.push(saved);return saved;});
-    const result=await f.repository.manageVisit(7,1,1,{action:'SCHEDULE',employeeId:31,date:'2026-11-01',time:'10:30 AM'});
+    const result=await f.repository.manageVisit(7,lead.id,1,{action:'SCHEDULE',employeeId:31,date:'2026-11-01',time:'10:30 AM'});
     expect(f.prisma.$transaction.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(f.visits[0].employeeId).toBe(31);
     expect(f.visits[0].time).toBe('10:30 AM');
-    expect((f.leads[0] as any).employeeId).toBe(31);
-    expect(f.leads[0].stageId).toBe(scheduled.id);
-    expect(f.leads[0].status).toBe('VISIT_SCHEDULED');
+    expect((lead as any).employeeId).toBe(31);
+    expect(lead.stageId).toBe(tenantVisitStage.id);
+    expect(lead.status).toBe('VISIT_SCHEDULED');
+    expect(lead.stage).toEqual(tenantVisitStage);
+    expect(f.prisma.leadStatusHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        leadId: lead.id,
+        fromStageId: stages[8].id,
+        toStageId: tenantVisitStage.id,
+        toStatus: 'VISIT_SCHEDULED',
+      }),
+    }));
     expect(result!.assignedVisitorId).toBe(31);
+    expect(result!.stageId).toBe(tenantVisitStage.id);
   });
 
   it('blocks Visitor bypasses through other stage-changing lead handlers while preserving non-Visitor access', async()=>{

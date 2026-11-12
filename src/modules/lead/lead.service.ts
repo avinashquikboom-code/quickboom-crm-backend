@@ -32,6 +32,8 @@ import {
   buildStageAutomationIdempotencyKey,
   validateTemplateVariableBag,
   didLeadPipelineStageChange,
+  canonicalLeadStageToken,
+  isVisitScheduledStageToken,
   isLeadEligibleForVisitorVisitDoneTransition,
   leadStageMatchWhere,
   tenantLeadStageScope,
@@ -1440,12 +1442,9 @@ export class LeadService {
         const stageName = ((lead as any).stage?.name || '').toUpperCase();
         const status = (lead.status || '').toUpperCase();
         const isVisitScheduled =
-          status === 'VISIT_SCHEDULED' ||
-          status === 'VISIT' ||
-          stageKey === 'VISIT_SCHEDULED' ||
-          stageKey === 'VISIT' ||
-          stageName === 'VISIT SCHEDULED' ||
-          stageName === 'VISIT';
+          isVisitScheduledStageToken(status) ||
+          isVisitScheduledStageToken(stageKey) ||
+          isVisitScheduledStageToken(stageName);
 
         if (!isVisitScheduled) {
           throw new ForbiddenException('Visitor employee can only access leads in Visit Scheduled stage.');
@@ -1558,12 +1557,9 @@ export class LeadService {
       const currentStageKey = (lead.stage?.key || '').toUpperCase();
       const currentStageName = (lead.stage?.name || '').toUpperCase();
       const isCurrentVisitScheduled =
-        currentStatus === 'VISIT_SCHEDULED' ||
-        currentStatus === 'VISIT' ||
-        currentStageKey === 'VISIT_SCHEDULED' ||
-        currentStageKey === 'VISIT' ||
-        currentStageName === 'VISIT SCHEDULED' ||
-        currentStageName.includes('VISIT SCHEDULED');
+        isVisitScheduledStageToken(currentStatus) ||
+        isVisitScheduledStageToken(currentStageKey) ||
+        isVisitScheduledStageToken(currentStageName);
 
       if (!isCurrentVisitScheduled) {
         throw new ForbiddenException('Visitors can only update leads that are currently scheduled for a visit.');
@@ -2623,8 +2619,8 @@ export class LeadService {
       }
 
       // 1. Resolve template mapping strictly for the NEW stage
-      const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normLeadStageKey = (lead.stage?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normNewStage = canonicalLeadStageToken(newStageName);
+      const normLeadStageKey = canonicalLeadStageToken(lead.stage?.key);
       const targetStageKey = normNewStage || normLeadStageKey;
 
       const candidateKeys = Array.from(
@@ -5018,8 +5014,8 @@ Sent by ${senderOrgName} via CRM.
         }).catch(() => null);
       }
 
-      const normNewStage = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normNewStageKey = (stageConfig?.key || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const normNewStage = canonicalLeadStageToken(newStageName);
+      const normNewStageKey = canonicalLeadStageToken(stageConfig?.key);
       const targetStageKey = normNewStageKey || normNewStage;
       const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normNewStage] || targetStageKey;
 
