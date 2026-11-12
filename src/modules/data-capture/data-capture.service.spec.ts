@@ -1,3 +1,5 @@
+import axios from 'axios';
+import type { Response } from 'express';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataCaptureService } from './data-capture.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -61,6 +63,38 @@ describe('DataCaptureService', () => {
 
     service = module.get<DataCaptureService>(DataCaptureService);
     prisma = module.get<PrismaService>(PrismaService);
+  });
+
+  it('refreshes an expired stored Places photo and serves the new photo', async () => {
+    const oldName = 'places/ChIJtest/photos/expired';
+    const newName = 'places/ChIJtest/photos/current';
+    mockPrisma.dataCapturePlace.findFirst.mockResolvedValueOnce({
+      id: 1, googlePlaceId: 'ChIJtest', photos: [oldName],
+    }).mockResolvedValueOnce({
+      id: 1, googlePlaceId: 'ChIJtest', photos: [oldName],
+    });
+    mockIntegrationSettingsService.getGoogleMapsConfig.mockImplementationOnce(async () =>
+      ({ isEnabled: true, apiKey: 'test-key' }),
+    ).mockImplementationOnce(async () =>
+      ({ isEnabled: true, apiKey: 'test-key' }),
+    ).mockImplementationOnce(async () =>
+      ({ isEnabled: true, apiKey: 'test-key' }),
+    );
+    const get = jest.spyOn(axios, 'get')
+      .mockResolvedValueOnce({ status: 404, data: {} })
+      .mockResolvedValueOnce({ status: 404, headers: {}, data: {} })
+      .mockResolvedValueOnce({ status: 200, data: { photos: [{ name: newName }] } })
+      .mockResolvedValueOnce({ status: 200, data: { photoUri: 'https://lh3.googleusercontent.com/real' } });
+    const res = { setHeader: jest.fn(), redirect: jest.fn() };
+    try {
+      await service.proxyPlacePhoto('ChIJtest', 0, res as unknown as Response);
+      expect(res.redirect).toHaveBeenCalledWith(302, 'https://lh3.googleusercontent.com/real');
+      expect(mockPrisma.dataCapturePlace.update).toHaveBeenCalledWith({
+        where: { id: 1 }, data: { photos: [newName] },
+      });
+    } finally {
+      get.mockRestore();
+    }
   });
 
   describe('listPlaces with status=ALL and source=ALL (Requirements 8, 9, 17, 25)', () => {

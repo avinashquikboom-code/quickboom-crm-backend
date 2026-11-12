@@ -257,6 +257,7 @@ export class DataCaptureService implements OnModuleInit {
     maxHeight: number | undefined,
     maxWidth: number | undefined,
     res: Response,
+    onUnavailable?: () => Promise<void>,
   ): Promise<void> {
     const rawRef = (photoRef || '').trim();
     if (!rawRef) {
@@ -327,6 +328,7 @@ export class DataCaptureService implements OnModuleInit {
       return;
     }
 
+    if (onUnavailable) return onUnavailable();
     res.status(404).json({ success: false, message: 'Photo unavailable' });
   }
 
@@ -337,6 +339,7 @@ export class DataCaptureService implements OnModuleInit {
     placeIdOrGoogleId: string,
     photoIndex: number | undefined,
     res: Response,
+    refresh = false,
   ): Promise<void> {
     const rawId = String(placeIdOrGoogleId || '').trim();
     const numId = Number(rawId);
@@ -360,14 +363,17 @@ export class DataCaptureService implements OnModuleInit {
       return;
     }
 
-    let storedPhotos = place
-      ? this.normalizeStoredPhotos(place.photos || (place.rawData as any)?.photos || (place.rawData as any)?.googlePhotos).googlePhotos
+    let storedPhotos = place && !refresh
+      ? [place.photos, (place.rawData as any)?.photos, (place.rawData as any)?.googlePhotos]
+          .map((value) => this.normalizeStoredPhotos(value).googlePhotos)
+          .find((photos) => photos.length > 0) ?? []
       : [];
 
     // Imported leads may retain their Google Place ID while the capture record
     // has no photo (or has already been removed). Resolve the real Places photo
     // resource on demand using the existing server-side Maps credentials.
-    if (!storedPhotos.length) {
+    const usedStoredPhotos = storedPhotos.length > 0;
+    if (!usedStoredPhotos) {
       try {
         const config = await this.integrationSettingsService.getGoogleMapsConfig();
         const apiKey = config?.apiKey?.trim();
@@ -413,7 +419,10 @@ export class DataCaptureService implements OnModuleInit {
     const idx = photoIndex !== undefined && Number.isInteger(Number(photoIndex)) ? Number(photoIndex) : 0;
     const selected = storedPhotos[idx] || storedPhotos[0];
     if (selected?.name) {
-      return this.proxyPhoto(selected.name, 800, 800, res);
+      return this.proxyPhoto(
+        selected.name, 800, 800, res,
+        usedStoredPhotos ? () => this.proxyPlacePhoto(rawId, photoIndex, res, true) : undefined,
+      );
     }
     if (selected?.url) {
       return this.proxyPhoto(selected.url, 800, 800, res);
