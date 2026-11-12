@@ -86,6 +86,11 @@ export class CreateMetaTemplateDto {
   @IsOptional()
   @IsBoolean()
   isLocalActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'When true, submits the template to Meta Graph API before saving', default: true })
+  @IsOptional()
+  @IsBoolean()
+  submitToMeta?: boolean;
 }
 
 export class UpdateMetaTemplateDto {
@@ -282,6 +287,17 @@ export class QueryMetaTemplateDto {
   @IsInt()
   @Min(0)
   offset?: number;
+
+  @ApiPropertyOptional({ description: 'Template source filter (META_SYNC, QB_SINGLE, QB_CAMPAIGN, SINGLE, SYNCED)' })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim().toUpperCase();
+    if (!trimmed || trimmed === 'ALL' || trimmed === 'UNDEFINED') return undefined;
+    return trimmed;
+  })
+  @IsString()
+  source?: string;
 
   @ApiPropertyOptional({ description: 'Template type (e.g. meta, WHATSAPP)' })
   @IsOptional()
