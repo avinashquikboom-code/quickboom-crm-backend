@@ -1866,7 +1866,12 @@ export class LeadService {
     const movingToVisitDone = this.isVisitDoneStage(resolvedStatus, stageName, targetStageKey);
     const actorIsVisitor = await this.leadRepository.isVisitorUser(user);
     if (movingToVisitDone && !actorIsVisitor) {
-      throw new ForbiddenException('Only a visitor employee can mark a lead as Visit Done.');
+      const teleBpo = this.leadRepository.isTelecallerOrBpoStaff(user);
+      throw new ForbiddenException(
+        teleBpo
+          ? 'Telecaller and BPO employees can schedule visits only. Visit Done must be completed by the assigned visitor employee.'
+          : 'Only a visitor employee can mark a lead as Visit Done.',
+      );
     }
 
     if (actorIsVisitor) {
@@ -3509,7 +3514,15 @@ export class LeadService {
   ) {
     const lead = await this.getLeadById(customerId, leadId, user);
     if (dto.action === 'COMPLETE' && !(await this.leadRepository.isVisitorUser(user))) {
-      throw new ForbiddenException('Only a visitor employee can mark a visit as done.');
+      const teleBpo = this.leadRepository.isTelecallerOrBpoStaff(user);
+      throw new ForbiddenException(
+        teleBpo
+          ? 'Telecaller and BPO employees can schedule visits only. Visit Done must be completed by the assigned visitor employee.'
+          : 'Only a visitor employee can mark a visit as done.',
+      );
+    }
+    if (dto.action === 'SCHEDULE' && (await this.leadRepository.isVisitorUser(user))) {
+      throw new ForbiddenException('Visitors cannot schedule visits. Telecaller or BPO staff schedule visits for visitor employees.');
     }
     if (await this.leadRepository.isVisitorUser(user)) {
       if (dto.action === 'SCHEDULE' || dto.employeeId != null) {
