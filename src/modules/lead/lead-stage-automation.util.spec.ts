@@ -1,0 +1,59 @@
+import {
+  didLeadPipelineStageChange,
+  leadStageMatchWhere,
+  stripUnresolvedTemplatePlaceholders,
+  buildStageAutomationIdempotencyKey,
+} from './lead-stage-automation.util';
+
+describe('lead-stage-automation.util', () => {
+  it('detects pipeline movement by stageId even when labels match', () => {
+    expect(
+      didLeadPipelineStageChange({
+        previousStageId: 1,
+        nextStageId: 2,
+        previousStageName: 'Connected',
+        nextStageName: 'Connected',
+      }),
+    ).toBe(true);
+  });
+
+  it('ignores legacy status-only noise when stageId is unchanged', () => {
+    expect(
+      didLeadPipelineStageChange({
+        previousStageId: 5,
+        nextStageId: 5,
+        previousStageName: 'Proposal',
+        nextStageName: 'Proposal',
+        previousStatus: 'NEGOTIATION',
+        nextStatus: 'PROPOSAL_SENT',
+      }),
+    ).toBe(false);
+  });
+
+  it('builds tenant-scoped stage match without duplicate OR keys', () => {
+    const where = leadStageMatchWhere('Qualified', 'QUALIFIED', 12);
+    expect(where).toMatchObject({
+      deletedAt: null,
+      AND: expect.arrayContaining([
+        expect.objectContaining({ OR: expect.any(Array) }),
+        { OR: [{ customerId: 12 }, { customerId: null }] },
+      ]),
+    });
+  });
+
+  it('strips unresolved placeholders', () => {
+    expect(stripUnresolvedTemplatePlaceholders('Hi {{lead_name}}, welcome!')).toBe('Hi , welcome!');
+  });
+
+  it('builds stable idempotency keys', () => {
+    const key = buildStageAutomationIdempotencyKey({
+      customerId: 1,
+      leadId: 99,
+      channel: 'WHATSAPP',
+      previousStageId: 2,
+      nextStageId: 3,
+      templateId: 7,
+    });
+    expect(key).toBe('stage_1_99_2_3_WHATSAPP_7');
+  });
+});

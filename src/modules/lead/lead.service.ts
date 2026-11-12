@@ -27,6 +27,11 @@ import {
   normalizeLeadStatus,
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
+import {
+  didLeadPipelineStageChange,
+  leadStageMatchWhere,
+  tenantLeadStageScope,
+} from './lead-stage-automation.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { EmailService } from '../email/email.service';
@@ -1531,9 +1536,14 @@ export class LeadService {
     };
 
     const previousStageName = lead.stage?.name || lead.status || 'NEW';
-    const isStageChanged =
-      (resolvedStageId !== undefined && resolvedStageId !== lead.stageId) ||
-      (resolvedStatus !== undefined && resolvedStatus !== lead.status);
+    const isStageChanged = didLeadPipelineStageChange({
+      previousStageId: lead.stageId,
+      nextStageId: resolvedStageId ?? lead.stageId,
+      previousStageName,
+      nextStageName: stageName ?? lead.stage?.name,
+      previousStatus: lead.status,
+      nextStatus: resolvedStatus ?? lead.status,
+    });
 
     if (isStageChanged && (await this.leadRepository.isVisitorUser(user))) {
       const currentStatus = (lead.status || '').toUpperCase();
@@ -1663,6 +1673,7 @@ export class LeadService {
             dto.customBody,
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
+            lead.stageId,
           )
         : Promise.resolve(emailNotification);
       const whatsappPromise = dto.sendWhatsapp !== false
@@ -1677,6 +1688,7 @@ export class LeadService {
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
             dto.whatsappTemplateId,
+            lead.stageId,
           )
         : Promise.resolve(whatsappNotification);
 
@@ -1868,18 +1880,16 @@ export class LeadService {
     // Detect if stage or status actually changed
     const previousStageName = lead.stage?.name || lead.status || 'New';
     const newStageName = stageName || resolvedStatus;
+    const previousStageId = lead.stageId ?? null;
 
-    const normPrev = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-    const normNew = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-    const normPrevStatus = (lead.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-    const normResolvedStatus = (resolvedStatus || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-
-    const isStageIdChanged = resolvedStageId !== undefined && resolvedStageId !== lead.stageId;
-    const isStageNameChanged = normPrev !== normNew;
-    const isStatusChanged = normPrevStatus !== normResolvedStatus;
-
-    // A stage change occurs if the stage ID changed, or both the name/status normalized keys changed
-    const isStageChanged = isStageIdChanged || isStageNameChanged || isStatusChanged;
+    const isStageChanged = didLeadPipelineStageChange({
+      previousStageId,
+      nextStageId: resolvedStageId ?? lead.stageId,
+      previousStageName,
+      nextStageName: newStageName,
+      previousStatus: lead.status,
+      nextStatus: resolvedStatus,
+    });
 
     let emailNotification: {
       sent: boolean;
@@ -1956,6 +1966,7 @@ export class LeadService {
             dto.customBody,
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
+            previousStageId,
           )
         : Promise.resolve(emailNotification);
 
@@ -1971,6 +1982,7 @@ export class LeadService {
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
             dto.whatsappTemplateId,
+            previousStageId,
           )
         : Promise.resolve(whatsappNotification);
 
@@ -2515,6 +2527,7 @@ export class LeadService {
     customBody?: string,
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' | 'MANUAL_SEND' = 'LEAD_STAGE_CHANGED',
     explicitNewStageId?: number,
+    previousStageId?: number | null,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -2525,13 +2538,17 @@ export class LeadService {
   }> {
     try {
       // 0. Do NOT send email if stage did not actually change (for stage change events)
-      const normPrevStage = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normNewStageForCheck = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const effectiveNewStageId = explicitNewStageId ?? lead.stageId ?? lead.stage?.id;
       if (
         eventType === 'LEAD_STAGE_CHANGED' &&
-        normPrevStage &&
-        normNewStageForCheck &&
-        normPrevStage === normNewStageForCheck
+        !didLeadPipelineStageChange({
+          previousStageId,
+          nextStageId: effectiveNewStageId,
+          previousStageName,
+          nextStageName: newStageName,
+          previousStatus: lead.status,
+          nextStatus: lead.status,
+        })
       ) {
         return {
           sent: false,
@@ -2553,28 +2570,10 @@ export class LeadService {
         }).catch(() => null);
       }
       if (!stageConfig && newStageName && this.prisma.leadStage) {
-        const numCustId = lead.customerId ? Number(lead.customerId) : null;
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: {
-            deletedAt: null,
-            AND: [
-              {
-                OR: [
-                  { name: { equals: newStageName, mode: 'insensitive' } },
-                  { key: (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_') },
-                ],
-              },
-              numCustId
-                ? {
-                    OR: [
-                      { customerId: numCustId },
-                      { customerId: null },
-                    ],
-                  }
-                : { customerId: null },
-            ],
-          },
+          where: leadStageMatchWhere(newStageName, stageConfig?.key, lead.customerId ?? customerId),
           include: { emailTemplate: true },
+          orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
         }).catch(() => null);
       }
 
@@ -4606,6 +4605,7 @@ Sent by ${senderOrgName} via CRM.
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' | 'MANUAL_SEND' = 'LEAD_STAGE_CHANGED',
     explicitNewStageId?: number,
     whatsappTemplateId?: number,
+    previousStageId?: number | null,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -4620,13 +4620,17 @@ Sent by ${senderOrgName} via CRM.
       this.logger.log(`[WHATSAPP] Handling ${eventType} WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
 
       // 0. Do NOT send if stage did not actually change for stage change events
-      const normPrevStage = (previousStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-      const normNewStageForCheck = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+      const effectiveNewStageId = explicitNewStageId ?? lead.stageId ?? lead.stage?.id;
       if (
         eventType === 'LEAD_STAGE_CHANGED' &&
-        normPrevStage &&
-        normNewStageForCheck &&
-        normPrevStage === normNewStageForCheck
+        !didLeadPipelineStageChange({
+          previousStageId,
+          nextStageId: effectiveNewStageId,
+          previousStageName,
+          nextStageName: newStageName,
+          previousStatus: lead.status,
+          nextStatus: lead.status,
+        })
       ) {
         this.logger.log(`[WHATSAPP] Stage unchanged (${previousStageName} → ${newStageName}). Skipping automatic WhatsApp.`);
         return {
@@ -4705,18 +4709,8 @@ Sent by ${senderOrgName} via CRM.
         }).catch(() => null);
       }
       if (!stageConfig && newStageName && this.prisma.leadStage) {
-        const normKey = (newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: {
-            deletedAt: null,
-            OR: [
-              { name: { equals: newStageName, mode: 'insensitive' } },
-              { key: normKey },
-            ],
-            ...(customerId
-              ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
-              : { customerId: null }),
-          },
+          where: leadStageMatchWhere(newStageName, stageConfig?.key, customerId),
           include: { whatsappTemplate: true },
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
         }).catch(() => null);
@@ -4766,10 +4760,10 @@ Sent by ${senderOrgName} via CRM.
         targetMetaTemplate = await this.prisma.metaTemplate.findFirst({
           where: {
             deletedAt: null,
-            OR: [{ templateName }, { name: templateName }],
-            ...(customerId
-              ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
-              : { customerId: null }),
+            AND: [
+              { OR: [{ templateName }, { name: templateName }] },
+              tenantLeadStageScope(customerId),
+            ],
           },
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
         }).catch(() => null);
@@ -4789,14 +4783,16 @@ Sent by ${senderOrgName} via CRM.
             deletedAt: null,
             isLocalActive: true,
             status: 'APPROVED',
-            OR: [
-              { key: { in: candidateKeys } },
-              { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
-              { name: { in: candidateKeys } },
+            AND: [
+              {
+                OR: [
+                  { key: { in: candidateKeys } },
+                  { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
+                  { name: { in: candidateKeys } },
+                ],
+              },
+              tenantLeadStageScope(customerId),
             ],
-            ...(customerId
-              ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
-              : { customerId: null }),
           },
           orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
         }).catch(() => null);
