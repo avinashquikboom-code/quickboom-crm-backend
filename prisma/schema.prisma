@@ -127,6 +127,7 @@ model Customer {
   sendDetailsDeliveries    SendDetailsDelivery[]
   leadStageWhatsappDeliveries LeadStageWhatsAppDelivery[]
   leadStageEmailDeliveries    LeadStageEmailDelivery[]
+  leadPlanProposals           LeadPlanProposal[]
   hrmReportSetting         HrmReportSetting?
   hrmMonthlyReportRuns     HrmMonthlyReportRun[]
   hrmEmployeeMonthlyReports HrmEmployeeMonthlyReport[]
@@ -165,6 +166,7 @@ model Plan {
   subscriptions    CustomerSubscription[]
   monthlySchedules MonthlySchedule[]
   commissions      Commission[]
+  leadPlanProposals LeadPlanProposal[]
 
   @@index([deletedAt])
 }
@@ -298,6 +300,7 @@ model User {
   sendDetailsDeliveries        SendDetailsDelivery[]
   leadStageWhatsappDeliveries  LeadStageWhatsAppDelivery[]
   leadStageEmailDeliveries     LeadStageEmailDelivery[]
+  leadPlanProposals            LeadPlanProposal[]
 
   @@index([customerId])
   @@index([email])
@@ -454,6 +457,13 @@ model Lead {
   sendDetailsDeliveries      SendDetailsDelivery[]
   stageWhatsappDeliveries    LeadStageWhatsAppDelivery[]
   stageEmailDeliveries       LeadStageEmailDelivery[]
+  planProposals              LeadPlanProposal[]
+
+  planPreferenceType         String?
+  customerRequirements       String?                  @db.Text
+  planPreferenceReady        Boolean                  @default(false)
+  activePlanProposalType     String?
+  planProposalWorkflowAt     DateTime?
 
   @@index([customerId])
   @@index([status])
@@ -3934,6 +3944,48 @@ model LeadStageWhatsAppDelivery {
   @@index([metaMessageId])
   @@index([createdAt])
   @@map("lead_stage_whatsapp_deliveries")
+}
+
+model LeadPlanProposal {
+  id                   Int       @id @default(autoincrement())
+  customerId           Int
+  leadId               Int
+  version              Int       @default(1)
+  proposalType         String
+  status               String    @default("DRAFT")
+  planId               Int?
+  planName             String?
+  planPrice            Float?
+  currency             String    @default("INR")
+  customerRequirements String?   @db.Text
+  customConfig         Json?
+  discount             Float?    @default(0)
+  validUntil           DateTime?
+  terms                String?   @db.Text
+  documentUrl          String?
+  emailStatus          String    @default("PENDING")
+  emailMessageId       String?
+  emailError           String?   @db.Text
+  emailSentAt          DateTime?
+  whatsappStatus       String    @default("PENDING")
+  whatsappMessageId    String?
+  whatsappError        String?   @db.Text
+  whatsappSentAt       DateTime?
+  idempotencyKey       String?   @unique
+  retryCount           Int       @default(0)
+  createdById          Int?
+  sentAt               DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  plan      Plan?    @relation(fields: [planId], references: [id], onDelete: SetNull)
+  createdBy User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([leadId, version])
+  @@index([customerId, leadId])
+  @@map("lead_plan_proposals")
 }
 
 model LeadStageEmailDelivery {

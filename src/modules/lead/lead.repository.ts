@@ -1683,6 +1683,22 @@ export class LeadRepository {
     }
   }
 
+  private async attachPlanProposals(lead: any): Promise<void> {
+    if (!lead?.id) return;
+    try {
+      const where: { leadId: number; customerId?: number } = { leadId: Number(lead.id) };
+      if (lead.customerId != null) where.customerId = Number(lead.customerId);
+      lead.planProposals = await this.prisma.leadPlanProposal.findMany({
+        where,
+        orderBy: { version: 'desc' },
+        take: 20,
+      });
+    } catch (err: any) {
+      this.logger.warn(`[PLAN_PROPOSAL] Skipping planProposals include: ${err?.message || err}`);
+      lead.planProposals = [];
+    }
+  }
+
   public enrichLeadRecord(lead: any): any {
     if (!lead) return lead;
     const isFake = (s: any) =>
@@ -1881,6 +1897,7 @@ export class LeadRepository {
             include: { items: true },
             orderBy: { createdAt: 'desc' },
           },
+          planProposals: { orderBy: { version: 'desc' }, take: 20 },
           socialProfiles: true,
           images: { select: { url: true, isPrimary: true }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }] },
           visitPhotos: { select: { url: true }, orderBy: { createdAt: 'desc' }, take: 4 },
@@ -1896,6 +1913,7 @@ export class LeadRepository {
         await this.resolveMissingLeadBusinessNames([result]);
         await this.attachPlacePhotos([result]);
         await this.resolveMissingLeadVisitedAndWonEmployees([result]);
+        await this.attachPlanProposals(result);
       }
       return this.enrichLeadRecord(result);
     } catch (err: any) {
@@ -1941,6 +1959,7 @@ export class LeadRepository {
         await this.resolveMissingLeadBusinessNames([fallbackResult]);
         await this.attachPlacePhotos([fallbackResult]);
         await this.resolveMissingLeadVisitedAndWonEmployees([fallbackResult]);
+        await this.attachPlanProposals(fallbackResult);
       }
       return this.enrichLeadRecord(fallbackResult);
     }
