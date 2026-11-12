@@ -41,6 +41,11 @@ import {
   SendLeadEmailDto,
   BulkDeleteLeadsDto,
 } from './dto/lead.dto';
+import {
+  CreateCustomPlanProposalDto,
+  ResendPlanProposalDto,
+  SetPlanPreferenceDto,
+} from './dto/lead-plan-proposal.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -598,6 +603,85 @@ export class LeadController {
     @Body() dto: StartWorkDto,
   ) {
     return this.leadService.startWork(customerId, id, userId, dto);
+  }
+
+  @Get(':id/plan-proposals')
+  @CrmCategory('BPO')
+  @ApiOperation({ summary: 'List plan proposal workflow state and version history for a lead' })
+  async listPlanProposals(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.leadService.listPlanProposals(customerId, id);
+  }
+
+  @Post(':id/plan-proposals/preference')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'PROPOSALS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Record customer plan preference and requirements before sending proposals' })
+  async setPlanProposalPreference(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: SetPlanPreferenceDto,
+  ) {
+    return this.leadService.setPlanProposalPreference(customerId, id, userId, dto);
+  }
+
+  @Get(':id/plan-proposals/default/preview')
+  @CrmCategory('BPO')
+  @ApiOperation({ summary: 'Preview default subscription plan proposal content' })
+  async previewDefaultPlanProposal(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+    return this.leadService.previewDefaultPlanProposal(customerId, id);
+  }
+
+  @Post(':id/plan-proposals/default/send')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'PROPOSALS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Send default plan proposal via email and WhatsApp' })
+  async sendDefaultPlanProposal(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.leadService.sendDefaultPlanProposal(customerId, id, userId);
+  }
+
+  @Post(':id/plan-proposals/custom')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'PROPOSALS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Create and optionally send a customized plan proposal' })
+  async createCustomPlanProposal(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateCustomPlanProposalDto,
+  ) {
+    return this.leadService.createCustomPlanProposal(customerId, id, userId, dto);
+  }
+
+  @Post(':id/plan-proposals/:proposalId/send')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'PROPOSALS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Send a drafted plan proposal version' })
+  async sendPlanProposalDraft(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Param('proposalId') proposalId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.leadService.sendPlanProposalDraft(customerId, id, proposalId, userId);
+  }
+
+  @Post(':id/plan-proposals/:proposalId/resend')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'PROPOSALS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Resend plan proposal on failed email or WhatsApp channels' })
+  async resendPlanProposal(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Param('proposalId') proposalId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ResendPlanProposalDto,
+  ) {
+    return this.leadService.resendPlanProposal(customerId, id, proposalId, userId, dto);
   }
 
   @Post(':id/send-details')

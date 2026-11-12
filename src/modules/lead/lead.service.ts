@@ -60,6 +60,12 @@ import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import { S3Service } from '../s3/s3.service';
 import { SendDetailsService } from '../send-details/send-details.service';
+import { LeadPlanProposalService } from './lead-plan-proposal.service';
+import {
+  CreateCustomPlanProposalDto,
+  ResendPlanProposalDto,
+  SetPlanPreferenceDto,
+} from './dto/lead-plan-proposal.dto';
 
 function maskEmail(email: string): string {
   if (!email || !email.includes('@')) return '***';
@@ -91,6 +97,7 @@ export class LeadService {
     @Optional() private readonly sendDetailsService?: SendDetailsService,
     @Optional() private readonly stageWhatsappDeliveryService?: LeadStageWhatsappDeliveryService,
     @Optional() private readonly stageEmailDeliveryService?: LeadStageEmailDeliveryService,
+    @Optional() private readonly leadPlanProposalService?: LeadPlanProposalService,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
@@ -1774,6 +1781,19 @@ export class LeadService {
             this.logger.error(`[SEND_DETAILS] Automatic delivery failed for Lead #${id}: ${err?.message}`, err?.stack);
           });
       }
+
+      if (
+        this.leadPlanProposalService?.isProposalStageToken(
+          updatedLead.stage?.key || newStageName,
+          updatedLead.status,
+        )
+      ) {
+        this.leadPlanProposalService
+          .initiateWorkflow(Number(customerId), updatedLead)
+          .catch((err) => {
+            this.logger.error(`[PLAN_PROPOSAL] Workflow init failed for Lead #${id}: ${err?.message}`, err?.stack);
+          });
+      }
     }
 
     const effectiveNewStageName = stageName || updatedLead.stage?.name || resolvedStatus || updatedLead.status || 'UPDATED';
@@ -2075,6 +2095,19 @@ export class LeadService {
           )
           .catch((err) => {
             this.logger.error(`[SEND_DETAILS] Automatic delivery failed for Lead #${id}: ${err?.message}`, err?.stack);
+          });
+      }
+
+      if (
+        this.leadPlanProposalService?.isProposalStageToken(
+          updatedLead.stage?.key || newStageName,
+          updatedLead.status,
+        )
+      ) {
+        this.leadPlanProposalService
+          .initiateWorkflow(Number(customerId), updatedLead)
+          .catch((err) => {
+            this.logger.error(`[PLAN_PROPOSAL] Workflow init failed for Lead #${id}: ${err?.message}`, err?.stack);
           });
       }
     }
@@ -2572,6 +2605,18 @@ export class LeadService {
           messageId: null,
           error: null,
           message: 'Stage did not change',
+        };
+      }
+
+      const proposalStageKey = canonicalLeadStageToken(newStageName || lead.stage?.key || lead.status);
+      if (['PROPOSAL', 'PROPOSAL_SENT'].includes(proposalStageKey) && eventType === 'LEAD_STAGE_CHANGED') {
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: null,
+          message: 'Plan proposal workflow handles PROPOSAL stage email notifications.',
         };
       }
 
@@ -4859,6 +4904,18 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
+      const proposalStageKey = canonicalLeadStageToken(newStageName || lead.stage?.key || lead.status);
+      if (['PROPOSAL', 'PROPOSAL_SENT'].includes(proposalStageKey) && eventType === 'LEAD_STAGE_CHANGED') {
+        return {
+          sent: false,
+          status: 'SKIPPED',
+          recipient: null,
+          messageId: null,
+          error: null,
+          message: 'Plan proposal workflow handles PROPOSAL stage WhatsApp notifications.',
+        };
+      }
+
       // 1. Resolve and validate recipient phone number
       const phone = (lead.phone || lead.mobile || '').trim();
       if (!phone) {
@@ -5382,5 +5439,69 @@ Sent by ${senderOrgName} via CRM.
       row.id,
     );
     return { delivery: row, send: sendRes };
+  }
+
+  async listPlanProposals(customerId: number | string, leadId: number | string) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.listForLead(Number(customerId), Number(leadId));
+  }
+
+  async setPlanProposalPreference(customerId: number | string, leadId: number | string, userId: number | string, dto: SetPlanPreferenceDto) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.setPreference(Number(customerId), Number(leadId), Number(userId), dto);
+  }
+
+  async previewDefaultPlanProposal(customerId: number | string, leadId: number | string) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.previewDefault(Number(customerId), Number(leadId));
+  }
+
+  async sendDefaultPlanProposal(customerId: number | string, leadId: number | string, userId: number | string) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.sendDefaultPlan(Number(customerId), Number(leadId), Number(userId));
+  }
+
+  async createCustomPlanProposal(
+    customerId: number | string,
+    leadId: number | string,
+    userId: number | string,
+    dto: CreateCustomPlanProposalDto,
+  ) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.createCustomProposal(Number(customerId), Number(leadId), Number(userId), dto);
+  }
+
+  async sendPlanProposalDraft(
+    customerId: number | string,
+    leadId: number | string,
+    proposalId: number | string,
+    userId: number | string,
+  ) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    const result = await this.leadPlanProposalService.sendDraft(
+      Number(customerId),
+      Number(leadId),
+      Number(proposalId),
+      Number(userId),
+    );
+    await this.getLeadById(customerId, leadId);
+    return result;
+  }
+
+  async resendPlanProposal(
+    customerId: number | string,
+    leadId: number | string,
+    proposalId: number | string,
+    userId: number | string,
+    dto: ResendPlanProposalDto,
+  ) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.resend(
+      Number(customerId),
+      Number(leadId),
+      Number(proposalId),
+      Number(userId),
+      dto,
+    );
   }
 }
