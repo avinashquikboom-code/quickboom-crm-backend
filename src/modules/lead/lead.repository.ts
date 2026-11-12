@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
+import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import {
   CheckDuplicateDto,
   ConvertLeadDto,
@@ -73,8 +75,12 @@ function socialProfileRows(social: Record<string, any>) {
 @Injectable()
 export class LeadRepository {
   private readonly logger = new Logger(LeadRepository.name);
+  private readonly placePhotoLookup = new Map<string, number>();
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Optional() @Inject(IntegrationSettingsService) private integrationSettings?: IntegrationSettingsService,
+  ) {}
 
   async create(
     customerId: number | string,
@@ -1224,7 +1230,6 @@ export class LeadRepository {
       });
     } catch (error: any) {
       this.logger.warn(`Lead photo lookup skipped: ${error?.message || error}`);
-      return;
     }
     for (const lead of leads) {
       const sameCustomer = (place: { customerId?: number | null }) => !lead.customerId || Number(place.customerId) === Number(lead.customerId);
@@ -1235,9 +1240,100 @@ export class LeadRepository {
       const photoField = (place: { photos?: unknown; rawData?: any }) => place.photos ?? place.rawData?.photos ?? place.rawData?.googlePhotos;
       const match = ranked.find((place) => this.photoProxyUrls(photoField(place)).length) || ranked[0];
       lead.placePhotos = match ? this.photoProxyUrls(photoField(match)) : [];
-      if (lead.googlePlaceId && !lead.placePhotos.length && !(Array.isArray(lead.images) && lead.images.length)) {
+    }
+    await this.hydrateMissingPlacePhotos(leads);
+    for (const lead of leads) {
+      if (lead.googlePlaceId && !(Array.isArray(lead.placePhotos) && lead.placePhotos.length) && !(Array.isArray(lead.images) && lead.images.some((image) => image?.url))) {
+        this.logger.warn(`[LEAD_IMAGE] leadId=${lead.id} placeId=${lead.googlePlaceId} photoAvailable=false`);
         this.logger.warn(`[LEAD_IMAGE] id=${lead.id} name=${lead.companyName || lead.title || ''} source=none url=missing`);
       }
+    }
+  }
+
+  private async hydrateMissingPlacePhotos(leads: any[]) {
+    if (!this.integrationSettings) {
+      this.logger.warn('[LEAD_IMAGE] photoFetchStatus=skipped reason=maps_not_configured');
+      return;
+    }
+    const now = Date.now();
+    const missing = leads.filter((lead) => {
+      const placeId = String(lead.googlePlaceId || '');
+      if (!placeId || placeId.startsWith('custom_')) return false;
+      if (Array.isArray(lead.placePhotos) && lead.placePhotos.length) return false;
+      if (Array.isArray(lead.images) && lead.images.some((image) => image?.url)) return false;
+      const checkedAt = this.placePhotoLookup.get(placeId) || 0;
+      return now - checkedAt > 6 * 60 * 60 * 1000;
+    }).slice(0, 6);
+    if (!missing.length) return;
+    let apiKey = '';
+    try {
+      const config = await this.integrationSettings.getGoogleMapsConfig();
+      if (!config?.isEnabled || !config.apiKey) {
+        this.logger.warn('[LEAD_IMAGE] photoFetchStatus=skipped reason=maps_not_configured');
+        return;
+      }
+      apiKey = config.apiKey;
+    } catch {
+      this.logger.warn('[LEAD_IMAGE] photoFetchStatus=skipped reason=maps_not_configured');
+      return;
+    }
+    for (const lead of missing) {
+      const placeId = String(lead.googlePlaceId).trim().replace(/^places\//, '');
+      try {
+        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+          headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
+          timeout: 12000,
+          validateStatus: () => true,
+        });
+        if (response.status === 429) {
+          this.logger.warn(`[LEAD_IMAGE] leadId=${lead.id} placeId=${placeId} photoFetchStatus=quota`);
+          break;
+        }
+        if (response.status >= 400) {
+          this.placePhotoLookup.set(placeId, now);
+          this.logger.warn(`[LEAD_IMAGE] leadId=${lead.id} placeId=${placeId} photoFetchStatus=failed status=${response.status}`);
+          continue;
+        }
+        const photos = this.photoProxyUrls(response.data?.photos).slice(0, 8);
+        this.placePhotoLookup.set(placeId, now);
+        this.logger.log(`[LEAD_IMAGE] leadId=${lead.id} placeId=${placeId} photoAvailable=${photos.length > 0}`);
+        this.logger.log(`[LEAD_IMAGE] photoFetchStatus=${photos.length ? 'success' : 'empty'}`);
+        if (!photos.length) continue;
+        this.logger.log('[LEAD_IMAGE] imageSource=google_places');
+        lead.placePhotos = photos;
+        await this.persistPlacePhotos(lead, photos);
+      } catch {
+        this.logger.warn(`[LEAD_IMAGE] leadId=${lead.id} placeId=${placeId} photoFetchStatus=failed`);
+      }
+    }
+  }
+
+  private async persistPlacePhotos(lead: any, photos: Array<{ url: string; attributions: string[] }>) {
+    const placeId = String(lead.googlePlaceId || '');
+    const customerId = Number(lead.customerId);
+    try {
+      if (placeId && typeof this.prisma.dataCapturePlace?.updateMany === 'function') {
+        await this.prisma.dataCapturePlace.updateMany({
+          where: { deletedAt: null, googlePlaceId: placeId, ...(Number.isInteger(customerId) && customerId > 0 ? { customerId } : {}) },
+          data: { photos },
+        });
+      }
+    } catch {
+      this.logger.warn(`[LEAD_IMAGE] leadId=${lead.id} photoFetchStatus=save_failed`);
+    }
+    if (typeof this.prisma.leadImage?.findMany !== 'function' || typeof this.prisma.leadImage?.create !== 'function') return;
+    try {
+      const existing = await this.prisma.leadImage.findMany({ where: { leadId: Number(lead.id) }, select: { url: true } });
+      const saved = new Set((existing || []).map((row: { url?: string }) => row.url));
+      for (const photo of photos) {
+        if (!photo.url || saved.has(photo.url)) continue;
+        await this.prisma.leadImage.create({
+          data: { leadId: Number(lead.id), url: photo.url, isPrimary: saved.size === 0, caption: photo.attributions[0] || 'Google Maps' },
+        });
+        saved.add(photo.url);
+      }
+    } catch {
+      this.logger.warn(`[LEAD_IMAGE] leadId=${lead.id} photoFetchStatus=save_failed`);
     }
   }
 
@@ -2070,30 +2166,46 @@ export class LeadRepository {
       updateData.stageId = resolvedStageId;
     }
 
-    await this.prisma.lead.updateMany({
-      where: updateWhere,
-      data: updateData,
-    });
+    const sameStage = (fromStageId ?? null) === (resolvedStageId ?? null);
+    const sameStatus = fromStatus === toStatus;
+    if (sameStage && sameStatus) {
+      this.logger.log(`[LEAD_STAGE] unchanged leadId=${numId} stageId=${resolvedStageId ?? 'none'}`);
+      return;
+    }
 
-    // Record full history with stage IDs so UI can resolve stage names from API
-    await this.prisma.leadStatusHistory.create({
-      data: {
-        leadId: numId,
-        fromStatus,
-        toStatus,
-        fromStageId: fromStageId ?? null,
-        toStageId: resolvedStageId ?? null,
-        changedById: numUserId,
-        notes: notes || `Stage transitioned from ${fromStatus || 'N/A'} to ${stageName || toStatus}`,
-      } as any,
-    });
-
-    await this.logTimeline(
-      numId,
-      'STATUS_CHANGED',
-      `Stage updated to ${stageName || toStatus}${notes ? ` (${notes})` : ''}`,
-      { fromStatus, toStatus, fromStageId, toStageId: resolvedStageId },
-    );
+    const writeTransition = async (db: any) => {
+      const updated = await db.lead.updateMany({
+        where: updateWhere,
+        data: updateData,
+      });
+      if (updated && typeof updated.count === 'number' && updated.count === 0) {
+        throw new BadRequestException('Lead stage was not saved');
+      }
+      await db.leadStatusHistory.create({
+        data: {
+          leadId: numId,
+          fromStatus,
+          toStatus,
+          fromStageId: fromStageId ?? null,
+          toStageId: resolvedStageId ?? null,
+          changedById: numUserId,
+          notes: notes || `Stage transitioned from ${fromStatus || 'N/A'} to ${stageName || toStatus}`,
+        } as any,
+      });
+      await db.leadActivityTimeline.create({
+        data: {
+          leadId: numId,
+          action: 'STATUS_CHANGED',
+          description: `Stage updated to ${stageName || toStatus}${notes ? ` (${notes})` : ''}`,
+          metadata: { fromStatus, toStatus, fromStageId, toStageId: resolvedStageId },
+        },
+      });
+    };
+    if (typeof this.prisma.$transaction === 'function') {
+      await this.prisma.$transaction((tx: any) => writeTransition(tx));
+    } else {
+      await writeTransition(this.prisma);
+    }
 
     if (toStatus === LeadStatus.VISIT_DONE || (toStatus as string) === 'VISIT_DONE' || (toStatus as string) === 'VISIT') {
       try {
