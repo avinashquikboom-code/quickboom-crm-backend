@@ -74,6 +74,76 @@ export function stripUnresolvedTemplatePlaceholders(content: string): string {
   return content.replace(/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/g, '');
 }
 
+/** Resolve a single template tag against lead/stage variable bag (positional + named). */
+export function resolveWhatsappVariableTag(
+  tag: string,
+  variables: Record<string, string>,
+): string {
+  let val = variables[tag];
+  if (val !== undefined && String(val).trim() !== '') return String(val);
+
+  const lower = tag.toLowerCase().replace(/_/g, '');
+  if (lower === 'customername' || lower === 'name' || lower === 'firstname' || lower === 'leadname') {
+    val = variables.customerName || variables.name || variables.firstName || variables.leadName;
+  } else if (lower === 'companyname' || lower === 'businessname') {
+    val = variables.companyName || variables.businessName;
+  } else if (lower === 'username' || lower === 'assigneduser' || lower === 'assignedemployeename') {
+    val = variables.userName || variables.assignedUser || variables.assignedEmployeeName;
+  } else if (lower === 'phone' || lower === 'mobile') {
+    val = variables.phone || variables.mobile;
+  }
+
+  const positionalFallback: Record<string, string> = {
+    '1': variables.customerName || variables.name || variables.firstName || variables.leadName || variables.leadTitle || '',
+    '2': variables.companyName || variables.businessName || '',
+    '3': variables.leadTitle || variables.userName || variables.assignedUser || '',
+    '4': variables.userName || variables.assignedUser || variables.assignedEmployeeName || '',
+  };
+  if (val === undefined && positionalFallback[tag] !== undefined) {
+    val = positionalFallback[tag];
+  }
+  return val !== undefined ? String(val) : '';
+}
+
+/** Apply admin-configured stage mapping (Meta tag → lead field key or literal). */
+export function applyWhatsappVariableMapping(
+  base: Record<string, string>,
+  mapping?: Record<string, unknown> | null,
+): Record<string, string> {
+  const out = { ...base };
+  if (!mapping || typeof mapping !== 'object') return out;
+  for (const [targetKey, source] of Object.entries(mapping)) {
+    const src = String(source ?? '').trim();
+    if (!src) continue;
+    const resolved = base[src] ?? src;
+    out[targetKey] = String(resolved ?? '').trim();
+  }
+  return out;
+}
+
+export function validateTemplateVariableBag(
+  templateBody: string,
+  variables: Record<string, string>,
+): { ok: boolean; message?: string; missing?: string[] } {
+  if (!templateBody) return { ok: true };
+  const matches = templateBody.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) || [];
+  const missing: string[] = [];
+  for (const raw of matches) {
+    const tag = raw.replace(/[\{\}\s]/g, '');
+    if (!resolveWhatsappVariableTag(tag, variables).trim()) {
+      missing.push(tag);
+    }
+  }
+  if (missing.length) {
+    return {
+      ok: false,
+      missing,
+      message: `Missing WhatsApp template variables: ${missing.join(', ')}`,
+    };
+  }
+  return { ok: true };
+}
+
 export function buildStageAutomationIdempotencyKey(params: {
   customerId: number | string;
   leadId: number | string;

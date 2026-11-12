@@ -467,6 +467,52 @@ export class LeadController {
     return this.leadService.addImage(customerId, id, file, { isPrimary: true });
   }
 
+  @Get(':id/stage-whatsapp/history')
+  @CrmCategory('BPO')
+  @ApiOperation({ summary: 'Stage automation WhatsApp message history for a lead' })
+  getStageWhatsappHistory(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    return this.leadService.getStageWhatsappHistory(customerId, id);
+  }
+
+  @Post(':id/stage-whatsapp/:deliveryId/retry')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Retry a failed stage automation WhatsApp delivery' })
+  retryStageWhatsapp(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Param('deliveryId', ParseIntPipe) deliveryId: number,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.leadService.retryStageWhatsappDelivery(customerId, id, deliveryId, userId);
+  }
+
+  @Get(':id/stage-email/history')
+  @CrmCategory('BPO')
+  @ApiOperation({ summary: 'Stage automation email message history for a lead' })
+  getStageEmailHistory(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+  ) {
+    return this.leadService.getStageEmailHistory(customerId, id);
+  }
+
+  @Post(':id/stage-email/:deliveryId/retry')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Retry a failed stage automation email delivery' })
+  retryStageEmail(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Param('deliveryId', ParseIntPipe) deliveryId: number,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.leadService.retryStageEmailDelivery(customerId, id, deliveryId, userId);
+  }
+
   @Post(':id/notes')
   @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })

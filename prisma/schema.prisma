@@ -125,6 +125,8 @@ model Customer {
   sendDetailsDocuments     SendDetailsDocument[]
   sendDetailsConfigs       SendDetailsConfig[]
   sendDetailsDeliveries    SendDetailsDelivery[]
+  leadStageWhatsappDeliveries LeadStageWhatsAppDelivery[]
+  leadStageEmailDeliveries    LeadStageEmailDelivery[]
   hrmReportSetting         HrmReportSetting?
   hrmMonthlyReportRuns     HrmMonthlyReportRun[]
   hrmEmployeeMonthlyReports HrmEmployeeMonthlyReport[]
@@ -293,7 +295,9 @@ model User {
   createdMarketingBanners MarketingBanner[] @relation("CreatedMarketingBanners")
   createdMarketingVideos  MarketingVideo[]  @relation("CreatedMarketingVideos")
   emailLogs               EmailLog[]
-  sendDetailsDeliveries   SendDetailsDelivery[]
+  sendDetailsDeliveries        SendDetailsDelivery[]
+  leadStageWhatsappDeliveries  LeadStageWhatsAppDelivery[]
+  leadStageEmailDeliveries     LeadStageEmailDelivery[]
 
   @@index([customerId])
   @@index([email])
@@ -447,7 +451,9 @@ model Lead {
   images               LeadImage[]
   visitPhotos          VisitPhoto[]
   commissions          Commission[]
-  sendDetailsDeliveries SendDetailsDelivery[]
+  sendDetailsDeliveries      SendDetailsDelivery[]
+  stageWhatsappDeliveries    LeadStageWhatsAppDelivery[]
+  stageEmailDeliveries       LeadStageEmailDelivery[]
 
   @@index([customerId])
   @@index([status])
@@ -564,10 +570,12 @@ model LeadStage {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  emailEnabled        Boolean        @default(true)
-  emailTemplateId     Int?
-  whatsappEnabled     Boolean        @default(true)
-  whatsappTemplateId  Int?
+  emailEnabled            Boolean        @default(true)
+  emailTemplateId         Int?
+  emailVariableMapping    Json?
+  whatsappEnabled         Boolean        @default(true)
+  whatsappTemplateId      Int?
+  whatsappVariableMapping Json?
 
   customer            Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   emailTemplate       EmailTemplate? @relation(fields: [emailTemplateId], references: [id], onDelete: SetNull)
@@ -3892,6 +3900,74 @@ model SendDetailsDelivery {
   @@index([overallStatus])
   @@index([createdAt])
   @@map("send_details_deliveries")
+}
+
+model LeadStageWhatsAppDelivery {
+  id               Int       @id @default(autoincrement())
+  customerId       Int
+  leadId           Int
+  userId           Int?
+  previousStageId  Int?
+  newStageId       Int?
+  previousStage    String?
+  newStage         String?
+  metaTemplateId   Int?
+  templateName     String?
+  recipientPhone   String?
+  triggerSource    String    @default("STAGE_CHANGE")
+  idempotencyKey   String    @unique
+  status           String    @default("QUEUED")
+  metaMessageId    String?
+  attemptCount     Int       @default(0)
+  error            String?   @db.Text
+  variableMapping  Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([leadId])
+  @@index([status])
+  @@index([metaMessageId])
+  @@index([createdAt])
+  @@map("lead_stage_whatsapp_deliveries")
+}
+
+model LeadStageEmailDelivery {
+  id                Int       @id @default(autoincrement())
+  customerId        Int
+  leadId            Int
+  userId            Int?
+  previousStageId   Int?
+  newStageId        Int?
+  previousStage     String?
+  newStage          String?
+  emailTemplateId   Int?
+  templateName      String?
+  recipientEmail    String?
+  triggerSource     String    @default("STAGE_CHANGE")
+  idempotencyKey    String    @unique
+  status            String    @default("QUEUED")
+  providerMessageId String?
+  attemptCount      Int       @default(0)
+  error             String?   @db.Text
+  variableMapping   Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([leadId])
+  @@index([status])
+  @@index([providerMessageId])
+  @@index([createdAt])
+  @@map("lead_stage_email_deliveries")
 }
 
 enum HrmReportType {

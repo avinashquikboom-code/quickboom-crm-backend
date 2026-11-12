@@ -10,6 +10,8 @@ import { LeadLimitModule } from '../lead-limit/lead-limit.module';
 import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { S3Module } from '../s3/s3.module';
 import { SendDetailsModule } from '../send-details/send-details.module';
+import { LeadStageWhatsappDeliveryService } from './lead-stage-whatsapp-delivery.service';
+import { LeadStageEmailDeliveryService } from './lead-stage-email-delivery.service';
 
 @Module({
   imports: [
@@ -21,7 +23,7 @@ import { SendDetailsModule } from '../send-details/send-details.module';
     forwardRef(() => SendDetailsModule),
   ],
   controllers: [LeadController],
-  providers: [LeadService, LeadRepository, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],
-  exports: [LeadService, LeadRepository],
+  providers: [LeadService, LeadRepository, LeadStageWhatsappDeliveryService, LeadStageEmailDeliveryService, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],
+  exports: [LeadService, LeadRepository, LeadStageWhatsappDeliveryService, LeadStageEmailDeliveryService],
 })
 export class LeadModule {}

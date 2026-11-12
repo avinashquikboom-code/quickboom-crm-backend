@@ -3083,6 +3083,8 @@ export class LeadRepository {
         emailTemplateId: data.emailTemplateId !== undefined ? (data.emailTemplateId ? Number(data.emailTemplateId) : null) : null,
         whatsappEnabled: data.whatsappEnabled !== undefined ? Boolean(data.whatsappEnabled) : true,
         whatsappTemplateId: data.whatsappTemplateId !== undefined ? (data.whatsappTemplateId ? Number(data.whatsappTemplateId) : null) : null,
+        emailVariableMapping: data.emailVariableMapping ?? undefined,
+        whatsappVariableMapping: data.whatsappVariableMapping ?? undefined,
       },
       include: {
         emailTemplate: { select: { id: true, name: true, key: true } },
@@ -3109,6 +3111,12 @@ export class LeadRepository {
     if (data.whatsappEnabled !== undefined) updateData.whatsappEnabled = Boolean(data.whatsappEnabled);
     if (data.whatsappTemplateId !== undefined) {
       updateData.whatsappTemplateId = data.whatsappTemplateId ? Number(data.whatsappTemplateId) : null;
+    }
+    if (data.emailVariableMapping !== undefined) {
+      updateData.emailVariableMapping = data.emailVariableMapping;
+    }
+    if (data.whatsappVariableMapping !== undefined) {
+      updateData.whatsappVariableMapping = data.whatsappVariableMapping;
     }
 
     return this.prisma.leadStage.update({

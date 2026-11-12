@@ -28,10 +28,15 @@ import {
 } from './dto/lead.dto';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import {
+  applyWhatsappVariableMapping,
+  buildStageAutomationIdempotencyKey,
+  validateTemplateVariableBag,
   didLeadPipelineStageChange,
   leadStageMatchWhere,
   tenantLeadStageScope,
 } from './lead-stage-automation.util';
+import { LeadStageWhatsappDeliveryService } from './lead-stage-whatsapp-delivery.service';
+import { LeadStageEmailDeliveryService } from './lead-stage-email-delivery.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { EmailService } from '../email/email.service';
@@ -81,6 +86,8 @@ export class LeadService {
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly s3Service?: S3Service,
     @Optional() private readonly sendDetailsService?: SendDetailsService,
+    @Optional() private readonly stageWhatsappDeliveryService?: LeadStageWhatsappDeliveryService,
+    @Optional() private readonly stageEmailDeliveryService?: LeadStageEmailDeliveryService,
     @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
@@ -2533,6 +2540,7 @@ export class LeadService {
     eventType: 'LEAD_CREATED' | 'LEAD_STAGE_CHANGED' | 'MANUAL_SEND' = 'LEAD_STAGE_CHANGED',
     explicitNewStageId?: number,
     previousStageId?: number | null,
+    existingDeliveryId?: number,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -2541,6 +2549,7 @@ export class LeadService {
     error: string | null;
     message: string;
   }> {
+    let deliveryRow: any = null;
     try {
       // 0. Do NOT send email if stage did not actually change (for stage change events)
       const effectiveNewStageId = explicitNewStageId ?? lead.stageId ?? lead.stage?.id;
@@ -2582,7 +2591,7 @@ export class LeadService {
         }).catch(() => null);
       }
 
-      if (stageConfig && stageConfig.emailEnabled === false) {
+      if (stageConfig && stageConfig.emailEnabled === false && eventType !== 'MANUAL_SEND') {
         const disabledMsg = `Email automation is disabled for stage "${stageConfig.name}" (ID: ${stageConfig.id})`;
         this.logger.log(`[EMAIL_AUTOMATION] ${disabledMsg}. Skipping email.`);
         await this.leadRepository.logTimeline(
@@ -2778,33 +2787,54 @@ export class LeadService {
         };
       }
 
-      // 3. Prevent duplicate notifications (debounce only successfully sent transitions within 60s)
-      const recentLog = await this.prisma.emailLog.findFirst({
-        where: {
-          leadId: Number(lead.id),
-          status: 'SENT',
-          newStage: String(newStageName),
-          createdAt: {
-            gte: new Date(Date.now() - 60000),
-          },
-        },
-        select: {
-          id: true,
-          status: true,
-          providerMessageId: true,
-          createdAt: true,
-        },
+      const customerIdNum = Number(lead.customerId ?? customerId);
+      const idempotencyKey = buildStageAutomationIdempotencyKey({
+        customerId: customerIdNum,
+        leadId: lead.id,
+        channel: 'EMAIL',
+        previousStageId,
+        nextStageId: effectiveStageId,
+        templateId: template?.id || stageConfig?.emailTemplateId || null,
       });
 
-      if (recentLog && eventType !== 'MANUAL_SEND') {
-        return {
-          sent: false,
-          status: 'SKIPPED',
-          recipient: recipientEmail,
-          messageId: recentLog.providerMessageId,
-          error: null,
-          message: 'Debounced duplicate stage transition email',
-        };
+      if (this.stageEmailDeliveryService && existingDeliveryId) {
+        deliveryRow = await this.stageEmailDeliveryService.findForLead(
+          customerIdNum,
+          Number(lead.id),
+          existingDeliveryId,
+        );
+        if (deliveryRow) {
+          await this.stageEmailDeliveryService.markProcessing(deliveryRow.id);
+        }
+      } else if (this.stageEmailDeliveryService && eventType !== 'MANUAL_SEND') {
+        const existing = await this.stageEmailDeliveryService.findByIdempotency(idempotencyKey);
+        if (await this.stageEmailDeliveryService.shouldSkipDuplicate(existing)) {
+          this.logger.log(`[EMAIL] Idempotent skip for lead #${lead.id} key=${idempotencyKey} status=${existing?.status}`);
+          return {
+            sent: String(existing?.status || '').toUpperCase() === 'SENT',
+            status: existing?.status === 'FAILED' ? 'FAILED' : 'SKIPPED',
+            recipient: recipientEmail,
+            messageId: existing?.providerMessageId || null,
+            error: existing?.error || null,
+            message: 'Duplicate stage transition email already recorded',
+          };
+        }
+        deliveryRow = await this.stageEmailDeliveryService.upsertQueued({
+          customerId: customerIdNum,
+          leadId: Number(lead.id),
+          userId: userId ? Number(userId) : null,
+          previousStageId: previousStageId ?? null,
+          newStageId: effectiveStageId ?? null,
+          previousStage: previousStageName,
+          newStage: newStageName,
+          emailTemplateId: template?.id ?? null,
+          templateName: template?.name || template?.key || null,
+          recipientEmail: maskEmail(recipientEmail),
+          triggerSource: eventType,
+          idempotencyKey,
+          variableMapping: (stageConfig?.emailVariableMapping as Record<string, unknown>) || null,
+        });
+        await this.stageEmailDeliveryService.markProcessing(deliveryRow.id);
       }
 
       // 4. Verify Email Integration is configured and active
@@ -2854,6 +2884,13 @@ export class LeadService {
             sentAt: new Date(),
           },
         }).catch(() => null);
+
+        if (deliveryRow?.id && this.stageEmailDeliveryService) {
+          await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
+            status: 'FAILED',
+            error: configWarning || 'Email integration not configured or disabled',
+          });
+        }
 
         return {
           sent: false,
@@ -3085,6 +3122,18 @@ export class LeadService {
           logoUrl,
         };
 
+        const flatForMapping: Record<string, string> = {};
+        for (const [k, v] of Object.entries(variables)) {
+          if (v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) {
+            flatForMapping[k] = String(v);
+          }
+        }
+        const mappedFlat = applyWhatsappVariableMapping(
+          flatForMapping,
+          (stageConfig?.emailVariableMapping as Record<string, unknown>) || null,
+        );
+        Object.assign(variables, mappedFlat);
+
         const rendered = renderEmailTemplate(
           { subject: template.subject, body: template.body },
           variables,
@@ -3128,6 +3177,13 @@ export class LeadService {
             sentAt: new Date(),
           },
         }).catch(() => null);
+
+        if (deliveryRow?.id && this.stageEmailDeliveryService) {
+          await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
+            status: 'FAILED',
+            error: errorMsg,
+          });
+        }
 
         return {
           sent: false,
@@ -3213,6 +3269,14 @@ export class LeadService {
         this.logger.warn(`[EMAIL_LOG_WARN] Failed to write EmailLog: ${logErr?.message}`);
       });
 
+      if (deliveryRow?.id && this.stageEmailDeliveryService) {
+        await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
+          status: status === 'SENT' ? 'SENT' : 'FAILED',
+          providerMessageId: messageId,
+          error: sendError,
+        });
+      }
+
       // 8. Record timeline event in CRM Lead timeline
       await this.leadRepository.logTimeline(
         lead.id,
@@ -3246,6 +3310,12 @@ export class LeadService {
     } catch (unexpectedError: any) {
       // Must NEVER fail the lead stage update even on unexpected notification errors
       this.logger.error(`[EMAIL_NOTIFICATION_UNEXPECTED_ERROR] ${unexpectedError?.message}`);
+      if (deliveryRow?.id && this.stageEmailDeliveryService) {
+        await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
+          status: 'FAILED',
+          error: unexpectedError?.message || 'Unexpected notification error',
+        }).catch(() => null);
+      }
       return {
         sent: false,
         status: 'FAILED',
@@ -4299,7 +4369,7 @@ Sent by ${senderOrgName} via CRM.
     }
 
     // 2. Check if WhatsApp automation is explicitly disabled for this stage
-    if (configuredStage && configuredStage.whatsappEnabled === false) {
+    if (configuredStage && configuredStage.whatsappEnabled === false && dto?.eventType !== 'MANUAL_SEND') {
       this.logger.log(
         `[WHATSAPP_AUTOMATION] Stage: ${configuredStage.name} | ID: ${configuredStage.id} | Automation Enabled: false. Skipping WhatsApp message.`,
       );
@@ -4473,7 +4543,7 @@ Sent by ${senderOrgName} via CRM.
     const followUpDateStr = lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('en-IN') : '';
     const followUpTimeStr = lead.nextFollowUpTime || '';
 
-    const variables: Record<string, string> = {
+    let variables: Record<string, string> = {
       leadName: leadFullName,
       name: leadFullName,
       customerName: leadFullName,
@@ -4496,6 +4566,23 @@ Sent by ${senderOrgName} via CRM.
       nextFollowUpDate: followUpDateStr,
       nextFollowUpTime: followUpTimeStr,
     };
+
+    variables = applyWhatsappVariableMapping(
+      variables,
+      (configuredStage?.whatsappVariableMapping as Record<string, unknown>) || null,
+    );
+
+    const templateBodyForValidation = metaTemplate?.body || fallbackTemplate?.body || '';
+    const varCheck = validateTemplateVariableBag(templateBodyForValidation, variables);
+    if (!varCheck.ok) {
+      this.logger.warn(`[WHATSAPP_AUTOMATION] ${varCheck.message}`);
+      return {
+        success: false,
+        skipped: false,
+        reason: 'MISSING_TEMPLATE_VARIABLES',
+        message: varCheck.message || 'Required WhatsApp template variables are missing.',
+      };
+    }
 
     let result: any = { success: false, messageId: undefined, skipped: true };
     if (this.whatsappService) {
@@ -4619,6 +4706,7 @@ Sent by ${senderOrgName} via CRM.
     explicitNewStageId?: number,
     whatsappTemplateId?: number,
     previousStageId?: number | null,
+    existingDeliveryId?: number,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -4629,6 +4717,7 @@ Sent by ${senderOrgName} via CRM.
     details?: string | null;
     errorCode?: string | null;
   }> {
+    let deliveryRow: any = null;
     try {
       this.logger.log(`[WHATSAPP] Handling ${eventType} WhatsApp notification for lead #${lead.id} (${previousStageName} → ${newStageName})`);
 
@@ -4729,8 +4818,8 @@ Sent by ${senderOrgName} via CRM.
         }).catch(() => null);
       }
 
-      // Check if WhatsApp is disabled for this stage
-      if (stageConfig && stageConfig.whatsappEnabled === false) {
+      // Check if WhatsApp is disabled for this stage (manual retries may still send)
+      if (stageConfig && stageConfig.whatsappEnabled === false && eventType !== 'MANUAL_SEND') {
         const disabledMsg = `WhatsApp automation disabled for stage "${stageConfig.name}" (ID: ${stageConfig.id})`;
         this.logger.log(`[WHATSAPP_AUTOMATION] ${disabledMsg}. Skipping.`);
         await this.leadRepository.logTimeline(
@@ -4857,40 +4946,54 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // 3. Debounce check: avoid duplicate sends within 60s for the exact same stage transition
-      let recentTimeline: any = null;
-      if (this.prisma.leadActivityTimeline?.findFirst) {
-        recentTimeline = await this.prisma.leadActivityTimeline.findFirst({
-          where: {
-            leadId: Number(lead.id),
-            action: { in: ['WHATSAPP_SENT', 'LEAD_CREATED_WHATSAPP', 'STAGE_CHANGE_WHATSAPP'] },
-            createdAt: {
-              gte: new Date(Date.now() - 60000),
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-        }).catch(() => null);
-      }
+      // 3. Persistent idempotency for this stage transition
+      const idempotencyKey = buildStageAutomationIdempotencyKey({
+        customerId,
+        leadId: lead.id,
+        channel: 'WHATSAPP',
+        previousStageId,
+        nextStageId: effectiveStageId,
+        templateId: targetMetaTemplate?.id || stageConfig?.whatsappTemplateId || null,
+      });
 
-      if (recentTimeline && eventType !== 'MANUAL_SEND') {
-        const meta = (recentTimeline.metadata as any) || {};
-        const recentStage = (meta.stageName || meta.newStage || '').trim().toUpperCase();
-        const currentNewStage = (newStageName || '').trim().toUpperCase();
-        const wasSentOrPending = meta.status === 'Sent' || meta.status === 'SENT' || meta.success === true || !recentTimeline.metadata;
-        if (
-          wasSentOrPending &&
-          (!recentStage || recentStage === currentNewStage)
-        ) {
-          this.logger.log(`[WHATSAPP] Duplicate ${eventType} WhatsApp notification within 60s for lead #${lead.id} on stage "${newStageName}". Skipping.`);
+      if (this.stageWhatsappDeliveryService && existingDeliveryId) {
+        deliveryRow = await this.stageWhatsappDeliveryService.findForLead(
+          Number(customerId),
+          Number(lead.id),
+          existingDeliveryId,
+        );
+        if (deliveryRow) {
+          await this.stageWhatsappDeliveryService.markProcessing(deliveryRow.id);
+        }
+      } else if (this.stageWhatsappDeliveryService && eventType !== 'MANUAL_SEND') {
+        const existing = await this.stageWhatsappDeliveryService.findByIdempotency(idempotencyKey);
+        if (await this.stageWhatsappDeliveryService.shouldSkipDuplicate(existing)) {
+          this.logger.log(`[WHATSAPP] Idempotent skip for lead #${lead.id} key=${idempotencyKey} status=${existing?.status}`);
           return {
-            sent: false,
-            status: 'SKIPPED',
+            sent: ['SENT', 'DELIVERED', 'READ'].includes(String(existing?.status || '').toUpperCase()),
+            status: existing?.status === 'FAILED' ? 'FAILED' : 'SKIPPED',
             recipient: maskPhone(phone),
-            messageId: meta.messageId || null,
-            error: null,
-            message: 'Debounced duplicate stage transition WhatsApp message',
+            messageId: existing?.metaMessageId || null,
+            error: existing?.error || null,
+            message: 'Duplicate stage transition WhatsApp already recorded',
           };
         }
+        deliveryRow = await this.stageWhatsappDeliveryService.upsertQueued({
+          customerId: Number(customerId),
+          leadId: Number(lead.id),
+          userId: userId ? Number(userId) : null,
+          previousStageId: previousStageId ?? null,
+          newStageId: effectiveStageId ?? null,
+          previousStage: previousStageName,
+          newStage: newStageName,
+          metaTemplateId: targetMetaTemplate?.id ?? null,
+          templateName: targetMetaTemplate?.name || targetMetaTemplate?.templateName || null,
+          recipientPhone: maskPhone(phone),
+          triggerSource: eventType,
+          idempotencyKey,
+          variableMapping: (stageConfig?.whatsappVariableMapping as Record<string, unknown>) || null,
+        });
+        await this.stageWhatsappDeliveryService.markProcessing(deliveryRow.id);
       }
 
       // 4. Verify WhatsApp Integration is configured and enabled in Settings
@@ -4961,6 +5064,14 @@ Sent by ${senderOrgName} via CRM.
         ? 'SKIPPED'
         : 'FAILED';
 
+      if (deliveryRow?.id && this.stageWhatsappDeliveryService) {
+        await this.stageWhatsappDeliveryService.markResult(deliveryRow.id, {
+          status: notifStatus,
+          metaMessageId: sendRes?.messageId || null,
+          error: isSent ? null : (sendRes?.reason || (sendRes as any)?.error || sendRes?.message || null),
+        });
+      }
+
       return {
         sent: isSent,
         status: notifStatus,
@@ -4973,6 +5084,12 @@ Sent by ${senderOrgName} via CRM.
       };
     } catch (err: any) {
       this.logger.error(`[WHATSAPP] Failed to send lead ${eventType} WhatsApp: ${err?.message}`);
+      if (deliveryRow?.id && this.stageWhatsappDeliveryService) {
+        await this.stageWhatsappDeliveryService.markResult(deliveryRow.id, {
+          status: 'FAILED',
+          error: err?.message || 'WhatsApp delivery failed',
+        }).catch(() => null);
+      }
       return {
         sent: false,
         status: 'FAILED',
@@ -5083,5 +5200,73 @@ Sent by ${senderOrgName} via CRM.
     );
 
     return { success: true, message: 'Image deleted successfully' };
+  }
+
+  async getStageWhatsappHistory(customerId: number | string, leadId: number | string) {
+    await this.getLeadById(customerId, leadId);
+    if (!this.stageWhatsappDeliveryService) return [];
+    return this.stageWhatsappDeliveryService.listForLead(Number(customerId), Number(leadId));
+  }
+
+  async retryStageWhatsappDelivery(
+    customerId: number | string,
+    leadId: number | string,
+    deliveryId: number | string,
+    userId?: number | string,
+  ) {
+    const lead = await this.getLeadById(customerId, leadId);
+    if (!this.stageWhatsappDeliveryService) {
+      throw new BadRequestException('Stage WhatsApp delivery tracking is not available.');
+    }
+    const row = await this.stageWhatsappDeliveryService.retry(Number(customerId), Number(leadId), Number(deliveryId));
+    const sendRes = await this.handleLeadStageChangeWhatsappNotification(
+      customerId,
+      lead,
+      row.previousStage || 'Previous',
+      row.newStage || lead.stage?.name || lead.status || 'Updated',
+      userId,
+      undefined,
+      row.templateName || undefined,
+      'MANUAL_SEND',
+      row.newStageId ?? lead.stageId ?? undefined,
+      row.metaTemplateId ?? undefined,
+      row.previousStageId ?? undefined,
+      row.id,
+    );
+    return { delivery: row, send: sendRes };
+  }
+
+  async getStageEmailHistory(customerId: number | string, leadId: number | string) {
+    await this.getLeadById(customerId, leadId);
+    if (!this.stageEmailDeliveryService) return [];
+    return this.stageEmailDeliveryService.listForLead(Number(customerId), Number(leadId));
+  }
+
+  async retryStageEmailDelivery(
+    customerId: number | string,
+    leadId: number | string,
+    deliveryId: number | string,
+    userId?: number | string,
+  ) {
+    const lead = await this.getLeadById(customerId, leadId);
+    if (!this.stageEmailDeliveryService) {
+      throw new BadRequestException('Stage email delivery tracking is not available.');
+    }
+    const row = await this.stageEmailDeliveryService.retry(Number(customerId), Number(leadId), Number(deliveryId));
+    const sendRes = await this.handleLeadStageChangeNotification(
+      customerId,
+      lead,
+      row.previousStage || 'Previous',
+      row.newStage || lead.stage?.name || lead.status || 'Updated',
+      userId,
+      row.emailTemplateId ?? undefined,
+      undefined,
+      undefined,
+      'MANUAL_SEND',
+      row.newStageId ?? lead.stageId ?? undefined,
+      row.previousStageId ?? undefined,
+      row.id,
+    );
+    return { delivery: row, send: sendRes };
   }
 }
