@@ -1563,18 +1563,19 @@ export class IntegrationSettingsService {
     const normProvider = normalizeProvider(provider);
     try {
       const result = await this.runProviderConnectionTest(provider, dto, adminUserId);
-      const message = String(result?.message || '');
+      const payload = result as Record<string, any>;
+      const message = String(payload?.message || '');
       const notConfigured =
-        /not[_\s-]?configured/i.test(`${result?.status || ''} ${message}`) ||
+        /not[_\s-]?configured/i.test(`${payload?.status || ''} ${message}`) ||
         /api key is required/i.test(message);
-      const failed = result?.success === false;
+      const failed = payload?.success === false;
       if (!notConfigured) {
         await this.recordConnectionTest(normProvider, failed ? 'FAILED' : 'SUCCESS', message);
       }
       return {
-        ...result,
-        lastTestedAt: notConfigured ? result?.lastTestedAt || null : new Date().toISOString(),
-        lastTestResult: notConfigured ? result?.lastTestResult || null : failed ? 'FAILED' : 'SUCCESS',
+        ...payload,
+        lastTestedAt: notConfigured ? payload?.lastTestedAt || null : new Date().toISOString(),
+        lastTestResult: notConfigured ? payload?.lastTestResult || null : failed ? 'FAILED' : 'SUCCESS',
       };
     } catch (error: any) {
       const message = String(error?.message || 'Connection test failed');
