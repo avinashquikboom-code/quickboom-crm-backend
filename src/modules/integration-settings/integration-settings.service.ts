@@ -718,7 +718,10 @@ export class IntegrationSettingsService {
     const conf = await this.getIntegrationConfig(IntegrationProvider.GOOGLE_MAPS);
     const creds = conf?.credentials || {};
 
-    const apiKey = String(creds.apiKey || creds.api_key || creds.key || '').trim();
+    let apiKey = String(creds.apiKey || creds.api_key || creds.key || '').trim();
+    if (!apiKey) {
+      apiKey = (process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim();
+    }
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? false;
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
@@ -1561,7 +1564,9 @@ export class IntegrationSettingsService {
     try {
       const result = await this.runProviderConnectionTest(provider, dto, adminUserId);
       const message = String(result?.message || '');
-      const notConfigured = /not configured/i.test(`${result?.status || ''} ${message}`);
+      const notConfigured =
+        /not[_\s-]?configured/i.test(`${result?.status || ''} ${message}`) ||
+        /api key is required/i.test(message);
       const failed = result?.success === false;
       if (!notConfigured) {
         await this.recordConnectionTest(normProvider, failed ? 'FAILED' : 'SUCCESS', message);
@@ -1577,6 +1582,96 @@ export class IntegrationSettingsService {
       if (!notConfigured) await this.recordConnectionTest(normProvider, 'FAILED', message);
       throw error;
     }
+  }
+
+  private resolveGoogleMapsApiKey(creds: Record<string, any>): string {
+    const fromCreds = String(creds.apiKey || creds.api_key || creds.key || '').trim();
+    if (fromCreds && !isMaskedSecret(fromCreds)) return fromCreds;
+    return (process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim();
+  }
+
+  private googleMapsTestFailureHint(googleMessage: string): string {
+    const m = (googleMessage || '').toLowerCase();
+    if (
+      m.includes('places api') ||
+      m.includes('not been used') ||
+      m.includes('is disabled') ||
+      m.includes('service_disabled')
+    ) {
+      return ' Enable "Places API (New)" in Google Cloud Console (APIs & Services → Library) and ensure billing is on.';
+    }
+    if (m.includes('referer') || m.includes('referrer') || m.includes('restriction')) {
+      return ' Connection tests run from the API server — use IP restrictions or none, not website-only referrer limits.';
+    }
+    if (m.includes('billing') || m.includes('payment')) {
+      return ' Enable billing for the Google Cloud project linked to this API key.';
+    }
+    return '';
+  }
+
+  private async verifyGoogleMapsApiKeyConnection(apiKey: string) {
+    const details = { apiKeyPrefix: `${apiKey.substring(0, 8)}...` };
+    const response = await axios.post(
+      'https://places.googleapis.com/v1/places:searchText',
+      { textQuery: 'Mumbai', pageSize: 1 },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': 'places.id,places.displayName',
+        },
+        timeout: 12000,
+        validateStatus: () => true,
+      },
+    );
+
+    if (response.status === 200) {
+      return {
+        success: true,
+        provider: 'GOOGLE_MAPS',
+        status: 'CONNECTED',
+        message: 'Google Maps Places API Key verified successfully!',
+        details: {
+          ...details,
+          placesCount: response.data?.places?.length || 0,
+          verifiedWith: 'PLACES_NEW_SEARCH_TEXT',
+        },
+      };
+    }
+
+    const googleMsg =
+      response.data?.error?.message ||
+      response.data?.error_message ||
+      `Google returned HTTP ${response.status}`;
+
+    if (response.status === 403 || /places/i.test(googleMsg)) {
+      const geocode = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+        params: { address: 'Mumbai, India', key: apiKey },
+        timeout: 10000,
+        validateStatus: () => true,
+      });
+      if (geocode.data?.status === 'OK') {
+        return {
+          success: false,
+          provider: 'GOOGLE_MAPS',
+          status: 'ERROR',
+          message:
+            `API key is valid for Geocoding, but Places API (New) is unavailable: ${googleMsg}.` +
+            ' Enable "Places API (New)" for Data Capture.',
+          details: { ...details, geocodingStatus: 'OK', placesStatus: response.status },
+        };
+      }
+    }
+
+    const hint = this.googleMapsTestFailureHint(googleMsg);
+    this.logger.error(`[GOOGLE_MAPS_TEST_FAILED] ${googleMsg}${hint}`);
+    return {
+      success: false,
+      provider: 'GOOGLE_MAPS',
+      status: 'ERROR',
+      message: `Google Maps connection test failed: ${googleMsg}${hint}`,
+      details: { ...details, httpStatus: response.status },
+    };
   }
 
   private async recordConnectionTest(provider: string, result: 'SUCCESS' | 'FAILED', message?: string) {
@@ -1623,6 +1718,11 @@ export class IntegrationSettingsService {
       if (typeof v === 'string' && !isMaskedSecret(v) && v.trim().length > 0) {
         resolvedCreds[k] = v.trim();
       }
+    }
+
+    if (normProvider === IntegrationProvider.GOOGLE_MAPS) {
+      const mergedKey = this.resolveGoogleMapsApiKey(resolvedCreds);
+      if (mergedKey) resolvedCreds.apiKey = mergedKey;
     }
 
     switch (normProvider) {
@@ -1705,46 +1805,28 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.GOOGLE_MAPS: {
-        const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
+        const apiKey = this.resolveGoogleMapsApiKey(resolvedCreds);
         if (!apiKey) {
-          throw new BadRequestException('Google Maps API Key is required to test connection');
+          return {
+            success: false,
+            provider: 'GOOGLE_MAPS',
+            status: 'NOT_CONFIGURED',
+            message:
+              'Google Maps API Key is required. Save it under Admin → Integrations → Google Maps, or set GOOGLE_MAPS_API_KEY on the server.',
+          };
         }
 
         try {
-          // Verify key by searching places for a known query
-          const response = await axios.post(
-            'https://places.googleapis.com/v1/places:searchText',
-            { textQuery: 'Mumbai', pageSize: 1 },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Goog-Api-Key': apiKey,
-                'X-Goog-FieldMask': 'places.id,places.displayName',
-              },
-              timeout: 8000,
-            },
-          );
-
-          if (response.status === 200) {
-            return {
-              success: true,
-              provider: 'GOOGLE_MAPS',
-              status: 'CONNECTED',
-              message: 'Google Maps Places API Key verified successfully!',
-              details: {
-                apiKeyPrefix: apiKey.substring(0, 8) + '...',
-                placesCount: response.data?.places?.length || 0,
-              },
-            };
-          }
-          throw new Error(`Unexpected response code: ${response.status}`);
+          return await this.verifyGoogleMapsApiKeyConnection(apiKey);
         } catch (err: any) {
-          this.logger.error(`[GOOGLE_MAPS_TEST_FAILED] ${err?.message}`);
-          const errMsg =
-            err?.response?.data?.error?.message ||
-            err?.message ||
-            'Could not authenticate with Google Maps API';
-          throw new BadRequestException(`Google Maps connection test failed: ${errMsg}`);
+          const errMsg = err?.message || 'Could not reach Google Maps API';
+          this.logger.error(`[GOOGLE_MAPS_TEST_FAILED] ${errMsg}`);
+          return {
+            success: false,
+            provider: 'GOOGLE_MAPS',
+            status: 'ERROR',
+            message: `Google Maps connection test failed: ${errMsg}`,
+          };
         }
       }
 
