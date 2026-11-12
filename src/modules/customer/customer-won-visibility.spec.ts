@@ -101,6 +101,7 @@ describe('Customers are visible only for WON leads', () => {
     const res = await service.findAll({ status: 'ALL' }, { id: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] });
     expect(res.items.map((item) => item.companyName)).toContain('Tenant Co');
     expect(res.items.map((item) => item.companyName)).not.toContain('Final Call Shop');
-    expect(res.items.map((item) => item.companyName)).not.toContain('Still Final');
+    expect(res.items.map((item) => item.companyName)).toContain('Still Final');
+    expect(res.items.find((item) => item.companyName === 'Still Final')?.customerStatus).toBe('UPCOMING');
   });
 });
