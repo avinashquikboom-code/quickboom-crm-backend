@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CommissionService } from './commission.service';
+import { CommissionWalletService } from './commission-wallet.service';
 import {
   CommissionFilterDto,
   UpdateCommissionStatusDto,
@@ -29,7 +30,50 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('commissions')
 export class CommissionController {
-  constructor(private readonly commissionService: CommissionService) {}
+  constructor(
+    private readonly commissionService: CommissionService,
+    private readonly walletService: CommissionWalletService,
+  ) {}
+
+  @Get('admin/wallet/dashboard')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  adminWallet(@CurrentCustomer() customerId: string) {
+    return this.walletService.adminDashboard(Number(customerId));
+  }
+
+  @Get('admin/wallet/employees')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  adminWalletEmployees(@CurrentCustomer() customerId: string) {
+    return this.walletService.adminEmployees(Number(customerId));
+  }
+
+  @Get('admin/wallet/withdrawals')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  adminWalletWithdrawals(@CurrentCustomer() customerId: string) {
+    return this.walletService.adminWithdrawals(Number(customerId));
+  }
+
+  @Get('admin/wallet/rules')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  adminWalletRules(@CurrentCustomer() customerId: string) {
+    return this.walletService.adminRules(Number(customerId));
+  }
+
+  @Post('admin/wallet/rules')
+  @RequirePermissions({ module: 'COMMISSION', action: 'MANAGE' })
+  saveWalletRule(@CurrentCustomer() customerId: string, @Body() body: any) {
+    return this.walletService.saveSlab(Number(customerId), body);
+  }
+
+  @Patch('admin/wallet/withdrawals/:id/:action')
+  @RequirePermissions({ module: 'COMMISSION', action: 'MANAGE' })
+  decideWithdrawal(
+    @CurrentCustomer() customerId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('action') action: string,
+  ) {
+    return this.walletService.setWithdrawalStatus(Number(customerId), id, action);
+  }
 
   /**
    * Admin: List all commissions with filters, pagination, and KPI summaries

@@ -24,6 +24,7 @@ import {
   CaptureSessionQueryDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { GoogleMapsUsageService } from '../google-maps-usage/google-maps-usage.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import {
   CapturedPlace,
@@ -572,7 +573,13 @@ export class DataCaptureService implements OnModuleInit {
     @Inject(forwardRef(() => LeadService))
     private readonly leadService?: LeadService,
     @Optional() private readonly s3Service?: S3Service,
+    @Optional() private readonly mapsUsage?: GoogleMapsUsageService,
   ) {}
+
+  private googleMapsCall<T>(customerId: number | string | undefined, apiName: string, run: () => Promise<T>) {
+    if (!this.mapsUsage) return run();
+    return this.mapsUsage.execute(Number(customerId), apiName, run);
+  }
 
   async onModuleInit() {
     try {
@@ -710,11 +717,11 @@ export class DataCaptureService implements OnModuleInit {
       throw new BadRequestException('Google Maps is not enabled. Configure it in Settings → Integrations.');
     }
     try {
-      const response = await axios.post(
+      const response = await this.googleMapsCall(undefined, 'Places API', () => axios.post(
         'https://places.googleapis.com/v1/places:autocomplete',
         { input: query },
         { headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': mapsConfig.apiKey }, timeout: 8000 },
-      );
+      ));
       const suggestions = (response.data?.suggestions || [])
         .map((item: any) => ({
           placeId: item.placePrediction?.placeId,
@@ -893,7 +900,7 @@ export class DataCaptureService implements OnModuleInit {
           );
 
           const tGStart = Date.now();
-          const response = await axios.post(
+          const response = await this.googleMapsCall(effectiveCustomerId, 'Places API', () => axios.post(
             'https://places.googleapis.com/v1/places:searchText',
             requestBody,
             {
@@ -904,7 +911,7 @@ export class DataCaptureService implements OnModuleInit {
               },
               timeout: 10000,
             },
-          );
+          ));
           const tGDuration = Date.now() - tGStart;
           tGoogleTotal += tGDuration;
           this.logger.log(

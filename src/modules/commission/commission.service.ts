@@ -169,6 +169,30 @@ export class CommissionService {
       return null;
     }
 
+    if (commissionType === CommissionType.PERCENTAGE && typeof (db as any).commissionSlab?.findMany === 'function') {
+      const now = new Date();
+      const slabs = await (db as any).commissionSlab.findMany({
+        where: {
+          customerId,
+          isActive: true,
+          minAmount: { lte: purchaseAmount },
+          AND: [
+            { OR: [{ maxAmount: null }, { maxAmount: { gte: purchaseAmount } }] },
+            { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+            { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+          ],
+        },
+        orderBy: { minAmount: 'desc' },
+        take: 20,
+      });
+      const roleName = String(employee.designation?.name || '').trim().toLowerCase();
+      const slab = slabs.find((item: { roles?: string | null; ratePercent?: number }) => {
+        if (!item.roles?.trim()) return true;
+        return item.roles.split(',').map((role) => role.trim().toLowerCase()).includes(roleName);
+      });
+      if (slab?.ratePercent > 0) commissionRate = slab.ratePercent;
+    }
+
     // 5. Calculate Commission
     let commissionAmount = 0;
     if (commissionType === CommissionType.PERCENTAGE) {
