@@ -169,6 +169,24 @@ export class CommissionService {
       return null;
     }
 
+    if (commissionType === CommissionType.PERCENTAGE && typeof db.commissionSlab?.findFirst === 'function') {
+      const now = new Date();
+      const slab = await db.commissionSlab.findFirst({
+        where: {
+          customerId,
+          isActive: true,
+          minAmount: { lte: purchaseAmount },
+          AND: [
+            { OR: [{ maxAmount: null }, { maxAmount: { gte: purchaseAmount } }] },
+            { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+            { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+          ],
+        },
+        orderBy: { minAmount: 'desc' },
+      });
+      if (slab?.ratePercent > 0) commissionRate = slab.ratePercent;
+    }
+
     // 5. Calculate Commission
     let commissionAmount = 0;
     if (commissionType === CommissionType.PERCENTAGE) {
