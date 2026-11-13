@@ -130,6 +130,9 @@ model Customer {
   leadStageWhatsappDeliveries LeadStageWhatsAppDelivery[]
   leadStageEmailDeliveries    LeadStageEmailDelivery[]
   leadPlanProposals           LeadPlanProposal[]
+  googleMapsQuota             GoogleMapsQuota?
+  googleMapsUsageDaily        GoogleMapsUsageDaily[]
+  googleMapsUsageAlerts       GoogleMapsUsageAlert[]
   hrmReportSetting         HrmReportSetting?
   hrmMonthlyReportRuns     HrmMonthlyReportRun[]
   hrmEmployeeMonthlyReports HrmEmployeeMonthlyReport[]
@@ -2771,6 +2774,56 @@ model IntegrationSetting {
   @@map("integration_settings")
 }
 
+model GoogleMapsQuota {
+  id                  Int      @id @default(autoincrement())
+  customerId          Int      @unique
+  dailyLimit          Int      @default(1000)
+  monthlyLimit        Int      @default(20000)
+  warningThresholds   Json?
+  alertsEnabled       Boolean  @default(true)
+  enforcementEnabled  Boolean  @default(false)
+  recipients          String?
+  timezone            String   @default("Asia/Kolkata")
+  apiLimits           Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("google_maps_quotas")
+}
+
+model GoogleMapsUsageDaily {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  apiName    String
+  day        String
+  requests   Int      @default(0)
+  success    Int      @default(0)
+  failed     Int      @default(0)
+  updatedAt  DateTime @updatedAt
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, apiName, day])
+  @@index([customerId, day])
+  @@map("google_maps_usage_daily")
+}
+
+model GoogleMapsUsageAlert {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  periodKey  String
+  scope      String
+  threshold  Int
+  apiName    String   @default("ALL")
+  message    String
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, periodKey, scope, threshold, apiName])
+  @@index([customerId, createdAt])
+  @@map("google_maps_usage_alerts")
+}
+
 model PaymentSetting {
   id                    Int      @id @default(autoincrement())
   singletonKey          String   @unique @default("DEFAULT")
@@ -3831,58 +3884,6 @@ model Commission {
   @@index([status])
   @@index([createdAt])
   @@map("commissions")
-}
-
-model CommissionSlab {
-  id          Int       @id @default(autoincrement())
-  customerId  Int
-  name        String
-  minAmount   Float     @default(0)
-  maxAmount   Float?
-  ratePercent Float     @default(0)
-  roles       Json?
-  startsAt    DateTime?
-  endsAt      DateTime?
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-
-  @@index([customerId, isActive])
-  @@map("commission_slabs")
-}
-
-enum CommissionWithdrawalStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  PAID
-}
-
-model CommissionWithdrawal {
-  id               Int                         @id @default(autoincrement())
-  customerId       Int
-  employeeId       Int
-  amount           Float
-  method           String
-  accountLabel     String?
-  accountRef       String?
-  status           CommissionWithdrawalStatus  @default(PENDING)
-  idempotencyKey   String?                     @unique
-  paymentReference String?
-  remarks          String?
-  requestedAt      DateTime                    @default(now())
-  decidedAt        DateTime?
-  paidAt           DateTime?
-  decidedById      Int?
-  createdAt        DateTime                    @default(now())
-  updatedAt        DateTime                    @updatedAt
-  customer         Customer                    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employee         Employee                    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@index([customerId, employeeId, status])
-  @@index([customerId, status])
-  @@map("commission_withdrawals")
 }
 
 model SendDetailsDocument {
