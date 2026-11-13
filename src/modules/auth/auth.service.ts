@@ -1198,6 +1198,15 @@ export class AuthService {
           }
         }
       }
+
+      const origin = String(customerRecord.source || '').trim().toUpperCase();
+      const fromMobileRegistration = origin === 'APP_REGISTRATION';
+      const fromLead = customerRecord.leadId != null || origin.includes('LEAD');
+      if (upperExpectedRole === 'CUSTOMER_MOBILE' && !fromMobileRegistration && !fromLead) {
+        throw new ForbiddenException(
+          'This app is only for customers registered on mobile or created from a lead.',
+        );
+      }
     } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole)) {
       if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
@@ -1822,7 +1831,7 @@ export class AuthService {
   /**
    * Verifies OTP code and logs the user in, issuing JWT tokens and roles.
    */
-  async verifyOtp(dto: VerifyMobileOtpDto | VerifyOtpDto, crmApp = false) {
+  async verifyOtp(dto: VerifyMobileOtpDto | VerifyOtpDto, crmApp = false, customerApp = false) {
     if ((dto as any).email && !(dto as any).mobile) {
       return this.verifyEmailOtp(dto as any, crmApp);
     }
@@ -1918,6 +1927,16 @@ export class AuthService {
 
     if (crmApp) {
       await assertCrmAppEmployee(this.prisma, user);
+    }
+    if (customerApp) {
+      const origin = String(user.customer?.source || '').trim().toUpperCase();
+      const fromMobileRegistration = origin === 'APP_REGISTRATION';
+      const fromLead = user.customer?.leadId != null || origin.includes('LEAD');
+      if (!user.customer || (!fromMobileRegistration && !fromLead) || user.employee) {
+        throw new ForbiddenException(
+          'This app is only for customers registered on mobile or created from a lead.',
+        );
+      }
     }
 
     // Resolve primary role

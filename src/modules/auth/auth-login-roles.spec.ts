@@ -101,6 +101,7 @@ describe('Customer Mobile Login Role Validation', () => {
         name: 'Test Customer Workspace',
         isActive: true,
         deletedAt: null,
+        source: 'APP_REGISTRATION',
       },
       userRoles: [
         {
@@ -160,6 +161,8 @@ describe('Customer Mobile Login Role Validation', () => {
         id: 11,
         name: 'Test Customer Workspace',
         isActive: true,
+        leadId: 651,
+        source: 'LEAD_CONVERSION',
       },
       userRoles: [
         {
@@ -185,6 +188,47 @@ describe('Customer Mobile Login Role Validation', () => {
     expect(response.user.id).toBe(20);
     expect(response.user.customerId).toBe(11);
     expect(response.user.role).toBe('CUSTOMER');
+  });
+
+  it('2b. Rejects a customer who was not created from a lead or mobile registration', async () => {
+    const mockUser = {
+      id: 21,
+      customerId: 11,
+      email: 'direct@test.com',
+      firstName: 'Direct',
+      lastName: 'Customer',
+      passwordHash: mockHashedPassword,
+      isActive: true,
+      isVerified: true,
+      deletedAt: null,
+      customer: {
+        id: 11,
+        name: 'Direct Workspace',
+        isActive: true,
+        source: 'DIRECT',
+        leadId: null,
+      },
+      userRoles: [
+        {
+          roleId: 7,
+          role: {
+            id: 7,
+            customerId: 11,
+            name: 'Customer Administrator',
+            type: RoleType.CUSTOMER_ADMIN,
+          },
+        },
+      ],
+    };
+
+    prisma.user.findFirst.mockResolvedValue(mockUser);
+
+    await expect(
+      mobileAuthController.loginCustomer({
+        email: 'direct@test.com',
+        password: 'validPassword123',
+      }),
+    ).rejects.toThrow(ForbiddenException);
   });
 
   it('3. Rejects EMPLOYEE role from customer mobile endpoint with HTTP 403 Forbidden', async () => {
