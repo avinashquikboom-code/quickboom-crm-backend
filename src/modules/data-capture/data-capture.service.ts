@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { googlePhotoResource, isPlaceholderPhoto } from './google-photo';
+import { PhotoLookupCache } from './photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadService } from '../lead/lead.service';
 import {
@@ -36,6 +37,7 @@ import {
 @Injectable()
 export class DataCaptureService implements OnModuleInit {
   private readonly logger = new Logger(DataCaptureService.name);
+  private readonly photoLookups = new PhotoLookupCache();
 
   // Field mask explicitly selecting only required fields (NO WILDCARD)
   private readonly googleFieldMask = [
@@ -302,10 +304,16 @@ export class DataCaptureService implements OnModuleInit {
 
     if (usableKey && targetPhotoName) {
       try {
-        const lookup = await axios.get(
+        const lookup = await this.photoLookups.get(
           `https://places.googleapis.com/v1/${targetPhotoName}/media`,
           { timeout: 12000, headers: { 'X-Goog-Api-Key': apiKey }, params: { maxHeightPx: h, maxWidthPx: w, skipHttpRedirect: true }, validateStatus: () => true },
         );
+        if (lookup.status === 429) {
+          res.setHeader('Retry-After', lookup.headers?.['retry-after'] || '60');
+          res.setHeader('Cache-Control', 'no-store');
+          res.status(429).json({ success: false, message: 'Photo service temporarily rate limited' });
+          return;
+        }
         const photoUri = lookup.data?.photoUri;
         if (lookup.status < 300 && typeof photoUri === 'string' && photoUri.startsWith('https://')) {
           this.logger.log(`[LEAD_IMAGE] photo resource resolved status=${lookup.status}`);
@@ -401,11 +409,15 @@ export class DataCaptureService implements OnModuleInit {
           res.status(404).json({ success: false, message: 'Google Maps photo integration is not configured' });
           return;
         }
-        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+        const response = await this.photoLookups.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
           headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
           timeout: 12000,
           validateStatus: () => true,
         });
+        if (response.status === 429) {
+          res.setHeader('Retry-After', response.headers?.['retry-after'] || '60');
+          res.setHeader('Cache-Control', 'no-store');
+        }
         if (response.status >= 400) {
           this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed status=${response.status}`);
           res.status(response.status === 429 ? 429 : 404).json({ success: false, message: 'Google Places photo lookup failed' });

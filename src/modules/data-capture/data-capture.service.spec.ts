@@ -103,6 +103,20 @@ describe('DataCaptureService', () => {
     }
   });
 
+  it('does not issue a stream fallback or fresh lookup during a media quota cooldown', async () => {
+    mockIntegrationSettingsService.getGoogleMapsConfig.mockResolvedValueOnce({ isEnabled: true, apiKey: 'test-key' })
+      .mockResolvedValueOnce({ isEnabled: true, apiKey: 'test-key' });
+    const get = jest.spyOn(axios, 'get').mockResolvedValue({ status: 429, headers: { 'retry-after': '90' }, data: {} });
+    const res = { setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn() };
+    try {
+      await service.proxyPhoto('places/one/photos/first', 400, 400, res as unknown as Response);
+      await service.proxyPhoto('places/two/photos/second', 400, 400, res as unknown as Response);
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(429);
+      expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '90');
+    } finally { get.mockRestore(); }
+  });
+
   it('syncs new capture photos onto an imported lead after update', async () => {
     const leadId = 91;
     const url = 'https://cdn.example.test/uploads/new-photo.webp';
