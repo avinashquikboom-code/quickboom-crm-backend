@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { googlePhotoResource, isPlaceholderPhoto } from './google-photo';
+import { PhotoLookupCache } from './photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadService } from '../lead/lead.service';
 import {
@@ -23,6 +24,7 @@ import {
   CaptureSessionQueryDto,
 } from './dto/data-capture.dto';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { GoogleMapsUsageService } from '../google-maps-usage/google-maps-usage.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import {
   CapturedPlace,
@@ -36,6 +38,7 @@ import {
 @Injectable()
 export class DataCaptureService implements OnModuleInit {
   private readonly logger = new Logger(DataCaptureService.name);
+  private readonly photoLookups = new PhotoLookupCache();
 
   // Field mask explicitly selecting only required fields (NO WILDCARD)
   private readonly googleFieldMask = [
@@ -302,10 +305,16 @@ export class DataCaptureService implements OnModuleInit {
 
     if (usableKey && targetPhotoName) {
       try {
-        const lookup = await axios.get(
+        const lookup = await this.photoLookups.get(
           `https://places.googleapis.com/v1/${targetPhotoName}/media`,
           { timeout: 12000, headers: { 'X-Goog-Api-Key': apiKey }, params: { maxHeightPx: h, maxWidthPx: w, skipHttpRedirect: true }, validateStatus: () => true },
         );
+        if (lookup.status === 429) {
+          res.setHeader('Retry-After', lookup.headers?.['retry-after'] || '60');
+          res.setHeader('Cache-Control', 'no-store');
+          res.status(429).json({ success: false, message: 'Photo service temporarily rate limited' });
+          return;
+        }
         const photoUri = lookup.data?.photoUri;
         if (lookup.status < 300 && typeof photoUri === 'string' && photoUri.startsWith('https://')) {
           this.logger.log(`[LEAD_IMAGE] photo resource resolved status=${lookup.status}`);
@@ -401,11 +410,15 @@ export class DataCaptureService implements OnModuleInit {
           res.status(404).json({ success: false, message: 'Google Maps photo integration is not configured' });
           return;
         }
-        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+        const response = await this.photoLookups.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
           headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
           timeout: 12000,
           validateStatus: () => true,
         });
+        if (response.status === 429) {
+          res.setHeader('Retry-After', response.headers?.['retry-after'] || '60');
+          res.setHeader('Cache-Control', 'no-store');
+        }
         if (response.status >= 400) {
           this.logger.warn(`[LEAD_IMAGE] placeId=${placeId} photoFetchStatus=failed status=${response.status}`);
           res.status(response.status === 429 ? 429 : 404).json({ success: false, message: 'Google Places photo lookup failed' });
@@ -560,7 +573,13 @@ export class DataCaptureService implements OnModuleInit {
     @Inject(forwardRef(() => LeadService))
     private readonly leadService?: LeadService,
     @Optional() private readonly s3Service?: S3Service,
+    @Optional() private readonly mapsUsage?: GoogleMapsUsageService,
   ) {}
+
+  private googleMapsCall<T>(customerId: number | string | undefined, apiName: string, run: () => Promise<T>) {
+    if (!this.mapsUsage) return run();
+    return this.mapsUsage.execute(Number(customerId), apiName, run);
+  }
 
   async onModuleInit() {
     try {
@@ -698,11 +717,11 @@ export class DataCaptureService implements OnModuleInit {
       throw new BadRequestException('Google Maps is not enabled. Configure it in Settings → Integrations.');
     }
     try {
-      const response = await axios.post(
+      const response = await this.googleMapsCall(undefined, 'Places API', () => axios.post(
         'https://places.googleapis.com/v1/places:autocomplete',
         { input: query },
         { headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': mapsConfig.apiKey }, timeout: 8000 },
-      );
+      ));
       const suggestions = (response.data?.suggestions || [])
         .map((item: any) => ({
           placeId: item.placePrediction?.placeId,
@@ -881,7 +900,7 @@ export class DataCaptureService implements OnModuleInit {
           );
 
           const tGStart = Date.now();
-          const response = await axios.post(
+          const response = await this.googleMapsCall(effectiveCustomerId, 'Places API', () => axios.post(
             'https://places.googleapis.com/v1/places:searchText',
             requestBody,
             {
@@ -892,7 +911,7 @@ export class DataCaptureService implements OnModuleInit {
               },
               timeout: 10000,
             },
-          );
+          ));
           const tGDuration = Date.now() - tGStart;
           tGoogleTotal += tGDuration;
           this.logger.log(

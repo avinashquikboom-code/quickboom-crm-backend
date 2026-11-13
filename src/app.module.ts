@@ -41,6 +41,7 @@ import { AnnouncementModule } from './modules/announcement/announcement.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { IntegrationSettingsModule } from './modules/integration-settings/integration-settings.module';
+import { GoogleMapsUsageModule } from './modules/google-maps-usage/google-maps-usage.module';
 import { EmailModule } from './modules/email/email.module';
 import { TrendingModule } from './modules/trending/trending.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
@@ -70,6 +71,7 @@ import { AppController } from './app.controller';
     Msg91Module,
     WhatsappModule,
     IntegrationSettingsModule,
+    GoogleMapsUsageModule,
     GeneralSettingsModule,
     EmailModule,
     AuthModule,

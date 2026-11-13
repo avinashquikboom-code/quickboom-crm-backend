@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import axios from 'axios';
+import { PhotoLookupCache } from '../data-capture/photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import {
@@ -82,6 +82,7 @@ function socialProfileRows(social: Record<string, any>) {
 @Injectable()
 export class LeadRepository {
   private readonly logger = new Logger(LeadRepository.name);
+  private readonly photoLookups = new PhotoLookupCache();
   private readonly placePhotoLookup = new Map<string, number>();
 
   constructor(
@@ -1327,7 +1328,7 @@ export class LeadRepository {
     for (const lead of leads) {
       const placeId = String(lead.googlePlaceId).trim().replace(/^places\//, '');
       try {
-        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+        const response = await this.photoLookups.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
           headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'photos' },
           timeout: 8000,
           validateStatus: () => true,
