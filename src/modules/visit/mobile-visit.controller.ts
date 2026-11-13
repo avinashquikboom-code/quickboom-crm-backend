@@ -463,6 +463,14 @@ export class MobileVisitController {
       };
     });
 
+    if (isVisitorUser && normalizedTab !== 'completed' && normalizedTab !== 'done') {
+      mapped.sort((a, b) => {
+        const created = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        if (created !== 0) return created;
+        return Number(b.id) - Number(a.id);
+      });
+    }
+
     return { items: mapped, data: mapped, total: mapped.length };
   }
 

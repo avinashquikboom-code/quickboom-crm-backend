@@ -37,7 +37,8 @@ export class MobileAuthController {
   @ApiOperation({ summary: 'Verify mobile OTP and login' })
   @ApiResponse({ status: 200, description: 'User logged in successfully' })
   async verifyOtp(@Body() dto: VerifyMobileOtpDto, @Headers('x-app') app?: string) {
-    return this.authService.verifyOtp(dto, String(app || '').toLowerCase() === 'crm');
+    const appName = String(app || '').toLowerCase();
+    return this.authService.verifyOtp(dto, appName === 'crm', appName === 'customer');
   }
 
   // ✅ CUSTOMER LOGIN
@@ -50,7 +51,7 @@ export class MobileAuthController {
     @Body() loginDto: LoginDto,
     @Headers('x-app') app?: string,
   ) {
-    return this.authService.login(loginDto.email, loginDto.password, 'CUSTOMER', String(app || '').toLowerCase() === 'crm');
+    return this.authService.login(loginDto.email, loginDto.password, 'CUSTOMER_MOBILE', false);
   }
 
   // ✅ EMPLOYEE LOGIN

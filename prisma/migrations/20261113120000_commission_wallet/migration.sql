@@ -64,3 +64,50 @@ DO $$ BEGIN
     ALTER TABLE "commission_withdrawals" ADD CONSTRAINT "commission_withdrawals_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
+
+-- Tables may already exist from 20261113150000 with a narrower column set.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'commission_slabs' AND column_name = 'roles'
+  ) THEN
+    ALTER TABLE "commission_slabs" ADD COLUMN "roles" JSONB;
+  ELSIF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'commission_slabs' AND column_name = 'roles' AND udt_name <> 'jsonb'
+  ) THEN
+    ALTER TABLE "commission_slabs"
+      ALTER COLUMN "roles" TYPE JSONB
+      USING (
+        CASE
+          WHEN "roles" IS NULL OR btrim("roles"::text) = '' THEN NULL
+          WHEN left(btrim("roles"::text), 1) IN ('{', '[') THEN "roles"::jsonb
+          ELSE to_jsonb(string_to_array("roles"::text, ','))
+        END
+      );
+  END IF;
+END $$;
+
+ALTER TABLE "commission_withdrawals" ADD COLUMN IF NOT EXISTS "method" TEXT;
+ALTER TABLE "commission_withdrawals" ADD COLUMN IF NOT EXISTS "accountLabel" TEXT;
+ALTER TABLE "commission_withdrawals" ADD COLUMN IF NOT EXISTS "accountRef" TEXT;
+ALTER TABLE "commission_withdrawals" ADD COLUMN IF NOT EXISTS "remarks" TEXT;
+ALTER TABLE "commission_withdrawals" ADD COLUMN IF NOT EXISTS "decidedById" INTEGER;
+
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'commission_withdrawals' AND column_name = 'paymentMethod'
+  ) THEN
+    UPDATE "commission_withdrawals" SET "method" = "paymentMethod" WHERE "method" IS NULL;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'commission_withdrawals' AND column_name = 'accountId'
+  ) THEN
+    UPDATE "commission_withdrawals" SET "accountRef" = "accountId" WHERE "accountRef" IS NULL;
+  END IF;
+END $$;
+
+UPDATE "commission_withdrawals" SET "method" = 'UNKNOWN' WHERE "method" IS NULL;
+ALTER TABLE "commission_withdrawals" ALTER COLUMN "method" SET NOT NULL;
