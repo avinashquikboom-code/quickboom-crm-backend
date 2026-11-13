@@ -3886,6 +3886,58 @@ model Commission {
   @@map("commissions")
 }
 
+model CommissionSlab {
+  id          Int       @id @default(autoincrement())
+  customerId  Int
+  name        String
+  minAmount   Float     @default(0)
+  maxAmount   Float?
+  ratePercent Float     @default(0)
+  roles       Json?
+  startsAt    DateTime?
+  endsAt      DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, isActive])
+  @@map("commission_slabs")
+}
+
+enum CommissionWithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model CommissionWithdrawal {
+  id               Int                        @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  amount           Float
+  method           String
+  accountLabel     String?
+  accountRef       String?
+  status           CommissionWithdrawalStatus @default(PENDING)
+  idempotencyKey   String?                    @unique
+  paymentReference String?
+  remarks          String?
+  requestedAt      DateTime                   @default(now())
+  decidedAt        DateTime?
+  paidAt           DateTime?
+  decidedById      Int?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  customer         Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee         Employee                   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, employeeId, status])
+  @@index([customerId, status])
+  @@map("commission_withdrawals")
+}
+
 model SendDetailsDocument {
   id          Int       @id @default(autoincrement())
   customerId  Int
