@@ -35,6 +35,29 @@ export interface WhatsAppSendResult {
  * Typed error codes for WhatsApp send failures.
  * Use these for programmatic differentiation — never put human messages here.
  */
+/**
+ * Local seeds use ids such as `seed_lead_stage_details_sent` and were never created in Meta.
+ */
+export function isLocalPlaceholderTemplate(template?: {
+  metaTemplateId?: string | null;
+} | null): boolean {
+  const metaId = String(template?.metaTemplateId || '').trim();
+  return !metaId || metaId.startsWith('seed_');
+}
+
+/**
+ * A template may be sent only when it was synced from Meta and is approved.
+ */
+export function isSendableMetaTemplate(template?: {
+  status?: string | null;
+  metaTemplateId?: string | null;
+} | null): boolean {
+  if (!template) return false;
+  const status = String(template.status || '').toUpperCase();
+  if (status !== 'APPROVED') return false;
+  return !isLocalPlaceholderTemplate(template);
+}
+
 export const WHATSAPP_ERROR_CODES = {
   AUTH_ERROR: 'WHATSAPP_AUTH_ERROR',             // 401 / code 190 (Token expired or invalid)
   PERMISSION_ERROR: 'WHATSAPP_PERMISSION_ERROR',  // 403 / code 200-299 / code 10

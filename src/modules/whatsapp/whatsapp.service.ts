@@ -14,6 +14,8 @@ import {
   resolveCleanAccessToken,
   classifyWhatsAppError,
   friendlyWhatsAppErrorMessage,
+  isLocalPlaceholderTemplate,
+  isSendableMetaTemplate,
 } from './whatsapp.util';
 
 @Injectable()
@@ -243,6 +245,21 @@ export class WhatsappService {
             where: whereClause,
             orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
           });
+        }
+
+        if (dbTemplate && isLocalPlaceholderTemplate(dbTemplate)) {
+          const errorMsg = `WhatsApp template "${dbTemplate.templateName}" is not an approved Meta template for this WhatsApp Business Account. Sync templates from Meta and map an approved template to this stage.`;
+          this.logger.warn(`[WHATSAPP_PRE_SEND_VALIDATION] ${errorMsg}`);
+          return {
+            success: false,
+            skipped: true,
+            provider: 'WHATSAPP',
+            errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+            reason: 'TEMPLATE_NOT_ON_META',
+            message: errorMsg,
+            providerMessage: errorMsg,
+            details: errorMsg,
+          };
         }
 
         if (dbTemplate) {
@@ -1499,15 +1516,16 @@ export class WhatsappService {
             isLocalActive: true,
           },
         });
-        if (dbTpl) {
+        if (dbTpl && isSendableMetaTemplate(dbTpl)) {
           return {
             key: dbTpl.key || stageKey || dbTpl.templateName,
             templateName: dbTpl.templateName,
             name: dbTpl.name,
             body: dbTpl.body,
             id: dbTpl.id,
-            language: dbTpl.language || 'en_US',
+            language: dbTpl.language,
             status: dbTpl.status,
+            metaTemplateId: dbTpl.metaTemplateId,
           };
         }
       }
@@ -1536,23 +1554,24 @@ export class WhatsappService {
           orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
         });
 
-        if (dbTpl) {
+        if (dbTpl && isSendableMetaTemplate(dbTpl)) {
           return {
             key: dbTpl.key || resolvedKey,
             templateName: dbTpl.templateName,
             name: dbTpl.name,
             body: dbTpl.body,
             id: dbTpl.id,
-            language: dbTpl.language || 'en_US',
+            language: dbTpl.language,
             status: dbTpl.status,
+            metaTemplateId: dbTpl.metaTemplateId,
           };
         }
       }
     } catch {
-      // Fallback to static templates
+      // A lookup failure is not a reason to send a guessed template name.
     }
 
-    return this.getStageTemplate(stageKey);
+    return null;
   }
 
   /**
@@ -1581,7 +1600,23 @@ export class WhatsappService {
 
     let template: LeadStageWhatsAppTemplate | null = metaTemplate || null;
     if (!template) {
-      template = (await this.getStageTemplateAsync(stageKey, customerId, metaTemplateId)) || this.getStageTemplate(stageKey);
+      template = await this.getStageTemplateAsync(stageKey, customerId, metaTemplateId);
+    }
+    if (template && !isSendableMetaTemplate(template)) {
+      template = null;
+    }
+    if (!template) {
+      const stageLabel = stageName || stageKey || 'this stage';
+      const message = `WhatsApp: Not configured for stage "${stageLabel}". Map an approved Meta template before sending.`;
+      this.logger.warn(`[WHATSAPP] ${message}`);
+      return {
+        success: false,
+        skipped: true,
+        errorCode: WHATSAPP_ERROR_CODES.NO_TEMPLATE_OR_MESSAGE,
+        reason: 'WHATSAPP_NOT_CONFIGURED',
+        message,
+        details: message,
+      };
     }
 
     if (template && template.status && template.status !== 'APPROVED') {
@@ -1624,13 +1659,13 @@ export class WhatsappService {
         skipped: true,
         errorCode: WHATSAPP_ERROR_CODES.NO_TEMPLATE_OR_MESSAGE,
         reason: WHATSAPP_ERROR_CODES.NO_TEMPLATE_OR_MESSAGE,
-        message: `WhatsApp template not configured for stage: ${stageName || stageKey}`,
-        details: `WhatsApp template not configured for stage: ${stageName || stageKey}`,
+        message: `WhatsApp: Not configured for stage "${stageName || stageKey}". Map an approved Meta template before sending.`,
+        details: `WhatsApp: Not configured for stage "${stageName || stageKey}". Map an approved Meta template before sending.`,
       };
     }
 
-    const templateName = template?.templateName || 'lead_stage_update';
-    const languageCode = template?.language || 'en_US';
+    const templateName = template.templateName;
+    const languageCode = template.language;
     const templateParameters = template
       ? this.resolveTemplateParameters(template.body, variables)
       : Object.values(variables).slice(0, 3).map((v) => ({ type: 'text' as const, text: String(v) }));
@@ -2543,6 +2578,7 @@ export interface LeadStageWhatsAppTemplate {
   id?: number;
   language?: string;
   status?: string;
+  metaTemplateId?: string | null;
 }
 
 export const LEAD_STAGE_WHATSAPP_TEMPLATES: Record<string, LeadStageWhatsAppTemplate> = {

@@ -1589,7 +1589,9 @@ export class LeadService {
       this.isVisitDoneStage(resolvedStatus, stageName, undefined) &&
       !(await this.leadRepository.isVisitorUser(user))
     ) {
-      throw new ForbiddenException('Only a visitor employee can mark a lead as Visit Done.');
+      throw new ForbiddenException(
+        'Visit Done must be completed by the assigned visitor employee through the visit-completion workflow.',
+      );
     }
 
     await this.leadRepository.update(customerId, id, sanitizedDto as any);
@@ -1886,15 +1888,13 @@ export class LeadService {
       throw new BadRequestException('Either stageId or status must be provided.');
     }
 
-    // Visit Done is reserved for the visitor employee assigned to the field visit.
+    // Visit Done is reserved for the assigned visitor via visit-completion workflow.
+    // BPO / Telecaller may change every other valid stage and schedule visits.
     const movingToVisitDone = this.isVisitDoneStage(resolvedStatus, stageName, targetStageKey);
     const actorIsVisitor = await this.leadRepository.isVisitorUser(user);
     if (movingToVisitDone && !actorIsVisitor) {
-      const teleBpo = this.leadRepository.isTelecallerOrBpoStaff(user);
       throw new ForbiddenException(
-        teleBpo
-          ? 'Telecaller and BPO employees can schedule visits only. Visit Done must be completed by the assigned visitor employee.'
-          : 'Only a visitor employee can mark a lead as Visit Done.',
+        'Visit Done must be completed by the assigned visitor employee through the visit-completion workflow.',
       );
     }
 
@@ -2582,6 +2582,7 @@ export class LeadService {
     messageId: string | null;
     error: string | null;
     message: string;
+    reason?: string;
   }> {
     let deliveryRow: any = null;
     try {
@@ -2764,8 +2765,9 @@ export class LeadService {
           status: 'SKIPPED',
           recipient: null,
           messageId: null,
-          error: `No email template configured for stage: ${newStageName}`,
-          message: `No email template configured for stage: ${newStageName}`,
+          error: 'No email template configured for this stage',
+          reason: 'EMAIL_TEMPLATE_MISSING',
+          message: 'Email skipped: No template configured for this stage.',
         };
       }
 
@@ -2810,17 +2812,17 @@ export class LeadService {
 
       // Handle missing or invalid customer email safely without failing the stage update
       if (!recipientEmail || !emailRegex.test(recipientEmail)) {
-        this.logger.warn(`[LEAD_STAGE_EMAIL] Lead has no customer email`);
+        this.logger.warn(`[LEAD_STAGE_EMAIL] Customer email is missing`);
         await this.leadRepository.logTimeline(
           lead.id,
           eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_EMAIL' : 'STAGE_CHANGE_EMAIL',
-          `Automatic stage email skipped: Lead has no customer email`,
+          `Email: SKIPPED – Customer email is missing`,
           {
             eventType,
             previousStage: previousStageName,
             newStage: newStageName,
             status: 'SKIPPED',
-            reason: 'Lead has no customer email',
+            reason: 'Customer email is missing',
           },
         ).catch(() => null);
         return {
@@ -2828,8 +2830,9 @@ export class LeadService {
           status: 'SKIPPED',
           recipient: null,
           messageId: null,
-          error: 'Lead has no customer email',
-          message: 'Automatic stage email skipped: Lead has no customer email',
+          error: 'Customer email is missing',
+          reason: 'CUSTOMER_EMAIL_MISSING',
+          message: 'Email skipped: Customer email address is missing.',
         };
       }
 
@@ -3707,11 +3710,8 @@ export class LeadService {
   ) {
     const lead = await this.getLeadById(customerId, leadId, user);
     if (dto.action === 'COMPLETE' && !(await this.leadRepository.isVisitorUser(user))) {
-      const teleBpo = this.leadRepository.isTelecallerOrBpoStaff(user);
       throw new ForbiddenException(
-        teleBpo
-          ? 'Telecaller and BPO employees can schedule visits only. Visit Done must be completed by the assigned visitor employee.'
-          : 'Only a visitor employee can mark a visit as done.',
+        'Visit Done must be completed by the assigned visitor employee through the visit-completion workflow.',
       );
     }
     if (dto.action === 'SCHEDULE' && (await this.leadRepository.isVisitorUser(user))) {
