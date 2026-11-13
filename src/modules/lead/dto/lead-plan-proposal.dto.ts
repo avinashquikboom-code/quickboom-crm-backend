@@ -109,3 +109,16 @@ export class ResendPlanProposalDto {
   @IsBoolean()
   whatsapp?: boolean;
 }
+
+export class CreateStandardPlanProposalDto {
+  @Type(() => Number)
+  @IsNumber()
+  planId: number;
+
+  @IsIn(['MONTHLY', 'YEARLY'])
+  billingCycle: 'MONTHLY' | 'YEARLY';
+
+  @IsString()
+  @IsNotEmpty()
+  idempotencyKey: string;
+}

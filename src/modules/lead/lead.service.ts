@@ -63,6 +63,7 @@ import { SendDetailsService } from '../send-details/send-details.service';
 import { LeadPlanProposalService } from './lead-plan-proposal.service';
 import {
   CreateCustomPlanProposalDto,
+  CreateStandardPlanProposalDto,
   ResendPlanProposalDto,
   SetPlanPreferenceDto,
 } from './dto/lead-plan-proposal.dto';
@@ -5439,6 +5440,26 @@ Sent by ${senderOrgName} via CRM.
       row.id,
     );
     return { delivery: row, send: sendRes };
+  }
+
+  async listTenantPlanProposals(customerId: string, query: any) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.listForTenant(Number(customerId), query);
+  }
+
+  async listAvailableProposalPlans(customerId: string, leadId: string) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.availablePlans(Number(customerId), Number(leadId));
+  }
+
+  async createStandardProposalDraft(customerId: string, leadId: string, userId: string, dto: CreateStandardPlanProposalDto) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.createStandardDraft(Number(customerId), Number(leadId), Number(userId), dto);
+  }
+
+  async getProposalPdf(customerId: string, leadId: string, proposalId: string) {
+    if (!this.leadPlanProposalService) throw new BadRequestException('Plan proposal module is unavailable.');
+    return this.leadPlanProposalService.pdfForProposal(Number(customerId), Number(leadId), Number(proposalId));
   }
 
   async listPlanProposals(customerId: number | string, leadId: number | string) {

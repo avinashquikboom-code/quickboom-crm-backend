@@ -101,12 +101,6 @@ export class CommissionWalletService {
     return rows;
   }
 
-  private roleNames(roles: unknown) {
-    if (Array.isArray(roles)) return roles.map((role) => String(role).trim().toLowerCase());
-    if (typeof roles === 'string' && roles.trim()) return roles.split(',').map((role) => role.trim().toLowerCase());
-    return [];
-  }
-
   async wallet(customerId: number, userId: number) {
     const employee = await this.employee(customerId, userId);
     return { ...(await this.summary(customerId, employee.id)), paymentAccounts: this.accounts(employee.bankDetails) };
@@ -132,8 +126,7 @@ export class CommissionWalletService {
   async rules(customerId: number, userId: number) {
     const employee = await this.employee(customerId, userId);
     const now = new Date();
-    const roleName = String(employee.designation?.name || '').trim().toLowerCase();
-    const slabs = (await this.prisma.commissionSlab.findMany({
+    const slabs = await this.prisma.commissionSlab.findMany({
       where: {
         customerId,
         isActive: true,
@@ -143,9 +136,6 @@ export class CommissionWalletService {
         ],
       },
       orderBy: { minAmount: 'asc' },
-    })).filter((slab) => {
-      const names = this.roleNames(slab.roles);
-      return names.length === 0 || names.includes(roleName);
     });
     const config = await this.prisma.commissionConfig.findUnique({ where: { employeeId: employee.id } });
     const rate = config
@@ -157,8 +147,12 @@ export class CommissionWalletService {
     return {
       source: config ? 'EMPLOYEE_RATE' : 'DESIGNATION_RATE',
       eligible,
-      note: 'Configured sale-amount slabs are shown for your designation. Credits always use the rate recorded by the commission engine at purchase time; historical credits are not recalculated.',
-      slabs,
+      note: !eligible
+        ? 'Your current employee or designation configuration does not make you eligible for commission.'
+        : rate.type === 'FIXED'
+          ? 'Your fixed commission amount applies; percentage slabs are not used.'
+          : 'The commission engine currently selects an active sale-amount slab without filtering its role field. The slabs shown reflect that calculation. Credits use the rate recorded at purchase time; historical credits are not recalculated.',
+      slabs: eligible && rate.type === 'PERCENTAGE' ? slabs : [],
       employeeRate: rate,
       calculationMethod: rate?.type === 'FIXED'
         ? 'Fixed configured amount per eligible purchase.'
@@ -178,7 +172,7 @@ export class CommissionWalletService {
     const page = Math.max(1, Math.floor(Number(query.page) || 1));
     const limit = Math.max(1, Math.min(50, Math.floor(Number(query.limit) || 20)));
     if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit)) throw new BadRequestException('Invalid pagination.');
-    if (query.type && !['COMMISSION_EARNED', 'WITHDRAWAL', 'REVERSAL'].includes(query.type)) throw new BadRequestException('Invalid transaction type.');
+    if (query.type && !['COMMISSION_EARNED', 'WITHDRAWAL'].includes(query.type)) throw new BadRequestException('Invalid transaction type.');
     if (query.status && !['PENDING', 'APPROVED', 'REJECTED', 'PAID', 'CANCELLED'].includes(query.status)) throw new BadRequestException('Invalid transaction status.');
     // UNION pagination avoids truncating either ledger at an arbitrary row cap.
     const ledger = Prisma.sql`
@@ -187,9 +181,6 @@ export class CommissionWalletService {
       UNION ALL
       SELECT 'wd-' || id::text, 'WITHDRAWAL', NULL::integer, amount, status::text, 'DEBIT', "requestedAt"
       FROM commission_withdrawals WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id}
-      UNION ALL
-      SELECT 'rev-' || id::text, 'REVERSAL', "leadId", "commissionAmount", status::text, 'DEBIT', "updatedAt"
-      FROM commissions WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id} AND status = 'CANCELLED'
     `;
     const filter = Prisma.sql`WHERE (${query.type || null}::text IS NULL OR type = ${query.type || null}) AND (${query.status || null}::text IS NULL OR status = ${query.status || null})`;
     const [data, count] = await Promise.all([
