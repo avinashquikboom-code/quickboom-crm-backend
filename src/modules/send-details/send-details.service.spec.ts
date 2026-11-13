@@ -163,7 +163,7 @@ describe('SendDetailsService', () => {
     const result: any = await service.triggerAutomaticSendDetails(1, lead, 'CONTACTED', 'Details Sent', 10);
     expect(result.whatsappStatus).toBe('SENT');
     expect(result.emailStatus).toBe('SKIPPED');
-    expect(result.emailError).toBe('Email skipped – Lead email address is missing.');
+    expect(result.emailError).toBe('Customer email is missing');
     expect(result.overallStatus).toBe('PARTIALLY_COMPLETED');
   });
 

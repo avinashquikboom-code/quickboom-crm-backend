@@ -340,7 +340,7 @@ export class SendDetailsService {
           isAutomationEnabled: true,
           whatsappEnabled: true,
           emailEnabled: true,
-          whatsappTemplateName: 'lead_stage_details_sent',
+          whatsappTemplateName: null,
           emailSubject: 'Company Details & Service Information',
           emailBody: '<p>Dear {{leadName}},</p><p>Thank you for your interest in {{companyName}}. Please find attached our company profile, product catalogue, pricing, and project portfolio.</p>',
           activeCategories: [
@@ -580,7 +580,7 @@ export class SendDetailsService {
       tasks.push(
         (async () => {
           if (!leadEmail) {
-            emailResult = { status: 'SKIPPED', error: 'Email skipped – Lead email address is missing.' };
+            emailResult = { status: 'SKIPPED', error: 'Customer email is missing' };
             return;
           }
           try {
@@ -668,7 +668,7 @@ export class SendDetailsService {
     }
 
     if (!channels.includes('EMAIL') && !leadEmail) {
-      emailResult = { status: 'SKIPPED', error: 'Email skipped – Lead email address is missing.' };
+      emailResult = { status: 'SKIPPED', error: 'Customer email is missing' };
     }
     if (!channels.includes('WHATSAPP') && existingDeliveryId && delivery) {
       whatsappResult = {
@@ -786,7 +786,7 @@ export class SendDetailsService {
       if (delivery.emailStatus === 'FAILED' || emailSkipped) {
         if (!this.validEmail(lead.email)) {
           if (targetChannel === 'EMAIL' || channelsToRetry.length === 0) {
-            throw new BadRequestException('Email skipped – Lead email address is missing.');
+            throw new BadRequestException('Customer email is missing');
           }
         } else {
           channelsToRetry.push('EMAIL');

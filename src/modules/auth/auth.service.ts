@@ -2853,6 +2853,26 @@ export class AuthService {
       }
     }
 
+    // BPO / Telecaller policy: scheduling visits is allowed when lead schedule/stage
+    // permissions remain. Restore VISITS:CREATE if a module DENY stripped it.
+    if (!isVisitorDesignation) {
+      const mayScheduleVisits =
+        permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
+        permissionsMap.has('LEADS:CHANGE_STAGE') ||
+        permissionsMap.has('VISITS:CREATE');
+      if (mayScheduleVisits) {
+        if (!permissionsMap.has('VISITS:CREATE')) {
+          permissionsMap.set('VISITS:CREATE', { module: 'VISITS', action: 'CREATE' });
+        }
+        if (!permissionsMap.has('VISITS:VIEW')) {
+          permissionsMap.set('VISITS:VIEW', { module: 'VISITS', action: 'VIEW' });
+        }
+        if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
+          permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
+        }
+      }
+    }
+
     if (!user.employee) {
       const customerItems = await resolveCustomerAppPermissionItems(
         this.prisma,

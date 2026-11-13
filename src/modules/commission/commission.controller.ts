@@ -72,8 +72,9 @@ export class CommissionController {
     @Param('id', ParseIntPipe) id: number,
     @Param('action') action: string,
     @CurrentUser() user: any,
+    @Body() confirmation: { paymentReference?: string; processingConfirmed?: boolean },
   ) {
-    return this.walletService.setWithdrawalStatus(Number(customerId), id, action, Number(user?.id) || undefined);
+    return this.walletService.setWithdrawalStatus(Number(customerId), id, action, Number(user?.id) || undefined, confirmation);
   }
 
   /**

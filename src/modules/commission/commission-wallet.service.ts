@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
@@ -19,7 +19,7 @@ export class CommissionWalletService {
   private async employee(customerId: number, userId: number) {
     const row = await this.prisma.employee.findFirst({
       where: { customerId, userId },
-      include: { designation: { select: { name: true } } },
+      include: { designation: true },
     });
     if (!row) throw new NotFoundException('Employee profile not found');
     return row;
@@ -29,7 +29,9 @@ export class CommissionWalletService {
     if (query.startDate || query.endDate) {
       const gte = query.startDate ? new Date(query.startDate) : undefined;
       const lte = query.endDate ? new Date(query.endDate) : undefined;
+      if ((gte && !Number.isFinite(+gte)) || (lte && !Number.isFinite(+lte))) throw new BadRequestException('Invalid date range.');
       if (lte) lte.setHours(23, 59, 59, 999);
+      if (gte && lte && gte > lte) throw new BadRequestException('Start date must precede end date.');
       return { gte, lte };
     }
     const now = new Date();
@@ -50,10 +52,11 @@ export class CommissionWalletService {
         lte: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
       };
     }
+    if (period !== 'this_month') throw new BadRequestException('Unsupported earnings period.');
     return { gte: new Date(now.getFullYear(), now.getMonth(), 1) };
   }
 
-  private async summary(customerId: number, employeeId: number, createdAt?: { gte?: Date; lte?: Date }) {
+  private async summary(customerId: number, employeeId: number, createdAt?: { gte?: Date; lte?: Date }, db: Prisma.TransactionClient = this.prisma) {
     const earnedWhere: Prisma.CommissionWhereInput = {
       customerId,
       employeeId,
@@ -65,25 +68,26 @@ export class CommissionWalletService {
       employeeId,
       ...(createdAt ? { requestedAt: createdAt } : {}),
     };
-    const [earned, reserved, paidOut, closed] = await Promise.all([
-      this.prisma.commission.aggregate({ where: earnedWhere, _sum: { commissionAmount: true, purchaseAmount: true }, _count: { id: true } }),
-      this.prisma.commissionWithdrawal.aggregate({ where: { ...withdrawalWhere, status: { in: ['PENDING', 'APPROVED'] } }, _sum: { amount: true } }),
-      this.prisma.commissionWithdrawal.aggregate({ where: { ...withdrawalWhere, status: 'PAID' }, _sum: { amount: true } }),
-      this.prisma.commission.count({ where: { ...earnedWhere, leadId: { not: null } } }),
+    const [earned, reserved, paidOut, closed, leadSales] = await Promise.all([
+      db.commission.aggregate({ where: earnedWhere, _sum: { commissionAmount: true, purchaseAmount: true }, _count: { id: true } }),
+      db.commissionWithdrawal.aggregate({ where: { ...withdrawalWhere, status: { in: ['PENDING', 'APPROVED'] } }, _sum: { amount: true } }),
+      db.commissionWithdrawal.aggregate({ where: { ...withdrawalWhere, status: 'PAID' }, _sum: { amount: true } }),
+      db.commission.groupBy({ by: ['leadId'], where: { ...earnedWhere, leadId: { not: null } } }),
+      db.commission.aggregate({ where: { ...earnedWhere, leadId: { not: null } }, _sum: { purchaseAmount: true, commissionAmount: true } }),
     ]);
     const totalEarned = this.round(earned._sum.commissionAmount || 0);
     const totalWithdrawn = this.round(paidOut._sum.amount || 0);
     const pendingWithdrawal = this.round(reserved._sum.amount || 0);
-    const sales = this.round(earned._sum.purchaseAmount || 0);
+    const sales = this.round(leadSales._sum.purchaseAmount || 0);
     return {
       currency: 'INR',
       totalEarned,
       totalWithdrawn,
       pendingWithdrawal,
       availableBalance: this.round(Math.max(0, totalEarned - pendingWithdrawal - totalWithdrawn)),
-      leadsClosed: closed,
+      leadsClosed: closed.length,
       totalSalesValue: sales,
-      averageCommissionRate: sales > 0 ? this.round((totalEarned / sales) * 100) : 0,
+      averageCommissionRate: sales > 0 ? this.round(((leadSales._sum.commissionAmount || 0) / sales) * 100) : 0,
     };
   }
 
@@ -121,7 +125,8 @@ export class CommissionWalletService {
       const key = row.createdAt.toISOString().slice(0, 10);
       byDay.set(key, this.round((byDay.get(key) || 0) + row.commissionAmount));
     }
-    return { ...totals, period: query.period || 'this_month', daily: [...byDay.entries()].map(([date, amount]) => ({ date, amount })) };
+    const current = await this.summary(customerId, employee.id);
+    return { ...totals, availableBalance: current.availableBalance, period: query.period || 'this_month', daily: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, amount]) => ({ date, amount })) };
   }
 
   async rules(customerId: number, userId: number) {
@@ -143,45 +148,55 @@ export class CommissionWalletService {
       return names.length === 0 || names.includes(roleName);
     });
     const config = await this.prisma.commissionConfig.findUnique({ where: { employeeId: employee.id } });
+    const rate = config
+      ? { type: config.commissionType, value: config.commissionValue, status: config.status }
+      : employee.designation?.commissionEnabled
+        ? { type: employee.designation.commissionType, value: employee.designation.commissionRate, status: 'ACTIVE' }
+        : null;
+    const eligible = rate?.status === 'ACTIVE' && rate.value > 0;
     return {
-      source: slabs.length ? 'COMMISSION_SLAB' : 'EMPLOYEE_OR_DESIGNATION_RATE',
-      note: 'Wallet credits use existing approved commission records. Slabs are the admin sale-amount rules. If none are active, the employee or designation rate already stored on each commission applies.',
+      source: config ? 'EMPLOYEE_RATE' : 'DESIGNATION_RATE',
+      eligible,
+      note: 'Configured sale-amount slabs are shown for your designation. Credits always use the rate recorded by the commission engine at purchase time; historical credits are not recalculated.',
       slabs,
-      employeeRate: config ? { type: config.commissionType, value: config.commissionValue, status: config.status } : null,
+      employeeRate: rate,
+      calculationMethod: rate?.type === 'FIXED'
+        ? 'Fixed configured amount per eligible purchase.'
+        : 'Purchase amount × recorded commission percentage ÷ 100, rounded to two decimal places.',
+      conditions: [
+        'An active employee override takes precedence over designation eligibility. An inactive override disables commission.',
+        'Commission is generated after successful customer plan payment and attributed to the converting or assigned employee. Closing a lead alone does not create a wallet credit.',
+        'Only approved and paid commission records contribute to earnings. Cancelled records are excluded.',
+        'This commission engine records one recipient per purchase; no team distribution is configured in this model.',
+      ],
+      withdrawalRules: 'Use a saved bank or UPI account. Amount must be positive and cannot exceed available funds. Pending and approved requests reserve funds. No additional withdrawal limits or processing SLA are configured. Supported statuses: PENDING, APPROVED, REJECTED, PAID.',
     };
   }
 
   async transactions(customerId: number, userId: number, query: { page?: string; limit?: string; type?: string; status?: string }) {
     const employee = await this.employee(customerId, userId);
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.max(1, Math.min(50, Number(query.limit) || 20));
-    const [credits, debits, reversals] = await Promise.all([
-      this.prisma.commission.findMany({
-        where: { customerId, employeeId: employee.id, status: { in: [...EARNED] } },
-        select: { id: true, leadId: true, commissionAmount: true, status: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-        take: 200,
-      }),
-      this.prisma.commissionWithdrawal.findMany({
-        where: { customerId, employeeId: employee.id },
-        orderBy: { requestedAt: 'desc' },
-        take: 200,
-      }),
-      this.prisma.commission.findMany({
-        where: { customerId, employeeId: employee.id, status: 'CANCELLED' },
-        select: { id: true, leadId: true, commissionAmount: true, status: true, createdAt: true },
-        take: 100,
-      }),
+    const page = Math.max(1, Math.floor(Number(query.page) || 1));
+    const limit = Math.max(1, Math.min(50, Math.floor(Number(query.limit) || 20)));
+    if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit)) throw new BadRequestException('Invalid pagination.');
+    if (query.type && !['COMMISSION_EARNED', 'WITHDRAWAL', 'REVERSAL'].includes(query.type)) throw new BadRequestException('Invalid transaction type.');
+    if (query.status && !['PENDING', 'APPROVED', 'REJECTED', 'PAID', 'CANCELLED'].includes(query.status)) throw new BadRequestException('Invalid transaction status.');
+    // UNION pagination avoids truncating either ledger at an arbitrary row cap.
+    const ledger = Prisma.sql`
+      SELECT 'earn-' || id::text AS id, 'COMMISSION_EARNED' AS type, "leadId", "commissionAmount" AS amount, status::text AS status, 'CREDIT' AS direction, "createdAt"
+      FROM commissions WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id} AND status IN ('APPROVED', 'PAID')
+      UNION ALL
+      SELECT 'wd-' || id::text, 'WITHDRAWAL', NULL::integer, amount, status::text, 'DEBIT', "requestedAt"
+      FROM commission_withdrawals WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id}
+      UNION ALL
+      SELECT 'rev-' || id::text, 'REVERSAL', "leadId", "commissionAmount", status::text, 'DEBIT', "updatedAt"
+      FROM commissions WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id} AND status = 'CANCELLED'
+    `;
+    const filter = Prisma.sql`WHERE (${query.type || null}::text IS NULL OR type = ${query.type || null}) AND (${query.status || null}::text IS NULL OR status = ${query.status || null})`;
+    const [data, count] = await Promise.all([
+      this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT * FROM (${ledger}) ledger ${filter} ORDER BY "createdAt" DESC, id DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`),
+      this.prisma.$queryRaw<{ total: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS total FROM (${ledger}) ledger ${filter}`),
     ]);
-    let rows = [
-      ...credits.map((row) => ({ id: `earn-${row.id}`, type: 'COMMISSION_EARNED', leadId: row.leadId, amount: row.commissionAmount, status: row.status, direction: 'CREDIT', createdAt: row.createdAt })),
-      ...debits.map((row) => ({ id: `wd-${row.id}`, type: 'WITHDRAWAL', leadId: null, amount: row.amount, status: row.status, direction: 'DEBIT', createdAt: row.requestedAt })),
-      ...reversals.map((row) => ({ id: `rev-${row.id}`, type: 'REVERSAL', leadId: row.leadId, amount: row.commissionAmount, status: row.status, direction: 'DEBIT', createdAt: row.createdAt })),
-    ];
-    if (query.type) rows = rows.filter((row) => row.type === query.type);
-    if (query.status) rows = rows.filter((row) => row.status === query.status);
-    rows.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-    return { data: rows.slice((page - 1) * limit, page * limit), meta: { page, limit, total: rows.length } };
+    return { data, meta: { page, limit, total: Number(count[0].total) } };
   }
 
   async withdrawals(customerId: number, userId: number) {
@@ -194,17 +209,27 @@ export class CommissionWalletService {
     const accounts = this.accounts(employee.bankDetails);
     const account = accounts.find((item) => item.id === body.paymentAccountId);
     if (!account) throw new BadRequestException('Select a saved UPI or bank account from your employee profile.');
-    if (body.paymentMethod && body.paymentMethod.toUpperCase() !== account.paymentMethod) {
+    if (body.paymentMethod && (typeof body.paymentMethod !== 'string' || body.paymentMethod.toUpperCase() !== account.paymentMethod)) {
       throw new BadRequestException('Payment method does not match the saved account.');
     }
-    const amount = this.round(Number(body.amount));
+    const rawAmount = Number(body.amount);
+    if (!Number.isFinite(rawAmount) || Math.abs(rawAmount * 100 - Math.round(rawAmount * 100)) > 0.00001) throw new BadRequestException('Amount must have at most two decimal places.');
+    const amount = this.round(rawAmount);
+    if (typeof body.idempotencyKey !== 'string' || !body.idempotencyKey.trim() || body.idempotencyKey.length > 128) throw new BadRequestException('A valid idempotency key is required.');
     if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Enter a valid withdrawal amount.');
     return this.prisma.$transaction(async (tx) => {
+      // Serialize balance checks and reservations for this employee, including retries.
+      await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} AND "customerId" = ${customerId} FOR UPDATE`;
       if (body.idempotencyKey) {
         const existing = await tx.commissionWithdrawal.findUnique({ where: { idempotencyKey: body.idempotencyKey } });
-        if (existing) return existing;
+        if (existing) {
+          if (existing.customerId !== customerId || existing.employeeId !== employee.id || existing.amount !== amount || existing.accountRef !== account.id) {
+            throw new ConflictException('Idempotency key is already in use for another request.');
+          }
+          return existing;
+        }
       }
-      const balance = await this.summary(customerId, employee.id);
+      const balance = await this.summary(customerId, employee.id, undefined, tx);
       if (amount > balance.availableBalance) throw new BadRequestException('Amount exceeds the available commission balance.');
       const created = await tx.commissionWithdrawal.create({
         data: {
@@ -327,12 +352,17 @@ export class CommissionWalletService {
     });
   }
 
-  async setWithdrawalStatus(customerId: number, id: number, action: string, userId?: number) {
+  async setWithdrawalStatus(customerId: number, id: number, action: string, userId?: number, confirmation?: { paymentReference?: string; processingConfirmed?: boolean }) {
     const next = action === 'approve' ? 'APPROVED' : action === 'reject' ? 'REJECTED' : action === 'paid' ? 'PAID' : '';
     if (!next) throw new BadRequestException('Unknown withdrawal action.');
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM commission_withdrawals WHERE id = ${id} AND "customerId" = ${customerId} FOR UPDATE`;
       const row = await tx.commissionWithdrawal.findFirst({ where: { id, customerId } });
       if (!row) throw new NotFoundException('Withdrawal not found.');
+      const reference = typeof confirmation?.paymentReference === 'string' ? confirmation.paymentReference.trim() : row.paymentReference;
+      if (next === 'PAID' && (row.status !== 'APPROVED' || !reference || confirmation?.processingConfirmed !== true)) {
+        throw new BadRequestException('Payment requires an approved withdrawal and a recorded processing reference.');
+      }
       if (row.status === 'PAID' || row.status === 'REJECTED') {
         throw new BadRequestException(`A ${row.status.toLowerCase()} withdrawal cannot be changed.`);
       }
@@ -342,6 +372,7 @@ export class CommissionWalletService {
           status: next as any,
           decidedAt: row.decidedAt ?? new Date(),
           paidAt: next === 'PAID' ? new Date() : null,
+          ...(next === 'PAID' ? { paymentReference: reference } : {}),
           decidedById: userId || row.decidedById,
         },
       });

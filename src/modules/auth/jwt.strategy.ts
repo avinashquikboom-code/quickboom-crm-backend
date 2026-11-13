@@ -511,6 +511,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
+    // BPO / Telecaller policy: keep visit scheduling if lead schedule/stage rights remain.
+    if (!isVisitorDesignation) {
+      const mayScheduleVisits =
+        permissionsMap.has('LEADS:SCHEDULE_VISIT') ||
+        permissionsMap.has('LEADS:CHANGE_STAGE') ||
+        permissionsMap.has('VISITS:CREATE');
+      if (mayScheduleVisits) {
+        if (!permissionsMap.has('VISITS:CREATE')) {
+          permissionsMap.set('VISITS:CREATE', { module: 'VISITS', action: 'CREATE' });
+        }
+        if (!permissionsMap.has('VISITS:VIEW')) {
+          permissionsMap.set('VISITS:VIEW', { module: 'VISITS', action: 'VIEW' });
+        }
+        if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
+          permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
+        }
+      }
+    }
+
     // 5. Add Safe [RBAC BACKEND DEBUG] log
     if (user.employee) {
       this.logger.log(

@@ -61,19 +61,32 @@ export class PermissionsGuard implements CanActivate {
       isCustomerAccount && customerScoped.length > 0 ? customerScoped : requiredPermissions;
 
     const userPermissions: { module?: string; action?: string }[] = user.permissions || [];
+    const normalizeMod = (m: string) => (m.endsWith('S') ? m.slice(0, -1) : m);
+    const canScheduleVisit = userPermissions.some((userPerm) => {
+      const uMod = (userPerm.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/\./g, '_');
+      const uAct = (userPerm.action || '').toUpperCase();
+      if (uMod === 'VISITS' && (uAct === 'CREATE' || uAct === 'SCHEDULE' || uAct === 'MANAGE' || uAct === 'ALL')) {
+        return true;
+      }
+      if (
+        uMod === 'LEADS' &&
+        (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE' || uAct === 'CHANGE_STAGE' || uAct === 'MANAGE' || uAct === 'ALL')
+      ) {
+        return true;
+      }
+      return false;
+    });
+
     const checkMatch = (reqPerm: RequiredPermission, userPerm: { module?: string; action?: string }) => {
       const uMod = (userPerm.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/\./g, '_');
       const uAct = (userPerm.action || '').toUpperCase();
       const rMod = (reqPerm.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/\./g, '_');
       const rAct = (reqPerm.action || '').toUpperCase();
 
-      const normalizeMod = (m: string) => (m.endsWith('S') ? m.slice(0, -1) : m);
-      const isLeadScheduleVisitEquivalent =
-        ((rMod === 'VISITS' && (rAct === 'CREATE' || rAct === 'SCHEDULE')) ||
-          (rMod === 'LEADS' && rAct === 'SCHEDULE_VISIT')) &&
-        (uMod === 'LEADS' && (uAct === 'SCHEDULE_VISIT' || uAct === 'SCHEDULE' || uAct === 'CHANGE_STAGE'));
-
-      if (isLeadScheduleVisitEquivalent) {
+      const requiresScheduleVisit =
+        (rMod === 'VISITS' && (rAct === 'CREATE' || rAct === 'SCHEDULE')) ||
+        (rMod === 'LEADS' && rAct === 'SCHEDULE_VISIT');
+      if (requiresScheduleVisit && canScheduleVisit) {
         return true;
       }
 
