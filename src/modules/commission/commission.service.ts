@@ -169,9 +169,9 @@ export class CommissionService {
       return null;
     }
 
-    if (commissionType === CommissionType.PERCENTAGE && typeof (db as any).commissionSlab?.findMany === 'function') {
+    if (commissionType === CommissionType.PERCENTAGE && typeof db.commissionSlab?.findFirst === 'function') {
       const now = new Date();
-      const slabs = await (db as any).commissionSlab.findMany({
+      const slab = await db.commissionSlab.findFirst({
         where: {
           customerId,
           isActive: true,
@@ -183,12 +183,6 @@ export class CommissionService {
           ],
         },
         orderBy: { minAmount: 'desc' },
-        take: 20,
-      });
-      const roleName = String(employee.designation?.name || '').trim().toLowerCase();
-      const slab = slabs.find((item: { roles?: string | null; ratePercent?: number }) => {
-        if (!item.roles?.trim()) return true;
-        return item.roles.split(',').map((role) => role.trim().toLowerCase()).includes(roleName);
       });
       if (slab?.ratePercent > 0) commissionRate = slab.ratePercent;
     }

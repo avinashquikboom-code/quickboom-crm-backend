@@ -7,9 +7,9 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { LeadLimitModule } from '../lead-limit/lead-limit.module';
 
 @Module({
-  imports: [PrismaModule, LeadLimitModule],
-  controllers: [CommissionController, MobileCommissionController],
-  providers: [CommissionService, CommissionWalletService],
+  imports: [PrismaModule],
+  controllers: [CommissionController],
+  providers: [CommissionService],
   exports: [CommissionService],
 })
 export class CommissionModule {}
