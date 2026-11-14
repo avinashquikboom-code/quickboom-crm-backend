@@ -3623,8 +3623,9 @@ export class LeadService {
     return note;
   }
 
-  async logFollowUp(customerId: number | string, leadId: number | string, userId: number | string, dto: LogFollowUpDto) {
-    await this.getLeadById(customerId, leadId);
+  async logFollowUp(customerId: number | string, leadId: number | string, userId: number | string, dto: LogFollowUpDto, user: any) {
+    if (!user) throw new ForbiddenException('Authenticated user is required.');
+    await this.getLeadById(customerId, leadId, user);
     return this.leadRepository.logFollowUp(customerId, leadId, userId, dto);
   }
 
