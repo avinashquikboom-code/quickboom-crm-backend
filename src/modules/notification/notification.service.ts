@@ -598,6 +598,41 @@ export class NotificationService {
   }
 
   /**
+   * Send Employee Penalty/Deduction Notification to the affected employee only.
+   */
+  async sendDeductionNotification(
+    employeeId: number,
+    params: { title: string; body: string; type?: string; deductionId?: number | string; status?: string; amount?: number | string },
+  ) {
+    try {
+      const emp = await this.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { userId: true, customerId: true },
+      });
+      if (!emp || !emp.userId) {
+        this.logger.warn(`Cannot send deduction notification: employee #${employeeId} has no linked userId`);
+        return null;
+      }
+      return await this.sendPushNotification({
+        userId: emp.userId,
+        customerId: emp.customerId,
+        title: params.title,
+        body: params.body,
+        type: params.type || 'DEDUCTION',
+        data: {
+          type: 'DEDUCTION',
+          deductionId: String(params.deductionId ?? ''),
+          status: params.status || '',
+          amount: String(params.amount ?? ''),
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(`Error sending deduction notification: ${err?.message}`, err?.stack);
+      return null;
+    }
+  }
+
+  /**
    * Send New Lead Assignment Push Notification to Employee (Requirement: Task Send Push Notification when a new Lead is assigned)
    */
   async sendLeadAssignedNotification(params: {

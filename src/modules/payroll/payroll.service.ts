@@ -225,6 +225,16 @@ export class PayrollService {
       tds: pi?.tds ?? 0,
       otherDeductions: pi?.otherDeductions ?? 0,
       loanDeduction: pi?.loanDeduction ?? 0,
+      penaltyDeduction: Number(pi?.penaltyDeduction || 0),
+      penaltyDeductions: Array.isArray(pi?.employeeDeductions)
+        ? pi.employeeDeductions.map((d: any) => ({
+            id: d.id,
+            reason: d.reason,
+            amount: Number(d.amount || 0),
+            payrollMonth: d.payrollMonth,
+            payrollYear: d.payrollYear,
+          }))
+        : [],
       unpaidLeaveDeduction: lopDeduction(
         Math.max(0, Number(pi?.grossSalary ?? slip.grossSalary ?? 0) - Number(pi?.overtime ?? 0) - Number(pi?.reimbursement ?? 0)),
         Number(pi?.unpaidLeaveDays ?? 0) + Number(pi?.absentDays ?? 0) + Number(pi?.halfDays ?? 0) * 0.5,
@@ -447,9 +457,22 @@ export class PayrollService {
         const profTax = structure?.professionalTax ?? 0;
         const tds = structure?.tds ?? 0;
         const otherDeductions = structure?.otherDeductions ?? 0;
+        const penaltyRows = tx.employeeDeduction?.findMany
+          ? await tx.employeeDeduction.findMany({
+              where: {
+                customerId: numCustomerId,
+                employeeId: emp.id,
+                status: 'APPROVED',
+                payrollMonth: month,
+                payrollYear: year,
+              },
+              select: { amount: true },
+            })
+          : [];
+        const penaltyDeduction = Math.round(penaltyRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0) * 100) / 100;
         const lateMarks = attendances.filter((row) => row.isLate || Number(row.lateMinutes) > 0).length;
         const lateDeduction = lateMarkDeduction(monthlySalary, lateMarks, Number(salaryPolicy?.lateArrivalDeductionPct) || 0);
-        const statutory = pf + esi + profTax + tds + otherDeductions + loanDeduction + lateDeduction;
+        const statutory = pf + esi + profTax + tds + otherDeductions + loanDeduction + lateDeduction + penaltyDeduction;
         const extraOvertime = overtimeRequestIds.length ? Math.max(0, overtime - structureOvertime) : 0;
         const settlement = settleMonthlySalary({
           monthlySalary,
@@ -481,6 +504,7 @@ export class PayrollService {
           tds,
           otherDeductions,
           loanDeduction,
+          penaltyDeduction,
           grossSalary: settlement.gross,
           totalDeductions: settlement.totalDeductions,
           netSalary: settlement.net,
@@ -723,6 +747,45 @@ export class PayrollService {
       for (const item of targetItems) {
         const slipNum = `SLIP-${payroll.year}${payroll.month.toString().padStart(2, '0')}-${item.employeeId.toString().padStart(4, '0')}`;
 
+        // Apply approved employee deductions for this payroll period exactly once.
+        // Covers deductions approved after payroll calculation; the payrollItemId
+        // link plus the APPLIED status makes re-application idempotent.
+        const pendingPenaltyRows = tx.employeeDeduction?.findMany
+          ? await tx.employeeDeduction.findMany({
+              where: {
+                customerId: numCustomerId,
+                employeeId: item.employeeId,
+                status: 'APPROVED',
+                payrollMonth: payroll.month,
+                payrollYear: payroll.year,
+                payrollItemId: null,
+              },
+              select: { id: true, amount: true },
+            })
+          : [];
+        let itemTotalDeductions = item.totalDeductions;
+        let itemNetSalary = item.netSalary;
+        if (pendingPenaltyRows.length) {
+          const pendingPenalty = Math.round(pendingPenaltyRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0) * 100) / 100;
+          const diff = Math.round((pendingPenalty - (Number(item.penaltyDeduction) || 0)) * 100) / 100;
+          if (diff !== 0) {
+            itemTotalDeductions = Math.round((itemTotalDeductions + diff) * 100) / 100;
+            itemNetSalary = Math.round((itemNetSalary - diff) * 100) / 100;
+            await tx.payrollItem.update({
+              where: { id: item.id },
+              data: {
+                penaltyDeduction: pendingPenalty,
+                totalDeductions: itemTotalDeductions,
+                netSalary: itemNetSalary,
+              },
+            });
+          }
+          await tx.employeeDeduction.updateMany({
+            where: { id: { in: pendingPenaltyRows.map((row) => row.id) } },
+            data: { status: 'APPLIED', payrollItemId: item.id, appliedAt: new Date() },
+          });
+        }
+
         const existing = await tx.salarySlip.findFirst({
           where: { payrollItemId: item.id, customerId: numCustomerId },
         });
@@ -736,8 +799,8 @@ export class PayrollService {
               slipNumber: slipNum,
               payPeriod,
               grossSalary: item.grossSalary,
-              totalDeductions: item.totalDeductions,
-              netSalary: item.netSalary,
+              totalDeductions: itemTotalDeductions,
+              netSalary: itemNetSalary,
               generatedAt: slipDate,
               status: 'GENERATED',
             },
@@ -748,8 +811,8 @@ export class PayrollService {
             data: {
               payPeriod,
               grossSalary: item.grossSalary,
-              totalDeductions: item.totalDeductions,
-              netSalary: item.netSalary,
+              totalDeductions: itemTotalDeductions,
+              netSalary: itemNetSalary,
               generatedAt: slipDate,
               status: 'GENERATED',
             },
@@ -1131,6 +1194,7 @@ export class PayrollService {
             include: {
               payroll: true,
               overtimeRequests: { where: { deletedAt: null, actualEndAt: { not: null } }, select: { totalMinutes: true, approvedMinutes: true, actualMinutes: true } },
+              employeeDeductions: { where: { status: 'APPLIED' }, select: { id: true, amount: true, reason: true, payrollMonth: true, payrollYear: true } },
             },
           },
         },
@@ -1177,6 +1241,7 @@ export class PayrollService {
           include: {
             payroll: true,
             overtimeRequests: { where: { deletedAt: null, actualEndAt: { not: null } }, select: { totalMinutes: true, approvedMinutes: true, actualMinutes: true } },
+            employeeDeductions: { where: { status: 'APPLIED' }, select: { id: true, amount: true, reason: true, payrollMonth: true, payrollYear: true } },
           },
         },
       },
