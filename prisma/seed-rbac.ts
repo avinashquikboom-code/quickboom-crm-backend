@@ -42,6 +42,10 @@ export async function seedRbac() {
     { name: 'HR', type: RoleType.CUSTOM, desc: 'HR Manager/Executive' },
     { name: 'EMPLOYEE', type: RoleType.CUSTOM, desc: 'General Employee role' },
     { name: 'MANAGER', type: RoleType.CUSTOM, desc: 'Department/Team Manager' },
+    { name: 'TEAM_LEADER', type: RoleType.CUSTOM, desc: 'Team Leader with CRM lead and follow-up access' },
+    { name: 'SALES_MANAGER', type: RoleType.CUSTOM, desc: 'Sales Manager with CRM lead and follow-up access' },
+    { name: 'BPO', type: RoleType.CUSTOM, desc: 'BPO caller role for CRM follow-ups and visits' },
+    { name: 'BPO_EXECUTIVE', type: RoleType.CUSTOM, desc: 'BPO Executive role for CRM follow-ups and visits' },
   ];
 
   for (const r of rolesToEnsure) {

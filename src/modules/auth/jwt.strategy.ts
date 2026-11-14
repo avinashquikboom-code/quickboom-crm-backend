@@ -436,6 +436,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
           permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
         }
+        // Baseline follow-up rights for CRM designations (BPO/Telecaller/Sales/Manager).
+        // Employee-level DENY overrides are applied after this block and still win.
+        if (!permissionsMap.has('FOLLOW_UP:VIEW')) {
+          permissionsMap.set('FOLLOW_UP:VIEW', { module: 'FOLLOW_UP', action: 'VIEW' });
+        }
+        if (!permissionsMap.has('FOLLOW_UP:CREATE')) {
+          permissionsMap.set('FOLLOW_UP:CREATE', { module: 'FOLLOW_UP', action: 'CREATE' });
+        }
       }
     }
 
