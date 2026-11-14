@@ -3190,7 +3190,7 @@ export class LeadRepository {
             select: { id: true, name: true, key: true, subject: true },
           },
           whatsappTemplate: {
-            select: { id: true, name: true, templateName: true, language: true, status: true, body: true },
+            select: { id: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true },
           },
           _count: {
             select: {
@@ -3230,7 +3230,7 @@ export class LeadRepository {
           select: { id: true, name: true, key: true, subject: true },
         },
         whatsappTemplate: {
-          select: { id: true, name: true, templateName: true, language: true, status: true, body: true },
+          select: { id: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true },
         },
         _count: {
           select: {
@@ -3278,7 +3278,7 @@ export class LeadRepository {
       },
       include: {
         emailTemplate: { select: { id: true, name: true, key: true } },
-        whatsappTemplate: { select: { id: true, name: true, templateName: true, language: true, status: true } },
+        whatsappTemplate: { select: { id: true, name: true, templateName: true, language: true, status: true, metaTemplateId: true, isLocalActive: true } },
       },
     });
   }
@@ -3314,7 +3314,7 @@ export class LeadRepository {
       data: updateData,
       include: {
         emailTemplate: { select: { id: true, name: true, key: true } },
-        whatsappTemplate: { select: { id: true, name: true, templateName: true, language: true, status: true } },
+        whatsappTemplate: { select: { id: true, name: true, templateName: true, language: true, status: true, metaTemplateId: true, isLocalActive: true } },
       },
     });
   }
