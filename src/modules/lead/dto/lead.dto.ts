@@ -751,6 +751,20 @@ export class LogFollowUpDto {
   @IsString()
   @IsOptional()
   nextFollowUpTime?: string;
+
+  @ApiPropertyOptional({ example: 'CALL', enum: ['CALL', 'WHATSAPP', 'VISIT', 'EMAIL', 'MEETING', 'OTHER'], description: 'Follow-up channel/type' })
+  @IsString()
+  @IsOptional()
+  type?: string;
+
+  @ApiPropertyOptional({ example: 12, description: 'Selected outcome/next stage ID (recorded only; does not move the lead)' })
+  @IsOptional()
+  nextStageId?: number | string;
+
+  @ApiPropertyOptional({ example: true, description: 'When true, only schedules the follow-up without changing lead status/stage' })
+  @IsBoolean()
+  @IsOptional()
+  schedule?: boolean;
 }
 
 export class ManageVisitDto {

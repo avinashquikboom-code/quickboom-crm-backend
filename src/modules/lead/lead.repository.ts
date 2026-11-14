@@ -2522,11 +2522,39 @@ export class LeadRepository {
     const numLeadId = Number(leadId);
     const numUserId = Number(userId);
     const lead = await this.prisma.lead.findUnique({ where: { id: numLeadId } });
-    if (!lead) return null;
+    if (!lead || Number(lead.customerId) !== numCustomerId) return null;
+
+    const ALLOWED_TYPES = ['CALL', 'WHATSAPP', 'VISIT', 'EMAIL', 'MEETING', 'OTHER'];
+    const type = dto.type ? String(dto.type).trim().toUpperCase() : undefined;
+    if (type && !ALLOWED_TYPES.includes(type)) {
+      throw new BadRequestException(`Invalid follow-up type "${dto.type}". Allowed: ${ALLOWED_TYPES.join(', ')}`);
+    }
+
+    // Validate the selected outcome/next stage exists for this tenant (or is a global stage).
+    // The selection is recorded on the follow-up only — it never moves the lead.
+    let selectedNextStage: { id: number; name: string } | null = null;
+    const nextStageId = Number(dto.nextStageId);
+    if (Number.isInteger(nextStageId) && nextStageId > 0) {
+      selectedNextStage = await this.prisma.leadStage.findFirst({
+        where: {
+          id: nextStageId,
+          deletedAt: null,
+          OR: [{ customerId: numCustomerId }, { customerId: null }],
+        },
+        select: { id: true, name: true },
+      });
+      if (!selectedNextStage) {
+        throw new BadRequestException('Selected stage is not valid for this lead.');
+      }
+    }
 
     const nextDate = dto.nextFollowUpDate ? new Date(dto.nextFollowUpDate) : null;
+    if (dto.nextFollowUpDate && isNaN(nextDate!.getTime())) {
+      throw new BadRequestException('Invalid nextFollowUpDate.');
+    }
+    const scheduleOnly = dto.schedule === true;
 
-    const followUpStage = await this.prisma.leadStage.findFirst({
+    const followUpStage = scheduleOnly ? null : await this.prisma.leadStage.findFirst({
       where: {
         OR: [
           { customerId: numCustomerId, key: 'FOLLOW_UP', deletedAt: null },
@@ -2538,35 +2566,52 @@ export class LeadRepository {
       orderBy: { customerId: 'desc' },
     });
 
-    await this.prisma.lead.update({
-      where: { id: numLeadId },
-      data: {
-        status: LeadStatus.FOLLOW_UP,
-        ...(followUpStage ? { stageId: followUpStage.id } : {}),
-        nextFollowUpDate: nextDate,
-        nextFollowUpTime: dto.nextFollowUpTime,
-      },
-    });
-
-    if (lead.status !== LeadStatus.FOLLOW_UP) {
-      await this.prisma.leadStatusHistory.create({
+    if (scheduleOnly) {
+      // Schedule-only: set the next follow-up slot without moving status/stage.
+      await this.prisma.lead.update({
+        where: { id: numLeadId },
         data: {
-          leadId: numLeadId,
-          fromStatus: lead.status,
-          toStatus: LeadStatus.FOLLOW_UP,
-          changedById: numUserId,
-          notes: `Follow-up call logged: ${dto.outcome}`,
+          nextFollowUpDate: nextDate,
+          nextFollowUpTime: dto.nextFollowUpTime,
         },
       });
+    } else {
+      await this.prisma.lead.update({
+        where: { id: numLeadId },
+        data: {
+          status: LeadStatus.FOLLOW_UP,
+          ...(followUpStage ? { stageId: followUpStage.id } : {}),
+          nextFollowUpDate: nextDate,
+          nextFollowUpTime: dto.nextFollowUpTime,
+        },
+      });
+
+      if (lead.status !== LeadStatus.FOLLOW_UP) {
+        await this.prisma.leadStatusHistory.create({
+          data: {
+            leadId: numLeadId,
+            fromStatus: lead.status,
+            toStatus: LeadStatus.FOLLOW_UP,
+            changedById: numUserId,
+            notes: `Follow-up call logged: ${dto.outcome}`,
+          },
+        });
+      }
     }
 
     await this.logTimeline(
       numLeadId,
-      'FOLLOW_UP_CALL',
-      `Follow-up Call: Outcome: "${dto.outcome}"${dto.notes ? ` - ${dto.notes}` : ''}`,
+      scheduleOnly ? 'FOLLOW_UP_SCHEDULED' : 'FOLLOW_UP_CALL',
+      scheduleOnly
+        ? `Follow-up scheduled${type ? ` (${type})` : ''}${selectedNextStage ? ` → ${selectedNextStage.name}` : ''}${dto.notes ? ` - ${dto.notes}` : ''}`
+        : `Follow-up Call: Outcome: "${dto.outcome}"${dto.notes ? ` - ${dto.notes}` : ''}`,
       {
         outcome: dto.outcome,
         notes: dto.notes,
+        type: type || null,
+        schedule: scheduleOnly,
+        nextStageId: selectedNextStage?.id ?? null,
+        nextStageName: selectedNextStage?.name ?? null,
         nextFollowUpDate: dto.nextFollowUpDate,
         nextFollowUpTime: dto.nextFollowUpTime,
       },

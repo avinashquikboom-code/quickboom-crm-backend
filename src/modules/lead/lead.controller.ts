@@ -543,9 +543,8 @@ export class LeadController {
   }
 
   @Post(':id/follow-ups')
-  @CrmCategory('BPO')
   @RequirePermissions({ module: 'FOLLOW_UP', action: 'CREATE' })
-  @ApiOperation({ summary: 'Log follow-up call outcome, next follow up, and update status to FOLLOW_UP' })
+  @ApiOperation({ summary: 'Log follow-up outcome or schedule a follow-up (schedule=true keeps lead stage unchanged)' })
   async logFollowUp(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
