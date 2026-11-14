@@ -103,6 +103,7 @@ describe('Subscription Plan Deletion & Sync Specification', () => {
               findUnique: jest.fn().mockResolvedValue({ id: 1, name: 'Test Customer', email: 'test@example.com' }),
             },
             customerSubscription: {
+              count: jest.fn().mockResolvedValue(0),
               findMany: jest.fn().mockResolvedValue([]),
               findFirst: jest.fn().mockResolvedValue(null),
               create: jest.fn().mockResolvedValue({ id: 101, planId: 10, status: 'ACTIVE' }),
@@ -194,6 +195,12 @@ describe('Subscription Plan Deletion & Sync Specification', () => {
       const res = await subscriptionService.deletePlan(10);
       expect(res.isActive).toBe(false);
       expect(res.deletedAt).toBeDefined();
+    });
+
+    it('rejects deletion when the plan has active subscribers', async () => {
+      jest.spyOn(prisma.customerSubscription, 'count').mockResolvedValueOnce(1);
+      await expect(subscriptionService.deletePlan(10)).rejects.toThrow(BadRequestException);
+      expect(prisma.plan.update).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when trying to delete already-deleted plan', async () => {
