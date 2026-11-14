@@ -265,38 +265,13 @@ export class CommissionRulesService {
       // Serialize all configuration writes for the tenant, including changes of role.
       // PostgreSQL returns void here; execute without deserializing a result row.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(27114, ${customerId}::int)`;
-      const role = await tx.role.findFirst({
-        where: { id: roleId, customerId, deletedAt: null },
-      });
-      if (!role)
-        throw new BadRequestException("Role does not belong to this tenant.");
-      const current = id
-        ? await tx.commissionConfig.findFirst({
-            where: { id, customerId, roleId: { not: null } },
-            include: { slabs: true },
-          })
-        : null;
-      if (id && !current)
-        throw new NotFoundException("Commission configuration not found.");
-      if (body.status === "ACTIVE") {
-        const conflicts = await tx.commissionConfig.count({
-          where: {
-            customerId,
-            roleId,
-            status: "ACTIVE",
-            ...(id ? { id: { not: id } } : {}),
-            AND: [
-              { OR: [{ endsAt: null }, { endsAt: { gte: startsAt } }] },
-              ...(endsAt
-                ? [{ OR: [{ startsAt: null }, { startsAt: { lte: endsAt } }] }]
-                : []),
-            ],
-          },
-        });
-        if (conflicts)
-          throw new ConflictException(
-            "An active configuration already covers this role and effective period.",
-          );
+      const role = await tx.role.findFirst({ where: { id: roleId, customerId, deletedAt: null } });
+      if (!role) throw new BadRequestException('Role does not belong to this tenant.');
+      const current = id ? await tx.commissionConfig.findFirst({ where: { id, customerId, roleId: { not: null } }, include: { slabs: true } }) : null;
+      if (id && !current) throw new NotFoundException('Commission configuration not found.');
+      if (body.status === 'ACTIVE') {
+        const conflicts = await tx.commissionConfig.count({ where: { customerId, roleId, status: 'ACTIVE', ...(id ? { id: { not: id } } : {}), AND: [ { OR: [{ endsAt: null }, { endsAt: { gte: startsAt } }] }, ...(endsAt ? [{ OR: [{ startsAt: null }, { startsAt: { lte: endsAt } }] }] : []) ] } });
+        if (conflicts) throw new ConflictException('An active configuration already covers this role and effective period.');
       }
       const history = Array.isArray(current?.history)
         ? [...current.history]
