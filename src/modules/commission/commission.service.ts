@@ -256,11 +256,8 @@ export class CommissionService {
       );
       return commission;
     } catch (err: any) {
-      // If concurrent request created it in the meantime, handle gracefully
-      if (err.code === 'P2002') {
-        this.logger.warn(`[COMMISSION] Unique constraint conflict on purchaseId #${purchaseId}, returning existing commission.`);
-        return db.commission.findUnique({ where: { purchaseId } });
-      }
+      // Payment-row locking serializes duplicate events. Propagate database errors so
+      // the transaction rolls back; never query a PostgreSQL transaction after a constraint error.
       this.logger.error(`[COMMISSION] Failed to create commission: ${err.message}`, err.stack);
       throw err;
     }
