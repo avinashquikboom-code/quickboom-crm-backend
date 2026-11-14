@@ -60,4 +60,24 @@ describe('LeadPlanProposalService', () => {
     expect(service.isProposalStageToken('proposal_sent', null)).toBe(true);
     expect(service.isProposalStageToken('FOLLOW_UP', null)).toBe(false);
   });
+  it('saves the selected active catalog price and reuses a matching request', async () => {
+    const row: any = { id: 8, customerId: 1, planPreferenceReady: true, customerRequirements: 'CRM', planPreferenceType: 'DEFAULT' };
+    prisma.lead.findFirst.mockResolvedValue(row);
+    const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 8 }]),
+      leadPlanProposal: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 3, ...data })) },
+      customer: { findUnique: jest.fn().mockResolvedValue({ name: 'Tenant' }) },
+      plan: { findFirst: jest.fn().mockResolvedValue({ id: 4, name: 'Plan', monthlyPrice: 100, yearlyPrice: 900, features: ['A'], description: 'Configured' }) },
+    };
+    prisma.$transaction = jest.fn((fn) => fn(tx));
+    const dto = { planId: 4, billingCycle: 'YEARLY' as const, idempotencyKey: 'unique-request' };
+    const result = await service.createStandardDraft(1, 8, 9, dto);
+    expect(result.proposal.planPrice).toBe(900);
+    expect(result.proposal.customConfig).toMatchObject({ billingCycle: 'YEARLY', features: ['A'] });
+    tx.leadPlanProposal.findUnique.mockResolvedValue(result.proposal);
+    expect((await service.createStandardDraft(1, 8, 9, dto)).proposal.id).toBe(3);
+    expect(tx.leadPlanProposal.create).toHaveBeenCalledTimes(1);
+    await expect(service.createStandardDraft(2, 8, 9, dto)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
 });

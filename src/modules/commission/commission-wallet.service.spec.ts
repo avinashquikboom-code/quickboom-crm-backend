@@ -69,6 +69,23 @@ describe('Commission wallet', () => {
     db.commissionConfig.findUnique.mockResolvedValue({ commissionType: 'PERCENTAGE', commissionValue: 5, status: 'INACTIVE' });
     expect((await service.rules(2, 5)).eligible).toBe(false);
   });
+  it('reports active slabs using the same role behavior as the commission engine', async () => {
+    const slabs = [
+      { minAmount: 0, ratePercent: 5, roles: ['Other role'] },
+      { minAmount: 100, ratePercent: 7, roles: null },
+    ];
+    db.commissionSlab.findMany.mockResolvedValue(slabs);
+    const result = await service.rules(2, 5);
+    expect(result.slabs).toEqual(slabs);
+    expect(result.note).toContain('without filtering its role field');
+  });
+  it('requires a reference and explicit confirmation before recording payment', async () => {
+    db.commissionWithdrawal.update.mockImplementation(({ data }) => Promise.resolve(data));
+    const updated = await service.setWithdrawalStatus(2, 11, 'paid', 4, { paymentReference: 'bank-reference', processingConfirmed: true });
+    expect(updated.status).toBe('PAID');
+    expect(updated.paymentReference).toBe('bank-reference');
+    expect(updated.paidAt).toBeInstanceOf(Date);
+  });
   it('paginates the combined ledger without the former 200-row cap', async () => {
     db.$queryRaw.mockResolvedValueOnce([{ id: 'earn-260' }]).mockResolvedValueOnce([{ total: BigInt(501) }]);
     const result = await service.transactions(2, 5, { page: '13', limit: '20' });

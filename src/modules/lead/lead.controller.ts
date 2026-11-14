@@ -15,6 +15,8 @@ import {
   Req,
   Logger,
   BadRequestException,
+  ForbiddenException,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -43,6 +45,7 @@ import {
 } from './dto/lead.dto';
 import {
   CreateCustomPlanProposalDto,
+  CreateStandardPlanProposalDto,
   ResendPlanProposalDto,
   SetPlanPreferenceDto,
 } from './dto/lead-plan-proposal.dto';
@@ -54,6 +57,7 @@ import { CrmCategory } from '../../common/decorators/crm-category.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { isUserAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
@@ -364,6 +368,13 @@ export class LeadController {
     return this.leadService.getWhatsAppTemplates(customerId);
   }
 
+  @Get('plan-proposals')
+  @RequirePermissions({ module: 'PROPOSALS', action: 'VIEW' })
+  async listTenantProposals(@CurrentCustomer() customerId: string, @CurrentUser() user: any, @Query() query: any) {
+    if (!isUserAdmin(user)) throw new ForbiddenException('Admin access required.');
+    return this.leadService.listTenantPlanProposals(customerId, query);
+  }
+
   @Get(':id/status')
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead status and stage details by ID' })
@@ -605,10 +616,39 @@ export class LeadController {
     return this.leadService.startWork(customerId, id, userId, dto);
   }
 
+  @Get(':id/plan-proposals/plans')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
+  async availableProposalPlans(@CurrentCustomer() customerId: string, @Param('id') id: string, @CurrentUser() user: any) {
+    await this.leadService.getLeadById(customerId, id, user);
+    return this.leadService.listAvailableProposalPlans(customerId, id);
+  }
+
+  @Post(':id/plan-proposals/standard')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
+  async createStandardProposal(@CurrentCustomer() customerId: string, @Param('id') id: string, @CurrentUser('id') userId: string, @Body() dto: CreateStandardPlanProposalDto, @CurrentUser() user: any) {
+    await this.leadService.getLeadById(customerId, id, user);
+    return this.leadService.createStandardProposalDraft(customerId, id, userId, dto);
+  }
+
+  @Get(':id/plan-proposals/:proposalId/pdf')
+  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
+  async proposalPdf(@CurrentCustomer() customerId: string, @Param('id') id: string, @Param('proposalId') proposalId: string, @CurrentUser() user: any, @Res() response: any) {
+    await this.leadService.getLeadById(customerId, id, user);
+    const pdf = await this.leadService.getProposalPdf(customerId, id, proposalId);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', 'inline; filename="proposal.pdf"');
+    response.send(pdf);
+  }
+
   @Get(':id/plan-proposals')
   @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'List plan proposal workflow state and version history for a lead' })
-  async listPlanProposals(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+  async listPlanProposals(@CurrentCustomer() customerId: string, @Param('id') id: string, @CurrentUser() user: any) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.listPlanProposals(customerId, id);
   }
 
@@ -621,14 +661,18 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: SetPlanPreferenceDto,
+    @CurrentUser() user: any,
   ) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.setPlanProposalPreference(customerId, id, userId, dto);
   }
 
   @Get(':id/plan-proposals/default/preview')
   @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Preview default subscription plan proposal content' })
-  async previewDefaultPlanProposal(@CurrentCustomer() customerId: string, @Param('id') id: string) {
+  async previewDefaultPlanProposal(@CurrentCustomer() customerId: string, @Param('id') id: string, @CurrentUser() user: any) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.previewDefaultPlanProposal(customerId, id);
   }
 
@@ -640,7 +684,9 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
   ) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.sendDefaultPlanProposal(customerId, id, userId);
   }
 
@@ -653,7 +699,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateCustomPlanProposalDto,
+    @CurrentUser() user: any,
   ) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.createCustomPlanProposal(customerId, id, userId, dto);
   }
 
@@ -666,7 +714,9 @@ export class LeadController {
     @Param('id') id: string,
     @Param('proposalId') proposalId: string,
     @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
   ) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.sendPlanProposalDraft(customerId, id, proposalId, userId);
   }
 
@@ -680,7 +730,9 @@ export class LeadController {
     @Param('proposalId') proposalId: string,
     @CurrentUser('id') userId: string,
     @Body() dto: ResendPlanProposalDto,
+    @CurrentUser() user: any,
   ) {
+    await this.leadService.getLeadById(customerId, id, user);
     return this.leadService.resendPlanProposal(customerId, id, proposalId, userId, dto);
   }
 

@@ -24,7 +24,7 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { RoleType } from '@prisma/client';
 
 import { InstallmentService } from './installment.service';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
@@ -306,7 +306,7 @@ export class SubscriptionController {
   @Get('customer/plans/:id')
   @ApiOperation({ summary: 'Get single plan details (Customer & Public)' })
   async getPlanById(@Param('id') id: string) {
-    return this.subscriptionService.getPlanById(id);
+    return this.subscriptionService.getPlanById(id, true);
   }
 
   @Get('subscriptions/effective-plan')
@@ -427,7 +427,11 @@ export class SubscriptionController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all subscription plans including inactive (Admin)' })
-  async getAdminPlans() {
+  async getAdminPlans(@Query() query: any, @CurrentUser() user: any) {
+    if (query.management === 'true') {
+      if (!isUserAdmin(user)) throw new ForbiddenException('Admin access required.');
+      return this.subscriptionService.getPlanManagement(query);
+    }
     return this.subscriptionService.getPlans(true);
   }
 
@@ -444,7 +448,7 @@ export class SubscriptionController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get plan by ID (Admin)' })
   async getAdminPlanById(@Param('id') id: string) {
-    return this.subscriptionService.getPlanById(id);
+    return this.subscriptionService.getPlanById(id, true);
   }
 
   @Get('admin/subscription-plans/:id')

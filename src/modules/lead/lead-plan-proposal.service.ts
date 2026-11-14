@@ -6,6 +6,7 @@ import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import {
   CreateCustomPlanProposalDto,
+  CreateStandardPlanProposalDto,
   CustomPlanProposalConfigDto,
   ResendPlanProposalDto,
   SetPlanPreferenceDto,
@@ -77,38 +78,14 @@ export class LeadPlanProposalService {
 
   async listForLead(customerId: number, leadId: number) {
     await this.assertLead(customerId, leadId);
-    let workflow: PlanProposalWorkflowState | null = null;
-    let proposals: LeadPlanProposal[] = [];
-    try {
-      workflow = await this.prisma.lead.findFirst({
-        where: { id: leadId, customerId, deletedAt: null },
-        select: {
-          planPreferenceType: true,
-          customerRequirements: true,
-          planPreferenceReady: true,
-          activePlanProposalType: true,
-          planProposalWorkflowAt: true,
-        },
-      });
-    } catch (err: any) {
-      this.logger.warn(`[PLAN_PROPOSAL] Workflow fields unavailable: ${err?.message || err}`);
-      workflow = {
-        planPreferenceType: null,
-        customerRequirements: null,
-        planPreferenceReady: false,
-        activePlanProposalType: null,
-        planProposalWorkflowAt: null,
-      };
-    }
-    try {
-      proposals = await this.prisma.leadPlanProposal.findMany({
-        where: { customerId, leadId },
-        orderBy: [{ version: 'desc' }],
-      });
-    } catch (err: any) {
-      this.logger.warn(`[PLAN_PROPOSAL] History unavailable: ${err?.message || err}`);
-      proposals = [];
-    }
+    const workflow = await this.prisma.lead.findFirst({
+      where: { id: leadId, customerId, deletedAt: null },
+      select: { planPreferenceType: true, customerRequirements: true, planPreferenceReady: true, activePlanProposalType: true, planProposalWorkflowAt: true },
+    });
+    const proposals = await this.prisma.leadPlanProposal.findMany({
+      where: { customerId, leadId }, orderBy: [{ version: 'desc' }],
+      include: { createdBy: { select: { id: true, firstName: true, lastName: true } } },
+    });
     return { workflow, proposals };
   }
 
@@ -160,6 +137,93 @@ export class LeadPlanProposalService {
       ready,
     });
     return this.listForLead(customerId, leadId);
+  }
+
+  async listForTenant(customerId: number, query: { page?: string; limit?: string; search?: string; type?: string; status?: string; startDate?: string; endDate?: string }) {
+    const page = Math.max(1, Math.floor(Number(query.page) || 1));
+    const limit = Math.max(1, Math.min(50, Math.floor(Number(query.limit) || 20)));
+    if (!Number.isSafeInteger(page)) throw new BadRequestException('Invalid page.');
+    const where: Prisma.LeadPlanProposalWhereInput = { customerId };
+    if (query.type) where.proposalType = query.type;
+    if (query.status) where.status = query.status;
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      where.OR = [
+        { planName: { contains: search, mode: 'insensitive' } },
+        { lead: { companyName: { contains: search, mode: 'insensitive' } } },
+        { lead: { firstName: { contains: search, mode: 'insensitive' } } },
+        { lead: { lastName: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    if (query.startDate || query.endDate) {
+      const start = query.startDate ? new Date(query.startDate) : undefined;
+      const end = query.endDate ? new Date(query.endDate) : undefined;
+      if ((start && !Number.isFinite(+start)) || (end && !Number.isFinite(+end))) throw new BadRequestException('Invalid date range.');
+      if (end) end.setUTCHours(23, 59, 59, 999);
+      if (start && end && start > end) throw new BadRequestException('Invalid date range.');
+      where.createdAt = { gte: start, lte: end };
+    }
+    const [data, total] = await Promise.all([
+      this.prisma.leadPlanProposal.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], include: { lead: { select: { companyName: true, firstName: true, lastName: true } }, createdBy: { select: { id: true, firstName: true, lastName: true } } } }),
+      this.prisma.leadPlanProposal.count({ where }),
+    ]);
+    return { data, meta: { page, limit, total } };
+  }
+
+  async availablePlans(customerId: number, leadId: number) {
+    await this.assertLead(customerId, leadId);
+    // Plans are global catalog entries in the current schema; no tenant-specific
+    // availability setting exists. Return only active, non-deleted plans.
+    return this.prisma.plan.findMany({
+      where: { isActive: true, deletedAt: null },
+      select: { id: true, name: true, description: true, monthlyPrice: true, yearlyPrice: true, features: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createStandardDraft(customerId: number, leadId: number, userId: number, dto: CreateStandardPlanProposalDto) {
+    const lead = await this.assertLead(customerId, leadId);
+    this.assertReadyToSend(lead, 'DEFAULT');
+    if (dto.idempotencyKey.length > 128) throw new BadRequestException('Invalid request key.');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Lead" WHERE id = ${leadId} AND "customerId" = ${customerId} FOR UPDATE`;
+      const previous = await tx.leadPlanProposal.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+      if (previous) {
+        if (previous.customerId !== customerId || previous.leadId !== leadId || previous.planId !== dto.planId || (previous.customConfig as any)?.billingCycle !== dto.billingCycle) {
+          throw new BadRequestException('Request key is already in use.');
+        }
+        return { proposal: previous };
+      }
+      const plan = await tx.plan.findFirst({ where: { id: dto.planId, isActive: true, deletedAt: null } });
+      if (!plan) throw new BadRequestException('Selected plan is not active.');
+      const latest = await tx.leadPlanProposal.findFirst({ where: { customerId, leadId }, orderBy: { version: 'desc' }, select: { version: true } });
+      const company = await tx.customer.findUnique({ where: { id: customerId }, select: { name: true, companyName: true } });
+      const proposal = await tx.leadPlanProposal.create({ data: {
+        customerId, leadId, createdById: userId, version: (latest?.version || 0) + 1,
+        proposalType: 'DEFAULT', status: 'DRAFT', planId: plan.id, planName: plan.name,
+        planPrice: dto.billingCycle === 'YEARLY' ? plan.yearlyPrice : plan.monthlyPrice,
+        customerRequirements: lead.customerRequirements, idempotencyKey: dto.idempotencyKey,
+        customConfig: this.toJson({ features: this.parsePlanFeatures(plan.features), description: plan.description, billingCycle: dto.billingCycle, recipientName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title, issuerName: company?.companyName || company?.name || '' }),
+      } });
+      return { proposal };
+    });
+  }
+
+  async pdfForProposal(customerId: number, leadId: number, proposalId: number) {
+    const lead = await this.assertLead(customerId, leadId);
+    const record = await this.getProposal(customerId, leadId, proposalId);
+    const snapshot = this.snapshotFromRecord(record);
+    const company = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, companyName: true } });
+    const saved = (record.customConfig || {}) as Record<string, unknown>;
+    return generatePlanProposalPdfBuffer({
+      proposalNo: `PLAN-${leadId}-${record.version}`,
+      leadName: typeof saved.recipientName === 'string' ? saved.recipientName : `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title,
+      companyName: typeof saved.issuerName === 'string' ? saved.issuerName : company?.companyName || company?.name || '',
+      planName: snapshot.planName, planPrice: snapshot.planPrice, proposalType: record.proposalType,
+      features: snapshot.features, customerRequirements: record.customerRequirements || undefined,
+      discount: record.discount || undefined, validUntil: snapshot.validUntil, terms: snapshot.terms,
+      customSummary: snapshot.customSummary,
+    });
   }
 
   async previewDefault(customerId: number, leadId: number) {
@@ -280,24 +344,25 @@ export class LeadPlanProposalService {
   ) {
     const lead = await this.assertLead(customerId, leadId);
     const record = await this.getProposal(customerId, leadId, proposalId);
+    // A retry must never send a channel already accepted by its provider.
+    channels = {
+      email: channels.email && record.emailStatus !== 'SENT',
+      whatsapp: channels.whatsapp && record.whatsappStatus !== 'SENT',
+    };
+    if (!channels.email && !channels.whatsapp) {
+      throw new BadRequestException('No unsent delivery channel selected.');
+    }
+    if (!channels.email && record.emailStatus === 'PENDING') {
+      await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, emailStatus: 'PENDING' }, data: { emailStatus: 'SKIPPED' } });
+    }
+    if (!channels.whatsapp && record.whatsappStatus === 'PENDING') {
+      await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, whatsappStatus: 'PENDING' }, data: { whatsappStatus: 'SKIPPED' } });
+    }
     const company = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, companyName: true } });
     const companyName = company?.companyName || company?.name || 'QUIKBOOM';
 
     const leadName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || 'Valued Customer';
-    const pdfBuffer = await generatePlanProposalPdfBuffer({
-      proposalNo,
-      leadName,
-      companyName,
-      planName: snapshot.planName,
-      planPrice: snapshot.planPrice,
-      proposalType: record.proposalType,
-      features: snapshot.features,
-      customerRequirements: lead.customerRequirements || undefined,
-      discount: record.discount || undefined,
-      validUntil: snapshot.validUntil,
-      terms: snapshot.terms,
-      customSummary: snapshot.customSummary,
-    });
+    const pdfBuffer = await this.pdfForProposal(customerId, leadId, proposalId);
 
     let emailStatus = record.emailStatus;
     let emailMessageId = record.emailMessageId;
@@ -312,10 +377,12 @@ export class LeadPlanProposalService {
       leadName,
       companyName,
       snapshot,
-      requirements: lead.customerRequirements,
+      requirements: record.customerRequirements,
     });
 
     if (channels.email) {
+      const claim = await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, emailStatus: { in: ['PENDING', 'FAILED', 'SKIPPED'] } }, data: { emailStatus: 'PROCESSING' } });
+      if (!claim.count) throw new BadRequestException('Email delivery is already in progress or has been sent.');
       const recipient = (lead.email || '').trim();
       if (!recipient) {
         emailStatus = 'FAILED';
@@ -346,7 +413,12 @@ export class LeadPlanProposalService {
       }
     }
 
+    if (channels.email) {
+      await this.prisma.leadPlanProposal.update({ where: { id: proposalId }, data: { emailStatus, emailMessageId, emailError, emailSentAt } });
+    }
     if (channels.whatsapp) {
+      const claim = await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, whatsappStatus: { in: ['PENDING', 'FAILED', 'SKIPPED'] } }, data: { whatsappStatus: 'PROCESSING' } });
+      if (!claim.count) throw new BadRequestException('WhatsApp delivery is already in progress or has been sent.');
       const phone = (lead.phone || '').trim();
       if (!phone) {
         whatsappStatus = 'FAILED';
@@ -355,7 +427,9 @@ export class LeadPlanProposalService {
         try {
           const summary = `${snapshot.planName} – INR ${Number(snapshot.planPrice || 0).toLocaleString('en-IN')}`;
           const customMessage = `Hi ${leadName}, your ${record.proposalType === 'CUSTOM' ? 'customized' : 'standard'} plan proposal (${summary}) from ${companyName} is ready. Please check your email for the detailed PDF. Reply here if you have questions.`;
-          const wa = await this.whatsappService.sendLeadStageMessage({
+          const wa = record.whatsappMessageId && record.whatsappStatus === 'FAILED'
+            ? { success: true, messageId: record.whatsappMessageId, message: undefined, details: undefined }
+            : await this.whatsappService.sendLeadStageMessage({
             to: phone,
             stageKey: 'PROPOSAL',
             variables: {
@@ -373,14 +447,17 @@ export class LeadPlanProposalService {
           whatsappError = wa.success ? null : wa.message || wa.details || 'WhatsApp delivery failed';
           whatsappSentAt = wa.success ? new Date() : null;
           if (wa.success && pdfBuffer?.length) {
-            await this.whatsappService.sendDocumentMessage({
-              to: phone,
-              pdfBuffer,
-              filename: `${proposalNo}.pdf`,
-              caption: `${snapshot.planName} proposal`,
-            }).catch((docErr) => {
-              this.logger.warn(`[PLAN_PROPOSAL] WhatsApp document follow-up failed: ${docErr?.message}`);
+            const document = await this.whatsappService.sendDocumentMessage({
+              to: phone, pdfBuffer, filename: `${proposalNo}.pdf`,
+              caption: `${snapshot.planName} proposal`, requireDocument: true,
             });
+            if (!document.success || !document.messageId) {
+              whatsappStatus = 'FAILED';
+              whatsappError = document.error || document.message || document.reason || 'WhatsApp document delivery failed';
+              whatsappSentAt = null;
+            } else {
+              whatsappMessageId = document.messageId;
+            }
           }
         } catch (err: any) {
           whatsappStatus = 'FAILED';
@@ -389,27 +466,21 @@ export class LeadPlanProposalService {
       }
     }
 
-    const overall =
-      emailStatus === 'SENT' && whatsappStatus === 'SENT'
-        ? 'SENT'
-        : emailStatus === 'SENT' || whatsappStatus === 'SENT'
-          ? 'PARTIAL'
-          : 'FAILED';
-
+    if (channels.whatsapp) {
+      await this.prisma.leadPlanProposal.update({ where: { id: proposalId }, data: { whatsappStatus, whatsappMessageId, whatsappError, whatsappSentAt } });
+    }
+    // Reload channel results so concurrent requests cannot overwrite each other.
+    const actual = await this.getProposal(customerId, leadId, proposalId);
+    emailStatus = actual.emailStatus;
+    whatsappStatus = actual.whatsappStatus;
+    const overall = (emailStatus === 'SENT' || whatsappStatus === 'SENT') && ['SENT', 'SKIPPED'].includes(emailStatus) && ['SENT', 'SKIPPED'].includes(whatsappStatus) ? 'SENT'
+      : emailStatus === 'SENT' || whatsappStatus === 'SENT' ? 'PARTIAL' : 'FAILED';
     const updated = await this.prisma.leadPlanProposal.update({
       where: { id: proposalId },
       data: {
-        status: overall === 'FAILED' ? record.status : overall,
-        emailStatus,
-        emailMessageId,
-        emailError,
-        emailSentAt,
-        whatsappStatus,
-        whatsappMessageId,
-        whatsappError,
-        whatsappSentAt,
-        sentAt: overall === 'SENT' || overall === 'PARTIAL' ? new Date() : record.sentAt,
-        retryCount: isResend ? { increment: 1 } : record.retryCount,
+        status: overall === 'FAILED' ? actual.status : overall,
+        sentAt: overall === 'SENT' || overall === 'PARTIAL' ? actual.sentAt ?? new Date() : actual.sentAt,
+        ...(isResend ? { retryCount: { increment: 1 } } : {}),
       },
     });
 

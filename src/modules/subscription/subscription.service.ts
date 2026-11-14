@@ -185,6 +185,43 @@ export class SubscriptionService {
     return mapped;
   }
 
+  /** Admin management view; does not seed or change the shared catalog. */
+  async getPlanManagement(query: { search?: string; status?: string; sort?: string; page?: string; limit?: string }) {
+    const page = Math.max(1, Math.floor(Number(query.page) || 1));
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(query.limit) || 12)));
+    if (!Number.isSafeInteger(page)) throw new BadRequestException('Invalid page.');
+    const all = await this.prisma.plan.findMany({
+      include: { _count: { select: { subscriptions: { where: { deletedAt: null, status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL] }, endDate: { gte: new Date() } } } } } },
+    });
+    const normalized = all.map((plan) => ({
+      id: plan.id, name: plan.name, code: plan.code, description: plan.description,
+      monthlyPrice: plan.monthlyPrice, yearlyPrice: plan.yearlyPrice, userLimit: plan.userLimit,
+      leadLimit: plan.leadLimit, storageLimitBytes: plan.storageLimit.toString(), features: plan.features,
+      isActive: plan.isActive, deletedAt: plan.deletedAt, createdAt: plan.createdAt, updatedAt: plan.updatedAt,
+      subscriberCount: plan._count.subscriptions,
+    }));
+    const current = normalized.filter((plan) => !plan.deletedAt);
+    const summary = {
+      totalPlans: current.length,
+      activePlans: current.filter((plan) => plan.isActive).length,
+      inactivePlans: current.filter((plan) => !plan.isActive).length,
+      subscribers: normalized.reduce((sum, plan) => sum + plan.subscriberCount, 0),
+    };
+    const search = String(query.search || '').trim().toLowerCase();
+    const status = String(query.status || 'all').toLowerCase();
+    if (!['all', 'active', 'inactive', 'archived'].includes(status)) throw new BadRequestException('Invalid status.');
+    const sort = String(query.sort || 'name');
+    if (!['name', 'subscribers', 'seats', 'created'].includes(sort)) throw new BadRequestException('Invalid sort.');
+    const rows = normalized.filter((plan) => {
+      if (status === 'archived' ? !plan.deletedAt : plan.deletedAt) return false;
+      if (status === 'active' && !plan.isActive) return false;
+      if (status === 'inactive' && plan.isActive) return false;
+      return !search || [plan.name, plan.code, plan.description || ''].some((value) => value.toLowerCase().includes(search));
+    });
+    rows.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'subscribers' ? b.subscriberCount - a.subscriberCount : sort === 'seats' ? b.userLimit - a.userLimit : +b.createdAt - +a.createdAt);
+    return { data: rows.slice((page - 1) * limit, page * limit), meta: { page, limit, total: rows.length }, summary };
+  }
+
   async getPlanById(id: number | string, includeInactive = false) {
     const numId = Number(id);
     if (!numId || isNaN(numId)) {
@@ -1342,6 +1379,9 @@ export class SubscriptionService {
     if (!existing) {
       throw new NotFoundException(`Plan with ID ${planId} not found or already deleted`);
     }
+
+    const activeSubscriptions = await this.prisma.customerSubscription.count({ where: { planId, deletedAt: null, status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL] }, endDate: { gte: new Date() } } });
+    if (activeSubscriptions > 0) throw new BadRequestException('This plan has active subscribers. Reassign or expire their subscriptions before deleting it.');
 
     // Soft-delete / deactivate plan so existing customer subscriptions and records remain linked
     const plan = await this.prisma.plan.update({
