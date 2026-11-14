@@ -15,7 +15,7 @@ import {
   TestSendMetaTemplateDto,
 } from './dto/meta-template.dto';
 import { LEAD_STAGE_WHATSAPP_TEMPLATES, WhatsappService } from '../whatsapp/whatsapp.service';
-import { resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
+import { isLocalPlaceholderTemplate, isSendableMetaTemplate, resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
 
 export const CRM_META_TEMPLATE_VARIABLES = [
   { key: 'leadName', label: '{{leadName}}', desc: 'Lead full name / contact title' },
@@ -192,6 +192,8 @@ export class MetaTemplateService {
       bodyText: t.body,
       footerText: t.footer,
       isActive: t.isLocalActive,
+      sendable: isSendableMetaTemplate(t),
+      isPlaceholder: isLocalPlaceholderTemplate(t),
     }));
 
     return {
