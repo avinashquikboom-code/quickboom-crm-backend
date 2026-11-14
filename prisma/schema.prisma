@@ -315,6 +315,7 @@ model User {
 }
 
 model Role {
+  commissionConfigurations CommissionConfig[]
   id              Int              @id @default(autoincrement())
   customerId      Int?
   designationId   Int?             @unique
@@ -3881,7 +3882,17 @@ model SalaryTargetReview {
 model CommissionConfig {
   id              Int                    @id @default(autoincrement())
   customerId      Int
-  employeeId      Int                    @unique
+  employeeId      Int?                   @unique
+  roleId          Int?
+  name            String?
+  description     String?
+  calculationBasis String                @default("FULL_PAYMENT_AMOUNT")
+  startsAt        DateTime?
+  endsAt          DateTime?
+  createdById     Int?
+  history         Json?
+  role            Role?                  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  slabs           CommissionSlab[]
   commissionType  CommissionType         @default(PERCENTAGE)
   commissionValue Float                  @default(0)
   status          CommissionConfigStatus @default(ACTIVE)
@@ -3889,8 +3900,9 @@ model CommissionConfig {
   updatedAt       DateTime               @updatedAt
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
+  @@index([customerId, roleId, status])
   @@index([customerId])
   @@index([employeeId])
   @@index([status])
@@ -3898,6 +3910,7 @@ model CommissionConfig {
 }
 
 model Commission {
+  calculationSnapshot Json?
   id               Int              @id @default(autoincrement())
   customerId       Int
   employeeId       Int
@@ -3932,12 +3945,15 @@ model Commission {
 }
 
 model CommissionSlab {
+  configurationId Int?
+  configuration CommissionConfig? @relation(fields: [configurationId], references: [id], onDelete: Restrict)
+  displayOrder Int @default(0)
   id          Int       @id @default(autoincrement())
   customerId  Int
   name        String
-  minAmount   Float     @default(0)
-  maxAmount   Float?
-  ratePercent Float     @default(0)
+  minAmount   Decimal   @default(0) @db.Decimal(18, 2)
+  maxAmount   Decimal?  @db.Decimal(18, 2)
+  ratePercent Decimal   @default(0) @db.Decimal(5, 2)
   roles       Json?
   startsAt    DateTime?
   endsAt      DateTime?

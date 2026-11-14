@@ -24,7 +24,7 @@ describe('Commission wallet', () => {
       $queryRaw: jest.fn().mockResolvedValue([]),
     };
     db.$transaction = jest.fn((fn) => fn(db));
-    service = new CommissionWalletService(db, {} as any);
+    service = new CommissionWalletService(db, {} as any, { resolveRole: jest.fn().mockResolvedValue({ id: 11, name: 'Configured Role' }), applicable: jest.fn().mockResolvedValue({ id: 1, name: 'Role slabs', slabs: [{ minAmount: 0, ratePercent: 5, roles: [11] }] }) } as any);
   });
   const request = { amount: 300, paymentAccountId: 'upi', paymentMethod: 'UPI', idempotencyKey: 'request-test-1' };
 
@@ -69,15 +69,12 @@ describe('Commission wallet', () => {
     db.commissionConfig.findUnique.mockResolvedValue({ commissionType: 'PERCENTAGE', commissionValue: 5, status: 'INACTIVE' });
     expect((await service.rules(2, 5)).eligible).toBe(false);
   });
-  it('reports active slabs using the same role behavior as the commission engine', async () => {
-    const slabs = [
-      { minAmount: 0, ratePercent: 5, roles: ['Other role'] },
-      { minAmount: 100, ratePercent: 7, roles: null },
-    ];
-    db.commissionSlab.findMany.mockResolvedValue(slabs);
+  it('returns only slabs resolved for the authenticated employee role', async () => {
     const result = await service.rules(2, 5);
-    expect(result.slabs).toEqual(slabs);
-    expect(result.note).toContain('without filtering its role field');
+    expect(result.eligibleRole).toEqual({ id: 11, name: 'Configured Role' });
+    expect(result.slabs).toEqual([{ minAmount: 0, ratePercent: 5, roles: [11] }]);
+    expect(result.note).not.toContain('without filtering');
+    expect(db.commissionSlab.findMany).not.toHaveBeenCalled();
   });
   it('requires a reference and explicit confirmation before recording payment', async () => {
     db.commissionWithdrawal.update.mockImplementation(({ data }) => Promise.resolve(data));

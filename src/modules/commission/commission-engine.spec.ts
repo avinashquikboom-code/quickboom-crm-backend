@@ -1,3 +1,4 @@
+import { CommissionRulesService, fullSaleCommission } from './commission-rules.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CommissionService } from './commission.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -40,9 +41,19 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       },
     };
 
+    prisma.$transaction = jest.fn(fn => fn(prisma));
+    prisma.$queryRaw = jest.fn();
+    const amounts = { 2001: 10000, 2002: 20000, 2003: 20000, 3001: 15000, 4001: 30000, 5001: 10000, 5002: 10000, 8888: 50000 };
+    prisma.paymentHistory = { findFirst: jest.fn(({where}) => Promise.resolve({ id: where.id, customerId: where.customerId, status: 'SUCCESS', amount: amounts[where.id], createdAt: new Date('2026-11-14') })) };
+    let rate = 0;
+    const rules = {
+      resolveRole: jest.fn(employee => { rate = employee.commissionConfig?.commissionValue || employee.designation.commissionRate; return {id: 11, name:'Configured employee role'}; }),
+      select: jest.fn(async (_tenant, _role, amount) => ({configuration:{id:1,name:'Configured'},slab:{id:1,name:'Range',ratePercent:rate},total:fullSaleCommission(amount,rate)})),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CommissionService,
+        { provide: CommissionRulesService, useValue: rules },
         { provide: PrismaService, useValue: prisma },
       ],
     }).compile();
@@ -59,6 +70,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       assignedEmployeeId: 10,
       leadId: 501,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 10,
         firstName: 'Rahul',
         lastName: 'Sharma',
@@ -109,6 +121,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       assignedEmployeeId: 11,
       leadId: 502,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 11,
         firstName: 'Pooja',
         lastName: 'Verma',
@@ -150,6 +163,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       assignedEmployeeId: 12,
       leadId: 503,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 12,
         firstName: 'Amit',
         lastName: 'Patel',
@@ -221,6 +235,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       assignedEmployeeId: 15,
       leadId: 601,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 15,
         firstName: 'Karan',
         lastName: 'Mehta',
@@ -260,6 +275,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       name: 'Customer A',
       assignedEmployeeId: 101,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 101,
         firstName: 'Employee',
         lastName: 'A',
@@ -280,6 +296,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       name: 'Customer B',
       assignedEmployeeId: 102,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 102,
         firstName: 'Employee',
         lastName: 'B',
@@ -344,6 +361,7 @@ describe('BPO Employee Commission Module — Business Logic & Test Cases', () =>
       },
       assignedEmployeeId: 25,
       assignedEmployeeRel: {
+        customerId: 1,
         id: 25,
         firstName: 'Vikram',
         lastName: 'Singh',

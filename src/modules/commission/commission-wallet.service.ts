@@ -1,3 +1,4 @@
+import { CommissionRulesService } from './commission-rules.service';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -10,6 +11,7 @@ export class CommissionWalletService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly leadLimits: LeadLimitService,
+    private readonly ruleEngine: CommissionRulesService,
   ) {}
 
   private round(value: number) {
@@ -125,18 +127,12 @@ export class CommissionWalletService {
 
   async rules(customerId: number, userId: number) {
     const employee = await this.employee(customerId, userId);
-    const now = new Date();
-    const slabs = await this.prisma.commissionSlab.findMany({
-      where: {
-        customerId,
-        isActive: true,
-        AND: [
-          { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
-          { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
-        ],
-      },
-      orderBy: { minAmount: 'asc' },
-    });
+    let role: any = null, configuration: any = null, configurationError = '';
+    try {
+      role = await this.ruleEngine.resolveRole(employee);
+      configuration = await this.ruleEngine.applicable(customerId, role.id, new Date());
+      if (!configuration) configurationError = 'No active commission configuration exists for your role.';
+    } catch (error) { configurationError = error.message; }
     const config = await this.prisma.commissionConfig.findUnique({ where: { employeeId: employee.id } });
     const rate = config
       ? { type: config.commissionType, value: config.commissionValue, status: config.status }
@@ -145,14 +141,16 @@ export class CommissionWalletService {
         : null;
     const eligible = rate?.status === 'ACTIVE' && rate.value > 0;
     return {
-      source: config ? 'EMPLOYEE_RATE' : 'DESIGNATION_RATE',
+      source: 'ROLE_CONFIGURATION',
+      eligibleRole: role ? { id: role.id, name: role.name } : null,
+      configuration: configuration ? { id: configuration.id, name: configuration.name, calculationBasis: configuration.calculationBasis } : null,
       eligible,
       note: !eligible
         ? 'Your current employee or designation configuration does not make you eligible for commission.'
         : rate.type === 'FIXED'
           ? 'Your fixed commission amount applies; percentage slabs are not used.'
-          : 'The commission engine currently selects an active sale-amount slab without filtering its role field. The slabs shown reflect that calculation. Credits use the rate recorded at purchase time; historical credits are not recalculated.',
-      slabs: eligible && rate.type === 'PERCENTAGE' ? slabs : [],
+          : configurationError || 'Your role-specific slab percentage applies to the full confirmed payment amount. Existing earned credits retain their original rates.',
+      slabs: eligible && rate.type === 'PERCENTAGE' ? (configuration?.slabs || []) : [],
       employeeRate: rate,
       calculationMethod: rate?.type === 'FIXED'
         ? 'Fixed configured amount per eligible purchase.'
@@ -176,10 +174,14 @@ export class CommissionWalletService {
     if (query.status && !['PENDING', 'APPROVED', 'REJECTED', 'PAID', 'CANCELLED'].includes(query.status)) throw new BadRequestException('Invalid transaction status.');
     // UNION pagination avoids truncating either ledger at an arbitrary row cap.
     const ledger = Prisma.sql`
-      SELECT 'earn-' || id::text AS id, 'COMMISSION_EARNED' AS type, "leadId", "commissionAmount" AS amount, status::text AS status, 'CREDIT' AS direction, "createdAt"
-      FROM commissions WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id} AND status IN ('APPROVED', 'PAID')
+      SELECT 'earn-' || c.id::text AS id, 'COMMISSION_EARNED' AS type, c."leadId", c."commissionAmount" AS amount, c.status::text AS status,
+        CASE WHEN c.status = 'CANCELLED' THEN 'REVERSAL' ELSE 'CREDIT' END AS direction, c."createdAt",
+        c."purchaseAmount" AS "saleAmount", c."commissionRate" AS "appliedRate", c.purchase_id AS "paymentId",
+        COALESCE(l."companyName", l.title) AS "businessName"
+      FROM commissions c LEFT JOIN "Lead" l ON l.id = c."leadId"
+      WHERE c."customerId" = ${customerId} AND c."employeeId" = ${employee.id} AND c.status IN ('APPROVED', 'PAID', 'CANCELLED')
       UNION ALL
-      SELECT 'wd-' || id::text, 'WITHDRAWAL', NULL::integer, amount, status::text, 'DEBIT', "requestedAt"
+      SELECT 'wd-' || id::text, 'WITHDRAWAL', NULL::integer, amount, status::text, 'DEBIT', "requestedAt", NULL::double precision, NULL::double precision, NULL::integer, NULL::text
       FROM commission_withdrawals WHERE "customerId" = ${customerId} AND "employeeId" = ${employee.id}
     `;
     const filter = Prisma.sql`WHERE (${query.type || null}::text IS NULL OR type = ${query.type || null}) AND (${query.status || null}::text IS NULL OR status = ${query.status || null})`;
@@ -323,24 +325,7 @@ export class CommissionWalletService {
   }
 
   async saveSlab(customerId: number, body: { name?: string; minAmount?: number; maxAmount?: number | null; ratePercent?: number; roles?: unknown; startsAt?: string; endsAt?: string }) {
-    const rate = Number(body.ratePercent);
-    const minAmount = Number(body.minAmount);
-    if (!body.name?.trim()) throw new BadRequestException('Slab name is required.');
-    if (!Number.isFinite(rate) || rate <= 0) throw new BadRequestException('Commission percentage must be greater than zero.');
-    if (!Number.isFinite(minAmount) || minAmount < 0) throw new BadRequestException('Minimum sale amount is invalid.');
-    return this.prisma.commissionSlab.create({
-      data: {
-        customerId,
-        name: body.name.trim(),
-        minAmount,
-        maxAmount: body.maxAmount == null ? null : Number(body.maxAmount),
-        ratePercent: rate,
-        roles: body.roles == null ? undefined : body.roles as Prisma.InputJsonValue,
-        startsAt: body.startsAt ? new Date(body.startsAt) : null,
-        endsAt: body.endsAt ? new Date(body.endsAt) : null,
-        isActive: true,
-      },
-    });
+    throw new BadRequestException('Use role-specific commission configuration management to add or edit slabs. Legacy unassigned slabs are read-only.');
   }
 
   async setWithdrawalStatus(customerId: number, id: number, action: string, userId?: number, confirmation?: { paymentReference?: string; processingConfirmed?: boolean }) {

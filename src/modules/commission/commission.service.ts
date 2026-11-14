@@ -1,3 +1,4 @@
+import { CommissionRulesService } from './commission-rules.service';
 import {
   Injectable,
   Logger,
@@ -23,7 +24,7 @@ import {
 export class CommissionService {
   private readonly logger = new Logger(CommissionService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly rules: CommissionRulesService) {}
 
   /**
    * Main commission generator triggered when a Customer Plan Purchase payment is successful.
@@ -37,13 +38,20 @@ export class CommissionService {
     orderId?: string | null;
     tx?: Prisma.TransactionClient;
   }): Promise<any> {
-    const { customerId, purchaseId, purchaseAmount, planId, orderId } = params;
+    if (!params.tx) return this.prisma.$transaction(tx => this.calculateAndAwardCommission({ ...params, tx }));
+    const { customerId, purchaseId, planId, orderId } = params;
     const db = params.tx || this.prisma;
 
     if (!purchaseId) {
       this.logger.warn(`[COMMISSION] Missing purchaseId for customer #${customerId}`);
       return null;
     }
+
+    await db.$queryRaw`SELECT id FROM "PaymentHistory" WHERE id = ${purchaseId} FOR UPDATE`;
+    const payment = await db.paymentHistory.findFirst({ where: { id: purchaseId, customerId, status: 'SUCCESS', deletedAt: null } });
+    if (!payment) throw new BadRequestException('Commission requires a successful authoritative payment.');
+    const purchaseAmount = Number(payment.amount);
+    if (!Number.isFinite(purchaseAmount) || purchaseAmount < 0) throw new BadRequestException('Invalid payment amount.');
 
     // 1. Idempotency Check: prevent duplicate commission for same purchaseId
     const existingCommission = await db.commission.findUnique({
@@ -169,30 +177,25 @@ export class CommissionService {
       return null;
     }
 
-    if (commissionType === CommissionType.PERCENTAGE && typeof db.commissionSlab?.findFirst === 'function') {
-      const now = new Date();
-      const slab = await db.commissionSlab.findFirst({
-        where: {
-          customerId,
-          isActive: true,
-          minAmount: { lte: purchaseAmount },
-          AND: [
-            { OR: [{ maxAmount: null }, { maxAmount: { gte: purchaseAmount } }] },
-            { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
-            { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
-          ],
-        },
-        orderBy: { minAmount: 'desc' },
-      });
-      if (slab?.ratePercent > 0) commissionRate = slab.ratePercent;
+    const tenantId = employee.customerId;
+    if (!Number.isSafeInteger(tenantId) || tenantId <= 0 || (customer.originLead?.customerId && customer.originLead.customerId !== tenantId)) {
+      throw new BadRequestException('Commission employee does not belong to the source lead tenant.');
     }
-
-    // 5. Calculate Commission
-    let commissionAmount = 0;
-    if (commissionType === CommissionType.PERCENTAGE) {
-      commissionAmount = Math.round(((purchaseAmount * commissionRate) / 100) * 100) / 100;
-    } else {
-      commissionAmount = commissionRate;
+    let selection: Awaited<ReturnType<CommissionRulesService['select']>> = null;
+    let role: any = null;
+    let commissionAmount: number;
+    try {
+      if (commissionType === CommissionType.PERCENTAGE) {
+        role = await this.rules.resolveRole(employee, db);
+        selection = await this.rules.select(tenantId, role.id, purchaseAmount, payment.createdAt, db);
+        commissionRate = Number(selection.slab.ratePercent);
+        commissionAmount = selection.total;
+      } else {
+        commissionAmount = new Prisma.Decimal(commissionRate).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toNumber();
+      }
+    } catch (error) {
+      this.logger.error(JSON.stringify({ event: 'COMMISSION_CONFIGURATION_FAILURE', purchaseId, employeeId, tenantId, message: error.message }));
+      throw error;
     }
 
     // 6. Persist Commission Record
@@ -202,8 +205,19 @@ export class CommissionService {
     try {
       const commission = await db.commission.create({
         data: {
-          customerId,
+          customerId: tenantId,
           employeeId,
+          calculationSnapshot: {
+            configurationId: selection?.configuration.id ?? null, configurationName: selection?.configuration.name ?? null,
+            slabId: selection?.slab.id ?? null, slabName: selection?.slab.name ?? null,
+            roleId: role?.id ?? null, roleName: role?.name ?? null, employeeId, teamLeaderId: null,
+            buyerCustomerId: customerId, tenantId, paymentId: purchaseId, leadId,
+            saleAmount: new Prisma.Decimal(purchaseAmount).toFixed(2), appliedRate: String(commissionRate),
+            totalCommission: String(commissionAmount), employeeAmount: String(commissionAmount), leaderAmount: '0',
+            basis: commissionType === 'PERCENTAGE' ? 'FULL_PAYMENT_AMOUNT' : 'FIXED',
+            paymentDate: payment.createdAt.toISOString(), calculatedAt: new Date().toISOString(),
+            allocationPolicy: 'EXISTING_SINGLE_RECIPIENT',
+          },
           leadId,
           planId: resolvedPlanId,
           purchaseId,
@@ -261,7 +275,7 @@ export class CommissionService {
         where: { purchaseId },
       });
 
-      if (commission && commission.customerId === customerId && commission.status !== CommissionStatus.CANCELLED) {
+      if (commission && (commission.customerId === customerId || (commission.calculationSnapshot as any)?.buyerCustomerId === customerId) && commission.status !== CommissionStatus.CANCELLED) {
         await this.prisma.commission.update({
           where: { id: commission.id },
           data: { status: CommissionStatus.CANCELLED },
@@ -717,7 +731,7 @@ export class CommissionService {
    */
   async getEmployeeCommissionConfigs(customerId: number) {
     const configs = await this.prisma.commissionConfig.findMany({
-      where: { customerId },
+      where: { customerId, employeeId: { not: null } },
       include: {
         employee: {
           select: {
