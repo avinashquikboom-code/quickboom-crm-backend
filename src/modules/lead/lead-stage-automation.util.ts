@@ -307,7 +307,8 @@ export function applyWhatsappVariableMapping(
   for (const [targetKey, source] of Object.entries(mapping)) {
     const src = String(source ?? '').trim();
     if (!src) continue;
-    const resolved = base[src] ?? src;
+    const tag = src.match(/^\{\{\s*([\w.]+)\s*\}\}$/)?.[1];
+    const resolved = tag ? (base[tag] ?? '') : (base[src] ?? src);
     out[targetKey] = String(resolved ?? '').trim();
   }
   return out;
@@ -343,7 +344,11 @@ export function buildStageAutomationIdempotencyKey(params: {
   previousStageId?: number | null;
   nextStageId?: number | null;
   templateId?: number | string | null;
+  transitionId?: number | string;
 }): string {
+  if (params.transitionId != null) {
+    return `stage_${params.customerId}_${params.leadId}_event_${params.transitionId}_${params.channel}`;
+  }
   const tpl = params.templateId != null ? String(params.templateId) : 'auto';
   const from = params.previousStageId != null ? String(params.previousStageId) : 'none';
   const to = params.nextStageId != null ? String(params.nextStageId) : 'none';

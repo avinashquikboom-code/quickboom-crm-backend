@@ -16,6 +16,7 @@ import {
   friendlyWhatsAppErrorMessage,
   isLocalPlaceholderTemplate,
   isSendableMetaTemplate,
+  buildStageTemplateComponents,
 } from './whatsapp.util';
 
 @Injectable()
@@ -113,6 +114,7 @@ export class WhatsappService {
       templateStatus?: string;
       wabaId?: string;
       isApproved?: boolean;
+      components?: Record<string, any>[];
     },
   ): Promise<WhatsAppSendResult> {
     const normalizedTo = this.normalizePhoneNumber(to);
@@ -503,14 +505,14 @@ export class WhatsappService {
       template: {
         name: resolvedTemplateName,
         language: { code: resolvedLanguageCode },
-        components: parameters.length > 0
+        components: templateMetadata?.components ?? (parameters.length > 0
           ? [
               {
                 type: 'body',
                 parameters,
               },
             ]
-          : undefined,
+          : undefined),
       },
     };
 
@@ -534,7 +536,10 @@ export class WhatsappService {
       this.logger.log(
         `[WHATSAPP DEBUG] Message sent successfully. HTTP status: ${response.status}. Message ID: ${messageId || 'N/A'}`
       );
-      return { success: true, provider: 'WHATSAPP', messageId, providerStatus: response.status };
+      return { success: Boolean(messageId), provider: 'WHATSAPP', messageId, providerStatus: response.status,
+        providerResponse: response.data,
+        ...(!messageId ? { reason: 'MISSING_MESSAGE_ID', message: 'Meta did not return a message ID; acceptance is unconfirmed.' } : {}),
+      };
     } catch (err: any) {
       const httpStatus = err?.response?.status as number | undefined;
       const fbError = err?.response?.data?.error;
@@ -1595,6 +1600,7 @@ export class WhatsappService {
     userId?: number;
     metaTemplateId?: number;
     metaTemplate?: any;
+    validateOnMeta?: boolean;
   }): Promise<WhatsAppSendResult> {
     const { to, stageKey, variables, customMessage, stageName, customerId, userId, metaTemplateId, metaTemplate } = params;
 
@@ -1629,6 +1635,43 @@ export class WhatsappService {
         message: `WhatsApp template "${template.templateName}" is currently ${template.status}. Only APPROVED templates can be sent.`,
         details: `WhatsApp template "${template.templateName}" is currently ${template.status}. Only APPROVED templates can be sent.`,
       };
+    }
+
+    let components: Record<string, any>[] | undefined;
+    let wabaId: string | undefined;
+    if (params.validateOnMeta) {
+      try {
+        const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', { forceFresh: true });
+        const creds = config?.credentials || {};
+        const { token } = resolveCleanAccessToken(creds.apiKey || creds.accessToken || creds.access_token || '');
+        wabaId = String(creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
+        const phoneId = String(creds.phoneNumberId || creds.phone_number_id || '').trim();
+        if (!config?.isEnabled || !token || !wabaId || !phoneId) {
+          return { success: false, skipped: true, reason: 'WHATSAPP_CONFIGURATION_ERROR',
+            message: 'Configure enabled WhatsApp credentials, WABA ID and Phone Number ID in Integrations.' };
+        }
+        const baseUrl = `https://graph.facebook.com/${creds.apiVersion || 'v25.0'}`;
+        const options = { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 };
+        const [templates, phones] = await Promise.all([
+          axios.get(`${baseUrl}/${wabaId}/message_templates`, {
+            ...options, params: { name: template.templateName, fields: 'id,name,status,language,components', limit: 100 },
+          }),
+          axios.get(`${baseUrl}/${wabaId}/phone_numbers`, { ...options, params: { fields: 'id', limit: 100 } }),
+        ]);
+        const approved = templates.data?.data?.find((item: any) =>
+          String(item.id) === String(template!.metaTemplateId) &&
+          item.name === template!.templateName && item.language === template!.language &&
+          item.status === 'APPROVED');
+        if (!approved || !phones.data?.data?.some((item: any) => String(item.id) === phoneId)) {
+          return { success: false, skipped: true, reason: 'META_TEMPLATE_ACCOUNT_MISMATCH',
+            message: 'The exact approved template, language and sending phone must belong to the configured WABA. Sync Meta templates and correct the stage mapping.' };
+        }
+        components = buildStageTemplateComponents(approved.components || [], variables);
+      } catch (error: any) {
+        return { success: false, skipped: false, reason: 'META_TEMPLATE_VALIDATION_FAILED',
+          message: error?.response ? 'Unable to verify template approval with Meta. Check integration access and retry.'
+            : (error?.message || 'Unable to validate Meta template parameters.') };
+      }
     }
 
     let messageText = customMessage;
@@ -1683,6 +1726,8 @@ export class WhatsappService {
         templateId: template?.id,
         providerTemplateId: (template as any)?.metaTemplateId,
         templateStatus: template?.status,
+        components,
+        wabaId,
       },
     );
   }
@@ -2289,7 +2334,11 @@ export class WhatsappService {
       const mapped = status === 'read' ? 'READ' : status === 'delivered' ? 'DELIVERED' : status === 'failed' ? 'FAILED' : status === 'sent' ? 'SENT' : null;
       if (mapped && this.prisma.leadStageWhatsAppDelivery?.updateMany) {
         await this.prisma.leadStageWhatsAppDelivery.updateMany({
-          where: { metaMessageId: messageId },
+          where: { metaMessageId: messageId, status: { in:
+            mapped === 'READ' ? ['QUEUED', 'PROCESSING', 'SENT', 'DELIVERED', 'FAILED'] :
+            mapped === 'DELIVERED' ? ['QUEUED', 'PROCESSING', 'SENT', 'FAILED'] :
+            ['QUEUED', 'PROCESSING', 'SENT'],
+          } },
           data: { status: mapped, error: errorMessage || null, updatedAt: new Date() },
         });
       }

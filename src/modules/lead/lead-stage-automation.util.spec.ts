@@ -10,9 +10,62 @@ import {
   visitScheduledStageWhere,
   shouldAdvanceLeadToVisitScheduled,
   shouldMoveLeadToVisitScheduledOnExplicitSchedule,
+  applyWhatsappVariableMapping,
 } from './lead-stage-automation.util';
+import { buildStageTemplateComponents } from '../whatsapp/whatsapp.util';
+import { LeadStageWhatsappDeliveryService } from './lead-stage-whatsapp-delivery.service';
+import { LeadStageEmailDeliveryService } from './lead-stage-email-delivery.service';
 
 describe('lead-stage-automation.util', () => {
+  it('uses event and channel identity independent of mapping corrections', () => {
+    const event = { customerId: 2, leadId: 12, transitionId: 51, channel: 'WHATSAPP' as const };
+    expect(buildStageAutomationIdempotencyKey({ ...event, templateId: 1 }))
+      .toBe(buildStageAutomationIdempotencyKey({ ...event, templateId: 2 }));
+    expect(buildStageAutomationIdempotencyKey(event))
+      .not.toBe(buildStageAutomationIdempotencyKey({ ...event, transitionId: 52 }));
+    expect(buildStageAutomationIdempotencyKey(event))
+      .not.toBe(buildStageAutomationIdempotencyKey({ ...event, channel: 'EMAIL' }));
+    expect(buildStageAutomationIdempotencyKey(event))
+      .not.toBe(buildStageAutomationIdempotencyKey({ ...event, customerId: 3 }));
+  });
+
+  it('resolves the existing admin {{field}} mapping and rejects missing component variables', () => {
+    const variables = applyWhatsappVariableMapping({ leadName: 'Ada', link: 'quote' }, {
+      '1': '{{leadName}}', header_1: 'leadName', button_0_1: '{{link}}',
+    });
+    const components = buildStageTemplateComponents([
+      { type: 'HEADER', format: 'TEXT', text: 'Hello {{1}}' },
+      { type: 'BODY', text: 'Hi {{1}}' },
+      { type: 'BUTTONS', buttons: [{ type: 'URL', url: 'https://example.com/{{1}}' }] },
+    ], variables);
+    expect(components).toHaveLength(3);
+    expect(components[2]).toMatchObject({ type: 'button', sub_type: 'url', parameters: [{ text: 'quote' }] });
+    expect(() => buildStageTemplateComponents([{ type: 'BODY', text: '{{missing}}' }], variables))
+      .toThrow('Missing WhatsApp template variable');
+  });
+
+  it.each([
+    [LeadStageWhatsappDeliveryService, 'leadStageWhatsAppDelivery', 'metaMessageId'],
+    [LeadStageEmailDeliveryService, 'leadStageEmailDelivery', 'providerMessageId'],
+  ] as const)('claims a channel once and never retries provider-accepted records (%s)', async (Service, model, messageField) => {
+    let row: any = { id: 1, status: 'QUEUED', attemptCount: 0, [messageField]: null };
+    const db = {
+      findFirst: jest.fn(async () => row),
+      updateMany: jest.fn(async ({ where, data }) => {
+        if (row.status !== where.status || row[messageField]) return { count: 0 };
+        row = { ...row, status: data.status, attemptCount: row.attemptCount + 1 };
+        return { count: 1 };
+      }),
+    };
+    const service = new Service({ [model]: db } as any);
+    expect(await service.claimQueued(1)).toBe(true);
+    expect(await service.claimQueued(1)).toBe(false);
+    row = { ...row, status: 'FAILED', [messageField]: 'provider-accepted-id' };
+    await expect(service.retry(2, 12, 1)).rejects.toThrow('Only failed or skipped');
+    row = { ...row, [messageField]: null };
+    expect((await service.retry(2, 12, 1)).status).toBe('FAILED');
+    await expect(service.retry(2, 12, 1)).rejects.toThrow();
+  });
   it('detects pipeline movement by stageId even when labels match', () => {
     expect(
       didLeadPipelineStageChange({

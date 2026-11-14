@@ -484,17 +484,17 @@ export class LeadController {
   }
 
   @Get(':id/stage-whatsapp/history')
-  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Stage automation WhatsApp message history for a lead' })
   getStageWhatsappHistory(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.getStageWhatsappHistory(customerId, id);
+    return this.leadService.getStageWhatsappHistory(customerId, id, user);
   }
 
   @Post(':id/stage-whatsapp/:deliveryId/retry')
-  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Retry a failed stage automation WhatsApp delivery' })
   retryStageWhatsapp(
@@ -502,22 +502,23 @@ export class LeadController {
     @Param('id') id: string,
     @Param('deliveryId', ParseIntPipe) deliveryId: number,
     @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.retryStageWhatsappDelivery(customerId, id, deliveryId, userId);
+    return this.leadService.retryStageWhatsappDelivery(customerId, id, deliveryId, userId, user);
   }
 
   @Get(':id/stage-email/history')
-  @CrmCategory('BPO')
+  @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Stage automation email message history for a lead' })
   getStageEmailHistory(
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.getStageEmailHistory(customerId, id);
+    return this.leadService.getStageEmailHistory(customerId, id, user);
   }
 
   @Post(':id/stage-email/:deliveryId/retry')
-  @CrmCategory('BPO')
   @RequirePermissions({ module: 'LEADS', action: 'EDIT' })
   @ApiOperation({ summary: 'Retry a failed stage automation email delivery' })
   retryStageEmail(
@@ -525,8 +526,9 @@ export class LeadController {
     @Param('id') id: string,
     @Param('deliveryId', ParseIntPipe) deliveryId: number,
     @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.retryStageEmailDelivery(customerId, id, deliveryId, userId);
+    return this.leadService.retryStageEmailDelivery(customerId, id, deliveryId, userId, user);
   }
 
   @Post(':id/notes')
@@ -771,4 +773,3 @@ export class LeadController {
     return this.leadService.sendLeadWhatsApp(customerId, id, userId, dto);
   }
 }
-

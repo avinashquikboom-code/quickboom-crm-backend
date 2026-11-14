@@ -54,8 +54,10 @@ export class LeadStageEmailDeliveryService {
     if (existing) {
       return existing;
     }
-    return this.prisma.leadStageEmailDelivery.create({
-      data: {
+    return this.prisma.leadStageEmailDelivery.upsert({
+      where: { idempotencyKey: params.idempotencyKey },
+      update: {},
+      create: {
         customerId: params.customerId,
         leadId: params.leadId,
         userId: params.userId ?? null,
@@ -80,6 +82,14 @@ export class LeadStageEmailDeliveryService {
       where: { id },
       data: { status: 'PROCESSING', attemptCount: { increment: 1 }, updatedAt: new Date() },
     });
+  }
+
+  async claimQueued(id: number) {
+    const result = await this.prisma.leadStageEmailDelivery.updateMany({
+      where: { id, status: 'QUEUED', providerMessageId: null },
+      data: { status: 'PROCESSING', attemptCount: { increment: 1 } },
+    });
+    return result.count === 1;
   }
 
   async markResult(
@@ -114,19 +124,18 @@ export class LeadStageEmailDeliveryService {
       where: { id: deliveryId, customerId, leadId },
     });
     if (!row) throw new NotFoundException('Stage email delivery record not found.');
-    if (!['FAILED', 'SKIPPED'].includes(String(row.status).toUpperCase())) {
+    if (row.providerMessageId || !['FAILED', 'SKIPPED'].includes(String(row.status).toUpperCase())) {
       throw new BadRequestException('Only failed or skipped deliveries can be retried.');
     }
-    const retryKey = `${row.idempotencyKey}:retry:${row.attemptCount + 1}`;
-    return this.prisma.leadStageEmailDelivery.update({
-      where: { id: row.id },
+    const claimed = await this.prisma.leadStageEmailDelivery.updateMany({
+      where: { id: row.id, status: row.status, attemptCount: row.attemptCount, providerMessageId: null },
       data: {
-        idempotencyKey: retryKey,
-        status: 'QUEUED',
-        error: null,
+        status: 'PROCESSING',
         attemptCount: { increment: 1 },
         updatedAt: new Date(),
       },
     });
+    if (claimed.count !== 1) throw new BadRequestException('A retry is already in progress.');
+    return row;
   }
 }

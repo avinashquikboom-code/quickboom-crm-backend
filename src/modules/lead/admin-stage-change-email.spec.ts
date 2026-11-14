@@ -83,6 +83,11 @@ describe('Admin Panel Stage Change Automatic Email Verification (9 Verification 
       { id: 7, key: 'QUIKBOOM_DEAL_LOST', name: 'Lost', subject: 'QUIKBOOM - Staying in Touch', body: 'Hello {{customerName}}, thank you for your time considering QUIKBOOM.', isActive: true },
     ];
 
+    // Automatic notifications use the configured stage mapping, never a name guess.
+    for (const stage of stagesTable) {
+      const template = templatesTable.find((item) => item.id === stage.id);
+      if (template) stage.emailTemplateId = template.id;
+    }
     emailLogsTable = [];
 
     mockPrisma = {

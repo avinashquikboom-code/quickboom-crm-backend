@@ -1976,7 +1976,8 @@ export class LeadRepository {
     }
   }
 
-  async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null }) {
+  async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null },
+    transition?: { userId: number; previousStatus: LeadStatus; previousStageId: number | null; expectedUpdatedAt?: Date }) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     const {
@@ -2163,10 +2164,28 @@ export class LeadRepository {
       updateData.website = w && w !== 'N/A' && w !== 'null' ? w : null;
     }
 
-    return this.prisma.lead.updateMany({
-      where: { id: numId, customerId: numCustomerId, deletedAt: null },
-      data: updateData,
-    });
+    const write = async (db: any) => {
+      const result = await db.lead.updateMany({
+        where: {
+          id: numId, customerId: numCustomerId, deletedAt: null,
+          ...(transition ? { status: transition.previousStatus, stageId: transition.previousStageId,
+            updatedAt: transition.expectedUpdatedAt } : {}),
+        },
+        data: updateData,
+      });
+      if (!transition) return result;
+      if (result.count !== 1) throw new BadRequestException('Lead changed while saving. Refresh before trying again.');
+      const history = await db.leadStatusHistory.create({
+        data: {
+          leadId: numId, fromStatus: transition.previousStatus,
+          toStatus: updateData.status ?? transition.previousStatus,
+          fromStageId: transition.previousStageId, toStageId: updateData.stageId ?? transition.previousStageId,
+          changedById: transition.userId,
+        },
+      });
+      return { ...result, transitionId: history.id };
+    };
+    return transition ? this.prisma.$transaction(write) : write(this.prisma);
   }
 
   async updateStatus(
@@ -2180,6 +2199,7 @@ export class LeadRepository {
     fromStageIdParam?: number | null,
     stageName?: string,
     inlineTransaction = false,
+    expectedUpdatedAt?: Date,
   ) {
     const numId = Number(id);
     const numCustomerId = Number(customerId);
@@ -2187,6 +2207,13 @@ export class LeadRepository {
     const updateWhere: any = { id: numId };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       updateWhere.customerId = numCustomerId;
+    }
+    if (expectedUpdatedAt) {
+      // Compare the version authorized by the service, preventing simultaneous
+      // requests from recording/sending the same transition twice.
+      updateWhere.updatedAt = expectedUpdatedAt;
+      updateWhere.status = fromStatus;
+      updateWhere.stageId = fromStageIdParam ?? null;
     }
 
     let resolvedStageId = stageId ? Number(stageId) : undefined;
@@ -2256,15 +2283,16 @@ export class LeadRepository {
       return;
     }
 
+    let transitionId: number | undefined;
     const writeTransition = async (db: any) => {
       const updated = await db.lead.updateMany({
         where: updateWhere,
         data: updateData,
       });
       if (updated && typeof updated.count === 'number' && updated.count === 0) {
-        throw new BadRequestException('Lead stage was not saved');
+        throw new BadRequestException('Lead changed while saving. Refresh the lead before trying again.');
       }
-      await db.leadStatusHistory.create({
+      const history = await db.leadStatusHistory.create({
         data: {
           leadId: numId,
           fromStatus,
@@ -2275,6 +2303,7 @@ export class LeadRepository {
           notes: notes || `Stage transitioned from ${fromStatus || 'N/A'} to ${stageName || toStatus}`,
         } as any,
       });
+      transitionId = history?.id;
       await db.leadActivityTimeline.create({
         data: {
           leadId: numId,
@@ -2460,6 +2489,7 @@ export class LeadRepository {
         this.logger.warn(`[updateStatus] Failed to sync won conversion employee: ${err.message}`);
       }
     }
+    return transitionId;
   }
 
   async softDelete(customerId: number | string, id: number | string) {

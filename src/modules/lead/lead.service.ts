@@ -1509,6 +1509,13 @@ export class LeadService {
 
     if (resolvedStageId) {
       const stage = await this.leadRepository.findStageById(resolvedStageId);
+      if (!stage || stage.deletedAt) throw new NotFoundException('Lead stage not found.');
+      if (stage.customerId != null && Number(stage.customerId) !== Number(customerId)) {
+        throw new ForbiddenException('Lead stage does not belong to your company/workspace');
+      }
+      if (stage.isActive === false && stage.id !== lead.stageId) {
+        throw new BadRequestException('Cannot transition to an inactive stage.');
+      }
       if (stage) {
         stageName = stage.name;
         const normKey = normalizeLeadStatus(stage.key);
@@ -1595,7 +1602,10 @@ export class LeadService {
       );
     }
 
-    await this.leadRepository.update(customerId, id, sanitizedDto as any);
+    const update = await this.leadRepository.update(customerId, id, sanitizedDto as any, isStageChanged ? {
+      userId: Number(userId), previousStatus: lead.status, previousStageId: lead.stageId,
+      expectedUpdatedAt: lead.updatedAt,
+    } : undefined);
     await this.leadRepository.logTimeline(
       id,
       'LEAD_UPDATED',
@@ -1675,36 +1685,42 @@ export class LeadService {
       this.logger.log(`[LEAD_STAGE] Old stage: ${previousStageName}`);
       this.logger.log(`[LEAD_STAGE] New stage: ${newStageName}`);
 
-      const emailPromise = dto.sendEmail !== false
-        ? this.handleLeadStageChangeNotification(
+      const emailPromise = this.deliverStageChannel(
+        'EMAIL', update?.transitionId, customerId, updatedLead, lead.stageId,
+        previousStageName, newStageName, userId,
+        (deliveryId) => this.handleLeadStageChangeNotification(
             customerId,
             updatedLead,
             previousStageName,
             newStageName,
             userId,
-            dto.templateId,
-            dto.customSubject,
-            dto.customBody,
+            undefined,
+            undefined,
+            undefined,
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
             lead.stageId,
-          )
-        : Promise.resolve(emailNotification);
-      const whatsappPromise = dto.sendWhatsapp !== false
-        ? this.handleLeadStageChangeWhatsappNotification(
+            deliveryId,
+          ),
+      );
+      const whatsappPromise = this.deliverStageChannel(
+        'WHATSAPP', update?.transitionId, customerId, updatedLead, lead.stageId,
+        previousStageName, newStageName, userId,
+        (deliveryId) => this.handleLeadStageChangeWhatsappNotification(
             customerId,
             updatedLead,
             previousStageName,
             newStageName,
             userId,
-            dto.whatsappMessage,
-            dto.whatsappTemplateName,
+            undefined,
+            undefined,
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
-            dto.whatsappTemplateId,
+            undefined,
             lead.stageId,
-          )
-        : Promise.resolve(whatsappNotification);
+            deliveryId,
+          ),
+      );
 
       const notifService = this.getNotificationService();
       let pushPromise = Promise.resolve();
@@ -1970,8 +1986,9 @@ export class LeadService {
       this.logger.log(`[LEAD_AUTOMATION] triggered=false leadId=${id} reason="Stage not changed"`);
     }
 
+    let transitionId: number | undefined;
     if (isStageChanged) {
-      await this.leadRepository.updateStatus(
+      transitionId = await this.leadRepository.updateStatus(
         customerId,
         id,
         lead.status,
@@ -1981,6 +1998,8 @@ export class LeadService {
         resolvedStageId,
         lead.stageId,
         stageName,
+        false,
+        lead.updatedAt,
       );
     }
 
@@ -1988,37 +2007,43 @@ export class LeadService {
 
     // If stage actually changed, trigger automatic customer Email, WhatsApp & Push notifications concurrently without cross-blocking
     if (isStageChanged) {
-      const emailPromise = dto.sendEmail !== false
-        ? this.handleLeadStageChangeNotification(
+      const emailPromise = this.deliverStageChannel(
+        'EMAIL', transitionId, customerId, updatedLead, previousStageId,
+        previousStageName, newStageName, userId,
+        (deliveryId) => this.handleLeadStageChangeNotification(
             customerId,
             updatedLead,
             previousStageName,
             newStageName,
             userId,
-            dto.templateId,
-            dto.customSubject,
-            dto.customBody,
+            undefined,
+            undefined,
+            undefined,
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
             previousStageId,
-          )
-        : Promise.resolve(emailNotification);
+            deliveryId,
+          ),
+      );
 
-      const whatsappPromise = dto.sendWhatsapp !== false
-        ? this.handleLeadStageChangeWhatsappNotification(
+      const whatsappPromise = this.deliverStageChannel(
+        'WHATSAPP', transitionId, customerId, updatedLead, previousStageId,
+        previousStageName, newStageName, userId,
+        (deliveryId) => this.handleLeadStageChangeWhatsappNotification(
             customerId,
             updatedLead,
             previousStageName,
             newStageName,
             userId,
-            dto.whatsappMessage,
-            dto.whatsappTemplateName,
+            undefined,
+            undefined,
             'LEAD_STAGE_CHANGED',
             resolvedStageId || updatedLead.stageId,
-            dto.whatsappTemplateId,
+            undefined,
             previousStageId,
-          )
-        : Promise.resolve(whatsappNotification);
+            deliveryId,
+          ),
+      );
 
       const notifService = this.getNotificationService();
       let pushPromise = Promise.resolve();
@@ -2559,6 +2584,68 @@ export class LeadService {
     }
   }
 
+  /** Record every channel outcome, including validation skips before provider calls. */
+  private async deliverStageChannel(
+    channel: 'EMAIL' | 'WHATSAPP',
+    transitionId: number | undefined,
+    customerId: number | string,
+    lead: any,
+    previousStageId: number | null,
+    previousStage: string,
+    newStage: string,
+    userId: number | string | undefined,
+    send: (deliveryId?: number) => Promise<any>,
+  ) {
+    const service = channel === 'EMAIL' ? this.stageEmailDeliveryService : this.stageWhatsappDeliveryService;
+    // The services are optional only in older module consumers and unit tests.
+    if (!service || transitionId == null) return send();
+    const idempotencyKey = buildStageAutomationIdempotencyKey({
+      customerId, leadId: lead.id, channel, transitionId,
+    });
+    const stage = lead.stageId ? await this.prisma.leadStage.findFirst({
+      where: { id: lead.stageId, deletedAt: null, ...tenantLeadStageScope(customerId) },
+      include: { emailTemplate: true, whatsappTemplate: true },
+    }) : null;
+    const template = channel === 'EMAIL' ? stage?.emailTemplate : stage?.whatsappTemplate;
+    const row = await service.upsertQueued({
+      customerId: Number(customerId), leadId: Number(lead.id), userId: Number(userId),
+      previousStageId, newStageId: lead.stageId, previousStage, newStage,
+      templateName: template?.name ?? null,
+      ...(channel === 'EMAIL'
+        ? { emailTemplateId: stage?.emailTemplateId, recipientEmail: lead.email }
+        : { metaTemplateId: stage?.whatsappTemplateId, recipientPhone: maskPhone(lead.phone || '') }),
+      triggerSource: 'LEAD_STAGE_CHANGED', idempotencyKey,
+      variableMapping: (channel === 'EMAIL' ? stage?.emailVariableMapping : stage?.whatsappVariableMapping) as any,
+    });
+    if (!await service.claimQueued(row.id)) {
+      return {
+        sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
+        message: 'This transition notification is already recorded. Use retry for failed delivery.',
+      };
+    }
+    let result: any;
+    try {
+      result = await send(row.id);
+    } catch (error: any) {
+      result = { sent: false, status: 'FAILED', recipient: null, messageId: null,
+        error: error?.message || 'Notification failed', message: 'Notification failed' };
+    }
+    await service.markResult(row.id, {
+      status: result.status,
+      ...(channel === 'EMAIL' ? { providerMessageId: result.messageId } : { metaMessageId: result.messageId }),
+      error: result.error || (result.status !== 'SENT' ? result.message : null),
+    });
+    await this.leadRepository.logTimeline(lead.id, 'STAGE_NOTIFICATION_RESULT',
+      `${channel}: ${result.status} — ${newStage}`, {
+        channel, transitionId, deliveryId: row.id, previousStage, newStage,
+        templateId: template?.id ?? null, templateName: template?.name ?? null,
+        language: channel === 'WHATSAPP' ? stage?.whatsappTemplate?.language : null,
+        recipient: result.recipient, status: result.status, messageId: result.messageId,
+        reason: result.error || result.message,
+      }).catch((error) => this.logger.warn(`Could not record notification timeline for delivery ${row.id}: ${error.message}`));
+    return result;
+  }
+
   /**
    * Dispatches automatic email notification to customer upon lead stage change.
    * Ensures email failure never causes the lead update to fail.
@@ -2610,24 +2697,12 @@ export class LeadService {
         };
       }
 
-      const proposalStageKey = canonicalLeadStageToken(newStageName || lead.stage?.key || lead.status);
-      if (['PROPOSAL', 'PROPOSAL_SENT'].includes(proposalStageKey) && eventType === 'LEAD_STAGE_CHANGED') {
-        return {
-          sent: false,
-          status: 'SKIPPED',
-          recipient: null,
-          messageId: null,
-          error: null,
-          message: 'Plan proposal workflow handles PROPOSAL stage email notifications.',
-        };
-      }
-
       // Check per-stage email automation settings
       const effectiveStageId = explicitNewStageId || lead.stageId || lead.stage?.id;
       let stageConfig: any = null;
       if (effectiveStageId && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: { id: Number(effectiveStageId) },
+          where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
           include: { emailTemplate: true },
         }).catch(() => null);
       }
@@ -2702,7 +2777,7 @@ export class LeadService {
       }
 
       // 1a. Search customer/global DB templates by candidate keys
-      if (!template && this.emailTemplateService) {
+      if (!template && eventType === 'MANUAL_SEND' && !stageConfig?.emailTemplateId && this.emailTemplateService) {
         for (const k of candidateKeys) {
           template = await this.emailTemplateService.findByKey(k, lead.customerId).catch(() => null);
           if (template) break;
@@ -2710,7 +2785,7 @@ export class LeadService {
       }
 
       // 1b. Search DB template by matching name or key (safe AND combination to prevent Prisma OR overwrite)
-      if (!template && this.prisma.emailTemplate && newStageName) {
+      if (!template && eventType === 'MANUAL_SEND' && !stageConfig?.emailTemplateId && this.prisma.emailTemplate && newStageName) {
         const dbTpl = await this.prisma.emailTemplate.findFirst({
           where: {
             deletedAt: null,
@@ -2741,11 +2816,12 @@ export class LeadService {
       }
 
       // 1c. Check predefined system fallback templates matching stage keys
-      if (!template) {
+      if (!template && eventType === 'MANUAL_SEND' && !stageConfig?.emailTemplateId) {
         template = PREDEFINED_SYSTEM_TEMPLATES.find((t) => candidateKeys.includes(t.key)) || null;
       }
 
-      if (template && template.isActive === false) {
+      if (template && (template.isActive === false || template.deletedAt ||
+          (template.customerId != null && Number(template.customerId) !== Number(customerId)))) {
         this.logger.warn(`[LeadEmailAutomation] Email template is inactive.`);
         return {
           sent: false,
@@ -2853,9 +2929,6 @@ export class LeadService {
           Number(lead.id),
           existingDeliveryId,
         );
-        if (deliveryRow) {
-          await this.stageEmailDeliveryService.markProcessing(deliveryRow.id);
-        }
       } else if (this.stageEmailDeliveryService && eventType !== 'MANUAL_SEND') {
         const existing = await this.stageEmailDeliveryService.findByIdempotency(idempotencyKey);
         if (await this.stageEmailDeliveryService.shouldSkipDuplicate(existing)) {
@@ -4468,8 +4541,9 @@ Sent by ${senderOrgName} via CRM.
       stageId?: number;
       whatsappTemplateId?: number;
     },
+    leadSnapshot?: any,
   ) {
-    const lead = await this.getLeadById(customerId, id);
+    const lead = leadSnapshot || await this.getLeadById(customerId, id);
     if (!lead) {
       throw new NotFoundException(`Lead #${id} not found`);
     }
@@ -4506,7 +4580,7 @@ Sent by ${senderOrgName} via CRM.
 
     if (effectiveStageId && this.prisma.leadStage) {
       configuredStage = await this.prisma.leadStage.findFirst({
-        where: { id: Number(effectiveStageId), deletedAt: null },
+        where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
         include: { whatsappTemplate: true },
       }).catch(() => null);
     }
@@ -4515,14 +4589,10 @@ Sent by ${senderOrgName} via CRM.
       configuredStage = await this.prisma.leadStage.findFirst({
         where: {
           deletedAt: null,
-          OR: [
-            { key: normStage },
-            { name: { equals: targetStageName, mode: 'insensitive' } },
-            { key: stageKey },
+          AND: [
+            { OR: [{ key: normStage }, { name: { equals: targetStageName, mode: 'insensitive' } }, { key: stageKey }] },
+            tenantLeadStageScope(customerId),
           ],
-          ...(customerId
-            ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
-            : { customerId: null }),
         },
         include: { whatsappTemplate: true },
         orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
@@ -4567,7 +4637,8 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      if (metaTemplate.status !== 'APPROVED') {
+      if (metaTemplate.status !== 'APPROVED' || metaTemplate.isLocalActive === false ||
+          metaTemplate.deletedAt || (metaTemplate.customerId != null && Number(metaTemplate.customerId) !== Number(customerId))) {
         this.logger.warn(
           `[WHATSAPP_AUTOMATION] Template "${metaTemplate.templateName}" (ID: ${metaTemplate.id}) has status "${metaTemplate.status}". Expected APPROVED. Skipping without fallback.`,
         );
@@ -4582,14 +4653,12 @@ Sent by ${senderOrgName} via CRM.
       metaTemplate = await this.prisma.metaTemplate.findFirst({
         where: {
           deletedAt: null,
-          OR: [
-            { templateName: dto.templateName },
-            { name: dto.templateName },
-          ],
           status: 'APPROVED',
-          ...(customerId
-            ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
-            : { customerId: null }),
+          isLocalActive: true,
+          AND: [
+            { OR: [{ templateName: dto.templateName }, { name: dto.templateName }] },
+            tenantLeadStageScope(customerId),
+          ],
         },
         orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
       }).catch(() => null);
@@ -4611,14 +4680,14 @@ Sent by ${senderOrgName} via CRM.
           deletedAt: null,
           isLocalActive: true,
           status: 'APPROVED',
-          OR: [
-            { key: { in: candidateKeys } },
-            { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
-            { name: { in: candidateKeys } },
+          AND: [
+            { OR: [
+              { key: { in: candidateKeys } },
+              { templateName: { in: candidateKeys.map((k) => k.toLowerCase()) } },
+              { name: { in: candidateKeys } },
+            ] },
+            tenantLeadStageScope(customerId),
           ],
-          ...(customerId
-            ? { OR: [{ customerId: Number(customerId) }, { customerId: null }] }
-            : { customerId: null }),
         },
         orderBy: [{ customerId: 'desc' }, { updatedAt: 'desc' }],
       }).catch(() => null);
@@ -4628,7 +4697,7 @@ Sent by ${senderOrgName} via CRM.
     let fallbackTemplate: any = null;
     if (!metaTemplate && !dto?.message) {
       // Check legacy in-memory templates
-      fallbackTemplate = typeof this.whatsappService?.getStageTemplate === 'function'
+      fallbackTemplate = dto?.eventType === 'MANUAL_SEND' && typeof this.whatsappService?.getStageTemplate === 'function'
         ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normStage))
         : null;
 
@@ -4758,6 +4827,7 @@ Sent by ${senderOrgName} via CRM.
           userId: userId ? Number(userId) : undefined,
           metaTemplateId: metaTemplate?.id,
           metaTemplate: metaTemplate || fallbackTemplate,
+          validateOnMeta: dto?.eventType !== 'MANUAL_SEND',
         });
       } catch (sendErr: any) {
         result = {
@@ -4814,6 +4884,7 @@ Sent by ${senderOrgName} via CRM.
             errorCode: result.errorCode || result.error || null,
             errorReason: result.reason || null,
             errorDetails: result.providerMessage || result.details || null,
+            providerResponse: result.providerResponse || null,
           } as any,
         },
       })
@@ -4906,18 +4977,6 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      const proposalStageKey = canonicalLeadStageToken(newStageName || lead.stage?.key || lead.status);
-      if (['PROPOSAL', 'PROPOSAL_SENT'].includes(proposalStageKey) && eventType === 'LEAD_STAGE_CHANGED') {
-        return {
-          sent: false,
-          status: 'SKIPPED',
-          recipient: null,
-          messageId: null,
-          error: null,
-          message: 'Plan proposal workflow handles PROPOSAL stage WhatsApp notifications.',
-        };
-      }
-
       // 1. Resolve and validate recipient phone number
       const phone = (lead.phone || lead.mobile || '').trim();
       if (!phone) {
@@ -4954,19 +5013,19 @@ Sent by ${senderOrgName} via CRM.
         await this.leadRepository.logTimeline(
           lead.id,
           eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'STAGE_CHANGE_WHATSAPP',
-          `Automatic stage WhatsApp failed: ${errorMsg}`,
+          `Automatic stage WhatsApp skipped: ${errorMsg}`,
           {
             eventType,
             previousStage: previousStageName,
             newStage: newStageName,
-            status: 'FAILED',
+            status: 'SKIPPED',
             reason: 'INVALID_PHONE',
             errorMessage: errorMsg,
           },
         ).catch(() => null);
         return {
           sent: false,
-          status: 'FAILED',
+          status: 'SKIPPED',
           recipient: phone,
           messageId: null,
           error: errorMsg,
@@ -4979,7 +5038,7 @@ Sent by ${senderOrgName} via CRM.
       let stageConfig: any = null;
       if (effectiveStageId && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: { id: Number(effectiveStageId), deletedAt: null },
+          where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
           include: { whatsappTemplate: true },
         }).catch(() => null);
       }
@@ -5021,6 +5080,14 @@ Sent by ${senderOrgName} via CRM.
       // Resolve the target Meta template for the NEW stage
       let targetMetaTemplate: any = null;
       const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
+      if (!resolvedTplId && eventType !== 'MANUAL_SEND') {
+        return {
+          sent: false, status: 'SKIPPED', recipient: maskPhone(phone), messageId: null,
+          error: 'Map an approved Meta template in Stage Management.',
+          message: 'WhatsApp skipped: no template mapped to this stage.',
+          errorCode: 'NO_TEMPLATE_CONFIGURED',
+        };
+      }
 
       if (resolvedTplId && this.prisma.metaTemplate) {
         targetMetaTemplate = (stageConfig?.whatsappTemplate && stageConfig.whatsappTemplate.id === Number(resolvedTplId))
@@ -5078,7 +5145,7 @@ Sent by ${senderOrgName} via CRM.
       const targetStageKey = normNewStageKey || normNewStage;
       const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normNewStage] || targetStageKey;
 
-      const hasInMemoryFallback = typeof this.whatsappService?.getStageTemplate === 'function' &&
+      const hasInMemoryFallback = eventType === 'MANUAL_SEND' && typeof this.whatsappService?.getStageTemplate === 'function' &&
         Boolean(this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage));
 
       const hasConfiguredTemplate = Boolean(
@@ -5135,9 +5202,6 @@ Sent by ${senderOrgName} via CRM.
           Number(lead.id),
           existingDeliveryId,
         );
-        if (deliveryRow) {
-          await this.stageWhatsappDeliveryService.markProcessing(deliveryRow.id);
-        }
       } else if (this.stageWhatsappDeliveryService && eventType !== 'MANUAL_SEND') {
         const existing = await this.stageWhatsappDeliveryService.findByIdempotency(idempotencyKey);
         if (await this.stageWhatsappDeliveryService.shouldSkipDuplicate(existing)) {
@@ -5228,7 +5292,7 @@ Sent by ${senderOrgName} via CRM.
         stageId: stageConfig?.id || effectiveStageId,
         whatsappTemplateId: targetMetaTemplate?.id || resolvedTplId,
         eventType,
-      });
+      }, lead);
 
       const isSent = Boolean(sendRes && sendRes.success && !sendRes.skipped);
       const notifStatus: 'SENT' | 'FAILED' | 'SKIPPED' = isSent
@@ -5375,8 +5439,8 @@ Sent by ${senderOrgName} via CRM.
     return { success: true, message: 'Image deleted successfully' };
   }
 
-  async getStageWhatsappHistory(customerId: number | string, leadId: number | string) {
-    await this.getLeadById(customerId, leadId);
+  async getStageWhatsappHistory(customerId: number | string, leadId: number | string, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     if (!this.stageWhatsappDeliveryService) return [];
     return this.stageWhatsappDeliveryService.listForLead(Number(customerId), Number(leadId));
   }
@@ -5386,12 +5450,17 @@ Sent by ${senderOrgName} via CRM.
     leadId: number | string,
     deliveryId: number | string,
     userId?: number | string,
+    user?: any,
   ) {
-    const lead = await this.getLeadById(customerId, leadId);
+    const lead = await this.getLeadById(customerId, leadId, user);
     if (!this.stageWhatsappDeliveryService) {
       throw new BadRequestException('Stage WhatsApp delivery tracking is not available.');
     }
     const row = await this.stageWhatsappDeliveryService.retry(Number(customerId), Number(leadId), Number(deliveryId));
+    await this.leadRepository.logTimeline(lead.id, 'STAGE_NOTIFICATION_RETRY', 'WhatsApp notification retry requested', {
+      channel: 'WHATSAPP', deliveryId: row.id, previousStatus: row.status, previousError: row.error,
+      attempt: row.attemptCount + 1, userId,
+    });
     const sendRes = await this.handleLeadStageChangeWhatsappNotification(
       customerId,
       lead,
@@ -5399,18 +5468,22 @@ Sent by ${senderOrgName} via CRM.
       row.newStage || lead.stage?.name || lead.status || 'Updated',
       userId,
       undefined,
-      row.templateName || undefined,
-      'MANUAL_SEND',
+      undefined,
+      'LEAD_STAGE_CHANGED',
       row.newStageId ?? lead.stageId ?? undefined,
-      row.metaTemplateId ?? undefined,
+      undefined,
       row.previousStageId ?? undefined,
       row.id,
     );
-    return { delivery: row, send: sendRes };
+    const delivery = await this.stageWhatsappDeliveryService.markResult(row.id, {
+      status: sendRes.status, metaMessageId: sendRes.messageId,
+      error: sendRes.error || (sendRes.status !== 'SENT' ? sendRes.message : null),
+    });
+    return { delivery, send: sendRes };
   }
 
-  async getStageEmailHistory(customerId: number | string, leadId: number | string) {
-    await this.getLeadById(customerId, leadId);
+  async getStageEmailHistory(customerId: number | string, leadId: number | string, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     if (!this.stageEmailDeliveryService) return [];
     return this.stageEmailDeliveryService.listForLead(Number(customerId), Number(leadId));
   }
@@ -5420,27 +5493,36 @@ Sent by ${senderOrgName} via CRM.
     leadId: number | string,
     deliveryId: number | string,
     userId?: number | string,
+    user?: any,
   ) {
-    const lead = await this.getLeadById(customerId, leadId);
+    const lead = await this.getLeadById(customerId, leadId, user);
     if (!this.stageEmailDeliveryService) {
       throw new BadRequestException('Stage email delivery tracking is not available.');
     }
     const row = await this.stageEmailDeliveryService.retry(Number(customerId), Number(leadId), Number(deliveryId));
+    await this.leadRepository.logTimeline(lead.id, 'STAGE_NOTIFICATION_RETRY', 'Email notification retry requested', {
+      channel: 'EMAIL', deliveryId: row.id, previousStatus: row.status, previousError: row.error,
+      attempt: row.attemptCount + 1, userId,
+    });
     const sendRes = await this.handleLeadStageChangeNotification(
       customerId,
       lead,
       row.previousStage || 'Previous',
       row.newStage || lead.stage?.name || lead.status || 'Updated',
       userId,
-      row.emailTemplateId ?? undefined,
       undefined,
       undefined,
-      'MANUAL_SEND',
+      undefined,
+      'LEAD_STAGE_CHANGED',
       row.newStageId ?? lead.stageId ?? undefined,
       row.previousStageId ?? undefined,
       row.id,
     );
-    return { delivery: row, send: sendRes };
+    const delivery = await this.stageEmailDeliveryService.markResult(row.id, {
+      status: sendRes.status, providerMessageId: sendRes.messageId,
+      error: sendRes.error || (sendRes.status !== 'SENT' ? sendRes.message : null),
+    });
+    return { delivery, send: sendRes };
   }
 
   async listTenantPlanProposals(customerId: string, query: any) {

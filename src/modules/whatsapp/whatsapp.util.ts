@@ -29,6 +29,52 @@ export interface WhatsAppSendResult {
   metaErrorMessage?: string;
   /** Meta Graph API fbtrace_id */
   fbtraceId?: string;
+  providerResponse?: unknown;
+}
+
+/** Build only parameters declared by the approved Meta component definitions. */
+export function buildStageTemplateComponents(
+  definitions: any[],
+  variables: Record<string, string>,
+): Record<string, any>[] {
+  const textParameters = (text: string, section: string) => {
+    const tags = Array.from(new Set(
+      Array.from((text || '').matchAll(/\{\{\s*([\w]+)\s*\}\}/g), (m) => m[1]),
+    ));
+    if (tags.every((tag) => /^\d+$/.test(tag))) tags.sort((a, b) => Number(a) - Number(b));
+    return tags.map((tag) => {
+      const value = variables[`${section}_${tag}`] ?? variables[tag];
+      if (!value?.trim()) throw new Error(`Missing WhatsApp template variable: ${section}_${tag}`);
+      return { type: 'text', text: value.trim(), ...(/^\d+$/.test(tag) ? {} : { parameter_name: tag }) };
+    });
+  };
+  const components: Record<string, any>[] = [];
+  for (const definition of definitions) {
+    const type = String(definition.type).toUpperCase();
+    if (type === 'BODY' || (type === 'HEADER' && definition.format === 'TEXT')) {
+      const parameters = textParameters(definition.text, type.toLowerCase());
+      if (parameters.length) components.push({ type: type.toLowerCase(), parameters });
+    } else if (type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(definition.format)) {
+      const link = variables.header_media_url;
+      if (!link || !/^https:\/\//i.test(link)) throw new Error('Map header_media_url to a public HTTPS file URL.');
+      const mediaType = String(definition.format).toLowerCase();
+      components.push({ type: 'header', parameters: [{ type: mediaType, [mediaType]: { link } }] });
+    } else if (type === 'BUTTONS') {
+      for (const [index, button] of (definition.buttons || []).entries()) {
+        if (button.type === 'URL') {
+          const parameters = textParameters(button.url, `button_${index}`);
+          if (parameters.length) components.push({ type: 'button', sub_type: 'url', index: String(index), parameters });
+        } else if (!['PHONE_NUMBER', 'QUICK_REPLY'].includes(button.type)) {
+          throw new Error(`Unsupported stage template button: ${button.type}. Choose a compatible approved template.`);
+        }
+      }
+    } else if (!['FOOTER', 'HEADER'].includes(type)) {
+      throw new Error(`Unsupported stage template component: ${type}.`);
+    } else if (type === 'HEADER' && definition.format !== 'TEXT') {
+      throw new Error(`Unsupported stage template header: ${definition.format}.`);
+    }
+  }
+  return components;
 }
 
 /**

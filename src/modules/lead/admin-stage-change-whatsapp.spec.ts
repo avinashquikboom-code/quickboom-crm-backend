@@ -88,6 +88,10 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
       { id: 13, templateName: 'lead_stage_pending', name: 'Pending Stage', status: 'PENDING', language: 'en', body: 'Hi {{leadName}}' },
     ];
 
+    stagesTable.find((stage) => stage.id === 2).emailTemplateId = 1;
+    stagesTable.find((stage) => stage.id === 2).emailTemplate = {
+      id: 1, key: 'QUIKBOOM_CONTACTED', subject: 'Update', body: 'Hello', isActive: true,
+    };
     timelineTable = [];
 
     mockPrisma = {
@@ -539,7 +543,7 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
     expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
 
-  it('Case 20: Explicit whatsappTemplateId override in updateStatus overrides stage default template', async () => {
+  it('ignores mobile template overrides and sends the configured stage template', async () => {
     leadsTable[0].stageId = 1;
     leadsTable[0].status = LeadStatus.NEW;
 
@@ -552,10 +556,10 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
     expect(res.whatsappNotification?.status).toBe('SENT');
     expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        metaTemplateId: 8,
+        metaTemplateId: 2,
         metaTemplate: expect.objectContaining({
-          id: 8,
-          templateName: 'lead_stage_won',
+          id: 2,
+          templateName: 'lead_stage_contacted',
         }),
       }),
     );

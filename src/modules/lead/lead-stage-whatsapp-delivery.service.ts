@@ -54,8 +54,10 @@ export class LeadStageWhatsappDeliveryService {
     if (existing) {
       return existing;
     }
-    return this.prisma.leadStageWhatsAppDelivery.create({
-      data: {
+    return this.prisma.leadStageWhatsAppDelivery.upsert({
+      where: { idempotencyKey: params.idempotencyKey },
+      update: {},
+      create: {
         customerId: params.customerId,
         leadId: params.leadId,
         userId: params.userId ?? null,
@@ -80,6 +82,14 @@ export class LeadStageWhatsappDeliveryService {
       where: { id },
       data: { status: 'PROCESSING', attemptCount: { increment: 1 }, updatedAt: new Date() },
     });
+  }
+
+  async claimQueued(id: number) {
+    const result = await this.prisma.leadStageWhatsAppDelivery.updateMany({
+      where: { id, status: 'QUEUED', metaMessageId: null },
+      data: { status: 'PROCESSING', attemptCount: { increment: 1 } },
+    });
+    return result.count === 1;
   }
 
   async markResult(
@@ -114,20 +124,19 @@ export class LeadStageWhatsappDeliveryService {
       where: { id: deliveryId, customerId, leadId },
     });
     if (!row) throw new NotFoundException('Stage WhatsApp delivery record not found.');
-    if (!['FAILED', 'SKIPPED'].includes(String(row.status).toUpperCase())) {
+    if (row.metaMessageId || !['FAILED', 'SKIPPED'].includes(String(row.status).toUpperCase())) {
       throw new BadRequestException('Only failed or skipped deliveries can be retried.');
     }
-    const retryKey = `${row.idempotencyKey}:retry:${row.attemptCount + 1}`;
-    return this.prisma.leadStageWhatsAppDelivery.update({
-      where: { id: row.id },
+    const claimed = await this.prisma.leadStageWhatsAppDelivery.updateMany({
+      where: { id: row.id, status: row.status, attemptCount: row.attemptCount, metaMessageId: null },
       data: {
-        idempotencyKey: retryKey,
-        status: 'QUEUED',
-        error: null,
+        status: 'PROCESSING',
         attemptCount: { increment: 1 },
         updatedAt: new Date(),
       },
     });
+    if (claimed.count !== 1) throw new BadRequestException('A retry is already in progress.');
+    return row;
   }
 
   async applyWebhookStatus(metaMessageId: string, status: string) {
@@ -136,7 +145,13 @@ export class LeadStageWhatsappDeliveryService {
     const allowed = ['SENT', 'DELIVERED', 'READ', 'FAILED'];
     if (!allowed.includes(mapped)) return;
     await this.prisma.leadStageWhatsAppDelivery.updateMany({
-      where: { metaMessageId },
+      where: {
+        metaMessageId,
+        // Meta may deliver events out of order. Do not downgrade READ/DELIVERED.
+        status: { in: mapped === 'READ' ? ['QUEUED', 'PROCESSING', 'SENT', 'DELIVERED', 'FAILED']
+          : mapped === 'DELIVERED' ? ['QUEUED', 'PROCESSING', 'SENT', 'FAILED']
+          : ['QUEUED', 'PROCESSING', 'SENT'] },
+      },
       data: { status: mapped, updatedAt: new Date() },
     });
   }
