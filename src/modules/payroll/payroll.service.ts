@@ -326,6 +326,15 @@ export class PayrollService {
       if (payroll.status === 'PAID') {
         throw new BadRequestException('Paid payroll cannot be recalculated.');
       }
+      // Recreating items cascades to their slips and can erase partially paid records.
+      // Refuse recalculation whenever either exists, even if the batch status is stale.
+      const [existingSlip, paidItem] = await Promise.all([
+        tx.salarySlip.findFirst({ where: { customerId: numCustomerId, payrollItem: { payrollId: payroll.id } }, select: { id: true } }),
+        tx.payrollItem.findFirst({ where: { customerId: numCustomerId, payrollId: payroll.id, status: 'PAID' }, select: { id: true } }),
+      ]);
+      if (existingSlip || paidItem || payroll.status === 'GENERATED') {
+        throw new BadRequestException('Payroll with generated salary slips or paid items cannot be recalculated.');
+      }
 
       let totalGross = 0;
       let totalDeductions = 0;
