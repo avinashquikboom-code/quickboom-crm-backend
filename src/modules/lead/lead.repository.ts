@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { PhotoLookupCache } from '../data-capture/photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -2288,6 +2288,9 @@ export class LeadRepository {
 
     let transitionId: number | undefined;
     const writeTransition = async (db: any) => {
+      if (toStatus === LeadStatus.VISIT_DONE) {
+        await new LeadRepository(db).requireCompletedAssignedVisit(numCustomerId, numId);
+      }
       const updated = await db.lead.updateMany({
         where: updateWhere,
         data: updateData,
@@ -2322,64 +2325,6 @@ export class LeadRepository {
       await this.prisma.$transaction((tx: any) => writeTransition(tx));
     } else {
       await writeTransition(this.prisma);
-    }
-
-    if (toStatus === LeadStatus.VISIT_DONE || (toStatus as string) === 'VISIT_DONE' || (toStatus as string) === 'VISIT') {
-      try {
-        const leadObj = await this.prisma.lead.findUnique({
-          where: { id: numId },
-          select: { id: true, employeeId: true, companyName: true, firstName: true, lastName: true, address: true },
-        });
-
-        const existingVisit = await this.prisma.visit.findFirst({
-          where: { leadId: numId },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        const emp = numUserId
-          ? await this.prisma.employee.findFirst({
-              where: { userId: numUserId },
-            })
-          : null;
-        const completionEmpId = emp?.id || existingVisit?.employeeId || (leadObj?.employeeId ? Number(leadObj.employeeId) : null);
-
-        const actingEmpName = emp ? `${emp.firstName || ''} ${emp.lastName || ''}`.trim() : null;
-
-        if (existingVisit) {
-          await this.prisma.visit.update({
-            where: { id: existingVisit.id },
-            data: {
-              status: VisitStatus.COMPLETED,
-              completedAt: new Date(),
-              notes: notes || existingVisit.notes,
-              outcome: notes || existingVisit.outcome || 'Visit Done',
-              completedById: emp?.id || null,
-              completedBy: actingEmpName || (existingVisit.completedBy !== 'Visitor' ? existingVisit.completedBy : null) || null,
-            },
-          });
-        } else if (completionEmpId) {
-          await this.prisma.visit.create({
-            data: {
-              customerId: numCustomerId,
-              leadId: numId,
-              employeeId: completionEmpId,
-              customerName: leadObj?.companyName || `${leadObj?.firstName || ''} ${leadObj?.lastName || ''}`.trim() || 'Client',
-              purpose: 'Client Meeting & Demo',
-              date: new Date(),
-              time: '11:00 AM',
-              location: leadObj?.address || 'Client Site',
-              status: VisitStatus.COMPLETED,
-              completedAt: new Date(),
-              notes: notes || 'Visit completed',
-              outcome: notes || 'Visit Done',
-              completedById: emp?.id || null,
-              completedBy: actingEmpName || null,
-            },
-          });
-        }
-      } catch (err: any) {
-        this.logger.warn(`[updateStatus] Failed to sync visit completion: ${err.message}`);
-      }
     }
 
     const isVisitScheduled =
@@ -2724,6 +2669,21 @@ export class LeadRepository {
     return 'MOVED';
   }
 
+  /** Only the latest assignment can authorize Visit Done; old completed visits cannot. */
+  async requireCompletedAssignedVisit(customerId: number | string, leadId: number | string) {
+    const visit = await this.prisma.visit.findFirst({
+      where: { customerId: Number(customerId), leadId: Number(leadId) },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    if (!visit || visit.customerId !== Number(customerId) || visit.leadId !== Number(leadId) ||
+        visit.status !== VisitStatus.COMPLETED || !visit.employeeId ||
+        visit.completedById !== visit.employeeId || !visit.completedAt ||
+        !Number.isFinite(+new Date(visit.completedAt))) {
+      throw new ForbiddenException('Visit Done requires the latest assigned visit to be completed by its assigned visitor through the visit-completion workflow.');
+    }
+    return visit;
+  }
+
   async resolveVisitDoneLeadStage(customerId: number) {
     const orderBy = [{ sortOrder: 'asc' as const }, { id: 'asc' as const }];
     const candidate = visitDoneStageCandidateWhere();
@@ -2758,7 +2718,9 @@ export class LeadRepository {
       where: { id: numLeadId },
       include: { stage: true },
     });
-    if (!lead) return 'SKIPPED';
+    if (!lead || lead.customerId !== effectiveCustomerId || lead.deletedAt) {
+      throw new BadRequestException('Visit lead does not belong to this workspace.');
+    }
 
     const visitDoneStage = await this.resolveVisitDoneLeadStage(effectiveCustomerId);
     if (!visitDoneStage) {
@@ -2907,7 +2869,7 @@ export class LeadRepository {
       );
     } else if (dto.action === 'COMPLETE') {
       const visit = await this.prisma.visit.findFirst({
-        where: { leadId: numLeadId, status: { in: ['IN_PROGRESS', 'SCHEDULED'] } },
+        where: { leadId: numLeadId, customerId: effectiveCustomerId },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -2915,6 +2877,9 @@ export class LeadRepository {
         ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim()
         : null;
 
+      if (!visit || !employee || visit.employeeId !== employee.id || !['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) {
+        throw new ForbiddenException('Only the assigned visitor can complete the latest active visit.');
+      }
       if (visit) {
         await this.prisma.visit.update({
           where: { id: visit.id },
@@ -2929,7 +2894,7 @@ export class LeadRepository {
         });
       }
 
-      await this.transitionLeadToVisitDoneAfterVisit(
+      const completedStageSync = await this.transitionLeadToVisitDoneAfterVisit(
         effectiveCustomerId,
         numLeadId,
         numUserId,
@@ -2937,6 +2902,7 @@ export class LeadRepository {
         { inlineTransaction: inTransaction },
       );
 
+      if (completedStageSync === 'NO_STAGE') throw new BadRequestException('Configure an active Visit Done stage before completing this visit.');
       await this.logTimeline(
         numLeadId,
         'VISIT_COMPLETED',
