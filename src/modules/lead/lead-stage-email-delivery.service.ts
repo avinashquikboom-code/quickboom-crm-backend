@@ -100,6 +100,10 @@ export class LeadStageEmailDeliveryService {
       error?: string | null;
     },
   ) {
+    const current = await this.prisma.leadStageEmailDelivery.findUnique({ where: { id }, select: { status: true } }).catch(() => null);
+    if (current && ['SENT', 'DELIVERED'].includes(String(current.status)) && !['DELIVERED'].includes(result.status)) {
+      return current;
+    }
     return this.prisma.leadStageEmailDelivery.update({
       where: { id },
       data: {

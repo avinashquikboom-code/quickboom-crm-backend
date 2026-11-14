@@ -1,3 +1,4 @@
+import { CommissionRulesService } from './commission-rules.service';
 import {
   Controller,
   Get,
@@ -33,7 +34,28 @@ export class CommissionController {
   constructor(
     private readonly commissionService: CommissionService,
     private readonly walletService: CommissionWalletService,
+    private readonly rulesService: CommissionRulesService,
   ) {}
+
+  @Get('configs/roles')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  roles(@CurrentCustomer() tenant: string) { return this.rulesService.roles(Number(tenant)); }
+
+  @Get('configs/rules')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  configurations(@CurrentCustomer() tenant: string) { return this.rulesService.list(Number(tenant)); }
+
+  @Post('configs/rules')
+  @RequirePermissions({ module: 'COMMISSION', action: 'MANAGE' })
+  createConfiguration(@CurrentCustomer() tenant: string, @CurrentUser() user: any, @Body() body: any) { return this.rulesService.save(Number(tenant), Number(user.id), body); }
+
+  @Patch('configs/rules/:id')
+  @RequirePermissions({ module: 'COMMISSION', action: 'MANAGE' })
+  updateConfiguration(@CurrentCustomer() tenant: string, @CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) { return this.rulesService.save(Number(tenant), Number(user.id), body, id); }
+
+  @Post('configs/preview')
+  @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })
+  preview(@CurrentCustomer() tenant: string, @Body() body: any) { return this.rulesService.select(Number(tenant), Number(body.roleId), Number(body.amount), new Date(body.date)); }
 
   @Get('admin/wallet/dashboard')
   @RequirePermissions({ module: 'COMMISSION', action: 'VIEW' })

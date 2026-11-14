@@ -2185,7 +2185,10 @@ export class LeadRepository {
       });
       return { ...result, transitionId: history.id };
     };
-    return transition ? this.prisma.$transaction(write) : write(this.prisma);
+    if (!transition) return write(this.prisma);
+    return typeof this.prisma.$transaction === 'function'
+      ? this.prisma.$transaction(write)
+      : write(this.prisma);
   }
 
   async updateStatus(

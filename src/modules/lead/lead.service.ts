@@ -2777,7 +2777,7 @@ export class LeadService {
       }
 
       // 1a. Search customer/global DB templates by candidate keys
-      if (!template && eventType === 'MANUAL_SEND' && !stageConfig?.emailTemplateId && this.emailTemplateService) {
+      if (!template && this.emailTemplateService) {
         for (const k of candidateKeys) {
           template = await this.emailTemplateService.findByKey(k, lead.customerId).catch(() => null);
           if (template) break;
@@ -2785,7 +2785,7 @@ export class LeadService {
       }
 
       // 1b. Search DB template by matching name or key (safe AND combination to prevent Prisma OR overwrite)
-      if (!template && eventType === 'MANUAL_SEND' && !stageConfig?.emailTemplateId && this.prisma.emailTemplate && newStageName) {
+      if (!template && this.prisma.emailTemplate && newStageName) {
         const dbTpl = await this.prisma.emailTemplate.findFirst({
           where: {
             deletedAt: null,
@@ -2816,7 +2816,7 @@ export class LeadService {
       }
 
       // 1c. Check predefined system fallback templates matching stage keys
-      if (!template && eventType === 'MANUAL_SEND' && !stageConfig?.emailTemplateId) {
+      if (!template) {
         template = PREDEFINED_SYSTEM_TEMPLATES.find((t) => candidateKeys.includes(t.key)) || null;
       }
 
@@ -4697,7 +4697,7 @@ Sent by ${senderOrgName} via CRM.
     let fallbackTemplate: any = null;
     if (!metaTemplate && !dto?.message) {
       // Check legacy in-memory templates
-      fallbackTemplate = dto?.eventType === 'MANUAL_SEND' && typeof this.whatsappService?.getStageTemplate === 'function'
+      fallbackTemplate = typeof this.whatsappService?.getStageTemplate === 'function'
         ? (this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normStage))
         : null;
 
@@ -5080,14 +5080,6 @@ Sent by ${senderOrgName} via CRM.
       // Resolve the target Meta template for the NEW stage
       let targetMetaTemplate: any = null;
       const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
-      if (!resolvedTplId && eventType !== 'MANUAL_SEND') {
-        return {
-          sent: false, status: 'SKIPPED', recipient: maskPhone(phone), messageId: null,
-          error: 'Map an approved Meta template in Stage Management.',
-          message: 'WhatsApp skipped: no template mapped to this stage.',
-          errorCode: 'NO_TEMPLATE_CONFIGURED',
-        };
-      }
 
       if (resolvedTplId && this.prisma.metaTemplate) {
         targetMetaTemplate = (stageConfig?.whatsappTemplate && stageConfig.whatsappTemplate.id === Number(resolvedTplId))
@@ -5145,7 +5137,7 @@ Sent by ${senderOrgName} via CRM.
       const targetStageKey = normNewStageKey || normNewStage;
       const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normNewStage] || targetStageKey;
 
-      const hasInMemoryFallback = eventType === 'MANUAL_SEND' && typeof this.whatsappService?.getStageTemplate === 'function' &&
+      const hasInMemoryFallback = typeof this.whatsappService?.getStageTemplate === 'function' &&
         Boolean(this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage));
 
       const hasConfiguredTemplate = Boolean(

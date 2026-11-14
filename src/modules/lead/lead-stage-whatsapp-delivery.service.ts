@@ -100,6 +100,11 @@ export class LeadStageWhatsappDeliveryService {
       error?: string | null;
     },
   ) {
+    // Do not let a late send-result overwrite an already delivered/read state.
+    const current = await this.prisma.leadStageWhatsAppDelivery.findUnique({ where: { id }, select: { status: true } }).catch(() => null);
+    if (current && ['DELIVERED', 'READ'].includes(String(current.status)) && !['DELIVERED', 'READ'].includes(result.status)) {
+      return current;
+    }
     return this.prisma.leadStageWhatsAppDelivery.update({
       where: { id },
       data: {

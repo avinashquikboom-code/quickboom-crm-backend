@@ -376,13 +376,13 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
     expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
 
-  it('Case 9: Lead has invalid phone number format (stage updates successfully, WhatsApp marked FAILED without crashing)', async () => {
+  it('Case 9: Lead has invalid phone number format (stage updates successfully, WhatsApp marked SKIPPED with clear reason)', async () => {
     const res = await service.updateStatus(1, 103, 42, { stageId: 2 });
 
     expect(res).toBeDefined();
     expect(res.stageId).toBe(2);
     expect(res.whatsappNotification?.sent).toBe(false);
-    expect(res.whatsappNotification?.status).toBe('FAILED');
+    expect(res.whatsappNotification?.status).toBe('SKIPPED');
     expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
 
