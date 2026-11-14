@@ -2,6 +2,7 @@ import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } f
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayrollService } from './payroll.service';
 import { SalaryTargetService } from './salary-target.service';
+import { DeductionsService } from './deductions.service';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -18,7 +19,119 @@ export class PayrollController {
   constructor(
     private readonly payrollService: PayrollService,
     private readonly salaryTargets: SalaryTargetService,
+    private readonly deductions: DeductionsService,
   ) {}
+
+  // ── Employee Penalty & Deductions ────────────────────────────────────────
+  // NOTE: these routes must stay above @Get(':id') so 'deductions' is not
+  // captured as a payroll id.
+
+  @Get('deductions/mine')
+  @ApiOperation({ summary: "Authenticated employee's own penalty & deduction records" })
+  async myDeductions(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('status') status?: string,
+  ) {
+    const customerId = user?.customerId || currentCustomer;
+    return this.deductions.mine(customerId, user, { page, limit, month, year, status });
+  }
+
+  @Get('deductions')
+  @RequirePermissions({ module: 'SALARY', action: 'VIEW' })
+  @ApiOperation({ summary: 'List employee penalty & deduction records with summary' })
+  async listDeductions(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('designationId') designationId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.deductions.list(customerId, {
+      page, limit, search, status, month, year, departmentId, designationId, from, to,
+    }, user);
+  }
+
+  @Post('deductions')
+  @RequirePermissions({ module: 'SALARY', action: 'CREATE' })
+  @ApiOperation({ summary: 'Create penalty/deduction for one or more employees (full amount each)' })
+  async createDeduction(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.deductions.create(customerId, body, user);
+  }
+
+  @Patch('deductions/:id/approve')
+  @RequirePermissions({ module: 'SALARY', action: 'APPROVE' })
+  @ApiOperation({ summary: 'Approve a pending employee deduction' })
+  async approveDeduction(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Param('id') id: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? currentCustomer : (user?.customerId || currentCustomer);
+    return this.deductions.approve(customerId, id, user);
+  }
+
+  @Patch('deductions/:id/reject')
+  @RequirePermissions({ module: 'SALARY', action: 'APPROVE' })
+  @ApiOperation({ summary: 'Reject a pending employee deduction' })
+  async rejectDeduction(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? currentCustomer : (user?.customerId || currentCustomer);
+    return this.deductions.reject(customerId, id, body, user);
+  }
+
+  @Patch('deductions/:id/reverse')
+  @RequirePermissions({ module: 'SALARY', action: 'APPROVE' })
+  @ApiOperation({ summary: 'Reverse an approved/applied employee deduction (audit preserved)' })
+  async reverseDeduction(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? currentCustomer : (user?.customerId || currentCustomer);
+    return this.deductions.reverse(customerId, id, body, user);
+  }
+
+  @Delete('deductions/:id')
+  @RequirePermissions({ module: 'SALARY', action: 'DELETE' })
+  @ApiOperation({ summary: 'Delete a pending employee deduction' })
+  async deleteDeduction(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Param('id') id: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? currentCustomer : (user?.customerId || currentCustomer);
+    return this.deductions.remove(customerId, id);
+  }
 
   @Post('calculate')
   @ApiOperation({ summary: 'Calculate monthly payroll for all active employees' })

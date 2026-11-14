@@ -54,6 +54,7 @@ model Customer {
   employeeClaims           EmployeeClaim[]
   leaveBalances            EmployeeLeaveBalance[]
   employeeLoans            EmployeeLoan[]
+  employeeDeductions       EmployeeDeduction[]
   employeeLocations        EmployeeLocation[]
   featureToggles           FeatureToggle[]
   invoices                 Invoice[]
@@ -1290,6 +1291,7 @@ model Employee {
   dataCaptureSearches      DataCaptureSearch[]
   leaveBalances            EmployeeLeaveBalance[]
   employeeLoans            EmployeeLoan[]
+  employeeDeductions       EmployeeDeduction[]
   employeeLocations        EmployeeLocation[]
   leaveAdjustments         LeaveAdjustmentHistory[]
   leaveRequests            LeaveRequest[]
@@ -1998,6 +2000,7 @@ model PayrollItem {
   tds              Float        @default(0.0)
   otherDeductions  Float        @default(0.0)
   loanDeduction    Float        @default(0.0)
+  penaltyDeduction Float        @default(0.0)
   grossSalary      Float
   totalDeductions  Float
   netSalary        Float
@@ -2024,6 +2027,7 @@ model PayrollItem {
   payroll          Payroll      @relation(fields: [payrollId], references: [id], onDelete: Cascade)
   salarySlips      SalarySlip[]
   overtimeRequests OvertimeRequest[]
+  employeeDeductions EmployeeDeduction[]
 
   @@index([payrollId])
   @@index([customerId])
@@ -2652,6 +2656,47 @@ enum ClaimStatus {
   REJECTED
   PAID
   CANCELLED
+}
+
+enum DeductionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  APPLIED
+  REVERSED
+}
+
+model EmployeeDeduction {
+  id              Int             @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int
+  amount          Float
+  reason          String
+  payrollMonth    Int
+  payrollYear     Int
+  status          DeductionStatus @default(PENDING)
+  createdById     Int?
+  createdByName   String?
+  approvedById    Int?
+  approvedAt      DateTime?
+  rejectedById    Int?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  payrollItemId   Int?
+  appliedAt       DateTime?
+  reversedById    Int?
+  reversedAt      DateTime?
+  reversalReason  String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  payrollItem     PayrollItem?    @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([employeeId])
+  @@index([payrollItemId])
+  @@index([customerId, status, payrollMonth, payrollYear])
 }
 
 enum ScheduleStatus {
