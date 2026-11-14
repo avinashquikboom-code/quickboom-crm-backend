@@ -88,7 +88,8 @@ export class CommissionRulesService {
     }
     return this.prisma.$transaction(async tx => {
       // Serialize all configuration writes for the tenant, including changes of role.
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(27114, ${customerId}::int)`;
+      // PostgreSQL returns void here; execute without deserializing a result row.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(27114, ${customerId}::int)`;
       const role = await tx.role.findFirst({ where: { id: roleId, customerId, deletedAt: null } });
       if (!role) throw new BadRequestException('Role does not belong to this tenant.');
       const current = id ? await tx.commissionConfig.findFirst({ where: { id, customerId, roleId: { not: null } }, include: { slabs: true } }) : null;
