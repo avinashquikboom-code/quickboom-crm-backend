@@ -2449,18 +2449,35 @@ export class LeadService {
 
         if (customerUser) {
           userExisted = true;
-          const userUpdateData: any = {
-            isActive: true,
-            isVerified: true,
-          };
-          if (!customerUser.customerId || customerUser.customerId !== customer.id) {
-            userUpdateData.customerId = customer.id;
+          const linkedEmployee = this.prisma.employee
+            ? await this.prisma.employee.findFirst({
+                where: { userId: customerUser.id },
+                select: { id: true, customerId: true },
+              })
+            : null;
+          const keepsCompanyTenant = Boolean(
+            linkedEmployee &&
+            linkedEmployee.customerId &&
+            Number(linkedEmployee.customerId) !== Number(customer.id),
+          );
+          if (keepsCompanyTenant) {
+            this.logger.warn(
+              `[LEAD_WON_CONVERSION] User #${customerUser.id} is an employee of company ${linkedEmployee.customerId}. Not moving them onto converted customer #${customer.id}.`,
+            );
+          } else {
+            const userUpdateData: any = {
+              isActive: true,
+              isVerified: true,
+            };
+            if (!customerUser.customerId || customerUser.customerId !== customer.id) {
+              userUpdateData.customerId = customer.id;
+            }
+            await this.prisma.user.update({
+              where: { id: customerUser.id },
+              data: userUpdateData,
+            });
+            this.logger.log(`[LEAD_WON_CONVERSION] Activated existing login user #${customerUser.id} (${customerUser.email}) for Customer #${customer.id}`);
           }
-          await this.prisma.user.update({
-            where: { id: customerUser.id },
-            data: userUpdateData,
-          });
-          this.logger.log(`[LEAD_WON_CONVERSION] Activated existing login user #${customerUser.id} (${customerUser.email}) for Customer #${customer.id}`);
         } else {
           let safePhone: string | null = normalizedPhone;
           if (safePhone) {

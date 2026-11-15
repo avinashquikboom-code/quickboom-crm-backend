@@ -83,8 +83,14 @@ authorization: ALLOWED (ADMIN)`);
       `[CUSTOMER_GUARD_DEBUG]\nuserId: ${user?.id ?? 'NONE'}\nuserCustomerId: ${user?.customerId ?? 'NONE'}\nuserCustomerCode: ${user?.customerCode ?? 'NONE'}\nqueryCustomerId: ${queryCustomerId ?? 'NONE'}\nheaderCustomerId: ${headerCustomerId ?? 'NONE'}\nrole: ${user?.role ?? 'CUSTOMER'}`,
     );
 
+    const employeeTenant = Number(user?.employee?.customerId);
+    const sessionEmployeeTenant =
+      Number.isInteger(employeeTenant) && employeeTenant > 0 ? employeeTenant : undefined;
+
     let authCustomerPk: number | undefined;
-    if (user?.customerId != null && Number(user.customerId) > 0) {
+    if (sessionEmployeeTenant) {
+      authCustomerPk = sessionEmployeeTenant;
+    } else if (user?.customerId != null && Number(user.customerId) > 0) {
       authCustomerPk = Number(user.customerId);
     }
 
@@ -166,7 +172,12 @@ authorization: ALLOWED (ADMIN)`);
       }
       if (resolvedHeaderPk === undefined || resolvedHeaderPk !== authCustomerPk) {
         const path = (request.originalUrl || request.url || '').toLowerCase();
-        if (
+        if (this.usesSessionTenant(path, sessionEmployeeTenant)) {
+          this.logger.warn(
+            `[CustomerGuard] Ignoring client customer id (${headerStr}) on ${path}; using employee company ${authCustomerPk}`,
+          );
+          resolvedHeaderPk = authCustomerPk;
+        } else if (
           path.includes('/employees/me') ||
           path.includes('/employees/permissions/me') ||
           path.includes('/lead-generation-limits/me')
@@ -191,7 +202,12 @@ authorization: ALLOWED (ADMIN)`);
       }
       if (resolvedQueryPk === undefined || resolvedQueryPk !== authCustomerPk) {
         const path = (request.originalUrl || request.url || '').toLowerCase();
-        if (
+        if (this.usesSessionTenant(path, sessionEmployeeTenant)) {
+          this.logger.warn(
+            `[CustomerGuard] Ignoring client customer id (${queryStr}) on ${path}; using employee company ${authCustomerPk}`,
+          );
+          resolvedQueryPk = authCustomerPk;
+        } else if (
           path.includes('/employees/me') ||
           path.includes('/employees/permissions/me') ||
           path.includes('/lead-generation-limits/me')
@@ -220,6 +236,16 @@ authorization: ALLOWED (ADMIN)`);
     request.customerId = authCustomerPk;
     request.customerExternalId = authCustomerCode;
     return true;
+  }
+
+  /**
+   * Lead APIs scope every query to the authenticated employee's company.
+   * A stale or converted-customer id on the client must not reject that update.
+   * Other modules still reject a customer id that belongs to another tenant.
+   */
+  private usesSessionTenant(path: string, employeeTenant?: number): boolean {
+    if (!employeeTenant) return false;
+    return path.includes('/leads');
   }
 
   private async resolveCustomerPk(rawId: any): Promise<number | undefined> {
