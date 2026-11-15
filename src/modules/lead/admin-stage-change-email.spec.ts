@@ -395,6 +395,16 @@ describe('Admin Panel Stage Change Automatic Email Verification (9 Verification 
     expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
   });
 
+  it('uses the linked contact email within the same tenant when the lead email is invalid', async () => {
+    leadsTable[0].email = 'invalid';
+    leadsTable[0].convertedToContactId = 17;
+    mockPrisma.contact = { findFirst: jest.fn().mockResolvedValue({ email: 'contact@example.org' }) };
+    const result = await service.updateStatus(1, 101, 42, { stageId: 2 });
+    expect(mockPrisma.contact.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 17, customerId: 1, deletedAt: null } }));
+    expect(result.emailNotification?.sent).toBe(true);
+    expect(mockEmailService.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'contact@example.org' }));
+  });
+
   it('does not substitute a predefined email template when the new stage has no mapping', async () => {
     stagesTable.find((stage) => stage.id === 2).emailTemplateId = null;
     const result = await service.updateStatus(1, 101, 42, { stageId: 2 });

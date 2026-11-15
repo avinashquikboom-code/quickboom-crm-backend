@@ -2742,14 +2742,19 @@ export class LeadService {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
           include: { emailTemplate: true },
-        }).catch(() => null);
+        });
       }
+
       if (!stageConfig && !effectiveStageId && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, lead.customerId ?? customerId),
           include: { emailTemplate: true },
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
-        }).catch(() => null);
+        });
+      }
+
+      if (eventType === 'LEAD_STAGE_CHANGED' && !stageConfig) {
+        throw new Error('Unable to resolve the selected stage for email automation.');
       }
 
       if (stageConfig && stageConfig.emailEnabled === false && eventType !== 'MANUAL_SEND') {
@@ -2899,33 +2904,30 @@ export class LeadService {
 
       // 2. Resolve recipient email: strictly comes from the lead or contact associated with the lead
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      let recipientEmail = (lead.email || lead.customerEmail || (lead as any).emailAddress || '').trim();
+      let recipientEmail = String(lead.email || lead.customerEmail || (lead as any).emailAddress || '').trim();
+      const placeholderEmails = [
+        'contact@company.com', 'placeholder@company.com', 'example@company.com',
+        'test@company.com', 'user@company.com', 'admin@quikboom.com',
+      ];
+      const validRecipient = (value: string) => emailRegex.test(value) && !placeholderEmails.includes(value.toLowerCase());
 
       // If missing on lead, check associated contact if converted or linked
-      if (!recipientEmail && lead.convertedToContactId && this.prisma.contact) {
-        const contact = await this.prisma.contact.findUnique({
-          where: { id: Number(lead.convertedToContactId) },
+      if (!validRecipient(recipientEmail) && lead.convertedToContactId && this.prisma.contact) {
+        const contact = await this.prisma.contact.findFirst({
+          where: { id: Number(lead.convertedToContactId), customerId: Number(customerId), deletedAt: null },
           select: { email: true },
-        }).catch(() => null);
+        });
         if (contact?.email) {
           recipientEmail = contact.email.trim();
         }
       }
 
       // If missing on lead, check lead.contact?.email if populated
-      if (!recipientEmail && (lead as any).contact?.email) {
+      if (!validRecipient(recipientEmail) && (lead as any).contact?.email) {
         recipientEmail = String((lead as any).contact.email).trim();
       }
 
       // Filter out placeholder / invalid dummy emails
-      const placeholderEmails = [
-        'contact@company.com',
-        'placeholder@company.com',
-        'example@company.com',
-        'test@company.com',
-        'user@company.com',
-        'admin@quikboom.com',
-      ];
       if (placeholderEmails.includes(recipientEmail.toLowerCase())) {
         recipientEmail = '';
       }
@@ -5083,14 +5085,19 @@ Sent by ${senderOrgName} via CRM.
         stageConfig = await this.prisma.leadStage.findFirst({
           where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
           include: { whatsappTemplate: true },
-        }).catch(() => null);
+        });
       }
+
       if (!stageConfig && !effectiveStageId && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, customerId),
           include: { whatsappTemplate: true },
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
-        }).catch(() => null);
+        });
+      }
+
+      if (eventType === 'LEAD_STAGE_CHANGED' && !stageConfig) {
+        throw new Error('Unable to resolve the selected stage for WhatsApp automation.');
       }
 
       // Check if WhatsApp is disabled for this stage (manual retries may still send)
