@@ -60,6 +60,38 @@ describe('LeadPlanProposalService', () => {
     expect(service.isProposalStageToken('proposal_sent', null)).toBe(true);
     expect(service.isProposalStageToken('FOLLOW_UP', null)).toBe(false);
   });
+  it.each([
+    [false, true, '', '919999999999'],
+    [true, false, 'lead@example.com', ''],
+    [true, true, 'lead@example.com', '919999999999'],
+  ])('sends only selected channels: email=%s whatsapp=%s', async (email, whatsapp, address, phone) => {
+    const proposal: any = { id: 3, version: 1, proposalType: 'DEFAULT', emailStatus: 'PENDING', whatsappStatus: 'PENDING', customConfig: {}, planName: 'Plan', planPrice: 100 };
+    prisma.lead.findFirst.mockResolvedValue({ id: 10, customerId: 1, email: address, phone, title: 'Lead' });
+    prisma.leadPlanProposal.findFirst.mockImplementation(async () => proposal);
+    prisma.leadPlanProposal.updateMany = jest.fn(async ({ data }) => { Object.assign(proposal, data); return { count: 1 }; });
+    prisma.leadPlanProposal.update.mockImplementation(async ({ data }) => Object.assign(proposal, data));
+    prisma.customer.findUnique.mockResolvedValue({ name: 'Tenant' });
+    prisma.emailTemplate.findFirst.mockResolvedValue(null);
+    emailService.sendEmail.mockResolvedValue({ messageId: 'mail' });
+    whatsappService.sendLeadStageMessage.mockResolvedValue({ success: true, messageId: 'wa' });
+    whatsappService.sendDocumentMessage.mockResolvedValue({ success: true, messageId: 'doc' });
+    jest.spyOn(service as any, 'pdfForProposal').mockResolvedValue(Buffer.from('pdf'));
+    await service.resend(1, 10, 3, 9, { email, whatsapp });
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(email ? 1 : 0);
+    expect(whatsappService.sendLeadStageMessage).toHaveBeenCalledTimes(whatsapp ? 1 : 0);
+    expect(proposal.emailStatus).toBe(email ? 'SENT' : 'SKIPPED');
+    expect(proposal.whatsappStatus).toBe(whatsapp ? 'SENT' : 'SKIPPED');
+  });
+
+  it('rejects a missing selected contact and no selected channels before sending', async () => {
+    prisma.lead.findFirst.mockResolvedValue({ id: 10, customerId: 1, email: '', phone: '' });
+    prisma.leadPlanProposal.findFirst.mockResolvedValue({ id: 3, version: 1, emailStatus: 'PENDING', whatsappStatus: 'PENDING', customConfig: {} });
+    await expect(service.resend(1, 10, 3, 9, { email: true, whatsapp: false })).rejects.toThrow('valid email');
+    await expect(service.resend(1, 10, 3, 9, { email: false, whatsapp: true })).rejects.toThrow('valid phone');
+    await expect(service.resend(1, 10, 3, 9, { email: false, whatsapp: false })).rejects.toThrow('No unsent');
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(whatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+  });
   it('saves the selected active catalog price and reuses a matching request', async () => {
     const row: any = { id: 8, customerId: 1, planPreferenceReady: true, customerRequirements: 'CRM', planPreferenceType: 'DEFAULT' };
     prisma.lead.findFirst.mockResolvedValue(row);

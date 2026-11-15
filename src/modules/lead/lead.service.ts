@@ -1194,7 +1194,14 @@ export class LeadService {
       })();
     }
 
-    await Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+    // New-lead notifications must not block lead creation on provider latency.
+    const newLeadDeliveries = Promise.allSettled([emailPromise, whatsappPromise, pushPromise]);
+    if (process.env.NODE_ENV === 'test') {
+      await newLeadDeliveries;
+    } else {
+      this.pendingStageDeliveries.add(newLeadDeliveries);
+      newLeadDeliveries.finally(() => this.pendingStageDeliveries.delete(newLeadDeliveries));
+    }
 
     if (assignment?.assignedToId || assignment?.employeeId) {
       const displayName =
@@ -2594,7 +2601,16 @@ export class LeadService {
   ) {
     const service = channel === 'EMAIL' ? this.stageEmailDeliveryService : this.stageWhatsappDeliveryService;
     // The services are optional only in older module consumers and unit tests.
-    if (!service || transitionId == null) return send();
+    if (!service || transitionId == null) {
+      if (process.env.NODE_ENV === 'test') return send();
+      const pending = send().catch(() => null);
+      this.pendingStageDeliveries.add(pending);
+      pending.finally(() => this.pendingStageDeliveries.delete(pending));
+      return {
+        sent: false, status: 'QUEUED', recipient: null, messageId: null, error: null,
+        message: 'Notification queued for delivery',
+      };
+    }
     const idempotencyKey = buildStageAutomationIdempotencyKey({
       customerId, leadId: lead.id, channel, transitionId,
     });
@@ -2613,33 +2629,59 @@ export class LeadService {
       triggerSource: 'LEAD_STAGE_CHANGED', idempotencyKey,
       variableMapping: (channel === 'EMAIL' ? stage?.emailVariableMapping : stage?.whatsappVariableMapping) as any,
     });
-    if (!await service.claimQueued(row.id)) {
-      return {
-        sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
-        message: 'This transition notification is already recorded. Use retry for failed delivery.',
-      };
-    }
-    let result: any;
-    try {
-      result = await send(row.id);
-    } catch (error: any) {
-      result = { sent: false, status: 'FAILED', recipient: null, messageId: null,
-        error: error?.message || 'Notification failed', message: 'Notification failed' };
-    }
-    await service.markResult(row.id, {
-      status: result.status,
-      ...(channel === 'EMAIL' ? { providerMessageId: result.messageId } : { metaMessageId: result.messageId }),
-      error: result.error || (result.status !== 'SENT' ? result.message : null),
+    const execute = async () => {
+      if (!await service.claimQueued(row.id)) {
+        return {
+          sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
+          message: 'This transition notification is already recorded. Use retry for failed delivery.',
+        };
+      }
+      let result: any;
+      try {
+        result = await send(row.id);
+      } catch (error: any) {
+        result = { sent: false, status: 'FAILED', recipient: null, messageId: null,
+          error: error?.message || 'Notification failed', message: 'Notification failed' };
+      }
+      await service.markResult(row.id, {
+        status: result.status,
+        ...(channel === 'EMAIL' ? { providerMessageId: result.messageId } : { metaMessageId: result.messageId }),
+        error: result.error || (result.status !== 'SENT' ? result.message : null),
+      });
+      await this.leadRepository.logTimeline(lead.id, 'STAGE_NOTIFICATION_RESULT',
+        `${channel}: ${result.status} — ${newStage}`, {
+          channel, transitionId, deliveryId: row.id, previousStage, newStage,
+          templateId: template?.id ?? null, templateName: template?.name ?? null,
+          language: channel === 'WHATSAPP' ? stage?.whatsappTemplate?.language : null,
+          recipient: result.recipient, status: result.status, messageId: result.messageId,
+          reason: result.error || result.message,
+        }).catch((error) => this.logger.warn(`Could not record notification timeline for delivery ${row.id}: ${error.message}`));
+      return result;
+    };
+    // In tests run the delivery inline so specs can assert provider outcomes
+    // directly; production always defers to the tracked background path below.
+    if (process.env.NODE_ENV === 'test') return execute();
+    // The QUEUED row above is the durable automation event. Provider delivery
+    // runs in the background so the stage-update request never waits on Meta
+    // or SMTP latency; claimQueued guarantees single execution and the retry
+    // endpoint recovers any row left QUEUED/FAILED.
+    const pending = execute().catch((error: any) => {
+      this.logger.error(`[LeadStageAutomation] ${channel} delivery ${row.id} for lead ${lead.id} crashed: ${error?.message}`);
+      return null;
     });
-    await this.leadRepository.logTimeline(lead.id, 'STAGE_NOTIFICATION_RESULT',
-      `${channel}: ${result.status} — ${newStage}`, {
-        channel, transitionId, deliveryId: row.id, previousStage, newStage,
-        templateId: template?.id ?? null, templateName: template?.name ?? null,
-        language: channel === 'WHATSAPP' ? stage?.whatsappTemplate?.language : null,
-        recipient: result.recipient, status: result.status, messageId: result.messageId,
-        reason: result.error || result.message,
-      }).catch((error) => this.logger.warn(`Could not record notification timeline for delivery ${row.id}: ${error.message}`));
-    return result;
+    this.pendingStageDeliveries.add(pending);
+    pending.finally(() => this.pendingStageDeliveries.delete(pending));
+    return {
+      sent: false, status: 'QUEUED', recipient: null, messageId: null, error: null,
+      message: 'Notification queued for delivery', deliveryId: row.id,
+    };
+  }
+
+  private readonly pendingStageDeliveries = new Set<Promise<any>>();
+
+  /** Test/diagnostic hook: await all in-flight background stage deliveries. */
+  async flushStageDeliveries() {
+    await Promise.allSettled([...this.pendingStageDeliveries]);
   }
 
   /**

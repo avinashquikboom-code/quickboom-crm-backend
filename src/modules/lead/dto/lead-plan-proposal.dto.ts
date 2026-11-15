@@ -108,6 +108,16 @@ export class ResendPlanProposalDto {
   @IsOptional()
   @IsBoolean()
   whatsapp?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  emailAddress?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
 }
 
 export class CreateStandardPlanProposalDto {
