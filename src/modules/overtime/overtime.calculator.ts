@@ -26,6 +26,7 @@ export function overtimeWindow(dateInput: string, startTime: string, endTime: st
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BadRequestException('Overtime date must be YYYY-MM-DD.');
   const startAt = istDateTime(date, startTime);
   let endAt = istDateTime(date, endTime);
+  if (endAt.getTime() === startAt.getTime()) throw new BadRequestException('Start and end times must be different.');
   if (endAt.getTime() <= startAt.getTime()) {
     endAt = new Date(endAt.getTime() + 24 * 60 * 60 * 1000);
   }

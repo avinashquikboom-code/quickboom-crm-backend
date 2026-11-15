@@ -1592,14 +1592,9 @@ export class LeadService {
       if (!isTargetVisitDone) {
         throw new ForbiddenException('Visitor employee can only update leads to Visit Done stage.');
       }
-    } else if (
-      isStageChanged &&
-      this.isVisitDoneStage(resolvedStatus, stageName, undefined) &&
-      !(await this.leadRepository.isVisitorUser(user))
-    ) {
-      throw new ForbiddenException(
-        'Visit Done must be completed by the assigned visitor employee through the visit-completion workflow.',
-      );
+    }
+    if (isStageChanged && this.isVisitDoneStage(resolvedStatus, stageName, undefined)) {
+      await this.leadRepository.requireCompletedAssignedVisit(customerId, id);
     }
 
     const update = await this.leadRepository.update(customerId, id, sanitizedDto as any, isStageChanged ? {
@@ -1910,9 +1905,7 @@ export class LeadService {
     const movingToVisitDone = this.isVisitDoneStage(resolvedStatus, stageName, targetStageKey);
     const actorIsVisitor = await this.leadRepository.isVisitorUser(user);
     if (movingToVisitDone && !actorIsVisitor) {
-      throw new ForbiddenException(
-        'Visit Done must be completed by the assigned visitor employee through the visit-completion workflow.',
-      );
+      await this.leadRepository.requireCompletedAssignedVisit(customerId, id);
     }
 
     if (actorIsVisitor) {

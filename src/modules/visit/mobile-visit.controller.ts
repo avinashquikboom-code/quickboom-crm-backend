@@ -809,12 +809,15 @@ export class MobileVisitController {
     },
   ) {
     const numId = Number(id);
-    const visit = await this.prisma.visit.findUnique({
+    if (!Number.isSafeInteger(numId) || numId <= 0 || !Number(customerId)) throw new BadRequestException('Invalid visit or tenant.');
+    return this.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Visit" WHERE id = ${numId} AND "customerId" = ${Number(customerId)} FOR UPDATE`;
+    const visit = await tx.visit.findUnique({
       where: { id: numId },
       include: { lead: { select: { employeeId: true } } },
     });
 
-    if (!visit) {
+    if (!visit || visit.customerId !== Number(customerId)) {
       throw new NotFoundException(`Visit with ID ${id} not found`);
     }
 
@@ -833,12 +836,7 @@ export class MobileVisitController {
       if (invalidPoint) throw new BadRequestException('Signature points must be normalized between 0 and 1.');
     }
 
-    if (visit.status === VisitStatus.COMPLETED) {
-      const doneCustomerId = Number(customerId) || visit.customerId;
-      return this.visitService.findOne(doneCustomerId, id);
-    }
-
-    const employee = await this.prisma.employee.findFirst({
+    const employee = await tx.employee.findFirst({
       where: {
         customerId: Number(customerId),
         OR: [
@@ -850,6 +848,9 @@ export class MobileVisitController {
     });
 
     const isVisitorUser = this.isVisitorEmployee(employee, user);
+    if (!isVisitorUser || !employee || Number(employee.userId) !== Number(user?.id)) {
+      throw new ForbiddenException('Only the authenticated assigned visitor can complete this visit.');
+    }
     this.assertVisitorAssignment(visit, employee, user, customerId);
     const isSuperAdmin = isUserSuperAdmin(user);
     const isAssigned =
@@ -861,16 +862,30 @@ export class MobileVisitController {
       throw new ForbiddenException('You do not have permission to update another employee\'s visit.');
     }
 
+    if (visit.status === VisitStatus.COMPLETED) {
+      if (visit.completedById !== employee.id || !visit.completedAt) throw new ForbiddenException('Visit completion attribution is missing.');
+      return visit;
+    }
+    if (![body?.notes, body?.outcome, body?.feedback].some(value => typeof value === 'string' && value.trim())) {
+      throw new BadRequestException('Provide visit completion notes or outcome.');
+    }
+    if (body?.nextFollowUpDate && !Number.isFinite(+new Date(body.nextFollowUpDate))) {
+      throw new BadRequestException('Invalid next follow-up date.');
+    }
+    if (visit.leadId) {
+      const latest = await tx.visit.findFirst({ where: { customerId: Number(customerId), leadId: visit.leadId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+      if (latest?.id !== visit.id) throw new ForbiddenException('Only the latest assigned visit can be completed.');
+    }
     if (isVisitorUser) {
       if (!['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) {
         throw new ForbiddenException('Only an active assigned visit may be completed.');
       }
       if (visit.leadId) {
-        const lead = await this.prisma.lead.findFirst({
+        const lead = await tx.lead.findFirst({
           where: { id: visit.leadId, customerId: employee!.customerId, deletedAt: null },
           include: { stage: true },
         });
-        const visitScheduledStage = await this.prisma.leadStage.findFirst({
+        const visitScheduledStage = await tx.leadStage.findFirst({
           where: visitScheduledStageWhere(employee!.customerId),
           orderBy: [{ customerId: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
         });
@@ -900,7 +915,7 @@ export class MobileVisitController {
     const completedAt = new Date();
     const syncUserId = user?.id ? Number(user.id) : employee?.userId ? Number(employee.userId) : 0;
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await (async () => {
       const txRepo = new LeadRepository(tx as PrismaService);
       const savedVisit = await tx.visit.update({
         where: { id: numId },
@@ -924,13 +939,15 @@ export class MobileVisitController {
       });
 
       if (visit.leadId) {
-        await txRepo.transitionLeadToVisitDoneAfterVisit(
+        const stageSync = await txRepo.transitionLeadToVisitDoneAfterVisit(
           numCustomerId,
           visit.leadId,
           syncUserId,
           `Field visit completed: ${finalOutcome}`,
           { inlineTransaction: true },
         );
+
+        if (stageSync === 'NO_STAGE') throw new BadRequestException('Configure an active Visit Done stage before completing this visit.');
 
         await tx.leadActivityTimeline
           .create({
@@ -956,14 +973,14 @@ export class MobileVisitController {
                 completedAt: completedAt.toISOString(),
               },
             },
-          })
-          .catch(() => null);
+          });
       }
 
       return savedVisit;
-    });
+    })();
 
     return updated;
+    });
   }
 
   private presentPhoto(photo: any) {
