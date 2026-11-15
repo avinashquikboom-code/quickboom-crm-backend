@@ -2679,6 +2679,20 @@ export class LeadService {
 
   private readonly pendingStageDeliveries = new Set<Promise<any>>();
 
+  /** Short window dedupe for channel sends that have no delivery row context. */
+  private readonly recentStageNotifications = new Map<string, number>();
+
+  private isDuplicateStageNotification(key: string, windowMs = 60_000) {
+    const now = Date.now();
+    for (const [k, ts] of this.recentStageNotifications) {
+      if (now - ts > windowMs) this.recentStageNotifications.delete(k);
+    }
+    const last = this.recentStageNotifications.get(key);
+    if (last != null && now - last < windowMs) return true;
+    this.recentStageNotifications.set(key, now);
+    return false;
+  }
+
   /** Test/diagnostic hook: await all in-flight background stage deliveries. */
   async flushStageDeliveries() {
     await Promise.allSettled([...this.pendingStageDeliveries]);
@@ -2735,21 +2749,38 @@ export class LeadService {
         };
       }
 
-      // Check per-stage email automation settings
+      if (existingDeliveryId == null && eventType !== 'MANUAL_SEND' &&
+          this.isDuplicateStageNotification(`EMAIL:${customerId}:${lead.id}:${previousStageName}:${newStageName}:${eventType}`)) {
+        return {
+          sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
+          message: 'Duplicate stage transition email suppressed',
+        };
+      }
+
+      // Check per-stage email automation settings. The template must belong to
+      // the NEW stage: explicit id first, then resolve by new stage name, and
+      // only then fall back to the lead's persisted stage id.
       const effectiveStageId = explicitNewStageId || lead.stageId || lead.stage?.id;
       let stageConfig: any = null;
-      if (effectiveStageId && this.prisma.leadStage) {
+      if (explicitNewStageId && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
+          where: { id: Number(explicitNewStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
           include: { emailTemplate: true },
         });
       }
 
-      if (!stageConfig && !effectiveStageId && newStageName && this.prisma.leadStage) {
+      if (!stageConfig && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, lead.customerId ?? customerId),
           include: { emailTemplate: true },
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
+        });
+      }
+
+      if (!stageConfig && !explicitNewStageId && (lead.stageId || lead.stage?.id) && this.prisma.leadStage) {
+        stageConfig = await this.prisma.leadStage.findFirst({
+          where: { id: Number(lead.stageId || lead.stage?.id), deletedAt: null, ...tenantLeadStageScope(customerId) },
+          include: { emailTemplate: true },
         });
       }
 
@@ -4661,14 +4692,16 @@ Sent by ${senderOrgName} via CRM.
     let metaTemplate: any = null;
     const requestedTemplateId = dto?.whatsappTemplateId || configuredStage?.whatsappTemplateId;
 
-    if (requestedTemplateId && this.prisma.metaTemplate) {
+    if (requestedTemplateId) {
       metaTemplate = (configuredStage?.whatsappTemplate && configuredStage.whatsappTemplate.id === Number(requestedTemplateId))
         ? configuredStage.whatsappTemplate
-        : (typeof this.prisma.metaTemplate.findUnique === 'function'
-            ? await this.prisma.metaTemplate.findUnique({ where: { id: Number(requestedTemplateId) } }).catch(() => null)
-            : await this.prisma.metaTemplate.findFirst({
-                where: { id: Number(requestedTemplateId), deletedAt: null },
-              }).catch(() => null));
+        : (this.prisma.metaTemplate
+            ? (typeof this.prisma.metaTemplate.findUnique === 'function'
+                ? await this.prisma.metaTemplate.findUnique({ where: { id: Number(requestedTemplateId) } }).catch(() => null)
+                : await this.prisma.metaTemplate.findFirst({
+                    where: { id: Number(requestedTemplateId), deletedAt: null },
+                  }).catch(() => null))
+            : null);
 
       if (!metaTemplate) {
         this.logger.error(
@@ -5022,6 +5055,45 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
+      if (existingDeliveryId == null && eventType !== 'MANUAL_SEND' &&
+          this.isDuplicateStageNotification(`WHATSAPP:${customerId}:${lead.id}:${previousStageName}:${newStageName}:${eventType}`)) {
+        return {
+          sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
+          message: 'Duplicate stage transition WhatsApp suppressed',
+        };
+      }
+
+      if (existingDeliveryId == null && eventType !== 'MANUAL_SEND' && this.prisma.leadActivityTimeline?.findFirst) {
+        const recentSent = await this.prisma.leadActivityTimeline.findFirst({
+          where: {
+            leadId: Number(lead.id),
+            action: 'WHATSAPP_SENT',
+            createdAt: { gte: new Date(Date.now() - 60_000) },
+          },
+          orderBy: { createdAt: 'desc' },
+        }).catch(() => null);
+        if (recentSent) {
+          // Only debounce repeats of the same stage transition; a genuinely
+          // different new stage within the window must still be sent. Legacy
+          // entries without stage metadata debounce conservatively.
+          const meta = (recentSent as any).metadata as any;
+          const recentStageId = meta?.stageId != null ? Number(meta.stageId) : null;
+          const recentStageName = meta?.stageName ? String(meta.stageName).trim().toUpperCase() : null;
+          const targetStageId = explicitNewStageId != null ? Number(explicitNewStageId) : null;
+          const sameStage =
+            (recentStageId == null && recentStageName == null) ||
+            (targetStageId != null && recentStageId === targetStageId) ||
+            (recentStageName != null && newStageName != null &&
+              recentStageName === String(newStageName).trim().toUpperCase());
+          if (sameStage) {
+            return {
+              sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
+              message: 'WhatsApp message was already sent recently for this stage',
+            };
+          }
+        }
+      }
+
       // 1. Resolve and validate recipient phone number
       const phone = (lead.phone || lead.mobile || '').trim();
       if (!phone) {
@@ -5078,21 +5150,30 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
-      // 2. Resolve Stage Automation Configuration from DB
+      // 2. Resolve Stage Automation Configuration from DB. The template must
+      // belong to the NEW stage: explicit id first, then resolve by new stage
+      // name, and only then fall back to the lead's persisted stage id.
       const effectiveStageId = explicitNewStageId || lead.stageId || lead.stage?.id;
       let stageConfig: any = null;
-      if (effectiveStageId && this.prisma.leadStage) {
+      if (explicitNewStageId && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
-          where: { id: Number(effectiveStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
+          where: { id: Number(explicitNewStageId), deletedAt: null, ...tenantLeadStageScope(customerId) },
           include: { whatsappTemplate: true },
         });
       }
 
-      if (!stageConfig && !effectiveStageId && newStageName && this.prisma.leadStage) {
+      if (!stageConfig && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, customerId),
           include: { whatsappTemplate: true },
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
+        });
+      }
+
+      if (!stageConfig && !explicitNewStageId && (lead.stageId || lead.stage?.id) && this.prisma.leadStage) {
+        stageConfig = await this.prisma.leadStage.findFirst({
+          where: { id: Number(lead.stageId || lead.stage?.id), deletedAt: null, ...tenantLeadStageScope(customerId) },
+          include: { whatsappTemplate: true },
         });
       }
 
@@ -5136,14 +5217,16 @@ Sent by ${senderOrgName} via CRM.
       let targetMetaTemplate: any = null;
       const resolvedTplId = eventType === 'LEAD_STAGE_CHANGED' ? stageConfig?.whatsappTemplateId : (whatsappTemplateId || stageConfig?.whatsappTemplateId);
 
-      if (resolvedTplId && this.prisma.metaTemplate) {
+      if (resolvedTplId) {
         targetMetaTemplate = (stageConfig?.whatsappTemplate && stageConfig.whatsappTemplate.id === Number(resolvedTplId))
           ? stageConfig.whatsappTemplate
-          : (typeof this.prisma.metaTemplate.findUnique === 'function'
+          : (this.prisma.metaTemplate
+            ? (typeof this.prisma.metaTemplate.findUnique === 'function'
               ? await this.prisma.metaTemplate.findUnique({ where: { id: Number(resolvedTplId) } }).catch(() => null)
               : await this.prisma.metaTemplate.findFirst({
                   where: { id: Number(resolvedTplId), deletedAt: null },
-                }).catch(() => null));
+                }).catch(() => null))
+            : null);
       }
       if (!targetMetaTemplate && eventType !== 'LEAD_STAGE_CHANGED' && templateName && this.prisma.metaTemplate) {
         targetMetaTemplate = await this.prisma.metaTemplate.findFirst({

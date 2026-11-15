@@ -8,6 +8,23 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { LeadStatus } from '@prisma/client';
+import { PREDEFINED_SYSTEM_TEMPLATES } from '../email/email-template.service';
+
+const STAGE_EMAIL_TEMPLATE_KEY: Record<string, string> = {
+  NEW: 'QUIKBOOM_NEW_LEAD',
+  CONTACTED: 'QUIKBOOM_CONTACTED',
+  QUALIFIED: 'QUIKBOOM_QUALIFIED',
+  DETAILS_SEND: 'QUIKBOOM_DETAILS_SENT',
+  FOLLOW_UP: 'QUIKBOOM_FOLLOW_UP',
+  VISIT_SCHEDULED: 'QUIKBOOM_VISIT_SCHEDULED',
+  VISIT_DONE: 'QUIKBOOM_VISIT_DONE',
+  PROPOSAL: 'QUIKBOOM_PROPOSAL_SENT',
+  PROPOSAL_SENT: 'QUIKBOOM_PROPOSAL_SENT',
+  NEGOTIATION: 'QUIKBOOM_NEGOTIATION',
+  FINAL_CALL: 'QUIKBOOM_FINAL_CALL',
+  WON: 'QUIKBOOM_WON',
+  LOST: 'QUIKBOOM_LOST',
+};
 
 describe('Lead Stage Change Email Notification Tests', () => {
   let service: LeadService;
@@ -20,6 +37,7 @@ describe('Lead Stage Change Email Notification Tests', () => {
   let leadsTable: any[] = [];
   let customersTable: any[] = [];
   let stagesTable: any[] = [];
+  let emailTemplatesTable: any[] = [];
   let emailLogsTable: any[] = [];
   let timelineTable: any[] = [];
 
@@ -100,6 +118,34 @@ describe('Lead Stage Change Email Notification Tests', () => {
       { id: 14, customerId: null, name: 'Proposal Sent', key: 'PROPOSAL_SENT', isActive: true, deletedAt: null },
     ];
 
+    // Attach the configured templates each stage maps to (mirrors the Admin
+    // Panel stage → template mapping). CUSTOM_REVIEW stays unconfigured.
+    emailTemplatesTable = [];
+    stagesTable = stagesTable.map((s) => {
+      const emailKey = STAGE_EMAIL_TEMPLATE_KEY[s.key];
+      const emailTemplate = emailKey ? PREDEFINED_SYSTEM_TEMPLATES.find((t) => t.key === emailKey) : undefined;
+      if (emailTemplate) {
+        emailTemplatesTable.push({ id: 700 + s.id, ...emailTemplate, isActive: true, customerId: null });
+      }
+      const whatsappTemplateId = emailKey ? 800 + s.id : null;
+      return {
+        ...s,
+        emailTemplateId: emailTemplate ? 700 + s.id : null,
+        whatsappTemplateId,
+        whatsappTemplate: whatsappTemplateId ? {
+          id: whatsappTemplateId,
+          key: s.key,
+          name: `${s.key} Stage`,
+          templateName: `lead_stage_${s.key.toLowerCase()}`,
+          language: 'en_US',
+          status: 'APPROVED',
+          isLocalActive: true,
+          body: `Stage updated to ${s.key}`,
+          variables: [],
+        } : null,
+      };
+    });
+
     emailLogsTable = [];
     timelineTable = [];
 
@@ -147,10 +193,23 @@ describe('Lead Stage Change Email Notification Tests', () => {
           return stagesTable.find((s) => s.id === where.id) || null;
         }),
         findFirst: jest.fn(async ({ where }) => {
+          const orClauses = where?.AND?.flatMap((c: any) => c?.OR ?? []) ?? [];
           return stagesTable.find((s) => {
             if (where.deletedAt === null && s.deletedAt !== null) return false;
             if (where.id !== undefined && s.id !== where.id) return false;
             if (where.key !== undefined && s.key !== where.key) return false;
+            if (orClauses.length) {
+              const matched = orClauses.some((clause: any) => {
+                if (clause.name?.equals !== undefined) {
+                  return String(s.name).toLowerCase() === String(clause.name.equals).toLowerCase();
+                }
+                if (clause.key !== undefined) {
+                  return s.key === clause.key;
+                }
+                return false;
+              });
+              if (!matched) return false;
+            }
             return true;
           }) || null;
         }),
@@ -192,7 +251,12 @@ describe('Lead Stage Change Email Notification Tests', () => {
         }),
       },
       emailTemplate: {
-        findFirst: jest.fn(async () => null),
+        findFirst: jest.fn(async ({ where }: any = {}) => {
+          if (where?.id !== undefined) {
+            return emailTemplatesTable.find((t) => t.id === Number(where.id)) || null;
+          }
+          return null;
+        }),
         findMany: jest.fn(async () => []),
         create: jest.fn(async ({ data }) => ({ id: 1, ...data })),
         update: jest.fn(async ({ data }) => data),
@@ -836,6 +900,11 @@ describe('Lead Stage Change Email Notification Tests', () => {
       leadsTable[0].status = stage.id === 1 ? LeadStatus.CONTACTED : LeadStatus.NEW;
       leadsTable[0].phone = '+919876543210';
       leadsTable[0].email = 'lead@example.com';
+
+      // Visit Done requires a completed assigned visit (real workflow rule)
+      mockPrisma.visit.findFirst = jest.fn(async () => stage.id === 9
+        ? { customerId: 1, leadId: 101, status: 'COMPLETED', employeeId: 55, completedById: 55, completedAt: new Date() }
+        : null);
 
       await service.updateStatus(1, 101, 999, {
         stageId: stage.id,

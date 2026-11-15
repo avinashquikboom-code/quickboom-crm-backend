@@ -49,6 +49,11 @@ describe('LeadService - Lead Communications & Push Dispatch', () => {
       mockEmailService,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
       mockModuleRef,
     );
   });
