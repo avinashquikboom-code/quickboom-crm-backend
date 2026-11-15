@@ -1609,7 +1609,12 @@ export class WhatsappService {
       template = await this.getStageTemplateAsync(stageKey, customerId, metaTemplateId);
     }
     if (template && !isSendableMetaTemplate(template)) {
-      template = null;
+      const status = String(template.status || '').toUpperCase();
+      const reason = status !== 'APPROVED' ? 'TEMPLATE_NOT_APPROVED' : 'TEMPLATE_NOT_SYNCED_WITH_META';
+      const message = status !== 'APPROVED'
+        ? 'The mapped WhatsApp template is not approved by Meta. Check its approval status in template settings.'
+        : 'The mapped WhatsApp template has no valid Meta template ID. Sync the existing template from Meta and verify the stage mapping.';
+      return { success: false, skipped: true, errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR, reason, message, details: message };
     }
     if (!template) {
       const stageLabel = stageName || stageKey || 'this stage';
