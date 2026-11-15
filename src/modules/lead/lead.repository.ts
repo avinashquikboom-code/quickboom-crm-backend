@@ -1433,7 +1433,7 @@ export class LeadRepository {
     }
   }
 
-  private applyResolvedBusinessName(lead: any, matchingPlace: any) {
+  private async applyResolvedBusinessName(lead: any, matchingPlace: any) {
     const isFake = (value: any) => !value || typeof value !== 'string' || ['business lead', 'direct lead', 'new lead', 'unnamed business', 'unknown business', 'placeholder lead', 'test lead', 'placeholder customer', 'test customer', '.'].includes(value.trim().toLowerCase());
     const resolvedName = String(matchingPlace.businessName).trim();
     const titleWasFake = isFake(lead.title);
@@ -1441,6 +1441,9 @@ export class LeadRepository {
     const hadWebsite = Boolean(lead.website);
     const hadEmail = Boolean(lead.email);
     const hadAddress = Boolean(lead.address);
+    const originalCompanyName = lead.companyName;
+    const originalSource = lead.source;
+    const originalCreatedFrom = lead.createdFrom;
     lead.companyName = resolvedName;
     lead.businessName = resolvedName;
     lead.name = resolvedName;
@@ -1452,9 +1455,7 @@ export class LeadRepository {
     if (matchingPlace.source && matchingPlace.source !== 'GOOGLE_DISCOVERY') lead.source = matchingPlace.source;
     else if (matchingPlace.googlePlaceId && (lead.source === 'GOOGLE_DISCOVERY' || !lead.source)) lead.source = 'GOOGLE_PLACES';
     if (!lead.createdFrom) lead.createdFrom = 'MOBILE_APP';
-    this.prisma.lead.update({
-      where: { id: lead.id },
-      data: {
+    const data = {
         companyName: resolvedName,
         ...(titleWasFake ? { title: resolvedName } : {}),
         ...(!hadPhone && matchingPlace.phone ? { phone: matchingPlace.phone } : {}),
@@ -1463,8 +1464,22 @@ export class LeadRepository {
         ...(!hadAddress && matchingPlace.address ? { address: matchingPlace.address } : {}),
         ...(lead.source ? { source: lead.source } : {}),
         ...(lead.createdFrom ? { createdFrom: lead.createdFrom } : {}),
-      },
-    }).catch((error: any) => this.logger.error(`[LEAD_NAME_RESOLUTION_DB_ERROR] Failed to persist Lead ${lead.id}: ${error?.message || error}`));
+    };
+    const changed = originalCompanyName !== resolvedName || titleWasFake ||
+      (!hadPhone && matchingPlace.phone) || (!hadWebsite && matchingPlace.website) ||
+      (!hadEmail && matchingPlace.email) || (!hadAddress && matchingPlace.address) ||
+      originalSource !== lead.source || originalCreatedFrom !== lead.createdFrom;
+    if (!changed) return;
+    try {
+      const saved = await this.prisma.lead.update({
+        where: { id: lead.id, customerId: lead.customerId, updatedAt: lead.updatedAt },
+        data,
+        select: { updatedAt: true },
+      });
+      if (saved?.updatedAt) lead.updatedAt = saved.updatedAt;
+    } catch (error: any) {
+      this.logger.warn(`[LEAD_NAME_RESOLUTION_DB_ERROR] Failed to persist Lead ${lead.id}: ${error?.message || error}`);
+    }
   }
 
   public async resolveMissingLeadBusinessNames(leads: any[]): Promise<void> {
@@ -1506,7 +1521,7 @@ export class LeadRepository {
         for (const place of places) {
           const lead = leadsById.get(place.importedLeadId);
           if (!lead || resolvedLeadIds.has(lead.id) || !place.businessName || isFake(place.businessName)) continue;
-          this.applyResolvedBusinessName(lead, place);
+          await this.applyResolvedBusinessName(lead, place);
           resolvedLeadIds.add(lead.id);
         }
       } catch (error: any) {
@@ -1592,7 +1607,7 @@ export class LeadRepository {
         }
 
         if (matchingPlace && matchingPlace.businessName && !isFake(matchingPlace.businessName)) {
-          this.applyResolvedBusinessName(lead, matchingPlace);
+          await this.applyResolvedBusinessName(lead, matchingPlace);
         } else if (matchingPlace && !matchingPlace.businessName) {
           this.logger.warn(`[LEAD_NAME_RESOLUTION_EMPTY_PLACE] Lead ${lead.id} matched DataCapturePlace but it has empty businessName`);
         }

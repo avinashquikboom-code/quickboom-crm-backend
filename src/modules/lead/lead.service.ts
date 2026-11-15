@@ -1481,6 +1481,9 @@ export class LeadService {
       leadId: lead.id,
       status: lead.status,
       stageId: lead.stageId ?? stage?.id ?? null,
+      // Raw persisted stage FK (not resolved from legacy status) — required
+      // for optimistic-concurrency comparisons against the actual row.
+      dbStageId: lead.stageId ?? null,
       stage: stage ?? null,
       statusHistory: lead.statusHistory ?? [],
     };
@@ -1598,7 +1601,7 @@ export class LeadService {
     }
 
     const update = await this.leadRepository.update(customerId, id, sanitizedDto as any, isStageChanged ? {
-      userId: Number(userId), previousStatus: lead.status, previousStageId: lead.stageId,
+      userId: Number(userId), previousStatus: lead.status, previousStageId: lead.dbStageId !== undefined ? lead.dbStageId : lead.stageId,
       expectedUpdatedAt: lead.updatedAt,
     } : undefined);
     await this.leadRepository.logTimeline(
@@ -1989,7 +1992,7 @@ export class LeadService {
         userId,
         dto.notes,
         resolvedStageId,
-        lead.stageId,
+        lead.dbStageId !== undefined ? lead.dbStageId : lead.stageId,
         stageName,
         false,
         lead.updatedAt,
