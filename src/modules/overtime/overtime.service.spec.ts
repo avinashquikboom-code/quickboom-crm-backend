@@ -10,6 +10,7 @@ describe('OvertimeService', () => {
     overtimeRequest: {
       findFirst: jest.fn(),
       updateMany: jest.fn(),
+      create: jest.fn(),
     },
     overtimeApproval: { create: jest.fn() },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -25,7 +26,8 @@ describe('OvertimeService', () => {
       salaryPolicy: { findFirst: jest.fn().mockResolvedValue({ overtimeMultiplier: 1.5, workingDaysPerMonth: 30, overtimeCalculationMethod: 'HOURLY_BASE', overtimeEnabled: true }) },
       employee: { findFirst: jest.fn().mockResolvedValue({ id: 9, customerId: 3, shiftId: 1, employeeType: 'FULL_TIME', shift: { id: 1, startTime: '10:00', endTime: '18:00' } }) },
       shift: { findFirst: jest.fn().mockResolvedValue({ id: 1, startTime: '10:00', endTime: '18:00' }) },
-      overtimeRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance: { findFirst: jest.fn() },
+      overtimeRequest: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue({ employeeId: 9 }) },
       $transaction: jest.fn(async (callback) => callback(tx)),
     };
     const module = await Test.createTestingModule({
@@ -60,16 +62,32 @@ describe('OvertimeService', () => {
     await expect(service.approve({ role: 'ADMIN', id: 1, firstName: 'Asha' }, 3, 4, { approvedMinutes: 60 })).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('rejects an employee overtime request submitted less than 24 hours ahead', async () => {
-    const soon = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    const date = soon.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-    await expect(service.create({ role: 'EMPLOYEE', employee: { id: 9 } }, 3, {
-      overtimeDate: date,
-      startTime: '08:00',
-      endTime: '10:00',
-      overtimeType: 'BEFORE_SHIFT',
-      reason: 'Coverage',
-    }, true)).rejects.toBeInstanceOf(BadRequestException);
+  it.each([
+    ['before the window', '2026-11-15T12:00:00Z', null],
+    ['after completion', '2026-11-15T16:30:00Z', '2026-11-15T15:30:00Z'],
+  ])('accepts the same-day after-shift example %s', async (_label, now, checkout) => {
+    jest.useFakeTimers().setSystemTime(new Date(now));
+    try {
+      prisma.shift.findFirst.mockResolvedValue({ id: 1, startTime: '10:00', endTime: '19:00' });
+      prisma.attendance.findFirst.mockResolvedValue({ id: 8, punchIn: new Date('2026-11-15T04:30:00Z'), punchOut: checkout ? new Date(checkout) : null, breaks: [] });
+      tx.overtimeRequest.create.mockImplementation(async ({ data }) => ({ id: 42, ...data }));
+      jest.spyOn(service, 'findOne').mockResolvedValue({ id: 42, status: 'PENDING' } as any);
+      const result = await service.create({ role: 'EMPLOYEE', employee: { id: 9 } }, 3, {
+        overtimeDate: '2026-11-15', startTime: '19:00', endTime: '21:00', overtimeType: 'AFTER_SHIFT', reason: 'Production support',
+      }, true);
+      expect(result).toEqual({ id: 42, status: 'PENDING' });
+      expect(tx.overtimeRequest.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ attendanceId: 8, status: 'PENDING', actualMinutes: checkout ? 120 : null }) }));
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('requires attendance for a same-day request', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-11-15T12:00:00Z'));
+    try {
+      prisma.attendance.findFirst.mockResolvedValue(null);
+      await expect(service.create({ role: 'EMPLOYEE', employee: { id: 9 } }, 3, {
+        overtimeDate: '2026-11-15', startTime: '19:00', endTime: '21:00', overtimeType: 'AFTER_SHIFT', reason: 'Coverage',
+      }, true)).rejects.toThrow('attendance record');
+    } finally { jest.useRealTimers(); }
   });
 
   it('uses the company active shift when the employee has no assigned shift', async () => {
