@@ -329,6 +329,7 @@ export class LeadPlanProposalService {
       snapshot,
       proposalNo,
       true,
+      { emailAddress: dto.emailAddress, phoneNumber: dto.phoneNumber },
     );
   }
 
@@ -341,6 +342,7 @@ export class LeadPlanProposalService {
     snapshot: PlanProposalSnapshot,
     proposalNo: string,
     isResend = false,
+    contact?: { emailAddress?: string; phoneNumber?: string },
   ) {
     const lead = await this.assertLead(customerId, leadId);
     const record = await this.getProposal(customerId, leadId, proposalId);
@@ -351,6 +353,14 @@ export class LeadPlanProposalService {
     };
     if (!channels.email && !channels.whatsapp) {
       throw new BadRequestException('No unsent delivery channel selected.');
+    }
+    const emailRecipient = (contact?.emailAddress || lead.email || '').trim();
+    const phoneRecipient = (contact?.phoneNumber || lead.phone || '').trim();
+    if (channels.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRecipient)) {
+      throw new BadRequestException('Enter a valid email address for email delivery.');
+    }
+    if (channels.whatsapp && (phoneRecipient.replace(/\D/g, '').length < 10 || phoneRecipient.replace(/\D/g, '').length > 15)) {
+      throw new BadRequestException('Enter a valid phone number for WhatsApp delivery.');
     }
     if (!channels.email && record.emailStatus === 'PENDING') {
       await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, emailStatus: 'PENDING' }, data: { emailStatus: 'SKIPPED' } });
@@ -383,7 +393,7 @@ export class LeadPlanProposalService {
     if (channels.email) {
       const claim = await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, emailStatus: { in: ['PENDING', 'FAILED', 'SKIPPED'] } }, data: { emailStatus: 'PROCESSING' } });
       if (!claim.count) throw new BadRequestException('Email delivery is already in progress or has been sent.');
-      const recipient = (lead.email || '').trim();
+      const recipient = emailRecipient;
       if (!recipient) {
         emailStatus = 'FAILED';
         emailError = 'Lead email address is missing.';
@@ -419,14 +429,14 @@ export class LeadPlanProposalService {
     if (channels.whatsapp) {
       const claim = await this.prisma.leadPlanProposal.updateMany({ where: { id: proposalId, customerId, leadId, whatsappStatus: { in: ['PENDING', 'FAILED', 'SKIPPED'] } }, data: { whatsappStatus: 'PROCESSING' } });
       if (!claim.count) throw new BadRequestException('WhatsApp delivery is already in progress or has been sent.');
-      const phone = (lead.phone || '').trim();
+      const phone = phoneRecipient;
       if (!phone) {
         whatsappStatus = 'FAILED';
         whatsappError = 'Lead phone number is missing.';
       } else {
         try {
           const summary = `${snapshot.planName} – INR ${Number(snapshot.planPrice || 0).toLocaleString('en-IN')}`;
-          const customMessage = `Hi ${leadName}, your ${record.proposalType === 'CUSTOM' ? 'customized' : 'standard'} plan proposal (${summary}) from ${companyName} is ready. Please check your email for the detailed PDF. Reply here if you have questions.`;
+          const customMessage = `Hi ${leadName}, your ${record.proposalType === 'CUSTOM' ? 'customized' : 'standard'} plan proposal (${summary}) from ${companyName} is ready. Please see the attached PDF. Reply here if you have questions.`;
           const wa = record.whatsappMessageId && record.whatsappStatus === 'FAILED'
             ? { success: true, messageId: record.whatsappMessageId, message: undefined, details: undefined }
             : await this.whatsappService.sendLeadStageMessage({

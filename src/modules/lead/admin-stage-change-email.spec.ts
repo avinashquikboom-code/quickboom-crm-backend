@@ -395,6 +395,13 @@ describe('Admin Panel Stage Change Automatic Email Verification (9 Verification 
     expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
   });
 
+  it('does not substitute a predefined email template when the new stage has no mapping', async () => {
+    stagesTable.find((stage) => stage.id === 2).emailTemplateId = null;
+    const result = await service.updateStatus(1, 101, 42, { stageId: 2 });
+    expect(result.emailNotification?.status).toBe('SKIPPED');
+    expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+  });
+
   it('Case 12: Unconfigured SMTP integration logs warning and saves FAILED email_log without failing stage update', async () => {
     mockEmailService.getSmtpStatus.mockResolvedValueOnce({
       isConfigured: false,
