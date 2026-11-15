@@ -218,7 +218,8 @@ export class OvertimeService {
     if (rules.applicableEmployeeTypes.length && !rules.applicableEmployeeTypes.includes(employee.employeeType)) {
       throw new BadRequestException('This employee type is not eligible for overtime.');
     }
-    const requestedShiftId = dto.shiftId ? Number(dto.shiftId) : employee.shiftId;
+    const employeeSubmission = ownOnly || this.isEmployee(user);
+    const requestedShiftId = employeeSubmission ? employee.shiftId : (dto.shiftId ? Number(dto.shiftId) : employee.shiftId);
     let shift = requestedShiftId
       ? await this.prisma.shift.findFirst({ where: { id: requestedShiftId, customerId: numCustomerId, deletedAt: null } })
       : employee.shift;
@@ -231,22 +232,42 @@ export class OvertimeService {
       });
     }
     const shiftId = shift?.id ?? null;
-    if (ownOnly && window.startAt.getTime() < Date.now() + 24 * 60 * 60 * 1000) {
+    const completed = employeeSubmission && window.endAt.getTime() <= Date.now();
+    if (employeeSubmission && !completed && window.startAt.getTime() < Date.now() + 24 * 60 * 60 * 1000) {
       throw new BadRequestException('Overtime must be requested at least 24 hours before the overtime start time.');
     }
     this.assertShiftWindow(dto.overtimeType, shift, window);
-    if (dto.attendanceId) {
+    let completedAttendance: { id: number; minutes: number } | null = null;
+    if (completed) {
+      if (!['BEFORE_SHIFT', 'AFTER_SHIFT'].includes(dto.overtimeType)) throw new BadRequestException('Completed overtime must be before or after the assigned shift.');
+      const dayStart = istDateTime(window.date, '00:00');
+      const attendance = await this.prisma.attendance.findFirst({
+        where: { customerId: numCustomerId, employeeId, date: { gte: dayStart, lt: new Date(dayStart.getTime() + 86400000) } },
+        include: { breaks: true },
+        orderBy: { punchIn: 'asc' },
+      });
+      if (!attendance?.punchIn || !attendance.punchOut) throw new BadRequestException('A completed attendance record with check-in and checkout is required.');
+      if (window.startAt < attendance.punchIn || window.endAt > attendance.punchOut) throw new BadRequestException('Overtime must fall within recorded attendance.');
+      let breakMs = 0;
+      for (const item of attendance.breaks) {
+        if (!item.breakEnd) throw new BadRequestException('An open attendance break must be closed before applying.');
+        breakMs += Math.max(0, Math.min(window.endAt.getTime(), item.breakEnd.getTime()) - Math.max(window.startAt.getTime(), item.breakStart.getTime()));
+      }
+      const minutes = Math.floor((window.endAt.getTime() - window.startAt.getTime() - breakMs) / 60000);
+      if (minutes < 1) throw new BadRequestException('Overtime must include at least one worked minute after breaks.');
+      completedAttendance = { id: attendance.id, minutes };
+    } else if (dto.attendanceId) {
       const attendance = await this.prisma.attendance.findFirst({ where: { id: Number(dto.attendanceId), customerId: numCustomerId, employeeId } });
       if (!attendance) throw new BadRequestException('Attendance record does not belong to this employee.');
     }
     await this.assertLimits(numCustomerId, employeeId, window.date, window.startAt, window.totalMinutes, rules);
-    const autoApprove = rules.autoCalculate && !rules.approvalRequired;
+    const autoApprove = !completed && rules.autoCalculate && !rules.approvalRequired;
     const created = await this.prisma.$transaction(async (tx) => {
       const row = await tx.overtimeRequest.create({
         data: {
           customerId: numCustomerId,
           employeeId,
-          attendanceId: dto.attendanceId ? Number(dto.attendanceId) : null,
+          attendanceId: completedAttendance?.id ?? (dto.attendanceId ? Number(dto.attendanceId) : null),
           shiftId: shiftId || null,
           overtimeDate: window.startAt,
           startTime: dto.startTime.trim(),
@@ -254,6 +275,9 @@ export class OvertimeService {
           startAt: window.startAt,
           endAt: window.endAt,
           totalMinutes: window.totalMinutes,
+          actualStartAt: completedAttendance ? window.startAt : null,
+          actualEndAt: completedAttendance ? window.endAt : null,
+          actualMinutes: completedAttendance?.minutes ?? null,
           overtimeType: dto.overtimeType as any,
           reason: dto.reason.trim(),
           employeeNotes: dto.employeeNotes?.trim() || null,
@@ -284,7 +308,8 @@ export class OvertimeService {
       const minutes = dto.approvedMinutes ?? current.totalMinutes;
       if (minutes <= 0 || minutes > current.totalMinutes) throw new BadRequestException('Approved minutes must be between 1 and the requested duration.');
       const rules = await this.rules(numCustomerId);
-      const pay = await this.compensation(current, minutes, rules);
+      const payableMinutes = current.actualEndAt ? payableOvertimeMinutes(current.actualMinutes ?? 0, minutes) : minutes;
+      const pay = await this.compensation(current, payableMinutes, rules);
       const actor = this.actor(user);
       const updatedCount = await tx.overtimeRequest.updateMany({
         where: { id, customerId: numCustomerId, status: 'PENDING' },
