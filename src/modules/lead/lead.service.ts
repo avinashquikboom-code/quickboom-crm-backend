@@ -2702,7 +2702,7 @@ export class LeadService {
           include: { emailTemplate: true },
         }).catch(() => null);
       }
-      if (!stageConfig && newStageName && this.prisma.leadStage) {
+      if (!stageConfig && !effectiveStageId && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, lead.customerId ?? customerId),
           include: { emailTemplate: true },
@@ -2736,6 +2736,11 @@ export class LeadService {
         };
       }
 
+      if (eventType === 'LEAD_STAGE_CHANGED' && !stageConfig?.emailTemplateId) {
+        const message = `No email template configured for stage: ${stageConfig?.name || newStageName}`;
+        return { sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null, message };
+      }
+
       // 1. Resolve template mapping strictly for the NEW stage
       const normNewStage = canonicalLeadStageToken(newStageName);
       const normLeadStageKey = canonicalLeadStageToken(lead.stage?.key);
@@ -2766,14 +2771,14 @@ export class LeadService {
       ) as string[];
 
       let template: any = null;
-      if (overrideTemplateId && this.emailTemplateService) {
+      if (eventType !== 'LEAD_STAGE_CHANGED' && overrideTemplateId && this.emailTemplateService) {
         template = await this.emailTemplateService.findOne(Number(overrideTemplateId), lead.customerId).catch(() => null);
       } else if (stageConfig?.emailTemplateId) {
         template = stageConfig.emailTemplate || (this.emailTemplateService ? await this.emailTemplateService.findOne(Number(stageConfig.emailTemplateId), lead.customerId).catch(() => null) : null);
       }
 
       // 1a. Search customer/global DB templates by candidate keys
-      if (!template && this.emailTemplateService) {
+      if (!template && eventType !== 'LEAD_STAGE_CHANGED' && this.emailTemplateService) {
         for (const k of candidateKeys) {
           template = await this.emailTemplateService.findByKey(k, lead.customerId).catch(() => null);
           if (template) break;
@@ -2781,7 +2786,7 @@ export class LeadService {
       }
 
       // 1b. Search DB template by matching name or key (safe AND combination to prevent Prisma OR overwrite)
-      if (!template && this.prisma.emailTemplate && newStageName) {
+      if (!template && eventType !== 'LEAD_STAGE_CHANGED' && this.prisma.emailTemplate && newStageName) {
         const dbTpl = await this.prisma.emailTemplate.findFirst({
           where: {
             deletedAt: null,
@@ -2812,7 +2817,7 @@ export class LeadService {
       }
 
       // 1c. Check predefined system fallback templates matching stage keys
-      if (!template) {
+      if (!template && eventType !== 'LEAD_STAGE_CHANGED') {
         template = PREDEFINED_SYSTEM_TEMPLATES.find((t) => candidateKeys.includes(t.key)) || null;
       }
 
@@ -5038,7 +5043,7 @@ Sent by ${senderOrgName} via CRM.
           include: { whatsappTemplate: true },
         }).catch(() => null);
       }
-      if (!stageConfig && newStageName && this.prisma.leadStage) {
+      if (!stageConfig && !effectiveStageId && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, customerId),
           include: { whatsappTemplate: true },
@@ -5073,9 +5078,14 @@ Sent by ${senderOrgName} via CRM.
         };
       }
 
+      if (eventType === 'LEAD_STAGE_CHANGED' && !stageConfig?.whatsappTemplateId) {
+        const message = `No WhatsApp template configured for stage: ${stageConfig?.name || newStageName}`;
+        return { sent: false, status: 'SKIPPED', recipient: maskPhone(phone), messageId: null, error: null, message };
+      }
+
       // Resolve the target Meta template for the NEW stage
       let targetMetaTemplate: any = null;
-      const resolvedTplId = whatsappTemplateId || stageConfig?.whatsappTemplateId;
+      const resolvedTplId = eventType === 'LEAD_STAGE_CHANGED' ? stageConfig?.whatsappTemplateId : (whatsappTemplateId || stageConfig?.whatsappTemplateId);
 
       if (resolvedTplId && this.prisma.metaTemplate) {
         targetMetaTemplate = (stageConfig?.whatsappTemplate && stageConfig.whatsappTemplate.id === Number(resolvedTplId))
@@ -5086,7 +5096,7 @@ Sent by ${senderOrgName} via CRM.
                   where: { id: Number(resolvedTplId), deletedAt: null },
                 }).catch(() => null));
       }
-      if (!targetMetaTemplate && templateName && this.prisma.metaTemplate) {
+      if (!targetMetaTemplate && eventType !== 'LEAD_STAGE_CHANGED' && templateName && this.prisma.metaTemplate) {
         targetMetaTemplate = await this.prisma.metaTemplate.findFirst({
           where: {
             deletedAt: null,
@@ -5098,7 +5108,7 @@ Sent by ${senderOrgName} via CRM.
           orderBy: [{ customerId: 'desc' }, { id: 'asc' }],
         }).catch(() => null);
       }
-      if (!targetMetaTemplate && !(stageConfig && stageConfig.whatsappTemplateId === null) && this.prisma.metaTemplate) {
+      if (!targetMetaTemplate && eventType !== 'LEAD_STAGE_CHANGED' && !(stageConfig && stageConfig.whatsappTemplateId === null) && this.prisma.metaTemplate) {
         const targetKey = (stageConfig?.key || newStageName || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
         const mappedKey = STAGE_KEY_TO_WHATSAPP_KEY[targetKey] || targetKey;
         const candidateKeys = Array.from(new Set([
@@ -5133,7 +5143,7 @@ Sent by ${senderOrgName} via CRM.
       const targetStageKey = normNewStageKey || normNewStage;
       const stageKey = STAGE_KEY_TO_WHATSAPP_KEY[targetStageKey] || STAGE_KEY_TO_WHATSAPP_KEY[normNewStage] || targetStageKey;
 
-      const hasInMemoryFallback = typeof this.whatsappService?.getStageTemplate === 'function' &&
+      const hasInMemoryFallback = eventType !== 'LEAD_STAGE_CHANGED' && typeof this.whatsappService?.getStageTemplate === 'function' &&
         Boolean(this.whatsappService.getStageTemplate(stageKey) || this.whatsappService.getStageTemplate(normNewStage));
 
       const hasConfiguredTemplate = Boolean(

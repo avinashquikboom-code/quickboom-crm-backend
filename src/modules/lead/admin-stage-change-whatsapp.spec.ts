@@ -411,6 +411,13 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
     expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
   });
 
+  it('does not substitute a legacy WhatsApp template when the new stage has no mapping', async () => {
+    stagesTable.find((stage) => stage.id === 2).whatsappTemplateId = null;
+    const result = await service.updateStatus(1, 101, 42, { stageId: 2 });
+    expect(result.whatsappNotification?.status).toBe('SKIPPED');
+    expect(mockWhatsappService.sendLeadStageMessage).not.toHaveBeenCalled();
+  });
+
   it('Case 12: Unconfigured WhatsApp integration logs warning and returns FAILED without crashing stage update', async () => {
     mockWhatsappService.getWhatsAppStatus.mockResolvedValueOnce({
       isConfigured: false,
