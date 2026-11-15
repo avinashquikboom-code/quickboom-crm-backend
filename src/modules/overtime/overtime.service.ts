@@ -232,13 +232,15 @@ export class OvertimeService {
       });
     }
     const shiftId = shift?.id ?? null;
-    const completed = employeeSubmission && window.endAt.getTime() <= Date.now();
-    if (employeeSubmission && !completed && window.startAt.getTime() < Date.now() + 24 * 60 * 60 * 1000) {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const sameDay = employeeSubmission && window.date === today;
+    const completed = sameDay && window.endAt.getTime() <= Date.now();
+    if (employeeSubmission && !sameDay && window.startAt.getTime() < Date.now() + 24 * 60 * 60 * 1000) {
       throw new BadRequestException('Overtime must be requested at least 24 hours before the overtime start time.');
     }
     this.assertShiftWindow(dto.overtimeType, shift, window);
     let completedAttendance: { id: number; minutes: number } | null = null;
-    if (completed) {
+    if (sameDay) {
       if (!['BEFORE_SHIFT', 'AFTER_SHIFT'].includes(dto.overtimeType)) throw new BadRequestException('Completed overtime must be before or after the assigned shift.');
       const dayStart = istDateTime(window.date, '00:00');
       const attendance = await this.prisma.attendance.findFirst({
@@ -246,22 +248,28 @@ export class OvertimeService {
         include: { breaks: true },
         orderBy: { punchIn: 'asc' },
       });
-      if (!attendance?.punchIn || !attendance.punchOut) throw new BadRequestException('A completed attendance record with check-in and checkout is required.');
-      if (window.startAt < attendance.punchIn || window.endAt > attendance.punchOut) throw new BadRequestException('Overtime must fall within recorded attendance.');
-      let breakMs = 0;
-      for (const item of attendance.breaks) {
-        if (!item.breakEnd) throw new BadRequestException('An open attendance break must be closed before applying.');
-        breakMs += Math.max(0, Math.min(window.endAt.getTime(), item.breakEnd.getTime()) - Math.max(window.startAt.getTime(), item.breakStart.getTime()));
+      if (!attendance?.punchIn) throw new BadRequestException('An attendance record with check-in is required.');
+      if (!completed) {
+        if (attendance.punchOut) throw new BadRequestException('Overtime must be completed within recorded attendance.');
+        completedAttendance = { id: attendance.id, minutes: 0 };
+      } else {
+        if (!attendance.punchOut) throw new BadRequestException('A completed attendance record with check-in and checkout is required.');
+        if (window.startAt < attendance.punchIn || window.endAt > attendance.punchOut) throw new BadRequestException('Overtime must fall within recorded attendance.');
+        let breakMs = 0;
+        for (const item of attendance.breaks) {
+          if (!item.breakEnd) throw new BadRequestException('An open attendance break must be closed before applying.');
+          breakMs += Math.max(0, Math.min(window.endAt.getTime(), item.breakEnd.getTime()) - Math.max(window.startAt.getTime(), item.breakStart.getTime()));
+        }
+        const minutes = Math.floor((window.endAt.getTime() - window.startAt.getTime() - breakMs) / 60000);
+        if (minutes < 1) throw new BadRequestException('Overtime must include at least one worked minute after breaks.');
+        completedAttendance = { id: attendance.id, minutes };
       }
-      const minutes = Math.floor((window.endAt.getTime() - window.startAt.getTime() - breakMs) / 60000);
-      if (minutes < 1) throw new BadRequestException('Overtime must include at least one worked minute after breaks.');
-      completedAttendance = { id: attendance.id, minutes };
     } else if (dto.attendanceId) {
       const attendance = await this.prisma.attendance.findFirst({ where: { id: Number(dto.attendanceId), customerId: numCustomerId, employeeId } });
       if (!attendance) throw new BadRequestException('Attendance record does not belong to this employee.');
     }
     await this.assertLimits(numCustomerId, employeeId, window.date, window.startAt, window.totalMinutes, rules);
-    const autoApprove = !completed && rules.autoCalculate && !rules.approvalRequired;
+    const autoApprove = !sameDay && rules.autoCalculate && !rules.approvalRequired;
     const created = await this.prisma.$transaction(async (tx) => {
       const row = await tx.overtimeRequest.create({
         data: {
@@ -275,9 +283,9 @@ export class OvertimeService {
           startAt: window.startAt,
           endAt: window.endAt,
           totalMinutes: window.totalMinutes,
-          actualStartAt: completedAttendance ? window.startAt : null,
-          actualEndAt: completedAttendance ? window.endAt : null,
-          actualMinutes: completedAttendance?.minutes ?? null,
+          actualStartAt: completed ? window.startAt : null,
+          actualEndAt: completed ? window.endAt : null,
+          actualMinutes: completed ? completedAttendance!.minutes : null,
           overtimeType: dto.overtimeType as any,
           reason: dto.reason.trim(),
           employeeNotes: dto.employeeNotes?.trim() || null,
