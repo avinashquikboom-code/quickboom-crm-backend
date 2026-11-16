@@ -53,6 +53,10 @@ describe('salary report late deduction consistency', () => {
     expect(report.deductions.lateDeductions).toBe(226);
     expect(report.attendance.lateArrivals).toBe(1);
     expect(report.deductions.lateMarks).toBe(1);
+    expect(db.attendance.findMany.mock.calls[0][0].where.date).toEqual({
+      gte: new Date('2026-10-31T18:30:00.000Z'),
+      lte: new Date('2026-11-30T18:29:59.999Z'),
+    });
   });
 });
 

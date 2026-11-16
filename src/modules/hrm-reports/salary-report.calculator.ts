@@ -1,4 +1,5 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { getBusinessMonthRange } from '../../common/utils/timezone.util';
 import {
   agreedMonthlySalary,
   countPayableAttendance,
@@ -96,6 +97,7 @@ export async function calculateEmployeeSalaryReport(
   const daysInCalendarMonth = new Date(year, month, 0).getDate();
   const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
   const endDate = new Date(Date.UTC(year, month - 1, daysInCalendarMonth, 23, 59, 59, 999));
+  const attendancePeriod = getBusinessMonthRange(new Date(Date.UTC(year, month - 1, 15)));
   const monthName = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'long' });
   const periodLabel = `${monthName} ${year} (01 ${monthName.slice(0, 3)} - ${daysInCalendarMonth} ${monthName.slice(0, 3)} ${year})`;
 
@@ -236,7 +238,7 @@ export async function calculateEmployeeSalaryReport(
     where: {
       customerId,
       employeeId: numEmpId,
-      date: { gte: startDate, lte: endDate },
+      date: { gte: attendancePeriod.start, lte: attendancePeriod.end },
     },
     orderBy: { date: 'asc' },
   });

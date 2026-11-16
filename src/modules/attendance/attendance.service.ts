@@ -1306,8 +1306,9 @@ result: SUCCESS`);
   private async summarizeEmployeeStoredLateMarks(employeeId: number, customerId: number) {
     const businessDate = getBusinessDate();
     const [year, month] = businessDate.split('-').map((part) => Number(part));
-    const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
-    const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const monthStart = getBusinessDayRange(`${year}-${String(month).padStart(2, '0')}-01`).start;
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const monthEnd = getBusinessDayRange(`${year}-${String(month).padStart(2, '0')}-${lastDay}`).end;
 
     const rows = await this.prisma.attendance.findMany({
       where: {
@@ -1329,7 +1330,7 @@ result: SUCCESS`);
 
     const latestByDay = new Map<string, (typeof rows)[number]>();
     for (const row of rows) {
-      const dayKey = row.date.toISOString().slice(0, 10);
+      const dayKey = getBusinessDate(row.date);
       const prev = latestByDay.get(dayKey);
       if (!prev || row.id > prev.id) latestByDay.set(dayKey, row);
     }

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { getBusinessMonthRange } from '../../common/utils/timezone.util';
 import { agreedMonthlySalary, countPayableAttendance, calculatePerMinuteLateDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
 
 function otHours(rows: Array<{ totalMinutes?: number | null; approvedMinutes?: number | null; actualMinutes?: number | null }> | undefined, kind: 'actual' | 'approved' | 'payable') {
@@ -272,6 +273,7 @@ export class PayrollService {
     const daysInMonth = new Date(year, month, 0).getDate();
     const periodStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
     const periodEnd = new Date(Date.UTC(year, month - 1, daysInMonth, 23, 59, 59, 999));
+    const attendancePeriod = getBusinessMonthRange(new Date(Date.UTC(year, month - 1, 15)));
 
     // Auto-checkout any open attendance records in or before this period
     await this.autoCheckOutOpenAttendances(numCustomerId, periodEnd);
@@ -395,7 +397,7 @@ export class PayrollService {
           where: {
             customerId: numCustomerId,
             employeeId: emp.id,
-            date: { gte: periodStart, lte: periodEnd },
+            date: { gte: attendancePeriod.start, lte: attendancePeriod.end },
           },
         });
         const approvedLeaves = await tx.leaveRequest.findMany({
