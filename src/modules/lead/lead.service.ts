@@ -2661,11 +2661,21 @@ export class LeadService {
         message: 'Notification queued for delivery',
       };
     }
-    // Both channel rows were committed with the transition; a separate worker
-    // discovers them even if this request or process exits immediately.
+    // Report the committed channel row, including disabled and unconfigured
+    // channels. The worker alone sends queued records after commit.
+    const key = buildStageAutomationIdempotencyKey({ customerId, leadId: lead.id, transitionId, channel });
+    const row = await service.findByIdempotency(key);
+    if (row) {
+      return {
+        sent: ['SENT', 'DELIVERED', 'READ'].includes(row.status),
+        status: row.status, deliveryId: row.id, templateName: row.templateName,
+        recipient: null, messageId: 'metaMessageId' in row ? row.metaMessageId : row.providerMessageId,
+        error: row.error, message: row.error || (row.status === 'QUEUED' ? 'Notification queued for delivery' : `Notification ${row.status.toLowerCase()}`),
+      };
+    }
     return {
-      sent: false, status: 'QUEUED', recipient: null, messageId: null, error: null,
-      message: 'Notification queued for delivery',
+      sent: false, status: 'UNKNOWN', recipient: null, messageId: null, error: 'Delivery record not available',
+      message: 'Delivery status unavailable; refresh the delivery history.',
     };
   }
 
@@ -3385,6 +3395,7 @@ export class LeadService {
           messageId: null,
           error: errorMsg,
           message: errorMsg,
+          stageProviderOutcome: 'DEFINITE_REJECTION',
         };
       }
 
@@ -4889,6 +4900,7 @@ Sent by ${senderOrgName} via CRM.
         skipped: false,
         reason: 'MISSING_TEMPLATE_VARIABLES',
         message: varCheck.message || 'Required WhatsApp template variables are missing.',
+        stageProviderOutcome: 'DEFINITE_REJECTION',
       };
     }
 
@@ -5415,6 +5427,7 @@ Sent by ${senderOrgName} via CRM.
           messageId: null,
           error: configWarning,
           message: configWarning || 'WhatsApp integration not configured or disabled',
+          stageProviderOutcome: 'DEFINITE_REJECTION',
         };
       }
 

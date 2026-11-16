@@ -101,6 +101,8 @@ export class PermissionsGuard implements CanActivate {
         uAct === 'ALL' ||
         (rAct === 'VIEW' && uAct === 'READ') ||
         (rAct === 'READ' && uAct === 'VIEW') ||
+        // Preserve accounts that were granted the legacy attendance punch permission.
+        (rMod === 'ATTENDANCE' && ['PUNCH_IN', 'PUNCH_OUT'].includes(rAct) && uAct === 'CREATE') ||
         ((rAct === 'CREATE' || rAct === 'SCHEDULE') &&
           (uAct === 'CREATE' || uAct === 'SCHEDULE' || uAct === 'SCHEDULE_VISIT' || uAct === 'ADD')) ||
         (rAct === 'CHANGE_STAGE' && (uAct === 'CHANGE_STAGE' || uAct === 'EDIT')) ||

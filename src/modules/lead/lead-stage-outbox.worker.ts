@@ -21,7 +21,11 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
     private readonly email: LeadStageEmailDeliveryService, private readonly whatsapp: LeadStageWhatsappDeliveryService) {}
 
   onModuleInit() {
-    if (process.env.NODE_ENV === 'test' || process.env.STAGE_OUTBOX_ENABLED === 'false') return;
+    if (process.env.NODE_ENV === 'test' || process.env.STAGE_OUTBOX_ENABLED === 'false') {
+      this.logger.warn('Stage delivery worker is disabled.');
+      return;
+    }
+    this.logger.log(`Stage delivery worker started; poll interval ${this.interval} ms.`);
     this.timer = setInterval(() => this.kick(), this.interval);
     this.kick();
   }
@@ -62,6 +66,17 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
       const currentTemplate = channel === 'EMAIL' ? stage?.emailTemplateId : stage?.whatsappTemplateId;
       const recordedTemplate = channel === 'EMAIL' ? row.emailTemplateId : row.metaTemplateId;
       const currentMapping = channel === 'EMAIL' ? stage?.emailVariableMapping : stage?.whatsappVariableMapping;
+      const enabled = channel === 'EMAIL' ? stage?.emailEnabled : stage?.whatsappEnabled;
+      if (stage && (enabled === false || stage.isActive === false)) {
+        await service.markResult(row.id, { status: 'SKIPPED', error: 'Channel or stage automation is disabled.' });
+        return;
+      }
+      if (stage && currentTemplate == null && recordedTemplate == null) {
+        const table: any = channel === 'EMAIL' ? this.prisma.leadStageEmailDelivery : this.prisma.leadStageWhatsAppDelivery;
+        await table.updateMany({ where: { id: row.id, status: 'PROCESSING', attemptCount: row.attemptCount + 1 },
+          data: { status: 'NOT_CONFIGURED', error: 'No template configured for this stage.' } });
+        return;
+      }
       if (!stage || stage.isActive === false || (currentTemplate ?? null) !== (recordedTemplate ?? null) ||
           JSON.stringify(currentMapping ?? null) !== JSON.stringify(row.variableMapping ?? null)) {
         await service.markResult(row.id, { status: 'SKIPPED', error: 'Stage is unavailable or inactive, or its template mapping changed after the transition; review configuration.' });

@@ -14,6 +14,19 @@ describe('stage outbox', () => {
     const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({}) }, leadStageWhatsAppDelivery: { create: jest.fn().mockResolvedValue({}) }, leadStageEmailDelivery: { create: jest.fn().mockRejectedValue(new Error('write failed')) } };
     await expect(createStageOutbox(db, params)).rejects.toThrow('write failed');
   });
+  it.each([
+    [true, true, 8, 9, 'QUEUED', 'QUEUED'],
+    [true, false, 8, 9, 'QUEUED', 'SKIPPED'],
+    [false, true, 8, 9, 'SKIPPED', 'QUEUED'],
+    [true, true, null, null, 'NOT_CONFIGURED', 'NOT_CONFIGURED'],
+    [false, false, null, null, 'SKIPPED', 'SKIPPED'],
+  ])('records only configured enabled channels as queued', async (emailEnabled, whatsappEnabled, emailTemplateId, whatsappTemplateId, emailStatus, whatsappStatus) => {
+    const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, emailEnabled, whatsappEnabled, emailTemplateId, whatsappTemplateId }) },
+      leadStageWhatsAppDelivery: { create: jest.fn() }, leadStageEmailDelivery: { create: jest.fn() } };
+    await createStageOutbox(db, params);
+    expect(db.leadStageEmailDelivery.create.mock.calls[0][0].data.status).toBe(emailStatus);
+    expect(db.leadStageWhatsAppDelivery.create.mock.calls[0][0].data.status).toBe(whatsappStatus);
+  });
   it('does not process a row already claimed by another worker', async () => {
     const email: any = { claimQueued: jest.fn().mockResolvedValue(false) };
     const lead: any = { getLeadById: jest.fn() };
