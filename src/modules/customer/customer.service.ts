@@ -1890,6 +1890,14 @@ export class CustomerService {
       ...unconvertedActiveLeads,
     ]);
 
+    // Newest-first ordering for every tab: creation timestamp desc, id desc as stable tiebreak.
+    unifiedDirectory.sort((a, b) => {
+      const timeA = new Date(a.createdAt || a.created_at || 0).getTime() || 0;
+      const timeB = new Date(b.createdAt || b.created_at || 0).getTime() || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return (Number(b.id) || 0) - (Number(a.id) || 0);
+    });
+
     const totalActive = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'ACTIVE').length;
     const totalUpcoming = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'UPCOMING').length;
     const totalInactive = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'INACTIVE').length;
@@ -1897,12 +1905,17 @@ export class CustomerService {
 
     let filteredDirectory = unifiedDirectory;
     if (targetStatus === 'UPCOMING') {
-      filteredDirectory = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'UPCOMING');
-      filteredDirectory.sort((a, b) => {
-        const timeA = a.upcomingCall?.scheduledAt ? new Date(a.upcomingCall.scheduledAt).getTime() : 0;
-        const timeB = b.upcomingCall?.scheduledAt ? new Date(b.upcomingCall.scheduledAt).getTime() : 0;
-        return timeA - timeB;
-      });
+      // Keep newest-first; only break ties by soonest scheduled call.
+      filteredDirectory = unifiedDirectory
+        .filter((item) => this.directoryBucket(item) === 'UPCOMING')
+        .sort((a, b) => {
+          const timeA = new Date(a.createdAt || a.created_at || 0).getTime() || 0;
+          const timeB = new Date(b.createdAt || b.created_at || 0).getTime() || 0;
+          if (timeB !== timeA) return timeB - timeA;
+          const callA = a.upcomingCall?.scheduledAt ? new Date(a.upcomingCall.scheduledAt).getTime() : 0;
+          const callB = b.upcomingCall?.scheduledAt ? new Date(b.upcomingCall.scheduledAt).getTime() : 0;
+          return callA - callB || (Number(b.id) || 0) - (Number(a.id) || 0);
+        });
     } else if (targetStatus === 'ACTIVE') {
       filteredDirectory = unifiedDirectory.filter((item) => this.directoryBucket(item) === 'ACTIVE');
     } else if (targetStatus === 'INACTIVE') {

@@ -173,7 +173,7 @@ export async function calculateEmployeeSalaryReport(
         unpaidLeaveDays: finalizedItem.unpaidLeaveDays ?? 0,
         weeklyOffDays: Math.max(0, daysInCalendarMonth - finalizedItem.workingDays),
         holidayDays: 0,
-        lateArrivals: 0,
+        lateArrivals: finalizedItem.lateMarks ?? 0,
         earlyDepartures: 0,
         totalWorkingHours: Math.round(finalizedItem.presentDays * 8 * 10) / 10,
         totalBreakHours: Math.round(finalizedItem.presentDays * 1 * 10) / 10,
@@ -195,7 +195,7 @@ export async function calculateEmployeeSalaryReport(
       deductions: {
         lopDays: finalizedItem.unpaidLeaveDays || finalizedItem.absentDays,
         lopDeduction: Math.round(finalizedItem.absentDays * (registered / 30)),
-        lateMarks: 0,
+        lateMarks: finalizedItem.lateMarks ?? 0,
         lateDeductions: finalizedItem.lateDeduction ?? 0,
         pf: finalizedItem.pf,
         esi: finalizedItem.esi,

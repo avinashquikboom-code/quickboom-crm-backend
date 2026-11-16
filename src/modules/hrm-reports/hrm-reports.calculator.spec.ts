@@ -11,7 +11,7 @@ describe('salary report late deduction consistency', () => {
       customer: { findUnique: jest.fn().mockResolvedValue({ name: 'Test' }) },
       payrollItem: { findFirst: jest.fn().mockResolvedValue({
         payroll: { id: 2, status: 'GENERATED' }, workingDays: 22, presentDays: 20,
-        halfDays: 1, lateDeduction: 99, netSalary: 28001, totalDeductions: 1999,
+        halfDays: 1, lateMarks: 3, lateDeduction: 99, netSalary: 28001, totalDeductions: 1999,
       }) },
       attendance: { findMany: jest.fn() },
       lateMarkPolicy: { findUnique: jest.fn() },
@@ -20,6 +20,8 @@ describe('salary report late deduction consistency', () => {
     expect(report.isProvisional).toBe(false);
     expect(report.netPayable).toBe(28001);
     expect(report.deductions.lateDeductions).toBe(99);
+    expect(report.attendance.lateArrivals).toBe(3);
+    expect(report.deductions.lateMarks).toBe(3);
     expect(db.attendance.findMany).not.toHaveBeenCalled();
     expect(db.lateMarkPolicy.findUnique).not.toHaveBeenCalled();
   });
