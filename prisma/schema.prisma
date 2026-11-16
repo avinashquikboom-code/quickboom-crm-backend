@@ -67,6 +67,7 @@ model Customer {
   payments                 PaymentHistory[]
   payrolls                 Payroll[]
   payrollPolicy            PayrollPolicy?
+  lateMarkPolicy           LateMarkPolicy?
   pipelines                Pipeline[]
   planEntitlements         PlanEntitlement[]
   products                 Product[]
@@ -2014,6 +2015,9 @@ model PayrollItem {
   wfhDays          Int          @default(0)
   lateMarks        Int          @default(0)
   lateDeduction    Float        @default(0)
+  totalLateMinutes Int          @default(0)
+  lateRatePerMinute Float       @default(1.0)
+  lateMarkBreakdown Json?
   compensationMode String       @default("FIXED")
   monthlyTarget    Float        @default(0)
   achievedAmount   Float        @default(0)
@@ -2069,6 +2073,28 @@ model PayrollPolicy {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model LateMarkPolicy {
+  id                  Int       @id @default(autoincrement())
+  customerId          Int       @unique
+  isEnabled           Boolean   @default(true)
+  deductionRatePerMin Float     @default(1.0)
+  currency            String    @default("INR")
+  gracePeriodMinutes  Int       @default(0)
+  calculationMethod   String    @default("PER_MINUTE")
+  applyTo             String    @default("ALL")
+  applicableRoles     String[]  @default([])
+  applicableEmpIds    Int[]     @default([])
+  maxDailyDeduction   Float?
+  maxMonthlyDeduction Float?
+  effectiveFrom       DateTime  @default(now())
+  requireApproval     Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
 }

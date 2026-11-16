@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { agreedMonthlySalary, countPayableAttendance, lateMarkDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
+import { agreedMonthlySalary, countPayableAttendance, lateMarkDeduction, calculatePerMinuteLateDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
 
 function otHours(rows: Array<{ totalMinutes?: number | null; approvedMinutes?: number | null; actualMinutes?: number | null }> | undefined, kind: 'actual' | 'approved' | 'payable') {
   const minutes = (rows || []).reduce((sum, row) => {
@@ -260,6 +260,9 @@ export class PayrollService {
       targetStatus: pi?.targetStatus || null,
       lateMarks: pi?.lateMarks ?? 0,
       lateDeduction: Number(pi?.lateDeduction || 0),
+      totalLateMinutes: Number(pi?.totalLateMinutes || 0),
+      lateRatePerMinute: Number(pi?.lateRatePerMinute ?? 1.0),
+      lateMarkBreakdown: pi?.lateMarkBreakdown || [],
       otPayout: Number(pi?.overtime || 0),
       otActualHours: otHours(pi?.overtimeRequests, 'actual'),
       otApprovedHours: otHours(pi?.overtimeRequests, 'approved'),
@@ -282,10 +285,16 @@ export class PayrollService {
     await this.autoCheckOutOpenAttendances(numCustomerId, periodEnd);
 
     // 1. Fetch Policy for Customer
-    const [payrollPolicy, salaryPolicy, attendancePolicy] = await Promise.all([
+    const [payrollPolicy, salaryPolicy, attendancePolicy, lateMarkPolicy, publicHolidays] = await Promise.all([
       this.prisma.payrollPolicy.findUnique({ where: { customerId: numCustomerId } }),
       this.prisma.salaryPolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
       this.prisma.attendancePolicy.findFirst({ where: { customerId: numCustomerId, isActive: true } }),
+      this.getLateMarkPolicy(numCustomerId),
+      (this.prisma as any).publicHoliday
+        ? (this.prisma as any).publicHoliday.findMany({
+            where: { customerId: numCustomerId, date: { gte: periodStart, lte: periodEnd } },
+          })
+        : [],
     ]);
 
     const pfPctConfig = payrollPolicy?.pfPercent ?? salaryPolicy?.pfPercent ?? 12.0;
@@ -470,8 +479,30 @@ export class PayrollService {
             })
           : [];
         const penaltyDeduction = Math.round(penaltyRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0) * 100) / 100;
-        const lateMarks = attendances.filter((row) => row.isLate || Number(row.lateMinutes) > 0).length;
-        const lateDeduction = lateMarkDeduction(monthlySalary, lateMarks, Number(salaryPolicy?.lateArrivalDeductionPct) || 0);
+
+        // Calculate per-minute late mark deduction based on assigned shift & late mark policy
+        const lateCalc = calculatePerMinuteLateDeduction({
+          attendances,
+          shift: emp.shift,
+          policy: lateMarkPolicy,
+          leaves: approvedLeaves.map((leave) => ({
+            from: leave.fromDate,
+            to: leave.toDate,
+            unpaid: leave.leaveType?.code === 'UL' || leave.leaveType?.code === 'LOP',
+          })),
+          holidays: publicHolidays,
+          workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek || 5,
+        });
+
+        // Use per-minute calculation if policy enabled; fallback to percentage-based only if lateMarkPolicy is explicitly disabled
+        const lateMarks = lateCalc.lateDaysCount;
+        const lateDeduction = lateMarkPolicy?.isEnabled !== false
+          ? lateCalc.totalLateDeduction
+          : lateMarkDeduction(monthlySalary, attendances.filter((row) => row.isLate || Number(row.lateMinutes) > 0).length, Number(salaryPolicy?.lateArrivalDeductionPct) || 0);
+        const totalLateMinutes = lateCalc.totalLateMinutes;
+        const lateRatePerMinute = lateCalc.lateRatePerMinute;
+        const lateMarkBreakdown = lateCalc.breakdown;
+
         const statutory = pf + esi + profTax + tds + otherDeductions + loanDeduction + lateDeduction + penaltyDeduction;
         const extraOvertime = overtimeRequestIds.length ? Math.max(0, overtime - structureOvertime) : 0;
         const settlement = settleMonthlySalary({
@@ -517,6 +548,9 @@ export class PayrollService {
           wfhDays: wfhCount,
           lateMarks,
           lateDeduction,
+          totalLateMinutes,
+          lateRatePerMinute,
+          lateMarkBreakdown,
           compensationMode: targetPay ? 'TARGET' : 'FIXED',
           monthlyTarget: targetPay?.monthlyTarget || 0,
           achievedAmount: targetPay?.achievedAmount || 0,
@@ -1485,6 +1519,120 @@ export class PayrollService {
         overtimeMultiplier,
         pfPercent,
         esiPercent,
+      },
+    });
+
+    return policy;
+  }
+
+  async getLateMarkPolicy(customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    let policy = (this.prisma as any).lateMarkPolicy
+      ? await (this.prisma as any).lateMarkPolicy.findUnique({
+          where: { customerId: numCustomerId },
+        })
+      : null;
+
+    if (!policy) {
+      if ((this.prisma as any).lateMarkPolicy?.create) {
+        policy = await (this.prisma as any).lateMarkPolicy.create({
+          data: {
+            customerId: numCustomerId,
+            isEnabled: true,
+            deductionRatePerMin: 1.0,
+            currency: 'INR',
+            gracePeriodMinutes: 0,
+            calculationMethod: 'PER_MINUTE',
+            applyTo: 'ALL',
+            maxDailyDeduction: null,
+            maxMonthlyDeduction: null,
+            effectiveFrom: new Date(),
+            requireApproval: false,
+          },
+        });
+      } else {
+        policy = {
+          customerId: numCustomerId,
+          isEnabled: true,
+          deductionRatePerMin: 1.0,
+          currency: 'INR',
+          gracePeriodMinutes: 0,
+          calculationMethod: 'PER_MINUTE',
+          applyTo: 'ALL',
+          maxDailyDeduction: null,
+          maxMonthlyDeduction: null,
+          effectiveFrom: new Date(),
+          requireApproval: false,
+        };
+      }
+    }
+
+    return policy;
+  }
+
+  async saveLateMarkPolicy(customerId: number | string | undefined, data: any) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const isEnabled = data.isEnabled !== undefined ? Boolean(data.isEnabled) : true;
+    const deductionRatePerMin = Number(data.deductionRatePerMin ?? data.ratePerMinute ?? 1.0);
+    const currency = String(data.currency || 'INR');
+    const gracePeriodMinutes = Number(data.gracePeriodMinutes ?? 0);
+    const calculationMethod = String(data.calculationMethod || 'PER_MINUTE');
+    const applyTo = String(data.applyTo || 'ALL');
+    const applicableRoles = Array.isArray(data.applicableRoles) ? data.applicableRoles : [];
+    const applicableEmpIds = Array.isArray(data.applicableEmpIds) ? data.applicableEmpIds.map(Number) : [];
+    const maxDailyDeduction = data.maxDailyDeduction != null && !isNaN(Number(data.maxDailyDeduction)) ? Number(data.maxDailyDeduction) : null;
+    const maxMonthlyDeduction = data.maxMonthlyDeduction != null && !isNaN(Number(data.maxMonthlyDeduction)) ? Number(data.maxMonthlyDeduction) : null;
+    const effectiveFrom = data.effectiveFrom ? new Date(data.effectiveFrom) : new Date();
+    const requireApproval = Boolean(data.requireApproval);
+
+    if (!(this.prisma as any).lateMarkPolicy?.upsert) {
+      return {
+        customerId: numCustomerId,
+        isEnabled,
+        deductionRatePerMin,
+        currency,
+        gracePeriodMinutes,
+        calculationMethod,
+        applyTo,
+        applicableRoles,
+        applicableEmpIds,
+        maxDailyDeduction,
+        maxMonthlyDeduction,
+        effectiveFrom,
+        requireApproval,
+      };
+    }
+
+    const policy = await (this.prisma as any).lateMarkPolicy.upsert({
+      where: { customerId: numCustomerId },
+      create: {
+        customerId: numCustomerId,
+        isEnabled,
+        deductionRatePerMin,
+        currency,
+        gracePeriodMinutes,
+        calculationMethod,
+        applyTo,
+        applicableRoles,
+        applicableEmpIds,
+        maxDailyDeduction,
+        maxMonthlyDeduction,
+        effectiveFrom,
+        requireApproval,
+      },
+      update: {
+        isEnabled,
+        deductionRatePerMin,
+        currency,
+        gracePeriodMinutes,
+        calculationMethod,
+        applyTo,
+        applicableRoles,
+        applicableEmpIds,
+        maxDailyDeduction,
+        maxMonthlyDeduction,
+        effectiveFrom,
+        requireApproval,
       },
     });
 

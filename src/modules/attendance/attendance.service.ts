@@ -528,22 +528,36 @@ isRemoteActive: ${isRemoteActive}`);
       });
     }
 
-    // Determine status based on Policy: Late arrival grace period strictly applies to punch-in
+    // Determine status based on assigned Shift or Policy:
     let attendanceStatus: AttendanceStatus = AttendanceStatus.PRESENT;
     let isLatePunchIn = false;
     let lateMinutesCount = 0;
     try {
-      const [startHour, startMin] = (policy.officeStartTime || '09:30').split(':').map(Number);
-      const scheduledStartTime = new Date(now);
-      scheduledStartTime.setHours(startHour || 9, startMin || 30, 0, 0);
+      const assignedShift = employee.shift;
+      const shiftStartTimeStr = assignedShift?.startTime || policy.officeStartTime || '09:30';
+      let scheduledStartTime = this.parseTimeStrToDate(shiftStartTimeStr, now);
+      if (!scheduledStartTime) {
+        const [startHour, startMin] = (policy.officeStartTime || '09:30').split(':').map(Number);
+        scheduledStartTime = new Date(now);
+        scheduledStartTime.setHours(startHour || 9, startMin || 30, 0, 0);
+      }
 
-      const graceMinutes = policy.gracePeriodMinutes || 15;
+      // Check if today is a scheduled workday for employee's shift
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const todayDayName = dayNames[now.getDay()];
+      const isScheduledShiftDay = assignedShift?.workingDays && assignedShift.workingDays.length > 0
+        ? assignedShift.workingDays.some((d: string) => d.toLowerCase() === todayDayName.toLowerCase())
+        : true;
+
+      const graceMinutes = assignedShift?.gracePeriodMinutes != null
+        ? assignedShift.gracePeriodMinutes
+        : (policy.gracePeriodMinutes ?? 0);
       const lateThresholdMinutes = policy.lateArrivalThresholdMins || 30;
 
       const graceLimit = new Date(scheduledStartTime.getTime() + graceMinutes * 60 * 1000);
       const lateLimit = new Date(scheduledStartTime.getTime() + lateThresholdMinutes * 60 * 1000);
 
-      if (now > graceLimit) {
+      if (isScheduledShiftDay && now > graceLimit) {
         isLatePunchIn = true;
         lateMinutesCount = Math.max(0, Math.round((now.getTime() - scheduledStartTime.getTime()) / (1000 * 60)));
         if (now > lateLimit && policy.lateRuleAction === 'HALF_DAY') {
