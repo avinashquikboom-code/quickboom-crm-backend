@@ -1,4 +1,13 @@
-import { agreedMonthlySalary, countPayableAttendance, eligibleTargetSalary, lateMarkDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
+import {
+  agreedMonthlySalary,
+  countPayableAttendance,
+  eligibleTargetSalary,
+  lateMarkDeduction,
+  calculatePerMinuteLateDeduction,
+  evaluateLatePunch,
+  lopDeduction,
+  settleMonthlySalary,
+} from './salary-calculation';
 
 describe('fixed monthly salary', () => {
   const salary = { basicSalary: 15000, grossSalary: 15000 };
@@ -84,6 +93,240 @@ describe('fixed monthly salary', () => {
     });
     expect(february.nonServiceDays).toBe(0);
     expect(february.lopDays).toBe(0);
+  });
+
+  describe('calculatePerMinuteLateDeduction', () => {
+    const shift = {
+      startTime: '10:00 AM',
+      endTime: '07:00 PM',
+      workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+    };
+
+    it('calculates default ₹1/minute deduction for late check-in on scheduled workday', () => {
+      // 2026-08-03 is a Monday. 10:05 AM check-in (in UTC+05:30: 04:35 UTC)
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 0 },
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T04:35:00.000Z', // 10:05 IST
+            isLate: true,
+          },
+        ],
+      });
+
+      expect(res.isEnabled).toBe(true);
+      expect(res.lateDaysCount).toBe(1);
+      expect(res.totalLateMinutes).toBe(5);
+      expect(res.totalLateDeduction).toBe(5);
+      expect(res.lateRatePerMinute).toBe(1.0);
+    });
+
+    it('respects grace period and does not deduct if check-in within grace limit', () => {
+      // 10:08 AM check-in with 10 min grace period -> 0 late minutes, ₹0
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 10 },
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T04:38:00.000Z', // 10:08 IST
+          },
+        ],
+      });
+
+      expect(res.lateDaysCount).toBe(0);
+      expect(res.totalLateMinutes).toBe(0);
+      expect(res.totalLateDeduction).toBe(0);
+    });
+
+    it('deducts minutes exceeding grace period when late beyond grace limit', () => {
+      // 10:25 AM check-in with 10 min grace period -> 25 - 10 = 15 late minutes -> ₹15 deduction
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 10 },
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T04:55:00.000Z', // 10:25 IST
+          },
+        ],
+      });
+
+      expect(res.lateDaysCount).toBe(1);
+      expect(res.totalLateMinutes).toBe(15);
+      expect(res.totalLateDeduction).toBe(15);
+    });
+
+    it('excludes weekly offs, holidays, and approved leaves', () => {
+      // 2026-08-09 is Sunday (weekly off)
+      const resWeeklyOff = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 1.0 },
+        attendances: [
+          {
+            date: '2026-08-09T00:00:00.000Z',
+            punchIn: '2026-08-09T04:45:00.000Z', // 10:15 IST on Sunday
+          },
+        ],
+      });
+      expect(resWeeklyOff.totalLateDeduction).toBe(0);
+
+      // Holiday on Monday 2026-08-03
+      const resHoliday = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 1.0 },
+        holidays: [{ date: '2026-08-03' }],
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T04:45:00.000Z',
+          },
+        ],
+      });
+      expect(resHoliday.totalLateDeduction).toBe(0);
+
+      // Approved leave on Monday 2026-08-03
+      const resLeave = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 1.0 },
+        leaves: [{ from: '2026-08-03T00:00:00.000Z', to: '2026-08-03T23:59:59.000Z' }],
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T04:45:00.000Z',
+          },
+        ],
+      });
+      expect(resLeave.totalLateDeduction).toBe(0);
+    });
+
+    it('enforces maxDailyDeduction and maxMonthlyDeduction caps', () => {
+      // 120 minutes late on Monday with maxDailyDeduction = ₹50
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: {
+          isEnabled: true,
+          deductionRatePerMin: 1.0,
+          gracePeriodMinutes: 0,
+          maxDailyDeduction: 50,
+          maxMonthlyDeduction: 100,
+        },
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T06:30:00.000Z', // 12:00 IST (120 mins late)
+          },
+          {
+            date: '2026-08-04T00:00:00.000Z',
+            punchIn: '2026-08-04T06:30:00.000Z', // 12:00 IST (120 mins late)
+          },
+          {
+            date: '2026-08-05T00:00:00.000Z',
+            punchIn: '2026-08-05T06:30:00.000Z', // 12:00 IST (120 mins late)
+          },
+        ],
+      });
+
+      // Day 1 cap: ₹50, Day 2 cap: ₹50, Day 3 cap: ₹50 -> sum 150 -> monthly cap 100
+      expect(res.lateDaysCount).toBe(3);
+      expect(res.totalLateDeduction).toBe(100);
+      expect(res.breakdown[0].deduction).toBe(50);
+    });
+
+    it('returns 0 deduction when late mark policy is disabled', () => {
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: false, deductionRatePerMin: 2.0 },
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T05:00:00.000Z',
+          },
+        ],
+      });
+      expect(res.isEnabled).toBe(false);
+      expect(res.totalLateDeduction).toBe(0);
+    });
+  });
+});
+
+describe('evaluateLatePunch', () => {
+  const policy = { isEnabled: true, deductionRatePerMin: 2, gracePeriodMinutes: 0, currency: 'INR' };
+  const shift = { startTime: '10:00 AM', endTime: '07:00 PM', workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] };
+
+  it('does not deduct an on-time punch or a punch inside grace', () => {
+    const onTime = evaluateLatePunch({
+      punchIn: '2026-08-03T04:30:00.000Z',
+      shift,
+      policy,
+    });
+    expect(onTime.lateMinutes).toBe(0);
+    expect(onTime.deduction).toBe(0);
+    expect(onTime.isLate).toBe(false);
+
+    const withinGrace = evaluateLatePunch({
+      punchIn: '2026-08-03T04:35:00.000Z',
+      shift,
+      policy: { ...policy, gracePeriodMinutes: 10 },
+    });
+    expect(withinGrace.lateMinutes).toBe(0);
+    expect(withinGrace.deduction).toBe(0);
+  });
+
+  it('uses the configured rate for 5, 15 and 30 late minutes', () => {
+    for (const [iso, minutes] of [
+      ['2026-08-03T04:35:00.000Z', 5],
+      ['2026-08-03T04:45:00.000Z', 15],
+      ['2026-08-03T05:00:00.000Z', 30],
+    ] as const) {
+      const result = evaluateLatePunch({ punchIn: iso, shift, policy });
+      expect(result.lateMinutes).toBe(minutes);
+      expect(result.deduction).toBe(minutes * 2);
+      expect(result.ratePerMinute).toBe(2);
+    }
+  });
+
+  it('ignores weekly offs, holidays, approved leave, and a disabled policy', () => {
+    const sunday = evaluateLatePunch({ punchIn: '2026-08-09T04:45:00.000Z', shift, policy });
+    expect(sunday.reason).toBe('weekly_off');
+    expect(sunday.deduction).toBe(0);
+    const holiday = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift, policy, isHoliday: true });
+    expect(holiday.deduction).toBe(0);
+    const leave = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift, policy, isApprovedLeave: true });
+    expect(leave.deduction).toBe(0);
+    const disabled = evaluateLatePunch({
+      punchIn: '2026-08-03T04:45:00.000Z',
+      shift,
+      policy: { ...policy, isEnabled: false },
+    });
+    expect(disabled.applicable).toBe(false);
+    expect(disabled.deduction).toBe(0);
+  });
+
+  it('uses the employee assigned shift and handles an overnight shift', () => {
+    const otherShift = evaluateLatePunch({
+      punchIn: '2026-08-03T03:50:00.000Z',
+      shift: { ...shift, startTime: '09:00', endTime: '18:00' },
+      policy: { ...policy, deductionRatePerMin: 1 },
+    });
+    expect(otherShift.lateMinutes).toBe(20);
+    expect(otherShift.deduction).toBe(20);
+
+    const overnight = evaluateLatePunch({
+      punchIn: '2026-08-03T16:45:00.000Z',
+      shift: { startTime: '22:00', endTime: '06:00', isNightShift: true, workingDays: shift.workingDays },
+      policy: { ...policy, deductionRatePerMin: 1 },
+    });
+    expect(overnight.lateMinutes).toBe(15);
+    expect(overnight.deduction).toBe(15);
+  });
+
+  it('does not deduct when no shift is assigned', () => {
+    const result = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift: null, policy });
+    expect(result.applicable).toBe(false);
+    expect(result.deduction).toBe(0);
   });
 });
 

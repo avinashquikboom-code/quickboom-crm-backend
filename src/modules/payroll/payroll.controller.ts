@@ -365,6 +365,31 @@ export class PayrollController {
     return this.payrollService.savePayrollPolicy(customerId, body);
   }
 
+  @Get('late-mark-policy')
+  @ApiOperation({ summary: 'Get Late Mark per-minute deduction policy' })
+  async getLateMarkPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer?: any,
+    @Query('customerId') customerIdQuery?: string
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (customerIdQuery || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.getLateMarkPolicy(customerId);
+  }
+
+  @Post('late-mark-policy')
+  @RequirePermissions({ module: 'SALARY', action: 'EDIT' })
+  @ApiOperation({ summary: 'Save or update Late Mark per-minute deduction policy' })
+  async saveLateMarkPolicy(
+    @CurrentUser() user: any,
+    @CurrentCustomer() currentCustomer: any,
+    @Body() body: any
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const customerId = isSuperAdmin ? (body?.customerId || currentCustomer) : (user?.customerId || currentCustomer);
+    return this.payrollService.saveLateMarkPolicy(customerId, body);
+  }
+
   @Get('targets/me')
   @ApiOperation({ summary: 'Current employee monthly target and eligible salary' })
   async myTarget(

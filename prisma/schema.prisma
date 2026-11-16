@@ -67,6 +67,8 @@ model Customer {
   payments                 PaymentHistory[]
   payrolls                 Payroll[]
   payrollPolicy            PayrollPolicy?
+  lateMarkPolicy           LateMarkPolicy?
+  lateMarkReportSetting    LateMarkReportSetting?
   pipelines                Pipeline[]
   planEntitlements         PlanEntitlement[]
   products                 Product[]
@@ -1347,6 +1349,9 @@ model Attendance {
   breakDuration      Float             @default(0.0)
   lateMinutes        Int?              @default(0)
   isLate             Boolean?          @default(false)
+  lateDeduction      Float             @default(0)
+  lateRatePerMinute  Float             @default(0)
+  lateGraceMinutes   Int               @default(0)
   workMode           String?           @default("OFFICE")
   locationStatus     String?           @default("INSIDE_RADIUS")
   status             AttendanceStatus  @default(PRESENT)
@@ -2014,6 +2019,9 @@ model PayrollItem {
   wfhDays          Int          @default(0)
   lateMarks        Int          @default(0)
   lateDeduction    Float        @default(0)
+  totalLateMinutes Int          @default(0)
+  lateRatePerMinute Float       @default(1.0)
+  lateMarkBreakdown Json?
   compensationMode String       @default("FIXED")
   monthlyTarget    Float        @default(0)
   achievedAmount   Float        @default(0)
@@ -2069,6 +2077,69 @@ model PayrollPolicy {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model LateMarkReportSetting {
+  id                      Int      @id @default(autoincrement())
+  customerId              Int      @unique
+  timezone                String   @default("Asia/Kolkata")
+  weekStartsOn            Int      @default(1)
+  dailyEnabled            Boolean  @default(false)
+  weeklyEnabled           Boolean  @default(false)
+  monthlyEnabled          Boolean  @default(false)
+  dailySendHour           Int      @default(23)
+  dailySendMinute         Int      @default(0)
+  weeklySendHour          Int      @default(9)
+  weeklySendMinute        Int      @default(0)
+  monthlySendHour         Int      @default(9)
+  monthlySendMinute       Int      @default(0)
+  recipients              String   @default("")
+  cc                      String   @default("")
+  includeEmployeeDetails  Boolean  @default(true)
+  includeCsv              Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  customer                Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model LateMarkReportDelivery {
+  id            Int       @id @default(autoincrement())
+  customerId    Int
+  kind          String
+  periodKey     String
+  periodLabel   String
+  recipients    String    @default("")
+  status        String    @default("SCHEDULED")
+  failureReason String?
+  sentAt        DateTime?
+  attachmentName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([customerId, kind, periodKey])
+  @@index([customerId, status])
+}
+
+model LateMarkPolicy {
+  id                  Int       @id @default(autoincrement())
+  customerId          Int       @unique
+  isEnabled           Boolean   @default(true)
+  deductionRatePerMin Float     @default(1.0)
+  currency            String    @default("INR")
+  gracePeriodMinutes  Int       @default(0)
+  calculationMethod   String    @default("PER_MINUTE")
+  applyTo             String    @default("ALL")
+  applicableRoles     String[]  @default([])
+  applicableEmpIds    Int[]     @default([])
+  maxDailyDeduction   Float?
+  maxMonthlyDeduction Float?
+  effectiveFrom       DateTime  @default(now())
+  requireApproval     Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  customer            Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
 }

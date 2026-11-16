@@ -1,11 +1,14 @@
 import {
   Injectable,
+  Optional,
   BadRequestException,
   NotFoundException,
   ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from '../notification/notification.service';
+import { evaluateLatePunch } from '../payroll/salary-calculation';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { AttendanceStatus } from '@prisma/client';
 import {
@@ -38,7 +41,10 @@ export function calculateDistanceMeters(
 
 @Injectable()
 export class AttendanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationService?: NotificationService,
+  ) {}
 
   private async getAuthenticatedEmployee(user: any, customerId?: number | string) {
     if (!user) {
@@ -528,35 +534,18 @@ isRemoteActive: ${isRemoteActive}`);
       });
     }
 
-    // Determine status based on Policy: Late arrival grace period strictly applies to punch-in
+    const lateEvaluation = await this.evaluatePunchLateness(employee, policy, now);
     let attendanceStatus: AttendanceStatus = AttendanceStatus.PRESENT;
-    let isLatePunchIn = false;
-    let lateMinutesCount = 0;
-    try {
-      const [startHour, startMin] = (policy.officeStartTime || '09:30').split(':').map(Number);
-      const scheduledStartTime = new Date(now);
-      scheduledStartTime.setHours(startHour || 9, startMin || 30, 0, 0);
-
-      const graceMinutes = policy.gracePeriodMinutes || 15;
+    const isLatePunchIn = lateEvaluation.isLate;
+    const lateMinutesCount = lateEvaluation.lateMinutes;
+    if (isLatePunchIn) {
       const lateThresholdMinutes = policy.lateArrivalThresholdMins || 30;
-
-      const graceLimit = new Date(scheduledStartTime.getTime() + graceMinutes * 60 * 1000);
-      const lateLimit = new Date(scheduledStartTime.getTime() + lateThresholdMinutes * 60 * 1000);
-
-      if (now > graceLimit) {
-        isLatePunchIn = true;
-        lateMinutesCount = Math.max(0, Math.round((now.getTime() - scheduledStartTime.getTime()) / (1000 * 60)));
-        if (now > lateLimit && policy.lateRuleAction === 'HALF_DAY') {
-          attendanceStatus = AttendanceStatus.HALF_DAY;
-        } else {
-          attendanceStatus = AttendanceStatus.LATE;
-        }
-      }
-    } catch {
-      attendanceStatus = AttendanceStatus.PRESENT;
+      attendanceStatus = lateEvaluation.rawLateMinutes > lateThresholdMinutes && policy.lateRuleAction === 'HALF_DAY'
+        ? AttendanceStatus.HALF_DAY
+        : AttendanceStatus.LATE;
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       if ((tx as any).$queryRaw) {
         try {
           await (tx as any).$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;
@@ -590,6 +579,9 @@ isRemoteActive: ${isRemoteActive}`);
             status: attendanceStatus,
             isLate: isLatePunchIn,
             lateMinutes: lateMinutesCount,
+            lateDeduction: lateEvaluation.deduction,
+            lateRatePerMinute: lateEvaluation.ratePerMinute,
+            lateGraceMinutes: lateEvaluation.gracePeriodMinutes,
             workMode,
             locationStatus,
             officeId: office.id,
@@ -611,6 +603,9 @@ isRemoteActive: ${isRemoteActive}`);
             status: attendanceStatus,
             isLate: isLatePunchIn,
             lateMinutes: lateMinutesCount,
+            lateDeduction: lateEvaluation.deduction,
+            lateRatePerMinute: lateEvaluation.ratePerMinute,
+            lateGraceMinutes: lateEvaluation.gracePeriodMinutes,
             workMode,
             locationStatus,
             officeId: office.id,
@@ -636,7 +631,9 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
 
       return {
         success: true,
-        message: `Punch In successful${isRemoteActive ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
+        message: isLatePunchIn
+          ? `Late Punch-In Detected. You punched in ${lateMinutesCount} minutes late today. Your applicable late-mark deduction is ${this.formatLateMoney(lateEvaluation.deduction, lateEvaluation.currency)}.`
+          : `Punch In successful${isRemoteActive ? ' (Remote Work Mode)' : ` at ${office.name}`}. Status: ${attendanceStatus}.`,
         data: {
           attendanceId: attendance.id,
           employeeId: employee.employeeCode || `EMP-${employee.id}`,
@@ -658,6 +655,11 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           allowedRadiusMeters: allowedRadius,
           locationStatus,
           biometricVerified: Boolean(dto.biometricVerified),
+          isLate: isLatePunchIn,
+          lateMinutes: lateMinutesCount,
+          gracePeriodMinutes: lateEvaluation.gracePeriodMinutes,
+          lateRatePerMinute: lateEvaluation.ratePerMinute,
+          lateDeduction: lateEvaluation.deduction,
         },
         status: attendanceStatus,
         office: {
@@ -669,6 +671,8 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
         },
       };
     });
+    await this.notifyLatePunchIn(employee, result?.data?.attendanceId, lateEvaluation);
+    return result;
   }
 
   async checkOut(user: any, customerId: number | string | undefined, dto: PunchAttendanceDto) {
@@ -1241,6 +1245,13 @@ result: SUCCESS`);
     const now = new Date();
     const isRemoteActive = isRemoteWorkActiveNow(approvedRemote, now);
 
+    const lateMark = await this.resolveTodayLateMark(
+      employee,
+      todayAtt,
+      policy,
+      assignedShift,
+    );
+
     return {
       employee: {
         id: employee.id,
@@ -1307,8 +1318,75 @@ result: SUCCESS`);
         breakDuration: breakDurationHoursVal,
         totalBreakDuration: formatDurationHoursMinutes(totalBreakMinutes),
         rawStatus: todayAtt?.status || 'NOT_MARKED',
+        isEligibleLateMark: lateMark.isEligibleLateMark,
+        isLate: lateMark.isLate,
+        lateMinutes: lateMark.lateMinutes,
+        lateDeduction: lateMark.lateDeduction,
+        lateRatePerMinute: lateMark.lateRatePerMinute,
+        lateGraceMinutes: lateMark.lateGraceMinutes,
       },
       todayAttendance: todayAtt,
+    };
+  }
+
+  private async resolveTodayLateMark(
+    employee: any,
+    todayAtt: any | null,
+    attendancePolicy: any,
+    assignedShift: any,
+  ): Promise<{
+    isEligibleLateMark: boolean;
+    isLate: boolean;
+    lateMinutes: number;
+    lateDeduction: number;
+    lateRatePerMinute: number;
+    lateGraceMinutes: number;
+  }> {
+    const empty = {
+      isEligibleLateMark: false,
+      isLate: false,
+      lateMinutes: 0,
+      lateDeduction: 0,
+      lateRatePerMinute: 0,
+      lateGraceMinutes: 0,
+    };
+    if (!todayAtt?.punchIn) return empty;
+
+    const shiftForEval =
+      assignedShift?.startTime != null
+        ? assignedShift
+        : employee?.shift?.startTime != null
+          ? employee.shift
+          : null;
+    if (!shiftForEval?.startTime) return empty;
+
+    const punchIn = new Date(todayAtt.punchIn);
+    const employeeWithShift = { ...employee, shift: shiftForEval };
+    const evaluation = await this.evaluatePunchLateness(employeeWithShift, attendancePolicy, punchIn);
+
+    if (!evaluation.applicable || !evaluation.isLate || evaluation.lateMinutes <= 0) {
+      return empty;
+    }
+
+    const storedDeduction = Number((todayAtt as any)?.lateDeduction) || 0;
+    const storedRate = Number((todayAtt as any)?.lateRatePerMinute) || 0;
+    const storedGrace = Number((todayAtt as any)?.lateGraceMinutes) || 0;
+
+    const lateMinutes = evaluation.lateMinutes;
+    const lateRatePerMinute = storedRate > 0 ? storedRate : evaluation.ratePerMinute;
+    const lateGraceMinutes = storedGrace > 0 ? storedGrace : evaluation.gracePeriodMinutes;
+    let lateDeduction = storedDeduction > 0 ? storedDeduction : evaluation.deduction;
+    if (lateDeduction <= 0 && lateMinutes > 0 && lateRatePerMinute > 0) {
+      lateDeduction = Math.round(lateMinutes * lateRatePerMinute * 100) / 100;
+    }
+
+    return {
+      isEligibleLateMark: true,
+      isLate: true,
+      lateMinutes,
+      lateDeduction,
+      lateRatePerMinute,
+      lateGraceMinutes,
     };
   }
 
@@ -1338,6 +1416,128 @@ result: SUCCESS`);
     }
 
     throw new ForbiddenException('A valid organization or customer context is required.');
+  }
+
+  private formatLateMoney(amount: number, currency = 'INR') {
+    const rounded = Math.round((Number(amount) || 0) * 100) / 100;
+    const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+    return currency === 'INR' ? `₹${text}` : `${currency} ${text}`;
+  }
+
+  private async evaluatePunchLateness(employee: any, attendancePolicy: any, punchIn: Date) {
+    const customerId = employee.customerId;
+    const { start, end } = getBusinessDayRange(punchIn);
+    let isHoliday = false;
+    let isApprovedLeave = false;
+    let latePolicy: any = null;
+    try {
+      if ((this.prisma as any).publicHoliday?.findFirst) {
+        const holiday = await (this.prisma as any).publicHoliday.findFirst({
+          where: { customerId, isActive: true, date: { gte: start, lte: end } },
+          select: { id: true },
+        });
+        isHoliday = Boolean(holiday);
+      }
+      if (this.prisma.leaveRequest?.findFirst) {
+        const leave = await this.prisma.leaveRequest.findFirst({
+          where: {
+            employeeId: employee.id,
+            status: 'APPROVED',
+            fromDate: { lte: end },
+            toDate: { gte: start },
+          },
+          select: { id: true },
+        });
+        isApprovedLeave = Boolean(leave);
+      }
+      if ((this.prisma as any).lateMarkPolicy?.findUnique) {
+        latePolicy = await (this.prisma as any).lateMarkPolicy.findUnique({ where: { customerId } });
+      }
+    } catch (error: any) {
+      console.error(`[LATE_PUNCH_POLICY] employee=${employee.id}: ${error?.message}`);
+    }
+    return evaluateLatePunch({
+      punchIn,
+      shift: employee.shift?.startTime ? employee.shift : null,
+      policy: latePolicy || {
+        isEnabled: true,
+        deductionRatePerMin: 1,
+        gracePeriodMinutes: 0,
+        currency: 'INR',
+      },
+      isHoliday,
+      isApprovedLeave,
+      workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek || 5,
+      employeeId: employee.id,
+      employeeRole: employee.designation?.name || employee.designation?.code || null,
+    });
+  }
+
+  private async notifyLatePunchIn(employee: any, attendanceId: number | undefined, evaluation: { applicable: boolean; isLate: boolean; lateMinutes: number; deduction: number; currency?: string }) {
+    if (!this.notificationService || !attendanceId || !evaluation.applicable || !evaluation.isLate || evaluation.lateMinutes <= 0) return;
+    const money = this.formatLateMoney(evaluation.deduction, evaluation.currency);
+    const title = 'Late Punch-In Detected';
+    const ownBody = `You punched in ${evaluation.lateMinutes} minutes late today. Your applicable late-mark deduction is ${money}.`;
+    const name = [employee.firstName, employee.lastName].filter(Boolean).join(' ') || 'An employee';
+    const otherBody = `${name} punched in ${evaluation.lateMinutes} minutes late today. Applicable late-mark deduction is ${money}.`;
+    const recipients = new Set<number>();
+    if (employee.userId) recipients.add(Number(employee.userId));
+    try {
+      if (employee.managerId && this.prisma.employee?.findUnique) {
+        const manager = await this.prisma.employee.findUnique({
+          where: { id: employee.managerId },
+          select: { userId: true },
+        });
+        if (manager?.userId) recipients.add(manager.userId);
+      }
+      if ((this.prisma as any).user?.findMany) {
+        const admins = await (this.prisma as any).user.findMany({
+          where: {
+            customerId: employee.customerId,
+            deletedAt: null,
+            role: { in: ['HR', 'HR_ADMIN', 'ADMIN'] },
+          },
+          select: { id: true },
+          take: 10,
+        });
+        for (const admin of admins || []) {
+          if (admin?.id) recipients.add(Number(admin.id));
+        }
+      }
+    } catch (error: any) {
+      console.error(`[LATE_PUNCH_RECIPIENTS] employee=${employee.id}: ${error?.message}`);
+    }
+    for (const userId of recipients) {
+      try {
+        if (await this.latePunchAlreadyNotified(userId, attendanceId)) continue;
+        await this.notificationService.sendPushNotification({
+          userId,
+          customerId: employee.customerId,
+          title,
+          body: userId === Number(employee.userId) ? ownBody : otherBody,
+          type: 'LATE_PUNCH_IN',
+          data: {
+            type: 'LATE_PUNCH_IN',
+            attendanceId: String(attendanceId),
+            lateMinutes: String(evaluation.lateMinutes),
+            deduction: String(evaluation.deduction),
+          },
+        });
+      } catch (error: any) {
+        console.error(`[LATE_PUNCH_NOTIFY] attendance=${attendanceId} user=${userId}: ${error?.message}`);
+      }
+    }
+  }
+
+  private async latePunchAlreadyNotified(userId: number, attendanceId: number) {
+    if (!this.prisma.notification?.findMany) return false;
+    const rows = await this.prisma.notification.findMany({
+      where: { userId, type: 'LATE_PUNCH_IN' },
+      orderBy: { id: 'desc' },
+      take: 30,
+      select: { data: true },
+    });
+    return rows.some((row) => String((row.data as any)?.attendanceId) === String(attendanceId));
   }
 
   private parseTimeStrToDate(timeStr: string | null | undefined, baseDate: Date): Date | null {
@@ -1477,22 +1677,8 @@ result: SUCCESS`);
         }
       }
 
-      let isLate = Boolean(att?.isLate);
-      let lateMinutes = att?.lateMinutes || 0;
-
-      if (punchInDate && emp.shift?.startTime) {
-        const shiftStart = this.parseTimeStrToDate(emp.shift.startTime, punchInDate);
-        if (shiftStart) {
-          const grace = (emp.shift.gracePeriodMinutes || 15) * 60 * 1000;
-          if (punchInDate.getTime() > shiftStart.getTime() + grace) {
-            isLate = true;
-            lateMinutes = Math.max(
-              1,
-              Math.round((punchInDate.getTime() - shiftStart.getTime()) / (1000 * 60)),
-            );
-          }
-        }
-      }
+      const isLate = Boolean(att?.isLate);
+      const lateMinutes = att?.lateMinutes || 0;
 
       const empLat = latestLoc?.latitude ?? att?.punchOutLatitude ?? att?.latitude ?? null;
       const empLng = latestLoc?.longitude ?? att?.punchOutLongitude ?? att?.longitude ?? null;

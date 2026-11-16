@@ -1266,9 +1266,11 @@ export class LeadService {
         emailEnabled: stage.emailEnabled !== undefined ? Boolean(stage.emailEnabled) : true,
         emailTemplateId: stage.emailTemplateId ?? null,
         emailTemplate: stage.emailTemplate ?? null,
+        emailVariableMapping: stage.emailVariableMapping ?? null,
         whatsappEnabled: stage.whatsappEnabled !== undefined ? Boolean(stage.whatsappEnabled) : true,
         whatsappTemplateId: stage.whatsappTemplateId ?? null,
         whatsappTemplate: stage.whatsappTemplate ?? null,
+        whatsappVariableMapping: stage.whatsappVariableMapping ?? null,
       }))
       .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }
@@ -1300,22 +1302,51 @@ export class LeadService {
       emailEnabled: stage.emailEnabled !== undefined ? Boolean(stage.emailEnabled) : true,
       emailTemplateId: stage.emailTemplateId ?? null,
       emailTemplate: stage.emailTemplate ?? null,
+      emailVariableMapping: stage.emailVariableMapping ?? null,
       whatsappEnabled: stage.whatsappEnabled !== undefined ? Boolean(stage.whatsappEnabled) : true,
       whatsappTemplateId: stage.whatsappTemplateId ?? null,
       whatsappTemplate: stage.whatsappTemplate ?? null,
+      whatsappVariableMapping: stage.whatsappVariableMapping ?? null,
       createdAt: stage.createdAt,
     };
   }
 
+  private async validateStageTemplates(customerId: number | null, dto: CreateLeadStageDto | UpdateLeadStageDto) {
+    const ownerScope = customerId == null ? { customerId: null } : { OR: [{ customerId }, { customerId: null }] };
+    if (dto.emailTemplateId != null) {
+      const template = await this.prisma.emailTemplate.findFirst({
+        where: { id: Number(dto.emailTemplateId), deletedAt: null, ...ownerScope },
+      });
+      if (!template || !template.isActive) throw new BadRequestException('Email template is missing, inactive, or belongs to another workspace.');
+    }
+    if (dto.whatsappTemplateId != null) {
+      const template = await this.prisma.metaTemplate.findFirst({
+        where: { id: Number(dto.whatsappTemplateId), deletedAt: null, ...ownerScope },
+      });
+      if (!template || !template.isLocalActive || String(template.status).toUpperCase() !== 'APPROVED' ||
+          !template.metaTemplateId || template.metaTemplateId.startsWith('seed_')) {
+        throw new BadRequestException('WhatsApp template is missing, inactive, unapproved, or belongs to another workspace.');
+      }
+    }
+  }
+
   async createStage(customerId: number | string | undefined, user: any, dto: CreateLeadStageDto) {
+    const tenantId = Number(customerId);
+    await this.validateStageTemplates(Number.isInteger(tenantId) && tenantId > 0 ? tenantId : null, dto);
     return this.leadRepository.createStage(customerId, dto);
   }
 
   async updateStage(customerId: number | string | undefined, user: any, id: number | string, dto: UpdateLeadStageDto) {
     const stage = await this.leadRepository.findStageById(id);
-    if (!stage) {
-      throw new NotFoundException(`Stage with ID ${id} not found`);
+    if (!stage) throw new NotFoundException(`Stage with ID ${id} not found`);
+    const tenantId = Number(customerId);
+    if (stage.customerId != null && Number(stage.customerId) !== tenantId) {
+      throw new ForbiddenException('This stage belongs to another workspace.');
     }
+    if (stage.customerId == null && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only a super administrator can modify a shared stage.');
+    }
+    await this.validateStageTemplates(stage.customerId == null ? null : Number(stage.customerId), dto);
     return this.leadRepository.updateStage(id, dto);
   }
 
@@ -2732,7 +2763,7 @@ export class LeadService {
         });
       }
 
-      if (!stageConfig && newStageName && this.prisma.leadStage) {
+      if (!stageConfig && !explicitNewStageId && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, lead.customerId ?? customerId),
           include: { emailTemplate: true },
@@ -5135,7 +5166,7 @@ Sent by ${senderOrgName} via CRM.
         });
       }
 
-      if (!stageConfig && newStageName && this.prisma.leadStage) {
+      if (!stageConfig && !explicitNewStageId && newStageName && this.prisma.leadStage) {
         stageConfig = await this.prisma.leadStage.findFirst({
           where: leadStageMatchWhere(newStageName, stageConfig?.key, customerId),
           include: { whatsappTemplate: true },

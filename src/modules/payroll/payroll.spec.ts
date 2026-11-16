@@ -104,6 +104,7 @@ describe('PayrollService (HRM Payroll)', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       payrollItem: {
+        findFirst: jest.fn().mockResolvedValue(null),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -112,6 +113,7 @@ describe('PayrollService (HRM Payroll)', () => {
         create: jest.fn().mockResolvedValue({ id: 1, slipNumber: 'SLIP-202608-0010' }),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       salaryStructure: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -119,6 +121,43 @@ describe('PayrollService (HRM Payroll)', () => {
         update: jest.fn().mockResolvedValue({ id: 1 }),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      attendance: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      payrollPolicy: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
+      salaryPolicy: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      attendancePolicy: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      lateMarkPolicy: {
+        findUnique: jest.fn().mockResolvedValue({ isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 0 }),
+        create: jest.fn().mockResolvedValue({ isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 0 }),
+        upsert: jest.fn().mockResolvedValue({ isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 0 }),
+      },
+      leaveRequest: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      employeeClaim: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      employeeLoan: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      employeeDeduction: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      overtimeRequest: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      $transaction: jest.fn(async (fn) => (typeof fn === 'function' ? fn(prisma) : fn)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -145,13 +184,15 @@ describe('PayrollService (HRM Payroll)', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.status).toBe('APPROVED');
-      expect(prisma.payroll.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: expect.objectContaining({
-          status: 'APPROVED',
-          approvedAt: expect.any(Date),
+      expect(prisma.payroll.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 101 },
+          data: expect.objectContaining({
+            status: 'APPROVED',
+            approvedAt: expect.any(Date),
+          }),
         }),
-      });
+      );
     });
 
     it('approves payroll with numeric ID', async () => {
@@ -165,12 +206,14 @@ describe('PayrollService (HRM Payroll)', () => {
       const result = await service.approvePayroll(3, 101);
 
       expect(result.success).toBe(true);
-      expect(prisma.payroll.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: expect.objectContaining({
-          status: 'APPROVED',
+      expect(prisma.payroll.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 101 },
+          data: expect.objectContaining({
+            status: 'APPROVED',
+          }),
         }),
-      });
+      );
     });
   });
 
@@ -187,13 +230,15 @@ describe('PayrollService (HRM Payroll)', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.status).toBe('PAID');
-      expect(prisma.payroll.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: expect.objectContaining({
-          status: 'PAID',
-          disbursedAt: expect.any(Date),
+      expect(prisma.payroll.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 101 },
+          data: expect.objectContaining({
+            status: 'PAID',
+            disbursedAt: expect.any(Date),
+          }),
         }),
-      });
+      );
     });
   });
 

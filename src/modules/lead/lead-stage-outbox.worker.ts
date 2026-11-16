@@ -62,9 +62,9 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
       const currentTemplate = channel === 'EMAIL' ? stage?.emailTemplateId : stage?.whatsappTemplateId;
       const recordedTemplate = channel === 'EMAIL' ? row.emailTemplateId : row.metaTemplateId;
       const currentMapping = channel === 'EMAIL' ? stage?.emailVariableMapping : stage?.whatsappVariableMapping;
-      if (!stage || (currentTemplate ?? null) !== (recordedTemplate ?? null) ||
+      if (!stage || stage.isActive === false || (currentTemplate ?? null) !== (recordedTemplate ?? null) ||
           JSON.stringify(currentMapping ?? null) !== JSON.stringify(row.variableMapping ?? null)) {
-        await service.markResult(row.id, { status: 'SKIPPED', error: 'Stage or its template mapping changed after the transition; review configuration.' });
+        await service.markResult(row.id, { status: 'SKIPPED', error: 'Stage is unavailable or inactive, or its template mapping changed after the transition; review configuration.' });
         return;
       }
       const lead = await this.lead.getLeadById(row.customerId, row.leadId);

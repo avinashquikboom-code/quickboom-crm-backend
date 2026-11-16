@@ -3214,7 +3214,7 @@ export class LeadRepository {
         ...stageQuery,
         include: {
           emailTemplate: {
-            select: { id: true, name: true, key: true, subject: true },
+            select: { id: true, name: true, key: true, subject: true, isActive: true, deletedAt: true },
           },
           whatsappTemplate: {
             select: { id: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true },
@@ -3254,7 +3254,7 @@ export class LeadRepository {
       where: { id: Number(id), deletedAt: null },
       include: {
         emailTemplate: {
-          select: { id: true, name: true, key: true, subject: true },
+          select: { id: true, name: true, key: true, subject: true, isActive: true, deletedAt: true },
         },
         whatsappTemplate: {
           select: { id: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true },

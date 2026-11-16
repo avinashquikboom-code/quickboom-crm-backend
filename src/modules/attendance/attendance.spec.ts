@@ -583,3 +583,51 @@ describe('AttendanceService (Punch In / Punch Out & Geofencing)', () => {
   });
 });
 
+describe('late punch-in notification', () => {
+  const evaluation = { applicable: true, isLate: true, lateMinutes: 15, deduction: 30, currency: 'INR', ratePerMinute: 2, gracePeriodMinutes: 0, rawLateMinutes: 15 };
+  const employee = { id: 10, userId: 5, customerId: 1, managerId: 8, firstName: 'Asha', lastName: 'Patil' };
+
+  function serviceWith(send: jest.Mock, notifications: any[]) {
+    const prisma: any = {
+      employee: { findUnique: jest.fn().mockResolvedValue({ userId: 80 }) },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 90 }]) },
+      notification: {
+        findMany: jest.fn().mockImplementation(async () => notifications),
+      },
+    };
+    return new AttendanceService(prisma, { sendPushNotification: send } as any);
+  }
+
+  it('notifies the employee, manager and HR once for the same attendance', async () => {
+    const sent: any[] = [];
+    const send = jest.fn().mockImplementation(async (payload) => {
+      sent.push(payload);
+      return {};
+    });
+    const notifications: any[] = [];
+    const service = serviceWith(send, notifications);
+    await (service as any).notifyLatePunchIn(employee, 44, evaluation);
+    notifications.push(...sent.map((payload) => ({ data: payload.data })));
+    await (service as any).notifyLatePunchIn(employee, 44, evaluation);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(sent.map((item) => item.userId).sort()).toEqual([5, 80, 90]);
+    expect(sent[0].title).toBe('Late Punch-In Detected');
+    expect(sent.find((item) => item.userId === 5).body).toContain('15 minutes late');
+    expect(sent.find((item) => item.userId === 5).body).toContain('₹30');
+  });
+
+  it('keeps the attendance flow alive when FCM delivery throws', async () => {
+    const send = jest.fn().mockRejectedValue(new Error('FCM unavailable'));
+    const service = serviceWith(send, []);
+    await expect((service as any).notifyLatePunchIn(employee, 44, evaluation)).resolves.toBeUndefined();
+    expect(send).toHaveBeenCalled();
+  });
+
+  it('does not notify an on-time punch', async () => {
+    const send = jest.fn();
+    const service = serviceWith(send, []);
+    await (service as any).notifyLatePunchIn(employee, 44, { ...evaluation, isLate: false, lateMinutes: 0, deduction: 0 });
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
