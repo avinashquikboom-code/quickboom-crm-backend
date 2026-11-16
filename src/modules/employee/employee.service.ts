@@ -1,3 +1,4 @@
+import { classifyPunchOut, scheduledCheckout } from '../attendance/attendance-classification';
 import {
   Injectable,
   NotFoundException,
@@ -792,24 +793,12 @@ export class EmployeeService {
     for (const att of openRecords) {
       try {
         const punchInDate = new Date(att.punchIn!);
-        const { dateStr } = getBusinessDayRange(punchInDate);
-        const [year, month, day] = dateStr.split('-').map(Number);
-
         const policy = await this.prisma.attendancePolicy.findFirst({
           where: { customerId: att.customerId, isActive: true },
           orderBy: { officeId: 'desc' },
         });
 
-        const endTimeStr = att.employee?.shift?.endTime || policy?.officeEndTime || '18:30';
-        const [endHour, endMin] = endTimeStr.split(':').map(Number);
-        let scheduledEnd = new Date(year, month - 1, day, endHour || 18, endMin || 30, 0, 0);
-
-        if (scheduledEnd.getTime() <= punchInDate.getTime()) {
-          scheduledEnd = new Date(punchInDate.getTime() + (policy?.workingHoursPerDay || 8.0) * 60 * 60 * 1000);
-        }
-        if (scheduledEnd.getTime() > now.getTime()) {
-          scheduledEnd = now;
-        }
+        const scheduledEnd = scheduledCheckout(punchInDate, now, policy ?? {}, att.employee?.shift);
 
         let totalBreakMins = 0;
         for (const b of att.breaks) {
@@ -832,9 +821,13 @@ export class EmployeeService {
         const netWorkingMins = Math.max(0, grossMins - totalBreakMins);
         const actualHours = Math.round((netWorkingMins / 60) * 100) / 100;
         const wasPunchInLate = Boolean(att.isLate || att.status === 'LATE');
-        const finalStatus = wasPunchInLate
-          ? (actualHours < (policy?.minWorkingHoursForHalfDay || 4.0) ? 'HALF_DAY' : 'LATE')
-          : (actualHours >= (policy?.minWorkingHoursForHalfDay || 4.0) ? 'PRESENT' : (actualHours > 0 ? 'HALF_DAY' : 'PRESENT'));
+        const { status: finalStatus } = classifyPunchOut({
+          currentStatus: att.status,
+          isLate: wasPunchInLate,
+          workedHours: actualHours,
+          policy: policy ?? {},
+          shift: att.employee?.shift,
+        });
 
         await this.prisma.attendance.update({
           where: { id: att.id },
@@ -3701,4 +3694,3 @@ export class EmployeeService {
     };
   }
 }
-

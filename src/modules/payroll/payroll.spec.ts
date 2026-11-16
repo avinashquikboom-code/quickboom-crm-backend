@@ -243,6 +243,29 @@ describe('PayrollService (HRM Payroll)', () => {
   });
 
   describe('calculatePayroll', () => {
+    it.each([true, false])('applies only the minute penalty when enabled=%s', async (isEnabled) => {
+      prisma.employee.findMany.mockResolvedValue([{
+        ...mockEmployee,
+        shift: { startTime: '09:30', endTime: '18:30', workingDays: ['Monday'] },
+      }]);
+      prisma.lateMarkPolicy.findUnique.mockResolvedValue({
+        isEnabled, deductionRatePerMin: 2, gracePeriodMinutes: 0,
+      });
+      prisma.salaryPolicy.findFirst.mockResolvedValue({ lateArrivalDeductionPct: 50 });
+      // Auto-checkout has no open records. Payroll receives one completed late day.
+      prisma.attendance.findMany.mockImplementation(({ where }) => Promise.resolve(
+        where.punchOut === null ? [] : [{
+          id: 1, date: new Date('2026-08-03T00:00:00Z'), status: 'LATE',
+          punchIn: new Date('2026-08-03T11:23:00+05:30'), isLate: true,
+          lateMinutes: 113, lateDeduction: 226, lateRatePerMinute: 2,
+        }],
+      ));
+      await service.calculatePayroll(3, 8, 2026);
+      const item = prisma.payrollItem.createMany.mock.calls[0][0].data[0];
+      expect(item.halfDays).toBe(0);
+      expect(item.lateDeduction).toBe(isEnabled ? 226 : 0);
+    });
+
     it('calculates gross, deductions, and net salary for active employees', async () => {
       prisma.payroll.findFirst.mockResolvedValue(null);
       prisma.payroll.create.mockResolvedValue(mockPayroll);

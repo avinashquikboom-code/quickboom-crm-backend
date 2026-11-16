@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { evaluateLatePunch } from '../payroll/salary-calculation';
+import { classifyPunchOut, scheduledCheckout } from './attendance-classification';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { AttendanceStatus } from '@prisma/client';
 import {
@@ -278,25 +279,7 @@ export class AttendanceService {
       activeShift = emp?.shift;
     }
 
-    // Determine scheduled checkout time on the date of punchIn
-    const { dateStr } = getBusinessDayRange(punchInDate);
-    const [year, month, day] = dateStr.split('-').map(Number);
-
-    const endTimeStr = activeShift?.endTime || activePolicy.officeEndTime || '18:30';
-    const [endHour, endMin] = endTimeStr.split(':').map(Number);
-
-    let scheduledEndTime = new Date(year, month - 1, day, endHour || 18, endMin || 30, 0, 0);
-
-    // If scheduled end time is at or before punchIn, fallback to standard working hours from punchIn
-    if (scheduledEndTime.getTime() <= punchInDate.getTime()) {
-      const standardHours = activePolicy.workingHoursPerDay || 8.0;
-      scheduledEndTime = new Date(punchInDate.getTime() + standardHours * 60 * 60 * 1000);
-    }
-
-    // Do not set a checkout time in the future beyond now
-    if (scheduledEndTime.getTime() > now.getTime()) {
-      scheduledEndTime = now;
-    }
+    const scheduledEndTime = scheduledCheckout(punchInDate, now, activePolicy, activeShift);
 
     // Fetch breaks for this attendance record
     const breaks = await client.attendanceBreak.findMany({
@@ -344,23 +327,13 @@ export class AttendanceService {
     // IMPORTANT: Keep Late Arrival Grace Period ONLY for late punch in.
     // If employee punched in on time, missing punch-out must NOT trigger a late mark.
     const wasPunchInLate = Boolean(attendance.isLate || attendance.status === AttendanceStatus.LATE);
-    let finalStatus: AttendanceStatus;
-
-    if (wasPunchInLate) {
-      if (actualWorkingHours < (activePolicy.minWorkingHoursForHalfDay || 4.0)) {
-        finalStatus = AttendanceStatus.HALF_DAY;
-      } else {
-        finalStatus = AttendanceStatus.LATE;
-      }
-    } else {
-      if (actualWorkingHours >= (activePolicy.minWorkingHoursForHalfDay || 4.0)) {
-        finalStatus = AttendanceStatus.PRESENT;
-      } else if (actualWorkingHours > 0) {
-        finalStatus = AttendanceStatus.HALF_DAY;
-      } else {
-        finalStatus = AttendanceStatus.PRESENT;
-      }
-    }
+    const { status: finalStatus } = classifyPunchOut({
+      currentStatus: attendance.status,
+      isLate: wasPunchInLate,
+      workedHours: actualWorkingHours,
+      policy: activePolicy,
+      shift: activeShift,
+    });
 
     const updated = await client.attendance.update({
       where: { id: attendance.id },
@@ -535,15 +508,11 @@ isRemoteActive: ${isRemoteActive}`);
     }
 
     const lateEvaluation = await this.evaluatePunchLateness(employee, policy, now);
-    let attendanceStatus: AttendanceStatus = AttendanceStatus.PRESENT;
     const isLatePunchIn = lateEvaluation.isLate;
     const lateMinutesCount = lateEvaluation.lateMinutes;
-    if (isLatePunchIn) {
-      const lateThresholdMinutes = policy.lateArrivalThresholdMins || 30;
-      attendanceStatus = lateEvaluation.rawLateMinutes > lateThresholdMinutes && policy.lateRuleAction === 'HALF_DAY'
-        ? AttendanceStatus.HALF_DAY
-        : AttendanceStatus.LATE;
-    }
+    // A new punch has no completed working duration yet. Lateness is stored
+    // independently; only checkout can determine a short working day.
+    const attendanceStatus: AttendanceStatus = isLatePunchIn ? AttendanceStatus.LATE : AttendanceStatus.PRESENT;
 
     const result = await this.prisma.$transaction(async (tx) => {
       if ((tx as any).$queryRaw) {
@@ -576,7 +545,7 @@ isRemoteActive: ${isRemoteActive}`);
           data: {
             punchIn: now,
             punchOut: null,
-            status: attendanceStatus,
+            status: attendance.status === AttendanceStatus.LEAVE ? AttendanceStatus.LEAVE : attendanceStatus,
             isLate: isLatePunchIn,
             lateMinutes: lateMinutesCount,
             lateDeduction: lateEvaluation.deduction,
@@ -642,7 +611,7 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           punchIn: punchInIso,
           punchOutAt: null,
           punchOut: null,
-          status: attendanceStatus,
+          status: attendance.status,
           workMode,
           office: {
             id: office.id,
@@ -661,7 +630,7 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           lateRatePerMinute: lateEvaluation.ratePerMinute,
           lateDeduction: lateEvaluation.deduction,
         },
-        status: attendanceStatus,
+        status: attendance.status,
         office: {
           id: office.id,
           name: office.name,
@@ -772,15 +741,15 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
       const netWorkingMinutes = Math.max(0, totalElapsedMinutes - totalBreakMinutes);
       const actualWorkingHours = Math.round((netWorkingMinutes / 60) * 100) / 100;
 
-      const minRequiredHours = policy.minWorkingHours || 8.0;
-      const earlyGraceHours = (policy.earlyCheckoutGraceMinutes || 15) / 60;
-      let finalStatus = attendance.status;
-
-      if (actualWorkingHours < minRequiredHours - earlyGraceHours) {
-        if (policy.earlyCheckoutAction === 'HALF_DAY' || actualWorkingHours < (policy.minWorkingHoursForHalfDay || 4.0)) {
-          finalStatus = AttendanceStatus.HALF_DAY;
-        }
-      }
+      const classification = classifyPunchOut({
+        currentStatus: attendance.status,
+        isLate: attendance.isLate,
+        lateMinutes: attendance.lateMinutes,
+        lateGraceMinutes: attendance.lateGraceMinutes,
+        workedHours: actualWorkingHours,
+        policy,
+        shift: employee.shift,
+      });
 
       const updated = await tx.attendance.update({
         where: { id: attendance.id },
@@ -789,8 +758,8 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
           workingHours: actualWorkingHours,
           workingMinutes: netWorkingMinutes,
           breakDuration: totalBreakHours,
-          status: finalStatus,
-          isLate: Boolean(attendance.isLate || attendance.status === AttendanceStatus.LATE),
+          status: classification.status,
+          isLate: classification.isLate,
           lateMinutes: attendance.lateMinutes || 0,
           locationOut: locationOutStr,
           punchOutLatitude: dto.latitude ?? null,
@@ -840,7 +809,7 @@ result: SUCCESS`);
           totalBreakMinutes,
           breakDuration: totalBreakFormatted,
           totalBreak: totalBreakFormatted,
-          status: finalStatus,
+          status: updated.status,
           office: {
             id: office.id,
             name: office.name,
@@ -968,7 +937,7 @@ result: SUCCESS`);
       this.prisma.attendance.count({ where: whereClause }),
       this.prisma.attendance.findMany({
         where: whereClause,
-        orderBy: { date: 'desc' },
+        orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         include: {
@@ -1534,7 +1503,7 @@ result: SUCCESS`);
       policy: latePolicy || {
         isEnabled: true,
         deductionRatePerMin: 1,
-        gracePeriodMinutes: 0,
+        gracePeriodMinutes: employee.shift?.gracePeriodMinutes ?? attendancePolicy?.gracePeriodMinutes ?? 0,
         currency: 'INR',
       },
       isHoliday,
