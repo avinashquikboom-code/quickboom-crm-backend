@@ -634,7 +634,7 @@ describe('late punch-in notification', () => {
 
 
 describe('today late deduction for legacy attendance', () => {
-  it('uses the eligible calculation when no rate was recorded, but preserves recorded zero amounts', async () => {
+  it('uses the eligible calculation when the stored deduction is zero or missing', async () => {
     const service = new AttendanceService({} as any);
     jest.spyOn(service as any, 'evaluatePunchLateness').mockResolvedValue({
       applicable: true, isLate: true, lateMinutes: 5, deduction: 10,
@@ -646,6 +646,8 @@ describe('today late deduction for legacy attendance', () => {
     expect(legacy.lateDeduction).toBe(10);
     expect(legacy.lateMinutes).toBe(5);
     const recorded = await (service as any).resolveTodayLateMark(employee, { ...attendance, lateRatePerMinute: 2 }, {}, employee.shift);
-    expect(recorded.lateDeduction).toBe(0);
+    expect(recorded.lateDeduction).toBe(10);
+    const stored = await (service as any).resolveTodayLateMark(employee, { ...attendance, lateDeduction: 7 }, {}, employee.shift);
+    expect(stored.lateDeduction).toBe(7);
   });
 });
