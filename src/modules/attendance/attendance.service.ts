@@ -1334,6 +1334,14 @@ result: SUCCESS`);
       if (!prev || row.id > prev.id) latestByDay.set(dayKey, row);
     }
 
+    let fallbackRate = 0;
+    try {
+      const latePolicy = (this.prisma as any).lateMarkPolicy?.findUnique
+        ? await (this.prisma as any).lateMarkPolicy.findUnique({ where: { customerId } })
+        : null;
+      fallbackRate = Math.max(0, Number(latePolicy?.deductionRatePerMin) || 0);
+    } catch { /* fall through */ }
+
     let lateDays = 0;
     let totalLateMinutes = 0;
     let totalDeduction = 0;
@@ -1348,10 +1356,12 @@ result: SUCCESS`);
 
       lateDays += 1;
       totalLateMinutes += minutes;
-      if (storedDeduction > 0) {
-        totalDeduction += storedDeduction;
-      }
-      if (storedRate > 0) rates.add(storedRate);
+      const rateUsed = storedRate > 0 ? storedRate : fallbackRate;
+      const dayDeduction = storedDeduction > 0
+        ? storedDeduction
+        : Math.round(minutes * rateUsed * 100) / 100;
+      totalDeduction += dayDeduction;
+      if (rateUsed > 0) rates.add(rateUsed);
     }
 
     totalDeduction = Math.round(totalDeduction * 100) / 100;
@@ -1411,10 +1421,14 @@ result: SUCCESS`);
     const storedRate = Number((todayAtt as any)?.lateRatePerMinute) || 0;
     const storedGrace = Number((todayAtt as any)?.lateGraceMinutes) || 0;
 
-    const lateMinutes = storedGrace > 0 ? Math.max(0, Number(todayAtt.lateMinutes) || 0) : evaluation.lateMinutes;
+    const lateMinutes = storedGrace > 0 && storedRate > 0
+      ? Math.max(0, Number(todayAtt.lateMinutes) || 0) : evaluation.lateMinutes;
     const lateRatePerMinute = storedRate > 0 ? storedRate : evaluation.ratePerMinute;
     const lateGraceMinutes = storedGrace > 0 ? storedGrace : evaluation.gracePeriodMinutes;
-    const lateDeduction = todayAtt.lateDeduction != null ? storedDeduction : evaluation.deduction;
+    // Older attendance rows predate stored deductions and have database-default
+    // zero amounts. Only trust a stored deduction when it is actually > 0;
+    // a stored rate with a zero amount is an incomplete record, not a real ₹0.
+    const lateDeduction = storedDeduction > 0 ? storedDeduction : evaluation.deduction;
 
     return {
       isEligibleLateMark: true,

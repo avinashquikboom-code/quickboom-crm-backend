@@ -684,11 +684,13 @@ export class HrmReportsService implements OnModuleInit, OnModuleDestroy {
       where: { customerId, employeeId: employee.id, year: y, month: m, reportType: 'SALARY_SUMMARY' },
     });
 
-    const summaryData = (existing?.summary as any) || await calculateEmployeeSalaryReport(this.prisma, customerId, employee, y, m);
+    const summaryData = (existing && !existing.isProvisional && existing.summary)
+      ? existing.summary as any
+      : await calculateEmployeeSalaryReport(this.prisma, customerId, employee, y, m);
     return {
       reportId: existing?.id || null,
       status: existing?.status || 'CALCULATED',
-      isProvisional: existing?.isProvisional ?? summaryData.isProvisional,
+      isProvisional: summaryData.isProvisional ?? existing?.isProvisional ?? true,
       payrollStatus: summaryData.payrollStatus || 'PROVISIONAL',
       summary: summaryData,
     };
@@ -723,11 +725,13 @@ export class HrmReportsService implements OnModuleInit, OnModuleDestroy {
       where: { customerId, employeeId: employee.id, year, month, reportType: 'SALARY_SUMMARY' },
     });
 
-    const summaryData = (existing?.summary as any) || await calculateEmployeeSalaryReport(this.prisma, customerId, employee, year, month);
+    const summaryData = (existing && !existing.isProvisional && existing.summary)
+      ? existing.summary as any
+      : await calculateEmployeeSalaryReport(this.prisma, customerId, employee, year, month);
     return {
       reportId: existing?.id || null,
       status: existing?.status || 'CALCULATED',
-      isProvisional: existing?.isProvisional ?? summaryData.isProvisional,
+      isProvisional: summaryData.isProvisional ?? existing?.isProvisional ?? true,
       payrollStatus: summaryData.payrollStatus || 'PROVISIONAL',
       summary: summaryData,
     };

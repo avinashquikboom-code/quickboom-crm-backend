@@ -232,6 +232,15 @@ describe('fixed monthly salary', () => {
       expect(holiday.totalLateDeduction).toBe(0);
     });
 
+    it('includes attendance on the date a policy becomes effective', () => {
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 2, effectiveFrom: new Date('2026-08-03T10:00:00Z') },
+        attendances: [{ date: '2026-08-03T00:00:00Z', punchIn: '2026-08-03T04:35:00Z' }],
+      });
+      expect(res.totalLateDeduction).toBe(10);
+    });
+
     it('enforces maxDailyDeduction and maxMonthlyDeduction caps', () => {
       // 120 minutes late on Monday with maxDailyDeduction = ₹50
       const res = calculatePerMinuteLateDeduction({
