@@ -4624,7 +4624,7 @@ Sent by ${senderOrgName} via CRM.
       throw new NotFoundException(`Lead #${id} not found`);
     }
 
-    const phone = lead.phone ? String(lead.phone).trim() : '';
+    const phone = String(lead.phone || lead.mobile || '').trim();
     if (!phone) {
       return {
         success: false,
@@ -4639,7 +4639,7 @@ Sent by ${senderOrgName} via CRM.
       return {
         success: false,
         reason: 'INVALID_PHONE',
-        message: `Phone number "${phone}" is not a valid mobile number for WhatsApp.`,
+        message: `Phone number "${maskPhone(phone)}" is not a valid mobile number for WhatsApp.`,
       };
     }
 
@@ -4943,9 +4943,9 @@ Sent by ${senderOrgName} via CRM.
           action,
           description: result.success
             ? (eventType === 'LEAD_CREATED'
-                ? `Welcome WhatsApp message sent to ${phone} for ${targetStageName} stage (template: "${templateDisplay}")`
-                : `WhatsApp notification sent to ${phone} for stage ${targetStageName} (template: "${templateDisplay}")`)
-            : `WhatsApp notification skipped or failed for ${phone}: ${result.reason || result.error || 'Not delivered'}`,
+                ? `Welcome WhatsApp message sent to ${maskPhone(phone)} for ${targetStageName} stage (template: "${templateDisplay}")`
+                : `WhatsApp notification sent to ${maskPhone(phone)} for stage ${targetStageName} (template: "${templateDisplay}")`)
+            : `WhatsApp notification skipped or failed for ${maskPhone(phone)}: ${result.reason || result.error || 'Not delivered'}`,
           metadata: {
             eventType,
             phone: maskPhone(phone),
@@ -5129,7 +5129,7 @@ Sent by ${senderOrgName} via CRM.
         : phone.replace(/[^\d+]/g, '');
       const digitsOnly = (normalizedPhone || phone).replace(/\D/g, '');
       if (!normalizedPhone || digitsOnly.length < 10) {
-        const errorMsg = `Phone number "${phone}" is not a valid mobile number for WhatsApp`;
+        const errorMsg = `Phone number "${maskPhone(phone)}" is not a valid mobile number for WhatsApp`;
         this.logger.warn(`[WHATSAPP] Lead #${lead.id} ${errorMsg}.`);
         await this.leadRepository.logTimeline(
           lead.id,
@@ -5147,7 +5147,7 @@ Sent by ${senderOrgName} via CRM.
         return {
           sent: false,
           status: 'SKIPPED',
-          recipient: phone,
+          recipient: maskPhone(phone),
           messageId: null,
           error: errorMsg,
           message: errorMsg,

@@ -1676,7 +1676,13 @@ export class WhatsappService {
         }
         components = buildStageTemplateComponents(approved.components || [], variables);
       } catch (error: any) {
+        // Validation runs before the POST, so even a timeout cannot have sent a
+        // message. Transient lookup failures can safely be retried by the outbox.
+        const status = error?.response?.status;
+        const retryable = !error?.response && Boolean(error?.isAxiosError || error?.code) ||
+          status === 429 || status >= 500;
         return { success: false, skipped: false, reason: 'META_TEMPLATE_VALIDATION_FAILED',
+          stageProviderOutcome: retryable ? 'RETRYABLE_REJECTION' : 'DEFINITE_REJECTION',
           message: error?.response ? 'Unable to verify template approval with Meta. Check integration access and retry.'
             : (error?.message || 'Unable to validate Meta template parameters.') };
       }
@@ -1745,7 +1751,7 @@ export class WhatsappService {
    * Mirrors EmailService.getSmtpStatus() for unified automation checks.
    */
   async getWhatsAppStatus() {
-    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
+    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', { forceFresh: true });
     const creds = config?.credentials || {};
     const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
     const { token: apiKey } = resolveCleanAccessToken(rawApiKey);
