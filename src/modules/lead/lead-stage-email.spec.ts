@@ -639,6 +639,19 @@ describe('Lead Stage Change Email Notification Tests', () => {
     );
   });
 
+  it('uses the customer mobile when the lead has no phone', async () => {
+    mockWhatsappService.sendLeadStageMessage.mockClear();
+    const lead = { ...leadsTable[0], phone: null, mobile: '9876543210' };
+    const result = await service.sendLeadWhatsApp(1, 101, 999, {
+      stageName: 'Proposal',
+    }, lead);
+
+    expect(result.success).toBe(true);
+    expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ to: '919876543210' }),
+    );
+  });
+
   it('CASE 14: Duplicate WhatsApp request within 60s is debounced', async () => {
     mockWhatsappService.sendLeadStageMessage.mockClear();
 

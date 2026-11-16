@@ -483,6 +483,17 @@ describe('WhatsApp Error #132001 Tracing & Pre-Send Validation Tests', () => {
   // Selected approved WhatsApp template sends with exact Meta name & language
   // =========================================================================
   it('TEST 6: Lead stage automation FOLLOW UP -> FINAL CALL sends approved template', async () => {
+    // Automatic sends verify both the exact template and phone against Meta's WABA.
+    mockedAxios.get.mockImplementation(async (url: any) => {
+      if (String(url).endsWith('/message_templates')) {
+        return { data: { data: [{ id: templatesInDb[7].metaTemplateId, name: templatesInDb[7].templateName,
+          language: templatesInDb[7].language, status: 'APPROVED', components: [] }] } } as any;
+      }
+      if (String(url).endsWith('/phone_numbers')) {
+        return { data: { data: [{ id: validConfig.credentials.phoneNumberId }] } } as any;
+      }
+      return { data: { verified_name: 'Verified Business Account', code_verification_status: 'VERIFIED' } } as any;
+    });
     // Mock Meta Cloud API response
     mockedAxios.post.mockResolvedValueOnce({
       status: 200,
@@ -505,6 +516,25 @@ describe('WhatsApp Error #132001 Tracing & Pre-Send Validation Tests', () => {
     expect(payload.template.name).toBe('lead_stage_final_call');
     expect(payload.template.language.code).toBe('en');
     expect(payload.to).toBe('919876543210');
+  });
+
+  it.each([
+    [{ isAxiosError: true, code: 'ETIMEDOUT' }, 'RETRYABLE_REJECTION'],
+    [{ response: { status: 503 } }, 'RETRYABLE_REJECTION'],
+    [{ response: { status: 401 } }, 'DEFINITE_REJECTION'],
+  ])('classifies a pre-send Meta validation failure safely', async (failure, outcome) => {
+    mockedAxios.get.mockRejectedValue(failure);
+    const result = await whatsappService.sendLeadStageMessage({
+      to: '919876543210', stageKey: 'FINAL_CALL', variables: {},
+      metaTemplate: templatesInDb[7], validateOnMeta: true,
+    });
+    expect(result.stageProviderOutcome).toBe(outcome);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('reads fresh integration settings for the stage pre-check', async () => {
+    await whatsappService.getWhatsAppStatus();
+    expect(mockIntegrationSettings.getIntegrationConfig).toHaveBeenCalledWith('WHATSAPP', { forceFresh: true });
   });
 
   // =========================================================================

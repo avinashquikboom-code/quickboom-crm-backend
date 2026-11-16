@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import { LeadRepository } from './lead.repository';
 import { LeadStageEmailDeliveryService } from './lead-stage-email-delivery.service';
+import { LeadStageWhatsappDeliveryService } from './lead-stage-whatsapp-delivery.service';
+import { LeadStageOutboxWorker } from './lead-stage-outbox.worker';
 
 // Explicitly opt in with a disposable database; never uses the application URL.
 const url = process.env.STAGE_OUTBOX_TEST_DATABASE_URL;
@@ -36,5 +38,19 @@ suite('stage outbox PostgreSQL integration', () => {
     const claims = await Promise.all([a.claimQueued(row.id), b.claimQueued(row.id)]);
     expect(claims.filter(Boolean)).toHaveLength(1);
     expect((await db.leadStageEmailDelivery.findUniqueOrThrow({ where: { id: row.id } })).attemptCount).toBe(1);
+  });
+  it('claims the committed WhatsApp row once and persists the provider message ID', async () => {
+    const row = await db.leadStageWhatsAppDelivery.findFirstOrThrow({ where: { leadId: lead.id } });
+    const handler = jest.fn().mockResolvedValue({ status: 'SENT', messageId: 'wamid.test-outbox', error: null });
+    const leadService: any = { getLeadById: jest.fn().mockResolvedValue(lead), handleLeadStageChangeWhatsappNotification: handler };
+    const whatsapp = new LeadStageWhatsappDeliveryService(db as any);
+    const worker = new LeadStageOutboxWorker(db as any, leadService, new LeadStageEmailDeliveryService(db as any), whatsapp);
+    await Promise.all([worker.process('WHATSAPP', row), worker.process('WHATSAPP', row)]);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(customer.id, lead, 'New', 'Connected', user.id, undefined, undefined, 'LEAD_STAGE_CHANGED', to.id, undefined, from.id, row.id, true);
+    const saved = await db.leadStageWhatsAppDelivery.findUniqueOrThrow({ where: { id: row.id } });
+    expect(saved.status).toBe('SENT');
+    expect(saved.metaMessageId).toBe('wamid.test-outbox');
+    expect(saved.attemptCount).toBe(1);
   });
 });
