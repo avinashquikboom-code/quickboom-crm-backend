@@ -1251,6 +1251,10 @@ result: SUCCESS`);
       policy,
       assignedShift,
     );
+    const lateMarkPeriodSummary = await this.summarizeEmployeeStoredLateMarks(
+      employee.id,
+      employee.customerId,
+    );
 
     return {
       employee: {
@@ -1325,7 +1329,75 @@ result: SUCCESS`);
         lateRatePerMinute: lateMark.lateRatePerMinute,
         lateGraceMinutes: lateMark.lateGraceMinutes,
       },
+      lateMarkPeriodSummary,
       todayAttendance: todayAtt,
+    };
+  }
+
+  private async summarizeEmployeeStoredLateMarks(employeeId: number, customerId: number) {
+    const businessDate = getBusinessDate();
+    const [year, month] = businessDate.split('-').map((part) => Number(part));
+    const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    const rows = await this.prisma.attendance.findMany({
+      where: {
+        employeeId,
+        customerId,
+        date: { gte: monthStart, lte: monthEnd },
+        punchIn: { not: null },
+        OR: [{ lateMinutes: { gt: 0 } }, { lateDeduction: { gt: 0 } }, { isLate: true }],
+      },
+      select: {
+        id: true,
+        date: true,
+        lateMinutes: true,
+        lateDeduction: true,
+        lateRatePerMinute: true,
+        isLate: true,
+      },
+      orderBy: [{ date: 'asc' }, { id: 'asc' }],
+    });
+
+    const latestByDay = new Map<string, (typeof rows)[number]>();
+    for (const row of rows) {
+      const dayKey = row.date.toISOString().slice(0, 10);
+      const prev = latestByDay.get(dayKey);
+      if (!prev || row.id > prev.id) latestByDay.set(dayKey, row);
+    }
+
+    let lateDays = 0;
+    let totalLateMinutes = 0;
+    let totalDeduction = 0;
+    const rates = new Set<number>();
+
+    for (const row of latestByDay.values()) {
+      const minutes = Math.max(0, Number(row.lateMinutes) || 0);
+      const storedDeduction = Math.max(0, Number(row.lateDeduction) || 0);
+      const storedRate = Number(row.lateRatePerMinute) || 0;
+      if (minutes <= 0 && storedDeduction <= 0 && !row.isLate) continue;
+
+      lateDays += 1;
+      totalLateMinutes += minutes;
+      if (storedDeduction > 0) {
+        totalDeduction += storedDeduction;
+      } else if (minutes > 0) {
+        totalDeduction += Math.round(minutes * (storedRate > 0 ? storedRate : 0) * 100) / 100;
+      }
+      if (storedRate > 0) rates.add(storedRate);
+    }
+
+    totalDeduction = Math.round(totalDeduction * 100) / 100;
+
+    return {
+      month,
+      year,
+      lateDays,
+      totalLateMinutes,
+      totalDeduction,
+      ratePerMinute: rates.size === 1 ? [...rates][0] : 0,
+      mixedRates: rates.size > 1,
+      hasData: lateDays > 0 || totalLateMinutes > 0 || totalDeduction > 0,
     };
   }
 

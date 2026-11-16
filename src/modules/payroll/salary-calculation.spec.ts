@@ -141,6 +141,27 @@ describe('fixed monthly salary', () => {
       expect(res.totalLateDeduction).toBe(0);
     });
 
+    it('uses stored punch-in late minutes and deduction without recalculating', () => {
+      const res = calculatePerMinuteLateDeduction({
+        shift,
+        policy: { isEnabled: true, deductionRatePerMin: 2.0, gracePeriodMinutes: 0 },
+        attendances: [
+          {
+            date: '2026-08-03T00:00:00.000Z',
+            punchIn: '2026-08-03T04:35:00.000Z',
+            lateMinutes: 15,
+            lateDeduction: 15,
+            lateRatePerMinute: 1,
+          },
+        ],
+      });
+
+      expect(res.lateDaysCount).toBe(1);
+      expect(res.totalLateMinutes).toBe(15);
+      expect(res.totalLateDeduction).toBe(15);
+      expect(res.breakdown[0]?.ratePerMinute).toBe(1);
+    });
+
     it('deducts minutes exceeding grace period when late beyond grace limit', () => {
       // 10:25 AM check-in with 10 min grace period -> 25 - 10 = 15 late minutes -> ₹15 deduction
       const res = calculatePerMinuteLateDeduction({

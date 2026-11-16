@@ -410,6 +410,9 @@ export function calculatePerMinuteLateDeduction(input: {
     punchOut?: Date | string | null;
     isLate?: boolean | null;
     lateMinutes?: number | null;
+    lateDeduction?: number | null;
+    lateRatePerMinute?: number | null;
+    lateGraceMinutes?: number | null;
     status?: string | null;
   }>;
   shift?: {
@@ -492,6 +495,32 @@ export function calculatePerMinuteLateDeduction(input: {
 
     // 5. Must have punch-in or stored lateMinutes
     if (!att.punchIn && !att.lateMinutes) continue;
+
+  const storedMinutes = Math.max(0, Number(att.lateMinutes) || 0);
+  const storedDeduction = Math.max(0, Number((att as any).lateDeduction) || 0);
+  const storedRate = Number((att as any).lateRatePerMinute) || 0;
+
+  // Prefer amounts recorded at punch-in (supports historical rates per day).
+  if (storedMinutes > 0 || storedDeduction > 0) {
+    const rateUsed = storedRate > 0 ? storedRate : ratePerMinute;
+    let dailyDeduction = storedDeduction > 0 ? storedDeduction : Math.round(storedMinutes * rateUsed * 100) / 100;
+    if (maxDaily !== null && dailyDeduction > maxDaily) dailyDeduction = maxDaily;
+    totalMinutes += storedMinutes;
+    totalDeduction += dailyDeduction;
+    breakdown.push({
+      date: dateKey,
+      checkInTime: att.punchIn ? dateToMinutesInIST(att.punchIn).timeStr : null,
+      shiftStartTime: input.shift!.startTime,
+      scheduledMinutes: shiftStartMins,
+      actualMinutes: shiftStartMins + storedMinutes,
+      rawLateMinutes: storedMinutes,
+      gracePeriodMinutes: Number((att as any).lateGraceMinutes) || graceMinutes,
+      eligibleLateMinutes: storedMinutes,
+      ratePerMinute: rateUsed,
+      deduction: dailyDeduction,
+    });
+    continue;
+  }
 
     let eligibleLateMinutes = 0;
     let rawLateMins = 0;
