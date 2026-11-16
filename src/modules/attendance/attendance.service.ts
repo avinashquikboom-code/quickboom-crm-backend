@@ -1245,6 +1245,13 @@ result: SUCCESS`);
     const now = new Date();
     const isRemoteActive = isRemoteWorkActiveNow(approvedRemote, now);
 
+    const lateMark = await this.resolveTodayLateMark(
+      employee,
+      todayAtt,
+      policy,
+      assignedShift,
+    );
+
     return {
       employee: {
         id: employee.id,
@@ -1311,8 +1318,75 @@ result: SUCCESS`);
         breakDuration: breakDurationHoursVal,
         totalBreakDuration: formatDurationHoursMinutes(totalBreakMinutes),
         rawStatus: todayAtt?.status || 'NOT_MARKED',
+        isEligibleLateMark: lateMark.isEligibleLateMark,
+        isLate: lateMark.isLate,
+        lateMinutes: lateMark.lateMinutes,
+        lateDeduction: lateMark.lateDeduction,
+        lateRatePerMinute: lateMark.lateRatePerMinute,
+        lateGraceMinutes: lateMark.lateGraceMinutes,
       },
       todayAttendance: todayAtt,
+    };
+  }
+
+  private async resolveTodayLateMark(
+    employee: any,
+    todayAtt: any | null,
+    attendancePolicy: any,
+    assignedShift: any,
+  ): Promise<{
+    isEligibleLateMark: boolean;
+    isLate: boolean;
+    lateMinutes: number;
+    lateDeduction: number;
+    lateRatePerMinute: number;
+    lateGraceMinutes: number;
+  }> {
+    const empty = {
+      isEligibleLateMark: false,
+      isLate: false,
+      lateMinutes: 0,
+      lateDeduction: 0,
+      lateRatePerMinute: 0,
+      lateGraceMinutes: 0,
+    };
+    if (!todayAtt?.punchIn) return empty;
+
+    const shiftForEval =
+      assignedShift?.startTime != null
+        ? assignedShift
+        : employee?.shift?.startTime != null
+          ? employee.shift
+          : null;
+    if (!shiftForEval?.startTime) return empty;
+
+    const punchIn = new Date(todayAtt.punchIn);
+    const employeeWithShift = { ...employee, shift: shiftForEval };
+    const evaluation = await this.evaluatePunchLateness(employeeWithShift, attendancePolicy, punchIn);
+
+    if (!evaluation.applicable || !evaluation.isLate || evaluation.lateMinutes <= 0) {
+      return empty;
+    }
+
+    const storedDeduction = Number((todayAtt as any)?.lateDeduction) || 0;
+    const storedRate = Number((todayAtt as any)?.lateRatePerMinute) || 0;
+    const storedGrace = Number((todayAtt as any)?.lateGraceMinutes) || 0;
+
+    const lateMinutes = evaluation.lateMinutes;
+    const lateRatePerMinute = storedRate > 0 ? storedRate : evaluation.ratePerMinute;
+    const lateGraceMinutes = storedGrace > 0 ? storedGrace : evaluation.gracePeriodMinutes;
+    let lateDeduction = storedDeduction > 0 ? storedDeduction : evaluation.deduction;
+    if (lateDeduction <= 0 && lateMinutes > 0 && lateRatePerMinute > 0) {
+      lateDeduction = Math.round(lateMinutes * lateRatePerMinute * 100) / 100;
+    }
+
+    return {
+      isEligibleLateMark: true,
+      isLate: true,
+      lateMinutes,
+      lateDeduction,
+      lateRatePerMinute,
+      lateGraceMinutes,
     };
   }
 
