@@ -75,7 +75,7 @@ export class AttendanceController {
   }
 
   @Post('check-in')
-  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'PUNCH_IN' })
   @ApiOperation({ summary: 'Employee Check-In with mandatory GPS Geo-fence verification' })
   async checkIn(
     @CurrentUser() user: any,
@@ -86,7 +86,7 @@ export class AttendanceController {
   }
 
   @Post('punch-in')
-  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'PUNCH_IN' })
   @ApiOperation({ summary: 'Alias for Check-In' })
   async punchIn(
     @CurrentUser() user: any,
@@ -97,7 +97,7 @@ export class AttendanceController {
   }
 
   @Post('check-out')
-  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'PUNCH_OUT' })
   @ApiOperation({ summary: 'Employee Check-Out with GPS verification' })
   async checkOut(
     @CurrentUser() user: any,
@@ -108,7 +108,7 @@ export class AttendanceController {
   }
 
   @Post('punch-out')
-  @RequirePermissions({ module: 'ATTENDANCE', action: 'CREATE' })
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'PUNCH_OUT' })
   @ApiOperation({ summary: 'Alias for Check-Out' })
   async punchOut(
     @CurrentUser() user: any,
