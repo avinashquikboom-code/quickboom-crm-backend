@@ -44,3 +44,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS "LateMarkReportDelivery_customerId_kind_period
   ON "LateMarkReportDelivery"("customerId", "kind", "periodKey");
 CREATE INDEX IF NOT EXISTS "LateMarkReportDelivery_customerId_status_idx"
   ON "LateMarkReportDelivery"("customerId", "status");
+
+-- Payroll late-mark snapshot fields (required by API / Prisma schema)
+ALTER TABLE "PayrollItem" ADD COLUMN IF NOT EXISTS "totalLateMinutes" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "PayrollItem" ADD COLUMN IF NOT EXISTS "lateRatePerMinute" DOUBLE PRECISION NOT NULL DEFAULT 1.0;
+ALTER TABLE "PayrollItem" ADD COLUMN IF NOT EXISTS "lateMarkBreakdown" JSONB;
+
+-- Per-tenant late mark policy (admin payroll configuration)
+CREATE TABLE IF NOT EXISTS "LateMarkPolicy" (
+  "id" SERIAL PRIMARY KEY,
+  "customerId" INTEGER NOT NULL,
+  "isEnabled" BOOLEAN NOT NULL DEFAULT true,
+  "deductionRatePerMin" DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+  "currency" TEXT NOT NULL DEFAULT 'INR',
+  "gracePeriodMinutes" INTEGER NOT NULL DEFAULT 0,
+  "calculationMethod" TEXT NOT NULL DEFAULT 'PER_MINUTE',
+  "applyTo" TEXT NOT NULL DEFAULT 'ALL',
+  "applicableRoles" TEXT[] DEFAULT ARRAY[]::TEXT[],
+  "applicableEmpIds" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
+  "maxDailyDeduction" DOUBLE PRECISION,
+  "maxMonthlyDeduction" DOUBLE PRECISION,
+  "effectiveFrom" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "requireApproval" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "LateMarkPolicy_customerId_key" ON "LateMarkPolicy"("customerId");
+CREATE INDEX IF NOT EXISTS "LateMarkPolicy_customerId_idx" ON "LateMarkPolicy"("customerId");
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'LateMarkPolicy_customerId_fkey'
+  ) THEN
+    ALTER TABLE "LateMarkPolicy"
+      ADD CONSTRAINT "LateMarkPolicy_customerId_fkey"
+      FOREIGN KEY ("customerId") REFERENCES "customers"("id")
+      ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
