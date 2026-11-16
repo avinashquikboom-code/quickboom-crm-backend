@@ -102,6 +102,17 @@ describe('fixed monthly salary', () => {
       workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
     };
 
+    it('uses the IST attendance day when midnight is on the previous UTC day', () => {
+      const result = calculatePerMinuteLateDeduction({
+        shift, policy: { isEnabled: true, deductionRatePerMin: 1 },
+        attendances: [{ id: 1, date: '2026-08-02T18:30:00.000Z',
+          punchIn: '2026-08-03T04:45:00.000Z', lateMinutes: 15, lateDeduction: 15, lateRatePerMinute: 1 }],
+      });
+      expect(result.lateDaysCount).toBe(1);
+      expect(result.totalLateDeduction).toBe(15);
+      expect(result.breakdown[0].date).toBe('2026-08-03');
+    });
+
     it('calculates default ₹1/minute deduction for late check-in on scheduled workday', () => {
       // 2026-08-03 is a Monday. 10:05 AM check-in (in UTC+05:30: 04:35 UTC)
       const res = calculatePerMinuteLateDeduction({

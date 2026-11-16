@@ -1,3 +1,5 @@
+import { getBusinessDate } from '../../common/utils/timezone.util';
+
 /** Fixed monthly salary. A full month pays the agreed amount in February, April, and May. */
 export const SALARY_DAY_DIVISOR = 30;
 
@@ -87,6 +89,13 @@ function asUtcDay(value?: Date | string | null) {
   return utcDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
+// Attendance dates are stored at midnight in the business timezone, which is
+// the previous UTC day. Other date-only fields use UTC and keep asUtcDay.
+function attendanceDay(value: Date | string) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : asUtcDay(getBusinessDate(date));
+}
+
 export function isScheduledWorkday(date: Date, shiftDays?: string[], workingDaysPerWeek = 5) {
   const name = DAY_NAMES[date.getUTCDay()];
   if (shiftDays && shiftDays.length > 0) {
@@ -143,7 +152,7 @@ export function countPayableAttendance(input: {
   const end = utcDate(input.year, input.month, daysInMonth(input.year, input.month));
   const marks = new Map<string, string>();
   for (const row of input.attendance || []) {
-    const day = asUtcDay(row.date);
+    const day = attendanceDay(row.date);
     if (day) marks.set(keyOf(day), String(row.status || '').toUpperCase());
   }
   const leaves = (input.leaves || []).map((leave) => ({
@@ -486,7 +495,7 @@ export function calculatePerMinuteLateDeduction(input: {
 
   // Associate after-midnight punches with the day their overnight shift starts.
   const scheduledDate = (row: (typeof input.attendances)[number]) => {
-    const date = asUtcDay(row.date);
+    const date = attendanceDay(row.date);
     if (!date || !row.punchIn) return date;
     const start = parseTimeStringToMinutes(input.shift?.startTime);
     const end = parseTimeStringToMinutes(input.shift?.endTime);
