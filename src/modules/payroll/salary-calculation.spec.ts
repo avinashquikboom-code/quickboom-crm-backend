@@ -123,8 +123,8 @@ describe('fixed monthly salary', () => {
       expect(res.lateRatePerMinute).toBe(1.0);
     });
 
-    it('respects grace period and does not deduct if check-in within grace limit', () => {
-      // 10:08 AM check-in with 10 min grace period -> 0 late minutes, ₹0
+    it('ignores an old configured grace period', () => {
+      // 10:08 AM check-in remains 8 minutes late despite old grace settings.
       const res = calculatePerMinuteLateDeduction({
         shift,
         policy: { isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 10 },
@@ -136,12 +136,12 @@ describe('fixed monthly salary', () => {
         ],
       });
 
-      expect(res.lateDaysCount).toBe(0);
-      expect(res.totalLateMinutes).toBe(0);
-      expect(res.totalLateDeduction).toBe(0);
+      expect(res.lateDaysCount).toBe(1);
+      expect(res.totalLateMinutes).toBe(8);
+      expect(res.totalLateDeduction).toBe(8);
     });
 
-    it('uses stored punch-in late minutes and deduction without recalculating', () => {
+    it('recalculates corrected punch times using the recorded rate', () => {
       const res = calculatePerMinuteLateDeduction({
         shift,
         policy: { isEnabled: true, deductionRatePerMin: 2.0, gracePeriodMinutes: 0 },
@@ -157,13 +157,13 @@ describe('fixed monthly salary', () => {
       });
 
       expect(res.lateDaysCount).toBe(1);
-      expect(res.totalLateMinutes).toBe(15);
-      expect(res.totalLateDeduction).toBe(15);
+      expect(res.totalLateMinutes).toBe(5);
+      expect(res.totalLateDeduction).toBe(5);
       expect(res.breakdown[0]?.ratePerMinute).toBe(1);
     });
 
-    it('deducts minutes exceeding grace period when late beyond grace limit', () => {
-      // 10:25 AM check-in with 10 min grace period -> 25 - 10 = 15 late minutes -> ₹15 deduction
+    it('deducts all late minutes despite an old configured grace', () => {
+      // 10:25 AM check-in is 25 minutes late.
       const res = calculatePerMinuteLateDeduction({
         shift,
         policy: { isEnabled: true, deductionRatePerMin: 1.0, gracePeriodMinutes: 10 },
@@ -176,8 +176,8 @@ describe('fixed monthly salary', () => {
       });
 
       expect(res.lateDaysCount).toBe(1);
-      expect(res.totalLateMinutes).toBe(15);
-      expect(res.totalLateDeduction).toBe(15);
+      expect(res.totalLateMinutes).toBe(25);
+      expect(res.totalLateDeduction).toBe(25);
     });
 
     it('excludes weekly offs, holidays, and approved leaves', () => {
@@ -221,6 +221,15 @@ describe('fixed monthly salary', () => {
         ],
       });
       expect(resLeave.totalLateDeduction).toBe(0);
+    });
+
+    it('uses the shift start date for an after-midnight overnight punch', () => {
+      const overnightShift = { startTime: '22:00', endTime: '06:00', isNightShift: true, workingDays: ['Monday'] };
+      const attendance = [{ date: '2026-08-04T00:00:00Z', punchIn: '2026-08-03T18:45:00Z' }]; // Tuesday 00:15 IST
+      const result = calculatePerMinuteLateDeduction({ shift: overnightShift, attendances: attendance });
+      expect(result.totalLateMinutes).toBe(135);
+      const holiday = calculatePerMinuteLateDeduction({ shift: overnightShift, attendances: attendance, holidays: [{ date: '2026-08-03' }] });
+      expect(holiday.totalLateDeduction).toBe(0);
     });
 
     it('enforces maxDailyDeduction and maxMonthlyDeduction caps', () => {
@@ -277,7 +286,7 @@ describe('evaluateLatePunch', () => {
   const policy = { isEnabled: true, deductionRatePerMin: 2, gracePeriodMinutes: 0, currency: 'INR' };
   const shift = { startTime: '10:00 AM', endTime: '07:00 PM', workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] };
 
-  it('does not deduct an on-time punch or a punch inside grace', () => {
+  it('does not deduct an on-time punch and ignores configured grace', () => {
     const onTime = evaluateLatePunch({
       punchIn: '2026-08-03T04:30:00.000Z',
       shift,
@@ -292,12 +301,13 @@ describe('evaluateLatePunch', () => {
       shift,
       policy: { ...policy, gracePeriodMinutes: 10 },
     });
-    expect(withinGrace.lateMinutes).toBe(0);
-    expect(withinGrace.deduction).toBe(0);
+    expect(withinGrace.lateMinutes).toBe(5);
+    expect(withinGrace.deduction).toBe(10);
   });
 
   it('uses the configured rate for 5, 15 and 30 late minutes', () => {
     for (const [iso, minutes] of [
+      ['2026-08-03T04:31:00.000Z', 1],
       ['2026-08-03T04:35:00.000Z', 5],
       ['2026-08-03T04:45:00.000Z', 15],
       ['2026-08-03T05:00:00.000Z', 30],
@@ -309,12 +319,12 @@ describe('evaluateLatePunch', () => {
     }
   });
 
-  it('uses shift grace without a policy override, including the exact boundary', () => {
+  it('ignores shift grace without a policy override', () => {
     const configuredShift = { ...shift, gracePeriodMinutes: 15 };
     const exact = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00Z', shift: configuredShift });
     const after = evaluateLatePunch({ punchIn: '2026-08-03T04:46:00Z', shift: configuredShift });
-    expect(exact.isLate).toBe(false);
-    expect(after.lateMinutes).toBe(1);
+    expect(exact.lateMinutes).toBe(15);
+    expect(after.lateMinutes).toBe(16);
   });
 
   it('tracks lateness even when the monetary deduction is disabled', () => {

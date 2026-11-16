@@ -15,7 +15,7 @@ export class ShiftGuidanceDto {
   @IsString()
   overtimeRule?: string;
 
-  @ApiPropertyOptional({ example: 'Punch-in allowed 30 mins prior to shift. 15-minute grace period.' })
+  @ApiPropertyOptional({ example: 'Punch-in allowed 30 mins prior to shift. Late arrival starts at shift start.' })
   @IsOptional()
   @IsString()
   punchInRule?: string;

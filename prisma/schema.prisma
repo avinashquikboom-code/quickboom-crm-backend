@@ -1512,7 +1512,7 @@ model AttendancePolicy {
   name                       String          @default("Standard Attendance Policy")
   workingDaysPerWeek         Int             @default(5)
   workingHoursPerDay         Float           @default(8.0)
-  gracePeriodMinutes         Int             @default(15)
+  gracePeriodMinutes         Int             @default(0)
   lateArrivalThresholdMins   Int             @default(30)
   earlyCheckoutThresholdMins Int             @default(30)
   fullDayAbsenceDeductionPct Float           @default(100.0)
@@ -1691,7 +1691,7 @@ model Shift {
   startTime             String         @default("09:30 AM")
   endTime               String         @default("06:30 PM")
   durationHours         Float          @default(9.0)
-  gracePeriodMinutes    Int            @default(15)
+  gracePeriodMinutes    Int            @default(0)
   halfDayThresholdHours Float          @default(4.5)
   breakDurationMinutes  Int            @default(60)
   isNightShift          Boolean        @default(false)
@@ -1718,7 +1718,7 @@ model ShiftGuidance {
   shiftId                  Int      @unique
   customerId               Int
   overtimeRule             String?  @default("Overtime commences after 9 hours of active shift work; calculated at 1.5x regular hourly wage.")
-  punchInRule              String?  @default("Punch-in allowed 30 minutes prior to shift start. Late arrival recorded after 15-minute grace period.")
+  punchInRule              String?  @default("Punch-in allowed 30 minutes prior to shift start. Late arrival recorded from shift start.")
   punchOutRule             String?  @default("Early departure before shift completion requires manager half-day authorization.")
   breakPolicy              String?  @default("1-hour lunch break between 01:00 PM and 02:00 PM + two 15-minute tea breaks.")
   nightShiftAllowance      String?  @default("₹250 per night shift allowance + complimentary company transport.")
