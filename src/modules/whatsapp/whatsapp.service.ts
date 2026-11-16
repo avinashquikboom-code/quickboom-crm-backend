@@ -1,3 +1,4 @@
+import { classifyMetaFailure } from '../lead/lead-stage-provider-outcome';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import * as crypto from 'crypto';
@@ -538,7 +539,7 @@ export class WhatsappService {
       );
       return { success: Boolean(messageId), provider: 'WHATSAPP', messageId, providerStatus: response.status,
         providerResponse: response.data,
-        ...(!messageId ? { reason: 'MISSING_MESSAGE_ID', message: 'Meta did not return a message ID; acceptance is unconfirmed.' } : {}),
+        ...(!messageId ? { stageProviderOutcome: 'AMBIGUOUS' as const, reason: 'MISSING_MESSAGE_ID', message: 'Meta did not return a message ID; acceptance is unconfirmed.' } : {}),
       };
     } catch (err: any) {
       const httpStatus = err?.response?.status as number | undefined;
@@ -573,6 +574,7 @@ export class WhatsappService {
 
         return {
           success: false,
+          stageProviderOutcome: 'DEFINITE_REJECTION',
           skipped: false,
           provider: 'WHATSAPP',
           errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
@@ -628,6 +630,7 @@ export class WhatsappService {
 
       return {
         success: false,
+        stageProviderOutcome: classifyMetaFailure(httpStatus),
         provider: 'WHATSAPP',
         errorCode: typedErrorCode,
         providerStatus: httpStatus || 400,
@@ -2340,9 +2343,9 @@ export class WhatsappService {
       if (mapped && this.prisma.leadStageWhatsAppDelivery?.updateMany) {
         await this.prisma.leadStageWhatsAppDelivery.updateMany({
           where: { metaMessageId: messageId, status: { in:
-            mapped === 'READ' ? ['QUEUED', 'PROCESSING', 'SENT', 'DELIVERED', 'FAILED'] :
-            mapped === 'DELIVERED' ? ['QUEUED', 'PROCESSING', 'SENT', 'FAILED'] :
-            ['QUEUED', 'PROCESSING', 'SENT'],
+            mapped === 'READ' ? ['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'SENT', 'DELIVERED', 'FAILED'] :
+            mapped === 'DELIVERED' ? ['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'SENT', 'FAILED'] :
+            ['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'SENT'],
           } },
           data: { status: mapped, error: errorMessage || null, updatedAt: new Date() },
         });

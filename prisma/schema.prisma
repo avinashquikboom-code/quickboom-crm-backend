@@ -4098,6 +4098,7 @@ model LeadStageWhatsAppDelivery {
   status           String    @default("QUEUED")
   metaMessageId    String?
   attemptCount     Int       @default(0)
+  nextAttemptAt    DateTime?
   error            String?   @db.Text
   variableMapping  Json?
   createdAt        DateTime  @default(now())
@@ -4174,6 +4175,7 @@ model LeadStageEmailDelivery {
   status            String    @default("QUEUED")
   providerMessageId String?
   attemptCount      Int       @default(0)
+  nextAttemptAt     DateTime?
   error             String?   @db.Text
   variableMapping   Json?
   createdAt         DateTime  @default(now())

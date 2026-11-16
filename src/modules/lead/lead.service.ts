@@ -1610,6 +1610,7 @@ export class LeadService {
     const update = await this.leadRepository.update(customerId, id, sanitizedDto as any, isStageChanged ? {
       userId: Number(userId), previousStatus: lead.status, previousStageId: lead.dbStageId !== undefined ? lead.dbStageId : lead.stageId,
       expectedUpdatedAt: lead.updatedAt,
+      outbox: process.env.NODE_ENV === 'test' && (!this.stageEmailDeliveryService || !this.stageWhatsappDeliveryService) ? undefined : { previousStage: previousStageName, newStage: stageName || resolvedStatus || lead.status },
     } : undefined);
     await this.leadRepository.logTimeline(
       id,
@@ -2003,6 +2004,7 @@ export class LeadService {
         stageName,
         false,
         lead.updatedAt,
+        process.env.NODE_ENV === 'test' && (!this.stageEmailDeliveryService || !this.stageWhatsappDeliveryService) ? undefined : { previousStage: previousStageName, newStage: newStageName },
       );
     }
 
@@ -2449,18 +2451,35 @@ export class LeadService {
 
         if (customerUser) {
           userExisted = true;
-          const userUpdateData: any = {
-            isActive: true,
-            isVerified: true,
-          };
-          if (!customerUser.customerId || customerUser.customerId !== customer.id) {
-            userUpdateData.customerId = customer.id;
+          const linkedEmployee = this.prisma.employee
+            ? await this.prisma.employee.findFirst({
+                where: { userId: customerUser.id },
+                select: { id: true, customerId: true },
+              })
+            : null;
+          const keepsCompanyTenant = Boolean(
+            linkedEmployee &&
+            linkedEmployee.customerId &&
+            Number(linkedEmployee.customerId) !== Number(customer.id),
+          );
+          if (keepsCompanyTenant) {
+            this.logger.warn(
+              `[LEAD_WON_CONVERSION] User #${customerUser.id} is an employee of company ${linkedEmployee.customerId}. Not moving them onto converted customer #${customer.id}.`,
+            );
+          } else {
+            const userUpdateData: any = {
+              isActive: true,
+              isVerified: true,
+            };
+            if (!customerUser.customerId || customerUser.customerId !== customer.id) {
+              userUpdateData.customerId = customer.id;
+            }
+            await this.prisma.user.update({
+              where: { id: customerUser.id },
+              data: userUpdateData,
+            });
+            this.logger.log(`[LEAD_WON_CONVERSION] Activated existing login user #${customerUser.id} (${customerUser.email}) for Customer #${customer.id}`);
           }
-          await this.prisma.user.update({
-            where: { id: customerUser.id },
-            data: userUpdateData,
-          });
-          this.logger.log(`[LEAD_WON_CONVERSION] Activated existing login user #${customerUser.id} (${customerUser.email}) for Customer #${customer.id}`);
         } else {
           let safePhone: string | null = normalizedPhone;
           if (safePhone) {
@@ -2611,69 +2630,11 @@ export class LeadService {
         message: 'Notification queued for delivery',
       };
     }
-    const idempotencyKey = buildStageAutomationIdempotencyKey({
-      customerId, leadId: lead.id, channel, transitionId,
-    });
-    const stage = lead.stageId ? await this.prisma.leadStage.findFirst({
-      where: { id: lead.stageId, deletedAt: null, ...tenantLeadStageScope(customerId) },
-      include: { emailTemplate: true, whatsappTemplate: true },
-    }) : null;
-    const template = channel === 'EMAIL' ? stage?.emailTemplate : stage?.whatsappTemplate;
-    const row = await service.upsertQueued({
-      customerId: Number(customerId), leadId: Number(lead.id), userId: Number(userId),
-      previousStageId, newStageId: lead.stageId, previousStage, newStage,
-      templateName: template?.name ?? null,
-      ...(channel === 'EMAIL'
-        ? { emailTemplateId: stage?.emailTemplateId, recipientEmail: lead.email }
-        : { metaTemplateId: stage?.whatsappTemplateId, recipientPhone: maskPhone(lead.phone || '') }),
-      triggerSource: 'LEAD_STAGE_CHANGED', idempotencyKey,
-      variableMapping: (channel === 'EMAIL' ? stage?.emailVariableMapping : stage?.whatsappVariableMapping) as any,
-    });
-    const execute = async () => {
-      if (!await service.claimQueued(row.id)) {
-        return {
-          sent: false, status: 'SKIPPED', recipient: null, messageId: null, error: null,
-          message: 'This transition notification is already recorded. Use retry for failed delivery.',
-        };
-      }
-      let result: any;
-      try {
-        result = await send(row.id);
-      } catch (error: any) {
-        result = { sent: false, status: 'FAILED', recipient: null, messageId: null,
-          error: error?.message || 'Notification failed', message: 'Notification failed' };
-      }
-      await service.markResult(row.id, {
-        status: result.status,
-        ...(channel === 'EMAIL' ? { providerMessageId: result.messageId } : { metaMessageId: result.messageId }),
-        error: result.error || (result.status !== 'SENT' ? result.message : null),
-      });
-      await this.leadRepository.logTimeline(lead.id, 'STAGE_NOTIFICATION_RESULT',
-        `${channel}: ${result.status} — ${newStage}`, {
-          channel, transitionId, deliveryId: row.id, previousStage, newStage,
-          templateId: template?.id ?? null, templateName: template?.name ?? null,
-          language: channel === 'WHATSAPP' ? stage?.whatsappTemplate?.language : null,
-          recipient: result.recipient, status: result.status, messageId: result.messageId,
-          reason: result.error || result.message,
-        }).catch((error) => this.logger.warn(`Could not record notification timeline for delivery ${row.id}: ${error.message}`));
-      return result;
-    };
-    // In tests run the delivery inline so specs can assert provider outcomes
-    // directly; production always defers to the tracked background path below.
-    if (process.env.NODE_ENV === 'test') return execute();
-    // The QUEUED row above is the durable automation event. Provider delivery
-    // runs in the background so the stage-update request never waits on Meta
-    // or SMTP latency; claimQueued guarantees single execution and the retry
-    // endpoint recovers any row left QUEUED/FAILED.
-    const pending = execute().catch((error: any) => {
-      this.logger.error(`[LeadStageAutomation] ${channel} delivery ${row.id} for lead ${lead.id} crashed: ${error?.message}`);
-      return null;
-    });
-    this.pendingStageDeliveries.add(pending);
-    pending.finally(() => this.pendingStageDeliveries.delete(pending));
+    // Both channel rows were committed with the transition; a separate worker
+    // discovers them even if this request or process exits immediately.
     return {
       sent: false, status: 'QUEUED', recipient: null, messageId: null, error: null,
-      message: 'Notification queued for delivery', deliveryId: row.id,
+      message: 'Notification queued for delivery',
     };
   }
 
@@ -2715,6 +2676,7 @@ export class LeadService {
     explicitNewStageId?: number,
     previousStageId?: number | null,
     existingDeliveryId?: number,
+    deferDeliveryResult = false,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -2722,6 +2684,7 @@ export class LeadService {
     messageId: string | null;
     error: string | null;
     message: string;
+    stageProviderOutcome?: 'RETRYABLE_REJECTION' | 'DEFINITE_REJECTION' | 'AMBIGUOUS';
     reason?: string;
   }> {
     let deliveryRow: any = null;
@@ -3084,7 +3047,7 @@ export class LeadService {
           },
         }).catch(() => null);
 
-        if (deliveryRow?.id && this.stageEmailDeliveryService) {
+        if (!deferDeliveryResult && deliveryRow?.id && this.stageEmailDeliveryService) {
           await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
             status: 'FAILED',
             error: configWarning || 'Email integration not configured or disabled',
@@ -3377,7 +3340,7 @@ export class LeadService {
           },
         }).catch(() => null);
 
-        if (deliveryRow?.id && this.stageEmailDeliveryService) {
+        if (!deferDeliveryResult && deliveryRow?.id && this.stageEmailDeliveryService) {
           await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
             status: 'FAILED',
             error: errorMsg,
@@ -3405,6 +3368,7 @@ export class LeadService {
 
       let messageId: string | null = null;
       let sendError: string | null = null;
+      let stageProviderOutcome: any;
       let status = 'SENT';
       let providerDurationMs = 0;
 
@@ -3437,6 +3401,7 @@ export class LeadService {
       } catch (err: any) {
         status = 'FAILED';
         sendError = err?.message || 'Failed to dispatch email';
+        stageProviderOutcome = err?.stageProviderOutcome || 'AMBIGUOUS';
         this.logger.error(`[LEAD_STAGE_EMAIL] Email failed: ${sendError}`);
         this.logger.error(`[LeadEmailAutomation] Email Send: FAILED - ${sendError}`);
         this.logger.error(
@@ -3468,11 +3433,12 @@ export class LeadService {
         this.logger.warn(`[EMAIL_LOG_WARN] Failed to write EmailLog: ${logErr?.message}`);
       });
 
-      if (deliveryRow?.id && this.stageEmailDeliveryService) {
+      if (!deferDeliveryResult && deliveryRow?.id && this.stageEmailDeliveryService) {
         await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
           status: status === 'SENT' ? 'SENT' : 'FAILED',
           providerMessageId: messageId,
           error: sendError,
+          stageProviderOutcome,
         });
       }
 
@@ -3505,14 +3471,16 @@ export class LeadService {
         messageId,
         error: sendError,
         message: status === 'SENT' ? 'Customer email sent successfully' : (sendError || 'Email delivery failed'),
+        stageProviderOutcome,
       };
     } catch (unexpectedError: any) {
       // Must NEVER fail the lead stage update even on unexpected notification errors
       this.logger.error(`[EMAIL_NOTIFICATION_UNEXPECTED_ERROR] ${unexpectedError?.message}`);
-      if (deliveryRow?.id && this.stageEmailDeliveryService) {
+      if (!deferDeliveryResult && deliveryRow?.id && this.stageEmailDeliveryService) {
         await this.stageEmailDeliveryService.markResult(deliveryRow.id, {
           status: 'FAILED',
           error: unexpectedError?.message || 'Unexpected notification error',
+          stageProviderOutcome: 'AMBIGUOUS',
         }).catch(() => null);
       }
       return {
@@ -3521,6 +3489,7 @@ export class LeadService {
         recipient: null,
         messageId: null,
         error: unexpectedError?.message || 'Unexpected notification error',
+        stageProviderOutcome: 'AMBIGUOUS',
         message: 'Unexpected notification error',
       };
     }
@@ -4913,6 +4882,7 @@ Sent by ${senderOrgName} via CRM.
           skipped: false,
           errorCode: 'PROVIDER_ERROR',
           reason: 'PROVIDER_ERROR',
+          stageProviderOutcome: 'AMBIGUOUS',
           message: sendErr?.message || 'WhatsApp message failed to send',
           details: sendErr?.message || 'WhatsApp message failed to send',
         };
@@ -4990,6 +4960,7 @@ Sent by ${senderOrgName} via CRM.
       messageId: result.messageId,
       errorCode: result.errorCode,
       providerStatus: result.providerStatus,
+      stageProviderOutcome: result.stageProviderOutcome,
       providerMessage: result.providerMessage || result.details,
       message: result.success
         ? `WhatsApp message sent successfully to ${phone}`
@@ -5017,6 +4988,7 @@ Sent by ${senderOrgName} via CRM.
     whatsappTemplateId?: number,
     previousStageId?: number | null,
     existingDeliveryId?: number,
+    deferDeliveryResult = false,
   ): Promise<{
     sent: boolean;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -5026,6 +4998,7 @@ Sent by ${senderOrgName} via CRM.
     message: string;
     details?: string | null;
     errorCode?: string | null;
+    stageProviderOutcome?: 'RETRYABLE_REJECTION' | 'DEFINITE_REJECTION' | 'AMBIGUOUS';
   }> {
     let deliveryRow: any = null;
     try {
@@ -5431,11 +5404,12 @@ Sent by ${senderOrgName} via CRM.
         ? 'SKIPPED'
         : 'FAILED';
 
-      if (deliveryRow?.id && this.stageWhatsappDeliveryService) {
+      if (!deferDeliveryResult && deliveryRow?.id && this.stageWhatsappDeliveryService) {
         await this.stageWhatsappDeliveryService.markResult(deliveryRow.id, {
           status: notifStatus,
           metaMessageId: sendRes?.messageId || null,
           error: isSent ? null : (sendRes?.reason || (sendRes as any)?.error || sendRes?.message || null),
+          stageProviderOutcome: (sendRes as any)?.stageProviderOutcome,
         });
       }
 
@@ -5448,13 +5422,15 @@ Sent by ${senderOrgName} via CRM.
         errorCode: isSent ? null : (sendRes?.errorCode || sendRes?.reason || null),
         message: sendRes?.message || (isSent ? 'Customer WhatsApp message sent successfully' : 'WhatsApp delivery failed'),
         details: (sendRes as any)?.details || null,
+        stageProviderOutcome: (sendRes as any)?.stageProviderOutcome,
       };
     } catch (err: any) {
       this.logger.error(`[WHATSAPP] Failed to send lead ${eventType} WhatsApp: ${err?.message}`);
-      if (deliveryRow?.id && this.stageWhatsappDeliveryService) {
+      if (!deferDeliveryResult && deliveryRow?.id && this.stageWhatsappDeliveryService) {
         await this.stageWhatsappDeliveryService.markResult(deliveryRow.id, {
           status: 'FAILED',
           error: err?.message || 'WhatsApp delivery failed',
+          stageProviderOutcome: 'AMBIGUOUS',
         }).catch(() => null);
       }
       return {
@@ -5463,6 +5439,7 @@ Sent by ${senderOrgName} via CRM.
         recipient: lead?.phone ? maskPhone(String(lead.phone)) : null,
         messageId: null,
         error: err?.message || 'WhatsApp delivery failed',
+        stageProviderOutcome: 'AMBIGUOUS',
         message: err?.message || 'WhatsApp delivery failed',
       };
     }
@@ -5608,6 +5585,7 @@ Sent by ${senderOrgName} via CRM.
     const delivery = await this.stageWhatsappDeliveryService.markResult(row.id, {
       status: sendRes.status, metaMessageId: sendRes.messageId,
       error: sendRes.error || (sendRes.status !== 'SENT' ? sendRes.message : null),
+      stageProviderOutcome: sendRes.stageProviderOutcome,
     });
     return { delivery, send: sendRes };
   }
@@ -5651,6 +5629,7 @@ Sent by ${senderOrgName} via CRM.
     const delivery = await this.stageEmailDeliveryService.markResult(row.id, {
       status: sendRes.status, providerMessageId: sendRes.messageId,
       error: sendRes.error || (sendRes.status !== 'SENT' ? sendRes.message : null),
+      stageProviderOutcome: sendRes.stageProviderOutcome,
     });
     return { delivery, send: sendRes };
   }

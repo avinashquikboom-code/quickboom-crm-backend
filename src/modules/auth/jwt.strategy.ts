@@ -594,9 +594,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const primaryRoleRecord = user.userRoles?.[0]?.role;
     const roleId = payload.roleId || primaryRoleRecord?.id || (user.userRoles?.[0]?.roleId ?? null);
 
+    // Employees act inside their company. A drifted user.customerId (for example
+    // after a lead was converted to a customer) must not replace that tenant.
+    const employeeTenant = Number(user.employee?.customerId);
     let customerId =
+      (Number.isInteger(employeeTenant) && employeeTenant > 0 ? employeeTenant : null) ??
       user.customerId ??
-      user.employee?.customerId ??
       user.customer?.id ??
       (payload.customerId ? Number(payload.customerId) : null);
 

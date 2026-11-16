@@ -1,3 +1,4 @@
+import { LeadStageOutboxWorker } from './lead-stage-outbox.worker';
 import { Module, forwardRef } from '@nestjs/common';
 import { LeadService } from './lead.service';
 import { LeadController } from './lead.controller';
@@ -26,7 +27,7 @@ import { EmailModule } from '../email/email.module';
     EmailModule,
   ],
   controllers: [LeadController],
-  providers: [LeadService, LeadRepository, LeadStageWhatsappDeliveryService, LeadStageEmailDeliveryService, LeadPlanProposalService, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],
+  providers: [LeadService, LeadRepository, LeadStageOutboxWorker, LeadStageWhatsappDeliveryService, LeadStageEmailDeliveryService, LeadPlanProposalService, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],
   exports: [LeadService, LeadRepository, LeadStageWhatsappDeliveryService, LeadStageEmailDeliveryService, LeadPlanProposalService],
 })
 export class LeadModule {}

@@ -1,3 +1,4 @@
+import { classifySmtpFailure } from '../lead/lead-stage-provider-outcome';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -436,9 +437,11 @@ export class EmailService {
         });
       }
 
-      throw new BadRequestException(
+      const failure = new BadRequestException(
         `Failed to send email via SMTP (${config.host}:${config.port}): ${err?.message || 'Email delivery failed'}`,
       );
+      Object.assign(failure, { stageProviderOutcome: classifySmtpFailure(err) });
+      throw failure;
     }
   }
 

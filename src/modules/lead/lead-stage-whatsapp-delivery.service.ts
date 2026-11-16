@@ -4,7 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { buildStageAutomationIdempotencyKey } from './lead-stage-automation.util';
 
 const TERMINAL_SUCCESS = new Set(['SENT', 'DELIVERED', 'READ']);
-const IN_FLIGHT = new Set(['QUEUED', 'PROCESSING', ...TERMINAL_SUCCESS]);
+const IN_FLIGHT = new Set(['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', ...TERMINAL_SUCCESS]);
 
 @Injectable()
 export class LeadStageWhatsappDeliveryService {
@@ -86,8 +86,8 @@ export class LeadStageWhatsappDeliveryService {
 
   async claimQueued(id: number) {
     const result = await this.prisma.leadStageWhatsAppDelivery.updateMany({
-      where: { id, status: 'QUEUED', metaMessageId: null },
-      data: { status: 'PROCESSING', attemptCount: { increment: 1 } },
+      where: { id, status: 'QUEUED', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }], metaMessageId: null },
+      data: { status: 'PROCESSING', nextAttemptAt: null, attemptCount: { increment: 1 } },
     });
     return result.count === 1;
   }
@@ -98,6 +98,7 @@ export class LeadStageWhatsappDeliveryService {
       status: 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'SKIPPED';
       metaMessageId?: string | null;
       error?: string | null;
+      stageProviderOutcome?: 'RETRYABLE_REJECTION' | 'DEFINITE_REJECTION' | 'AMBIGUOUS';
     },
   ) {
     // Do not let a late send-result overwrite an already delivered/read state.
@@ -108,7 +109,7 @@ export class LeadStageWhatsappDeliveryService {
     return this.prisma.leadStageWhatsAppDelivery.update({
       where: { id },
       data: {
-        status: result.status,
+        status: result.status === 'FAILED' && result.stageProviderOutcome === 'AMBIGUOUS' ? 'RECONCILIATION_REQUIRED' : result.status,
         metaMessageId: result.metaMessageId ?? undefined,
         error: result.error ?? null,
         updatedAt: new Date(),
@@ -153,9 +154,9 @@ export class LeadStageWhatsappDeliveryService {
       where: {
         metaMessageId,
         // Meta may deliver events out of order. Do not downgrade READ/DELIVERED.
-        status: { in: mapped === 'READ' ? ['QUEUED', 'PROCESSING', 'SENT', 'DELIVERED', 'FAILED']
-          : mapped === 'DELIVERED' ? ['QUEUED', 'PROCESSING', 'SENT', 'FAILED']
-          : ['QUEUED', 'PROCESSING', 'SENT'] },
+        status: { in: mapped === 'READ' ? ['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'SENT', 'DELIVERED', 'FAILED']
+          : mapped === 'DELIVERED' ? ['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'SENT', 'FAILED']
+          : ['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', 'SENT'] },
       },
       data: { status: mapped, updatedAt: new Date() },
     });

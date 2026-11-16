@@ -4,7 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { buildStageAutomationIdempotencyKey } from './lead-stage-automation.util';
 
 const TERMINAL_SUCCESS = new Set(['SENT', 'DELIVERED']);
-const IN_FLIGHT = new Set(['QUEUED', 'PROCESSING', ...TERMINAL_SUCCESS]);
+const IN_FLIGHT = new Set(['QUEUED', 'PROCESSING', 'RECONCILIATION_REQUIRED', ...TERMINAL_SUCCESS]);
 
 @Injectable()
 export class LeadStageEmailDeliveryService {
@@ -86,8 +86,8 @@ export class LeadStageEmailDeliveryService {
 
   async claimQueued(id: number) {
     const result = await this.prisma.leadStageEmailDelivery.updateMany({
-      where: { id, status: 'QUEUED', providerMessageId: null },
-      data: { status: 'PROCESSING', attemptCount: { increment: 1 } },
+      where: { id, status: 'QUEUED', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }], providerMessageId: null },
+      data: { status: 'PROCESSING', nextAttemptAt: null, attemptCount: { increment: 1 } },
     });
     return result.count === 1;
   }
@@ -98,6 +98,7 @@ export class LeadStageEmailDeliveryService {
       status: 'SENT' | 'DELIVERED' | 'FAILED' | 'SKIPPED';
       providerMessageId?: string | null;
       error?: string | null;
+      stageProviderOutcome?: 'RETRYABLE_REJECTION' | 'DEFINITE_REJECTION' | 'AMBIGUOUS';
     },
   ) {
     const current = await this.prisma.leadStageEmailDelivery.findUnique({ where: { id }, select: { status: true } }).catch(() => null);
@@ -107,7 +108,7 @@ export class LeadStageEmailDeliveryService {
     return this.prisma.leadStageEmailDelivery.update({
       where: { id },
       data: {
-        status: result.status,
+        status: result.status === 'FAILED' && result.stageProviderOutcome === 'AMBIGUOUS' ? 'RECONCILIATION_REQUIRED' : result.status,
         providerMessageId: result.providerMessageId ?? undefined,
         error: result.error ?? null,
         updatedAt: new Date(),

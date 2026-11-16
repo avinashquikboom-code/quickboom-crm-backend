@@ -1,3 +1,4 @@
+import { createStageOutbox } from './lead-stage-outbox';
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { PhotoLookupCache } from '../data-capture/photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -1992,7 +1993,7 @@ export class LeadRepository {
   }
 
   async update(customerId: number | string, id: number | string, dto: UpdateLeadDto & { employeeId?: number | null },
-    transition?: { userId: number; previousStatus: LeadStatus; previousStageId: number | null; expectedUpdatedAt?: Date }) {
+    transition?: { userId: number; previousStatus: LeadStatus; previousStageId: number | null; expectedUpdatedAt?: Date; outbox?: { previousStage: string; newStage: string } }) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
     const {
@@ -2198,6 +2199,12 @@ export class LeadRepository {
           changedById: transition.userId,
         },
       });
+      if (transition.outbox) await createStageOutbox(db, {
+        customerId: numCustomerId, leadId: numId, userId: transition.userId || null,
+        transitionId: history.id, previousStageId: transition.previousStageId,
+        newStageId: updateData.stageId ?? transition.previousStageId,
+        ...transition.outbox,
+      });
       return { ...result, transitionId: history.id };
     };
     if (!transition) return write(this.prisma);
@@ -2218,6 +2225,7 @@ export class LeadRepository {
     stageName?: string,
     inlineTransaction = false,
     expectedUpdatedAt?: Date,
+    outbox?: { previousStage: string; newStage: string },
   ) {
     const numId = Number(id);
     const numCustomerId = Number(customerId);
@@ -2325,6 +2333,11 @@ export class LeadRepository {
         } as any,
       });
       transitionId = history?.id;
+      if (outbox) await createStageOutbox(db, {
+        customerId: numCustomerId, leadId: numId, userId: numUserId || null,
+        transitionId: history.id, previousStageId: fromStageId,
+        newStageId: resolvedStageId ?? null, ...outbox,
+      });
       await db.leadActivityTimeline.create({
         data: {
           leadId: numId,

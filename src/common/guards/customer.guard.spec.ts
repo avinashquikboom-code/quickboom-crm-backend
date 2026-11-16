@@ -143,6 +143,42 @@ describe('CustomerGuard - Customer ID Resolution & Cross-Customer Protection', (
     }
   });
 
+  it('uses the employee company for lead stage updates when the client sends another customer id', async () => {
+    const req: any = {
+      user: {
+        id: 15,
+        email: 'bpo@target.com',
+        customerId: 17,
+        role: 'EMPLOYEE',
+        employee: { id: 8, customerId: 16, status: 'ACTIVE' },
+      },
+      query: { customerId: '17' },
+      headers: { 'x-customer-id': 'QB-CUST-017' },
+      originalUrl: '/api/v1/leads/42/status',
+    };
+    const context: any = {
+      switchToHttp: () => ({ getRequest: () => req }),
+    };
+
+    const allowed = await guard.canActivate(context);
+    expect(allowed).toBe(true);
+    expect(req.customerId).toBe(16);
+  });
+
+  it('still blocks a non-employee from requesting another customer', async () => {
+    const req: any = {
+      user: { id: 15, email: 'user15@target.com', customerId: 16, role: 'CUSTOMER' },
+      query: { customerId: '17' },
+      headers: {},
+      originalUrl: '/api/v1/customers/17',
+    };
+    const context: any = {
+      switchToHttp: () => ({ getRequest: () => req }),
+    };
+
+    await expect(guard.canActivate(context)).rejects.toThrow(ForbiddenException);
+  });
+
   it('rejects when user has no customer context', async () => {
     const req: any = {
       user: { id: 99, email: 'orphan@test.com', customerId: null, role: 'CUSTOMER' },
