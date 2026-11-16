@@ -439,7 +439,7 @@ export function calculatePerMinuteLateDeduction(input: {
   const graceMinutes = 0;
   const maxDaily = policy?.maxDailyDeduction != null && policy.maxDailyDeduction > 0 ? Number(policy.maxDailyDeduction) : null;
   const maxMonthly = policy?.maxMonthlyDeduction != null && policy.maxMonthlyDeduction > 0 ? Number(policy.maxMonthlyDeduction) : null;
-  const effectiveFrom = policy?.effectiveFrom ? new Date(policy.effectiveFrom) : null;
+  const effectiveFrom = policy?.effectiveFrom ? asUtcDay(policy.effectiveFrom) : null;
 
   const roleApplies = policy?.applyTo !== 'ROLES' ||
     (policy.applicableRoles || []).some((role) => role.toLowerCase() === (input.employeeRole || '').trim().toLowerCase());

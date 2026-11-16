@@ -1411,10 +1411,15 @@ result: SUCCESS`);
     const storedRate = Number((todayAtt as any)?.lateRatePerMinute) || 0;
     const storedGrace = Number((todayAtt as any)?.lateGraceMinutes) || 0;
 
-    const lateMinutes = storedGrace > 0 ? Math.max(0, Number(todayAtt.lateMinutes) || 0) : evaluation.lateMinutes;
+    const lateMinutes = storedGrace > 0 && storedRate > 0
+      ? Math.max(0, Number(todayAtt.lateMinutes) || 0) : evaluation.lateMinutes;
     const lateRatePerMinute = storedRate > 0 ? storedRate : evaluation.ratePerMinute;
     const lateGraceMinutes = storedGrace > 0 ? storedGrace : evaluation.gracePeriodMinutes;
-    const lateDeduction = todayAtt.lateDeduction != null ? storedDeduction : evaluation.deduction;
+    // Older attendance rows predate stored rates and have database-default zero
+    // amounts. Show the current eligible calculation for those rows only.
+    const hasRecordedRate = storedRate > 0;
+    const lateDeduction = hasRecordedRate || storedDeduction > 0
+      ? storedDeduction : evaluation.deduction;
 
     return {
       isEligibleLateMark: true,
