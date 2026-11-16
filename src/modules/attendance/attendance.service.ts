@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
-import { evaluateLatePunch } from '../payroll/salary-calculation';
+import { evaluateLatePunch, dateToMinutesInIST, parseTimeStringToMinutes } from '../payroll/salary-calculation';
 import { classifyPunchOut, scheduledCheckout } from './attendance-classification';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { AttendanceStatus } from '@prisma/client';
@@ -222,7 +222,7 @@ export class AttendanceService {
       punchInRequired: true,
       earlyPunchInAllowed: true,
       multiplePunchInAllowed: false,
-      gracePeriodMinutes: 15,
+      gracePeriodMinutes: 0,
       lateArrivalThresholdMins: 30,
       lateRuleAction: 'MARK_LATE',
       punchOutRequired: true,
@@ -1275,7 +1275,7 @@ result: SUCCESS`);
       policy: {
         officeStartTime: policy.officeStartTime || '09:30',
         officeEndTime: policy.officeEndTime || '18:30',
-        gracePeriodMinutes: policy.gracePeriodMinutes || 15,
+        gracePeriodMinutes: 0,
         minWorkingHours: policy.minWorkingHours || 8.0,
       },
       status: {
@@ -1314,12 +1314,11 @@ result: SUCCESS`);
         employeeId,
         customerId,
         date: { gte: monthStart, lte: monthEnd },
-        punchIn: { not: null },
-        OR: [{ lateMinutes: { gt: 0 } }, { lateDeduction: { gt: 0 } }, { isLate: true }],
       },
       select: {
         id: true,
         date: true,
+        punchIn: true,
         lateMinutes: true,
         lateDeduction: true,
         lateRatePerMinute: true,
@@ -1341,6 +1340,7 @@ result: SUCCESS`);
     const rates = new Set<number>();
 
     for (const row of latestByDay.values()) {
+      if (!row.punchIn) continue;
       const minutes = Math.max(0, Number(row.lateMinutes) || 0);
       const storedDeduction = Math.max(0, Number(row.lateDeduction) || 0);
       const storedRate = Number(row.lateRatePerMinute) || 0;
@@ -1350,8 +1350,6 @@ result: SUCCESS`);
       totalLateMinutes += minutes;
       if (storedDeduction > 0) {
         totalDeduction += storedDeduction;
-      } else if (minutes > 0) {
-        totalDeduction += Math.round(minutes * (storedRate > 0 ? storedRate : 0) * 100) / 100;
       }
       if (storedRate > 0) rates.add(storedRate);
     }
@@ -1413,13 +1411,10 @@ result: SUCCESS`);
     const storedRate = Number((todayAtt as any)?.lateRatePerMinute) || 0;
     const storedGrace = Number((todayAtt as any)?.lateGraceMinutes) || 0;
 
-    const lateMinutes = evaluation.lateMinutes;
+    const lateMinutes = storedGrace > 0 ? Math.max(0, Number(todayAtt.lateMinutes) || 0) : evaluation.lateMinutes;
     const lateRatePerMinute = storedRate > 0 ? storedRate : evaluation.ratePerMinute;
     const lateGraceMinutes = storedGrace > 0 ? storedGrace : evaluation.gracePeriodMinutes;
-    let lateDeduction = storedDeduction > 0 ? storedDeduction : evaluation.deduction;
-    if (lateDeduction <= 0 && lateMinutes > 0 && lateRatePerMinute > 0) {
-      lateDeduction = Math.round(lateMinutes * lateRatePerMinute * 100) / 100;
-    }
+    const lateDeduction = todayAtt.lateDeduction != null ? storedDeduction : evaluation.deduction;
 
     return {
       isEligibleLateMark: true,
@@ -1467,7 +1462,14 @@ result: SUCCESS`);
 
   private async evaluatePunchLateness(employee: any, attendancePolicy: any, punchIn: Date) {
     const customerId = employee.customerId;
-    const { start, end } = getBusinessDayRange(punchIn);
+    const startMinutes = parseTimeStringToMinutes(employee.shift?.startTime);
+    const endMinutes = parseTimeStringToMinutes(employee.shift?.endTime);
+    const punchMinutes = dateToMinutesInIST(punchIn).minutes;
+    const overnight = startMinutes != null && endMinutes != null &&
+      (employee.shift?.isNightShift || endMinutes <= startMinutes);
+    const schedulePunch = overnight && punchMinutes < startMinutes! && punchMinutes <= endMinutes!
+      ? new Date(punchIn.getTime() - 24 * 60 * 60 * 1000) : punchIn;
+    const { start, end } = getBusinessDayRange(schedulePunch);
     let isHoliday = false;
     let isApprovedLeave = false;
     let latePolicy: any = null;
@@ -1776,7 +1778,7 @@ result: SUCCESS`);
               code: emp.shift.code,
               startTime: emp.shift.startTime,
               endTime: emp.shift.endTime,
-              gracePeriodMinutes: emp.shift.gracePeriodMinutes || 15,
+              gracePeriodMinutes: 0,
               durationHours: emp.shift.durationHours || 8,
             }
           : null,

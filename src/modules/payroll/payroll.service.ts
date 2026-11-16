@@ -1560,7 +1560,7 @@ export class PayrollService {
       }
     }
 
-    return policy;
+    return { ...policy, gracePeriodMinutes: 0 };
   }
 
   async saveLateMarkPolicy(customerId: number | string | undefined, data: any) {
@@ -1568,7 +1568,7 @@ export class PayrollService {
     const isEnabled = data.isEnabled !== undefined ? Boolean(data.isEnabled) : true;
     const deductionRatePerMin = Number(data.deductionRatePerMin ?? data.ratePerMinute ?? 1.0);
     const currency = String(data.currency || 'INR');
-    const gracePeriodMinutes = Number(data.gracePeriodMinutes ?? 0);
+    const gracePeriodMinutes = 0;
     const calculationMethod = String(data.calculationMethod || 'PER_MINUTE');
     const applyTo = String(data.applyTo || 'ALL');
     const applicableRoles = Array.isArray(data.applicableRoles) ? data.applicableRoles : [];
