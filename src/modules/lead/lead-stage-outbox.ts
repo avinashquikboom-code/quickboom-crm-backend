@@ -15,15 +15,21 @@ export async function createStageOutbox(db: any, p: {
     customerId: p.customerId, leadId: p.leadId, userId: p.userId,
     previousStageId: p.previousStageId, newStageId: p.newStageId,
     previousStage: p.previousStage, newStage: p.newStage,
-    triggerSource: 'LEAD_STAGE_CHANGED', status: 'QUEUED',
+    triggerSource: 'LEAD_STAGE_CHANGED',
   };
+  const channelState = (enabled: boolean | undefined, templateId: number | null | undefined) =>
+    enabled === false || stage?.isActive === false
+      ? { status: 'SKIPPED', error: 'Channel or stage automation is disabled.' }
+      : !stage || !templateId
+        ? { status: 'NOT_CONFIGURED', error: 'No template configured for this stage.' }
+        : { status: 'QUEUED', error: null };
   await db.leadStageWhatsAppDelivery.create({ data: {
-    ...common, idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'WHATSAPP' }),
-    metaTemplateId: stage?.whatsappTemplateId ?? null, templateName: stage?.whatsappTemplate?.name ?? null,
+    ...common, ...channelState(stage?.whatsappEnabled, stage?.whatsappTemplateId), idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'WHATSAPP' }),
+    metaTemplateId: stage?.whatsappTemplateId ?? null, templateName: stage?.whatsappTemplate?.templateName ?? stage?.whatsappTemplate?.name ?? null,
     ...(stage?.whatsappVariableMapping != null ? { variableMapping: stage.whatsappVariableMapping } : {}),
   } });
   await db.leadStageEmailDelivery.create({ data: {
-    ...common, idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'EMAIL' }),
+    ...common, ...channelState(stage?.emailEnabled, stage?.emailTemplateId), idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'EMAIL' }),
     emailTemplateId: stage?.emailTemplateId ?? null, templateName: stage?.emailTemplate?.name ?? null,
     ...(stage?.emailVariableMapping != null ? { variableMapping: stage.emailVariableMapping } : {}),
   } });

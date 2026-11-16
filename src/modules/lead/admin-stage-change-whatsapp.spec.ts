@@ -267,7 +267,7 @@ describe('Admin Panel Stage Change Automatic WhatsApp Verification', () => {
         data: expect.objectContaining({
           leadId: 101,
           action: 'WHATSAPP_SENT',
-          description: expect.stringContaining('WhatsApp notification sent to +919876543210 for stage Contacted'),
+          description: expect.stringContaining('WhatsApp notification sent to ****3210 for stage Contacted'),
         }),
       }),
     );

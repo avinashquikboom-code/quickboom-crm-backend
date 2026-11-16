@@ -14,7 +14,9 @@ suite('stage outbox PostgreSQL integration', () => {
     customer = await db.customer.create({ data: { name: 'Outbox isolated test' } });
     user = await db.user.create({ data: { customerId: customer.id, email: `outbox-${Date.now()}@example.invalid`, passwordHash: 'not-a-real-credential', firstName: 'Test', lastName: 'User' } });
     from = await db.leadStage.create({ data: { customerId: customer.id, name: 'New', key: 'NEW' } });
-    to = await db.leadStage.create({ data: { customerId: customer.id, name: 'Connected', key: 'CONNECTED' } });
+    const emailTemplate = await db.emailTemplate.create({ data: { customerId: customer.id, name: 'Test email', key: `OUTBOX_${Date.now()}`, subject: 'Test', body: 'Test' } });
+    const metaTemplate = await db.metaTemplate.create({ data: { customerId: customer.id, name: 'Test WhatsApp', templateName: `outbox_${Date.now()}`, body: 'Test' } });
+    to = await db.leadStage.create({ data: { customerId: customer.id, name: 'Connected', key: 'CONNECTED', emailTemplateId: emailTemplate.id, whatsappTemplateId: metaTemplate.id } });
     lead = await db.lead.create({ data: { customerId: customer.id, createdById: user.id, title: 'Test', firstName: 'Test', lastName: 'Lead', stageId: from.id } });
   });
   afterAll(async () => { await db.$disconnect(); });
