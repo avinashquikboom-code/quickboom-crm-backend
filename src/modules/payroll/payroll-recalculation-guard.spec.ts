@@ -21,6 +21,7 @@ describe('Payroll recalculation protection', () => {
 
   it.each([
     ['GENERATED', null, null],
+    ['APPROVED', null, null],
     ['CALCULATED', { id: 3 }, null],
     ['CALCULATED', null, { id: 4 }],
     ['PAID', null, null],

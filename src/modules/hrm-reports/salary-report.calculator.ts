@@ -2,7 +2,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   agreedMonthlySalary,
   countPayableAttendance,
-  lateMarkDeduction,
+  calculatePerMinuteLateDeduction,
   lopDeduction,
   settleMonthlySalary,
 } from '../payroll/salary-calculation';
@@ -114,8 +114,12 @@ export async function calculateEmployeeSalaryReport(
       payroll: {
         month,
         year,
-        status: { in: ['PAID', 'APPROVED'] },
       },
+      OR: [
+        { payroll: { status: { in: ['PAID', 'APPROVED', 'GENERATED'] } } },
+        { salarySlips: { some: {} } },
+        { status: 'PAID' },
+      ],
     },
     include: {
       payroll: true,
@@ -255,6 +259,7 @@ export async function calculateEmployeeSalaryReport(
     joiningDate: employee.joiningDate,
     shiftDays: employee.shift?.workingDays,
     workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek || 5,
+    halfDayDeductionPct: attendancePolicy?.halfDayDeductionPct ?? 50,
     attendance: attendances.map((r) => ({ date: r.date, status: r.status })),
     leaves: approvedLeaves.map((l) => {
       const code = l.leaveType?.code?.toUpperCase() || '';
@@ -342,11 +347,20 @@ export async function calculateEmployeeSalaryReport(
   const otherDeductions = structure?.otherDeductions ?? 0;
 
   // Late mark deductions
-  const lateDeduction = lateMarkDeduction(
-    registeredSalary,
-    lateMarks,
-    Number(salaryPolicy?.lateArrivalDeductionPct) || 0,
-  );
+  const [latePolicy, holidays] = await Promise.all([
+    prisma.lateMarkPolicy.findUnique({ where: { customerId } }),
+    prisma.publicHoliday.findMany({ where: { customerId, isActive: true, date: { gte: startDate, lte: endDate } } }),
+  ]);
+  const lateDeduction = calculatePerMinuteLateDeduction({
+    attendances,
+    shift: employee.shift,
+    policy: latePolicy,
+    employeeId: numEmpId,
+    employeeRole: employee.designation?.name || employee.designation?.code,
+    workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek ?? 5,
+    holidays,
+    leaves: approvedLeaves.map((leave) => ({ from: leave.fromDate, to: leave.toDate })),
+  }).totalLateDeduction;
 
   const statutory = pf + esi + professionalTax + tds + otherDeductions + loanDeduction + lateDeduction;
   const extraEarnings = approvedReimbursements + (overtimeEarnings - structureOvertime);

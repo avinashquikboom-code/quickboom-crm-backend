@@ -1,17 +1,35 @@
 import { AttendanceStatus } from '@prisma/client';
+import { getBusinessDayRange, parseTimeToMinutes } from '../../common/utils/timezone.util';
+
+/** Scheduled checkout in the business timezone, including AM/PM and night shifts. */
+export function scheduledCheckout(punchIn: Date, now: Date, policy: {
+  officeEndTime?: string; workingHoursPerDay?: number;
+}, shift?: { startTime?: string; endTime?: string } | null): Date {
+  const { start } = getBusinessDayRange(punchIn);
+  const endMinutes = parseTimeToMinutes(shift?.endTime || policy.officeEndTime || '18:30');
+  let end = new Date(start.getTime() + endMinutes * 60_000);
+  if (end <= punchIn) {
+    const overnight = shift?.startTime && endMinutes <= parseTimeToMinutes(shift.startTime);
+    end = overnight
+      ? new Date(end.getTime() + 24 * 60 * 60_000)
+      : new Date(punchIn.getTime() + (policy.workingHoursPerDay ?? 8) * 60 * 60_000);
+  }
+  return end > now ? now : end;
+}
 
 export interface PunchOutPolicy {
   minWorkingHours?: number | null;
   earlyCheckoutGraceMinutes?: number | null;
   earlyCheckoutAction?: string | null;
   minWorkingHoursForHalfDay?: number | null;
+  workingHoursPerDay?: number | null;
 }
 
 /**
  * Day classification at punch-out. Late mark and half day are decided separately:
  * the late mark comes from punch-in and is only carried forward here, while half day
- * depends on the hours actually worked. Time lost to the late arrival is already
- * covered by the late mark, so it is not counted again as an early checkout.
+ * depends only on eligible hours actually worked and the configured hours policy.
+ * Late minutes must never be credited as working time.
  */
 export function classifyPunchOut(input: {
   currentStatus: AttendanceStatus | string;
@@ -20,25 +38,34 @@ export function classifyPunchOut(input: {
   lateGraceMinutes?: number | null;
   workedHours: number;
   policy: PunchOutPolicy;
+  shift?: {
+    durationHours?: number | null;
+    breakDurationMinutes?: number | null;
+    halfDayThresholdHours?: number | null;
+  } | null;
 }): { status: AttendanceStatus; isLate: boolean; isHalfDay: boolean } {
   const current = input.currentStatus as AttendanceStatus;
   const isLate = Boolean(input.isLate || current === AttendanceStatus.LATE);
-  if (current === AttendanceStatus.LEAVE) return { status: current, isLate, isHalfDay: false };
+  // HOLIDAY/WEEKLY_OFF can be supplied by report APIs even though they are not
+  // persisted enum values. Do not replace an explicit non-working classification.
+  if (['LEAVE', 'HOLIDAY', 'WEEKLY_OFF', 'ABSENT'].includes(current)) {
+    return { status: current, isLate, isHalfDay: false };
+  }
 
   const worked = Math.max(0, Number(input.workedHours) || 0);
-  const halfDayHours = input.policy.minWorkingHoursForHalfDay || 4.0;
-  const requiredHours = input.policy.minWorkingHours || 8.0;
-  const earlyGraceHours = (input.policy.earlyCheckoutGraceMinutes || 15) / 60;
-  const lateArrivalHours = isLate
-    ? (Math.max(0, Number(input.lateMinutes) || 0) + Math.max(0, Number(input.lateGraceMinutes) || 0)) / 60
-    : 0;
+  const shiftHours = input.shift?.durationHours
+    ? Math.max(0, input.shift.durationHours - (input.shift.breakDurationMinutes ?? 0) / 60)
+    : Infinity;
+  const requiredHours = Math.min(input.policy.minWorkingHours ?? input.policy.workingHoursPerDay ?? 8, shiftHours);
+  const halfDayHours = Math.min(input.shift?.halfDayThresholdHours ?? input.policy.minWorkingHoursForHalfDay ?? 4, requiredHours);
+  const earlyGraceHours = (input.policy.earlyCheckoutGraceMinutes ?? 15) / 60;
 
-  const leftEarly = worked + lateArrivalHours < requiredHours - earlyGraceHours;
-  const isHalfDay = worked < halfDayHours || (leftEarly && input.policy.earlyCheckoutAction === 'HALF_DAY');
+  const shortHours = worked < requiredHours - earlyGraceHours;
+  const isHalfDay = worked < requiredHours &&
+    (worked <= halfDayHours || (shortHours && input.policy.earlyCheckoutAction === 'HALF_DAY'));
 
   if (isHalfDay) return { status: AttendanceStatus.HALF_DAY, isLate, isHalfDay };
-  if (current === AttendanceStatus.HALF_DAY) {
-    return { status: isLate ? AttendanceStatus.LATE : AttendanceStatus.PRESENT, isLate, isHalfDay };
-  }
-  return { status: current, isLate, isHalfDay };
+  // LATE remains a paid present day for existing API consumers; isLate also
+  // survives independently when the hours classification is HALF_DAY.
+  return { status: isLate ? AttendanceStatus.LATE : current === AttendanceStatus.REMOTE ? current : AttendanceStatus.PRESENT, isLate, isHalfDay };
 }

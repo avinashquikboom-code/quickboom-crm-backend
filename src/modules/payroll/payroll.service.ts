@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { agreedMonthlySalary, countPayableAttendance, lateMarkDeduction, calculatePerMinuteLateDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
+import { agreedMonthlySalary, countPayableAttendance, calculatePerMinuteLateDeduction, lopDeduction, settleMonthlySalary } from './salary-calculation';
 
 function otHours(rows: Array<{ totalMinutes?: number | null; approvedMinutes?: number | null; actualMinutes?: number | null }> | undefined, kind: 'actual' | 'approved' | 'payable') {
   const minutes = (rows || []).reduce((sum, row) => {
@@ -13,6 +13,7 @@ function otHours(rows: Array<{ totalMinutes?: number | null; approvedMinutes?: n
   return Math.round((minutes / 60) * 100) / 100;
 }
 import { SalaryTargetService } from './salary-target.service';
+import { classifyPunchOut, scheduledCheckout } from '../attendance/attendance-classification';
 
 @Injectable()
 export class PayrollService {
@@ -57,25 +58,12 @@ export class PayrollService {
     for (const att of openRecords) {
       try {
         const punchInDate = new Date(att.punchIn!);
-        const year = punchInDate.getFullYear();
-        const month = punchInDate.getMonth();
-        const day = punchInDate.getDate();
-
         const policy = await this.prisma.attendancePolicy.findFirst({
           where: { customerId: att.customerId, isActive: true },
           orderBy: { officeId: 'desc' },
         });
 
-        const endTimeStr = att.employee?.shift?.endTime || policy?.officeEndTime || '18:30';
-        const [endHour, endMin] = endTimeStr.split(':').map(Number);
-        let scheduledEnd = new Date(year, month, day, endHour || 18, endMin || 30, 0, 0);
-
-        if (scheduledEnd.getTime() <= punchInDate.getTime()) {
-          scheduledEnd = new Date(punchInDate.getTime() + (policy?.workingHoursPerDay || 8.0) * 60 * 60 * 1000);
-        }
-        if (scheduledEnd.getTime() > now.getTime()) {
-          scheduledEnd = now;
-        }
+        const scheduledEnd = scheduledCheckout(punchInDate, now, policy ?? {}, att.employee?.shift);
 
         let totalBreakMins = 0;
         for (const b of att.breaks) {
@@ -98,9 +86,13 @@ export class PayrollService {
         const netWorkingMins = Math.max(0, grossMins - totalBreakMins);
         const actualHours = Math.round((netWorkingMins / 60) * 100) / 100;
         const wasPunchInLate = Boolean(att.isLate || att.status === 'LATE');
-        const finalStatus = wasPunchInLate
-          ? (actualHours < (policy?.minWorkingHoursForHalfDay || 4.0) ? 'HALF_DAY' : 'LATE')
-          : (actualHours >= (policy?.minWorkingHoursForHalfDay || 4.0) ? 'PRESENT' : (actualHours > 0 ? 'HALF_DAY' : 'PRESENT'));
+        const { status: finalStatus } = classifyPunchOut({
+          currentStatus: att.status,
+          isLate: wasPunchInLate,
+          workedHours: actualHours,
+          policy: policy ?? {},
+          shift: att.employee?.shift,
+        });
 
         await this.prisma.attendance.update({
           where: { id: att.id },
@@ -351,7 +343,7 @@ export class PayrollService {
         tx.salarySlip.findFirst({ where: { customerId: numCustomerId, payrollItem: { payrollId: payroll.id } }, select: { id: true } }),
         tx.payrollItem.findFirst({ where: { customerId: numCustomerId, payrollId: payroll.id, status: 'PAID' }, select: { id: true } }),
       ]);
-      if (existingSlip || paidItem || payroll.status === 'GENERATED') {
+      if (existingSlip || paidItem || payroll.status === 'GENERATED' || payroll.status === 'APPROVED') {
         throw new BadRequestException('Payroll with generated salary slips or paid items cannot be recalculated.');
       }
 
@@ -422,6 +414,7 @@ export class PayrollService {
           joiningDate: emp.joiningDate,
           shiftDays: emp.shift?.workingDays,
           workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek || 5,
+          halfDayDeductionPct: attendancePolicy?.halfDayDeductionPct ?? 50,
           attendance: attendances.map((row) => ({ date: row.date, status: row.status })),
           leaves: approvedLeaves.map((leave) => {
             const code = leave.leaveType?.code?.toUpperCase() || '';
@@ -485,6 +478,8 @@ export class PayrollService {
           attendances,
           shift: emp.shift,
           policy: lateMarkPolicy,
+          employeeId: emp.id,
+          employeeRole: emp.designation?.name || emp.designation?.code,
           leaves: approvedLeaves.map((leave) => ({
             from: leave.fromDate,
             to: leave.toDate,
@@ -494,11 +489,9 @@ export class PayrollService {
           workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek || 5,
         });
 
-        // Use per-minute calculation if policy enabled; fallback to percentage-based only if lateMarkPolicy is explicitly disabled
+        // Disabling the minute policy must not activate a second salary penalty.
         const lateMarks = lateCalc.lateDaysCount;
-        const lateDeduction = lateMarkPolicy?.isEnabled !== false
-          ? lateCalc.totalLateDeduction
-          : lateMarkDeduction(monthlySalary, attendances.filter((row) => row.isLate || Number(row.lateMinutes) > 0).length, Number(salaryPolicy?.lateArrivalDeductionPct) || 0);
+        const lateDeduction = lateCalc.totalLateDeduction;
         const totalLateMinutes = lateCalc.totalLateMinutes;
         const lateRatePerMinute = lateCalc.lateRatePerMinute;
         const lateMarkBreakdown = lateCalc.breakdown;
@@ -1639,4 +1632,3 @@ export class PayrollService {
     return policy;
   }
 }
-

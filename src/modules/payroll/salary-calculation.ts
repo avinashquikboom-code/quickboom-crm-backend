@@ -135,6 +135,7 @@ export function countPayableAttendance(input: {
   workingDaysPerWeek?: number;
   attendance?: AttendanceMark[];
   leaves?: LeaveMark[];
+  halfDayDeductionPct?: number;
 }) {
   const joining = asUtcDay(input.joiningDate);
   const exit = asUtcDay(input.exitDate);
@@ -197,7 +198,8 @@ export function countPayableAttendance(input: {
   }
 
   const outsideService = nonServiceDays(input.year, input.month, joining && joining > start ? joining : null, exit && exit < end ? exit : null);
-  const lopDays = unpaidLeaveDays + absentDays + halfDays * 0.5 + outsideService;
+  const halfDayFraction = Math.max(0, Math.min(100, input.halfDayDeductionPct ?? 50)) / 100;
+  const lopDays = unpaidLeaveDays + absentDays + halfDays * halfDayFraction + outsideService;
   return {
     workingDays,
     presentDays,
@@ -323,7 +325,7 @@ export function evaluateLatePunch(input: {
   const policy = input.policy;
   const enabled = policy?.isEnabled !== false;
   const rate = Math.max(0, Number(policy?.deductionRatePerMin ?? 1));
-  const grace = Math.max(0, Number(policy?.gracePeriodMinutes ?? 0));
+  const grace = Math.max(0, Number(policy?.gracePeriodMinutes ?? input.shift?.gracePeriodMinutes ?? 0));
   const startRaw = input.shift?.startTime || input.officeStartTime || null;
   const startMins = parseTimeStringToMinutes(startRaw);
   const endMins = parseTimeStringToMinutes(input.shift?.endTime);
@@ -344,14 +346,14 @@ export function evaluateLatePunch(input: {
 
   const ist = dateToMinutesInIST(input.punchIn);
   if (!ist.dateStr || startMins == null) return blank(startMins == null ? 'no_shift' : 'invalid_punch');
-  if (!enabled) return blank('policy_disabled');
+  let deductionReason = !enabled ? 'policy_disabled' : undefined;
   if (policy?.applyTo === 'ROLES') {
     const role = (input.employeeRole || '').trim().toLowerCase();
     const allowed = (policy.applicableRoles || []).some((item) => item.toLowerCase() === role);
-    if (!allowed) return blank('role_not_applicable');
+    if (!allowed) deductionReason = 'role_not_applicable';
   }
   if (policy?.applyTo === 'EMPLOYEES' && (policy.applicableEmpIds || []).length > 0) {
-    if (!policy.applicableEmpIds!.includes(Number(input.employeeId))) return blank('employee_not_applicable');
+    if (!policy.applicableEmpIds!.includes(Number(input.employeeId))) deductionReason = 'employee_not_applicable';
   }
 
   const [year, month, day] = ist.dateStr.split('-').map(Number);
@@ -362,7 +364,7 @@ export function evaluateLatePunch(input: {
   }
   if (policy?.effectiveFrom) {
     const from = asUtcDay(policy.effectiveFrom);
-    if (from && schedule < from) return blank('before_effective_date');
+    if (from && schedule < from) deductionReason = 'before_effective_date';
   }
   if (!isScheduledWorkday(schedule, input.shift?.workingDays || undefined, input.workingDaysPerWeek ?? 5)) {
     return blank('weekly_off');
@@ -374,13 +376,13 @@ export function evaluateLatePunch(input: {
   if (ist.minutes >= startMins) raw = ist.minutes - startMins;
   else if (overnight && endMins != null && ist.minutes <= endMins) raw = ist.minutes + 24 * 60 - startMins;
   const eligible = Math.max(0, raw - grace);
-  let deduction = Math.round(eligible * rate * 100) / 100;
+  let deduction = deductionReason ? 0 : Math.round(eligible * rate * 100) / 100;
   const maxDaily = policy?.maxDailyDeduction;
   if (maxDaily != null && Number(maxDaily) > 0 && deduction > Number(maxDaily)) {
     deduction = Number(maxDaily);
   }
   return {
-    applicable: true,
+    applicable: !deductionReason,
     isLate: eligible > 0,
     rawLateMinutes: raw,
     lateMinutes: eligible,
@@ -391,6 +393,7 @@ export function evaluateLatePunch(input: {
     actualMinutes: ist.minutes,
     checkInTime: ist.timeStr,
     currency: policy?.currency || 'INR',
+    reason: deductionReason,
   };
 }
 
@@ -405,6 +408,7 @@ export interface CalculatePerMinuteLateDeductionResult {
 
 export function calculatePerMinuteLateDeduction(input: {
   attendances: Array<{
+    id?: number;
     date: Date | string;
     punchIn?: Date | string | null;
     punchOut?: Date | string | null;
@@ -426,16 +430,22 @@ export function calculatePerMinuteLateDeduction(input: {
   leaves?: Array<{ from: Date | string; to: Date | string; unpaid?: boolean }>;
   holidays?: Array<{ date: Date | string }>;
   workingDaysPerWeek?: number;
+  employeeId?: number;
+  employeeRole?: string | null;
 }): CalculatePerMinuteLateDeductionResult {
   const policy = input.policy;
   const isEnabled = policy?.isEnabled !== false;
   const ratePerMinute = Math.max(0, Number(policy?.deductionRatePerMin ?? 1.0));
-  const graceMinutes = Math.max(0, Number(policy?.gracePeriodMinutes ?? 0));
+  const graceMinutes = Math.max(0, Number(policy?.gracePeriodMinutes ?? input.shift?.gracePeriodMinutes ?? 0));
   const maxDaily = policy?.maxDailyDeduction != null && policy.maxDailyDeduction > 0 ? Number(policy.maxDailyDeduction) : null;
   const maxMonthly = policy?.maxMonthlyDeduction != null && policy.maxMonthlyDeduction > 0 ? Number(policy.maxMonthlyDeduction) : null;
   const effectiveFrom = policy?.effectiveFrom ? new Date(policy.effectiveFrom) : null;
 
-  if (!isEnabled || ratePerMinute <= 0 || !input.shift || !input.shift.startTime) {
+  const roleApplies = policy?.applyTo !== 'ROLES' ||
+    (policy.applicableRoles || []).some((role) => role.toLowerCase() === (input.employeeRole || '').trim().toLowerCase());
+  const employeeApplies = policy?.applyTo !== 'EMPLOYEES' || !policy.applicableEmpIds?.length ||
+    policy.applicableEmpIds.includes(Number(input.employeeId));
+  if (!isEnabled || !roleApplies || !employeeApplies || ratePerMinute <= 0 || !input.shift || !input.shift.startTime) {
     return {
       isEnabled,
       lateDaysCount: 0,
@@ -474,7 +484,16 @@ export function calculatePerMinuteLateDeduction(input: {
   let totalMinutes = 0;
   let totalDeduction = 0;
 
-  for (const att of input.attendances || []) {
+  // Legacy duplicate daily records must not charge the same day twice.
+  const daily = new Map<string, (typeof input.attendances)[number]>();
+  for (const row of input.attendances || []) {
+    const date = asUtcDay(row.date);
+    if (!date) continue;
+    const key = keyOf(date);
+    const previous = daily.get(key);
+    if (!previous || (row.id ?? 0) >= (previous.id ?? 0)) daily.set(key, row);
+  }
+  for (const att of daily.values()) {
     const attDate = asUtcDay(att.date);
     if (!attDate) continue;
     const dateKey = keyOf(attDate);
@@ -487,7 +506,7 @@ export function calculatePerMinuteLateDeduction(input: {
     if (!scheduled) continue;
 
     // 3. Exclude public holidays
-    if (holidayKeys.has(dateKey) || att.status === 'HOLIDAY') continue;
+    if (holidayKeys.has(dateKey) || ['HOLIDAY', 'WEEKLY_OFF', 'LEAVE'].includes(att.status || '')) continue;
 
     // 4. Exclude approved full-day leave
     const onLeave = leaves.some((l) => covers(attDate, l.from, l.to));
@@ -535,6 +554,8 @@ export function calculatePerMinuteLateDeduction(input: {
         isHoliday: holidayKeys.has(dateKey) || att.status === 'HOLIDAY',
         isApprovedLeave: onLeave,
         workingDaysPerWeek: input.workingDaysPerWeek,
+        employeeId: input.employeeId,
+        employeeRole: input.employeeRole,
       });
       if (!evaluated.applicable || evaluated.lateMinutes <= 0) continue;
       eligibleLateMinutes = evaluated.lateMinutes;

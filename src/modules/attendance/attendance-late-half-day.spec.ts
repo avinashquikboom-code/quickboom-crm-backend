@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { classifyPunchOut } from './attendance-classification';
+import { classifyPunchOut, scheduledCheckout } from './attendance-classification';
 import { calculatePerMinuteLateDeduction, countPayableAttendance } from '../payroll/salary-calculation';
 
 const policy = {
@@ -27,8 +27,7 @@ describe('classifyPunchOut (late mark and half day are independent)', () => {
     ).toEqual({ status: 'LATE', isLate: true, isHalfDay: false });
   });
 
-  it('late arrival that leaves at shift end is not a half day under the early checkout rule', () => {
-    // 113 minutes late, left on time: 8h shift minus the late arrival.
+  it('uses actual eligible hours even when the employee arrived late', () => {
     const result = classifyPunchOut({
       currentStatus: 'LATE',
       isLate: true,
@@ -36,11 +35,10 @@ describe('classifyPunchOut (late mark and half day are independent)', () => {
       workedHours: 6.12,
       policy: halfDayOnEarlyCheckout,
     });
-    expect(result).toEqual({ status: 'LATE', isLate: true, isHalfDay: false });
+    expect(result).toEqual({ status: 'HALF_DAY', isLate: true, isHalfDay: true });
   });
 
-  it('counts the grace minutes when crediting the late arrival', () => {
-    // 20 raw minutes late with 15 grace: 5 eligible late minutes.
+  it('does not credit late or grace minutes as worked time', () => {
     const result = classifyPunchOut({
       currentStatus: 'LATE',
       isLate: true,
@@ -49,7 +47,7 @@ describe('classifyPunchOut (late mark and half day are independent)', () => {
       workedHours: 7.45,
       policy: halfDayOnEarlyCheckout,
     });
-    expect(result.isHalfDay).toBe(false);
+    expect(result.isHalfDay).toBe(true);
   });
 
   it('late with half-day working hours keeps both classifications', () => {
@@ -109,6 +107,33 @@ describe('classifyPunchOut (late mark and half day are independent)', () => {
   it('never overwrites approved leave', () => {
     expect(classifyPunchOut({ currentStatus: 'LEAVE', workedHours: 2, policy }).status).toBe('LEAVE');
   });
+
+  it.each(['HOLIDAY', 'WEEKLY_OFF'])('preserves %s instead of generating a half day', (currentStatus) => {
+    expect(classifyPunchOut({ currentStatus, workedHours: 0, policy }).status).toBe(currentStatus);
+  });
+
+  it('classifies the exact half-day threshold independently of lateness', () => {
+    for (const isLate of [false, true]) {
+      expect(classifyPunchOut({ currentStatus: 'PRESENT', isLate, workedHours: 4, policy }).status).toBe('HALF_DAY');
+      expect(classifyPunchOut({ currentStatus: 'PRESENT', isLate, workedHours: 4.5, policy,
+        shift: { durationHours: 9, breakDurationMinutes: 60, halfDayThresholdHours: 4.5 } }).status).toBe('HALF_DAY');
+    }
+  });
+
+  it('respects a short shift and zero early-checkout grace', () => {
+    expect(classifyPunchOut({ currentStatus: 'PRESENT', workedHours: 4, policy,
+      shift: { durationHours: 4, halfDayThresholdHours: 2 } }).status).toBe('PRESENT');
+    expect(classifyPunchOut({ currentStatus: 'PRESENT', workedHours: 7.9,
+      policy: { ...halfDayOnEarlyCheckout, earlyCheckoutGraceMinutes: 0 } }).status).toBe('HALF_DAY');
+  });
+
+  it('resolves AM/PM and overnight auto-checkout independently of the server timezone', () => {
+    const now = new Date('2026-11-18T10:00:00+05:30');
+    expect(scheduledCheckout(new Date('2026-11-17T09:30:00+05:30'), now, {},
+      { startTime: '09:30 AM', endTime: '06:30 PM' })).toEqual(new Date('2026-11-17T18:30:00+05:30'));
+    expect(scheduledCheckout(new Date('2026-11-17T22:30:00+05:30'), now, {},
+      { startTime: '22:00', endTime: '06:00' })).toEqual(new Date('2026-11-18T06:00:00+05:30'));
+  });
 });
 
 describe('AttendanceService late mark vs half day', () => {
@@ -160,6 +185,7 @@ describe('AttendanceService late mark vs half day', () => {
         update: jest.fn().mockImplementation(({ data }: any) => ({ id: 101, ...data })),
       },
       attendanceBreak: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+      overtimeRequest: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((callback) => callback(prisma)),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -196,7 +222,7 @@ describe('AttendanceService late mark vs half day', () => {
     expect(savedPunchIn()).toMatchObject({ status: 'PRESENT', isLate: false, lateMinutes: 0 });
   });
 
-  it('a late employee who works until shift end stays LATE at punch-out', async () => {
+  it('a late employee who works full hours stays LATE at punch-out', async () => {
     prisma.attendancePolicy.findFirst.mockResolvedValue(halfDayOnEarlyCheckout);
     prisma.attendance.findFirst.mockResolvedValue({
       id: 101,
@@ -209,7 +235,7 @@ describe('AttendanceService late mark vs half day', () => {
       lateGraceMinutes: 0,
       breaks: [],
     });
-    jest.setSystemTime(ist('18:30'));
+    jest.setSystemTime(ist('19:23'));
 
     await service.checkOut(user, 1, gps);
 
@@ -253,6 +279,29 @@ describe('AttendanceService late mark vs half day', () => {
     await service.checkOut(user, 1, gps);
 
     expect(savedPunchOut()).toMatchObject({ status: 'HALF_DAY', isLate: false, lateMinutes: 0 });
+  });
+
+  it('auto-checkout uses the same hours policy and retains both classifications', async () => {
+    jest.setSystemTime(new Date('2026-11-18T09:00:00+05:30'));
+    const row = { id: 101, customerId: 1, employeeId: 10, punchIn: ist('15:30'),
+      status: 'LATE', isLate: true, lateMinutes: 360 };
+    await service.applyAutoCheckOutForRecord(prisma, row, policy, employee.shift);
+    expect(savedPunchOut()).toMatchObject({ status: 'HALF_DAY', isLate: true, workingMinutes: 180 });
+  });
+
+  it('preserves corrected historical classifications and does not rewrite them on refresh', async () => {
+    const corrected = { id: 2, customerId: 1, employeeId: 10, date: ist('00:00'),
+      punchIn: ist('09:30'), punchOut: ist('13:30'), status: 'HALF_DAY',
+      isLate: true, lateMinutes: 113, breaks: [] };
+    prisma.attendance.count = jest.fn().mockResolvedValue(1);
+    // Each refresh first checks open records, then fetches completed history.
+    prisma.attendance.findMany.mockImplementation(({ where }) =>
+      Promise.resolve(where.punchOut === null ? [] : [corrected]));
+    for (let refresh = 0; refresh < 2; refresh++) {
+      const response = await service.getAttendanceHistory(user, 1, {});
+      expect(response.data[0]).toMatchObject({ status: 'HALF_DAY', isLate: true, lateMinutes: 113 });
+    }
+    expect(prisma.attendance.update).not.toHaveBeenCalled();
   });
 });
 
@@ -308,5 +357,25 @@ describe('payroll treats late mark and half day separately', () => {
     const late = calculatePerMinuteLateDeduction({ attendances: [{ ...lateRow, status: 'HALF_DAY' }], shift, policy: latePolicy });
     expect(late.lateDaysCount).toBe(1);
     expect(late.totalLateDeduction).toBe(226);
+  });
+
+  it('uses the half-day deduction policy without turning late minutes into lost days', () => {
+    const input = { year: 2026, month: 11, shiftDays: shift.workingDays };
+    const present = countPayableAttendance({ ...input, attendance: [{ date: day(17), status: 'LATE' }] });
+    const half = countPayableAttendance({ ...input, halfDayDeductionPct: 50,
+      attendance: [{ date: day(17), status: 'HALF_DAY' }] });
+    const waived = countPayableAttendance({ ...input, halfDayDeductionPct: 0,
+      attendance: [{ date: day(17), status: 'HALF_DAY' }] });
+    expect(half.lopDays - present.lopDays).toBe(0.5);
+    expect(waived.lopDays).toBe(present.lopDays);
+  });
+
+  it('charges one late deduction for duplicate records of the same day', () => {
+    const late = calculatePerMinuteLateDeduction({
+      attendances: [{ ...lateRow, id: 1 }, { ...lateRow, id: 2 }],
+      shift, policy: latePolicy,
+    });
+    expect(late.totalLateDeduction).toBe(226);
+    expect(late.lateDaysCount).toBe(1);
   });
 });

@@ -72,6 +72,7 @@ describe('AttendanceService (Punch In / Punch Out & Geofencing)', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      overtimeRequest: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((callback) => callback(prisma)),
     };
 
@@ -630,4 +631,3 @@ describe('late punch-in notification', () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
-

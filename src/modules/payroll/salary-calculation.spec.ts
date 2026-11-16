@@ -309,6 +309,23 @@ describe('evaluateLatePunch', () => {
     }
   });
 
+  it('uses shift grace without a policy override, including the exact boundary', () => {
+    const configuredShift = { ...shift, gracePeriodMinutes: 15 };
+    const exact = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00Z', shift: configuredShift });
+    const after = evaluateLatePunch({ punchIn: '2026-08-03T04:46:00Z', shift: configuredShift });
+    expect(exact.isLate).toBe(false);
+    expect(after.lateMinutes).toBe(1);
+  });
+
+  it('tracks lateness even when the monetary deduction is disabled', () => {
+    const result = evaluateLatePunch({
+      punchIn: '2026-08-03T04:45:00Z', shift, policy: { ...policy, isEnabled: false },
+    });
+    expect(result.isLate).toBe(true);
+    expect(result.lateMinutes).toBe(15);
+    expect(result.deduction).toBe(0);
+  });
+
   it('ignores weekly offs, holidays, approved leave, and a disabled policy', () => {
     const sunday = evaluateLatePunch({ punchIn: '2026-08-09T04:45:00.000Z', shift, policy });
     expect(sunday.reason).toBe('weekly_off');

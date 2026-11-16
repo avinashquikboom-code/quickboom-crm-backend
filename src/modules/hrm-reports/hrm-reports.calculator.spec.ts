@@ -1,5 +1,52 @@
 import { buildAttendanceReport } from './attendance-report.calculator';
 import { isUnpaidLeave, leaveBalanceLine, overlapLeaveDays } from './leave-report.calculator';
+import { calculateEmployeeSalaryReport } from './salary-report.calculator';
+
+describe('salary report late deduction consistency', () => {
+  const employee = { id: 7, salaryStructures: [{ basicSalary: 30000, pf: 0, esi: 0 }],
+    shift: { startTime: '09:30', workingDays: ['Tuesday'] } };
+
+  it('uses stored finalized amounts without consulting current attendance or policies', async () => {
+    const db: any = {
+      customer: { findUnique: jest.fn().mockResolvedValue({ name: 'Test' }) },
+      payrollItem: { findFirst: jest.fn().mockResolvedValue({
+        payroll: { id: 2, status: 'GENERATED' }, workingDays: 22, presentDays: 20,
+        halfDays: 1, lateDeduction: 99, netSalary: 28001, totalDeductions: 1999,
+      }) },
+      attendance: { findMany: jest.fn() },
+      lateMarkPolicy: { findUnique: jest.fn() },
+    };
+    const report = await calculateEmployeeSalaryReport(db, 1, employee, 2026, 11);
+    expect(report.isProvisional).toBe(false);
+    expect(report.netPayable).toBe(28001);
+    expect(report.deductions.lateDeductions).toBe(99);
+    expect(db.attendance.findMany).not.toHaveBeenCalled();
+    expect(db.lateMarkPolicy.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('uses minute deductions rather than a percentage in the provisional report', async () => {
+    const db: any = {
+      customer: { findUnique: jest.fn().mockResolvedValue({ name: 'Test' }) },
+      payrollItem: { findFirst: jest.fn().mockResolvedValue(null) },
+      payrollPolicy: { findUnique: jest.fn().mockResolvedValue(null) },
+      salaryPolicy: { findFirst: jest.fn().mockResolvedValue({ lateArrivalDeductionPct: 50 }) },
+      attendancePolicy: { findFirst: jest.fn().mockResolvedValue(null) },
+      lateMarkPolicy: { findUnique: jest.fn().mockResolvedValue({ isEnabled: true, deductionRatePerMin: 2 }) },
+      publicHoliday: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance: { findMany: jest.fn().mockResolvedValue([{
+        date: new Date('2026-11-17T00:00:00Z'), status: 'HALF_DAY', isLate: true,
+        lateMinutes: 113, lateDeduction: 226, lateRatePerMinute: 2,
+        punchIn: new Date('2026-11-17T11:23:00+05:30'),
+      }]) },
+      leaveRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      employeeClaim: { findMany: jest.fn().mockResolvedValue([]) },
+      employeeLoan: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const report = await calculateEmployeeSalaryReport(db, 1, employee, 2026, 11);
+    expect(report.attendance.halfDays).toBe(1);
+    expect(report.deductions.lateDeductions).toBe(226);
+  });
+});
 
 describe('HRM attendance report', () => {
   const year = 2026;
