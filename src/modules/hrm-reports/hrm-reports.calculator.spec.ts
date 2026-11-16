@@ -36,7 +36,11 @@ describe('salary report late deduction consistency', () => {
       lateMarkPolicy: { findUnique: jest.fn().mockResolvedValue({ isEnabled: true, deductionRatePerMin: 2 }) },
       publicHoliday: { findMany: jest.fn().mockResolvedValue([]) },
       attendance: { findMany: jest.fn().mockResolvedValue([{
-        date: new Date('2026-11-17T00:00:00Z'), status: 'HALF_DAY', isLate: true,
+        id: 1, date: new Date('2026-11-17T00:00:00Z'), status: 'HALF_DAY', isLate: true,
+        lateMinutes: 113, lateDeduction: 226, lateRatePerMinute: 2,
+        punchIn: new Date('2026-11-17T11:23:00+05:30'),
+      }, {
+        id: 2, date: new Date('2026-11-17T00:00:00Z'), status: 'HALF_DAY', isLate: true,
         lateMinutes: 113, lateDeduction: 226, lateRatePerMinute: 2,
         punchIn: new Date('2026-11-17T11:23:00+05:30'),
       }]) },
@@ -47,6 +51,8 @@ describe('salary report late deduction consistency', () => {
     const report = await calculateEmployeeSalaryReport(db, 1, employee, 2026, 11);
     expect(report.attendance.halfDays).toBe(1);
     expect(report.deductions.lateDeductions).toBe(226);
+    expect(report.attendance.lateArrivals).toBe(1);
+    expect(report.deductions.lateMarks).toBe(1);
   });
 });
 
