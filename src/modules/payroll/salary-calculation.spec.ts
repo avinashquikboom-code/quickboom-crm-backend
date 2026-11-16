@@ -4,6 +4,7 @@ import {
   eligibleTargetSalary,
   lateMarkDeduction,
   calculatePerMinuteLateDeduction,
+  evaluateLatePunch,
   lopDeduction,
   settleMonthlySalary,
 } from './salary-calculation';
@@ -248,6 +249,84 @@ describe('fixed monthly salary', () => {
       expect(res.isEnabled).toBe(false);
       expect(res.totalLateDeduction).toBe(0);
     });
+  });
+});
+
+describe('evaluateLatePunch', () => {
+  const policy = { isEnabled: true, deductionRatePerMin: 2, gracePeriodMinutes: 0, currency: 'INR' };
+  const shift = { startTime: '10:00 AM', endTime: '07:00 PM', workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] };
+
+  it('does not deduct an on-time punch or a punch inside grace', () => {
+    const onTime = evaluateLatePunch({
+      punchIn: '2026-08-03T04:30:00.000Z',
+      shift,
+      policy,
+    });
+    expect(onTime.lateMinutes).toBe(0);
+    expect(onTime.deduction).toBe(0);
+    expect(onTime.isLate).toBe(false);
+
+    const withinGrace = evaluateLatePunch({
+      punchIn: '2026-08-03T04:35:00.000Z',
+      shift,
+      policy: { ...policy, gracePeriodMinutes: 10 },
+    });
+    expect(withinGrace.lateMinutes).toBe(0);
+    expect(withinGrace.deduction).toBe(0);
+  });
+
+  it('uses the configured rate for 5, 15 and 30 late minutes', () => {
+    for (const [iso, minutes] of [
+      ['2026-08-03T04:35:00.000Z', 5],
+      ['2026-08-03T04:45:00.000Z', 15],
+      ['2026-08-03T05:00:00.000Z', 30],
+    ] as const) {
+      const result = evaluateLatePunch({ punchIn: iso, shift, policy });
+      expect(result.lateMinutes).toBe(minutes);
+      expect(result.deduction).toBe(minutes * 2);
+      expect(result.ratePerMinute).toBe(2);
+    }
+  });
+
+  it('ignores weekly offs, holidays, approved leave, and a disabled policy', () => {
+    const sunday = evaluateLatePunch({ punchIn: '2026-08-09T04:45:00.000Z', shift, policy });
+    expect(sunday.reason).toBe('weekly_off');
+    expect(sunday.deduction).toBe(0);
+    const holiday = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift, policy, isHoliday: true });
+    expect(holiday.deduction).toBe(0);
+    const leave = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift, policy, isApprovedLeave: true });
+    expect(leave.deduction).toBe(0);
+    const disabled = evaluateLatePunch({
+      punchIn: '2026-08-03T04:45:00.000Z',
+      shift,
+      policy: { ...policy, isEnabled: false },
+    });
+    expect(disabled.applicable).toBe(false);
+    expect(disabled.deduction).toBe(0);
+  });
+
+  it('uses the employee assigned shift and handles an overnight shift', () => {
+    const otherShift = evaluateLatePunch({
+      punchIn: '2026-08-03T03:50:00.000Z',
+      shift: { ...shift, startTime: '09:00', endTime: '18:00' },
+      policy: { ...policy, deductionRatePerMin: 1 },
+    });
+    expect(otherShift.lateMinutes).toBe(20);
+    expect(otherShift.deduction).toBe(20);
+
+    const overnight = evaluateLatePunch({
+      punchIn: '2026-08-03T16:45:00.000Z',
+      shift: { startTime: '22:00', endTime: '06:00', isNightShift: true, workingDays: shift.workingDays },
+      policy: { ...policy, deductionRatePerMin: 1 },
+    });
+    expect(overnight.lateMinutes).toBe(15);
+    expect(overnight.deduction).toBe(15);
+  });
+
+  it('does not deduct when no shift is assigned', () => {
+    const result = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift: null, policy });
+    expect(result.applicable).toBe(false);
+    expect(result.deduction).toBe(0);
   });
 });
 

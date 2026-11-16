@@ -274,6 +274,126 @@ export interface LateMarkDeductionBreakdownItem {
   reason?: string;
 }
 
+export interface LateMarkPolicyInput {
+  isEnabled?: boolean;
+  deductionRatePerMin?: number;
+  gracePeriodMinutes?: number;
+  maxDailyDeduction?: number | null;
+  maxMonthlyDeduction?: number | null;
+  effectiveFrom?: Date | string | null;
+  currency?: string | null;
+  applyTo?: string | null;
+  applicableRoles?: string[] | null;
+  applicableEmpIds?: number[] | null;
+}
+
+export interface LatePunchEvaluation {
+  applicable: boolean;
+  isLate: boolean;
+  rawLateMinutes: number;
+  lateMinutes: number;
+  gracePeriodMinutes: number;
+  ratePerMinute: number;
+  deduction: number;
+  shiftStartTime: string | null;
+  actualMinutes: number;
+  checkInTime: string | null;
+  currency: string;
+  reason?: string;
+}
+
+/** Late minutes after grace, using the Asia/Kolkata clock and the assigned shift. */
+export function evaluateLatePunch(input: {
+  punchIn: Date | string;
+  shift?: {
+    startTime?: string | null;
+    endTime?: string | null;
+    gracePeriodMinutes?: number | null;
+    workingDays?: string[] | null;
+    isNightShift?: boolean | null;
+  } | null;
+  policy?: LateMarkPolicyInput | null;
+  officeStartTime?: string | null;
+  isHoliday?: boolean;
+  isApprovedLeave?: boolean;
+  workingDaysPerWeek?: number;
+  employeeRole?: string | null;
+  employeeId?: number | null;
+}): LatePunchEvaluation {
+  const policy = input.policy;
+  const enabled = policy?.isEnabled !== false;
+  const rate = Math.max(0, Number(policy?.deductionRatePerMin ?? 1));
+  const grace = Math.max(0, Number(policy?.gracePeriodMinutes ?? 0));
+  const startRaw = input.shift?.startTime || input.officeStartTime || null;
+  const startMins = parseTimeStringToMinutes(startRaw);
+  const endMins = parseTimeStringToMinutes(input.shift?.endTime);
+  const blank = (reason: string, applicable = false): LatePunchEvaluation => ({
+    applicable,
+    isLate: false,
+    rawLateMinutes: 0,
+    lateMinutes: 0,
+    gracePeriodMinutes: grace,
+    ratePerMinute: rate,
+    deduction: 0,
+    shiftStartTime: startRaw,
+    actualMinutes: startMins ?? 0,
+    checkInTime: null,
+    currency: policy?.currency || 'INR',
+    reason,
+  });
+
+  const ist = dateToMinutesInIST(input.punchIn);
+  if (!ist.dateStr || startMins == null) return blank(startMins == null ? 'no_shift' : 'invalid_punch');
+  if (!enabled) return blank('policy_disabled');
+  if (policy?.applyTo === 'ROLES') {
+    const role = (input.employeeRole || '').trim().toLowerCase();
+    const allowed = (policy.applicableRoles || []).some((item) => item.toLowerCase() === role);
+    if (!allowed) return blank('role_not_applicable');
+  }
+  if (policy?.applyTo === 'EMPLOYEES' && (policy.applicableEmpIds || []).length > 0) {
+    if (!policy.applicableEmpIds!.includes(Number(input.employeeId))) return blank('employee_not_applicable');
+  }
+
+  const [year, month, day] = ist.dateStr.split('-').map(Number);
+  let schedule = new Date(Date.UTC(year, month - 1, day));
+  const overnight = Boolean(input.shift?.isNightShift) || (endMins != null && endMins <= startMins);
+  if (overnight && endMins != null && ist.minutes < startMins && ist.minutes <= endMins) {
+    schedule = new Date(schedule.getTime() - 24 * 60 * 60 * 1000);
+  }
+  if (policy?.effectiveFrom) {
+    const from = asUtcDay(policy.effectiveFrom);
+    if (from && schedule < from) return blank('before_effective_date');
+  }
+  if (!isScheduledWorkday(schedule, input.shift?.workingDays || undefined, input.workingDaysPerWeek ?? 5)) {
+    return blank('weekly_off');
+  }
+  if (input.isHoliday) return blank('holiday');
+  if (input.isApprovedLeave) return blank('approved_leave');
+
+  let raw = 0;
+  if (ist.minutes >= startMins) raw = ist.minutes - startMins;
+  else if (overnight && endMins != null && ist.minutes <= endMins) raw = ist.minutes + 24 * 60 - startMins;
+  const eligible = Math.max(0, raw - grace);
+  let deduction = Math.round(eligible * rate * 100) / 100;
+  const maxDaily = policy?.maxDailyDeduction;
+  if (maxDaily != null && Number(maxDaily) > 0 && deduction > Number(maxDaily)) {
+    deduction = Number(maxDaily);
+  }
+  return {
+    applicable: true,
+    isLate: eligible > 0,
+    rawLateMinutes: raw,
+    lateMinutes: eligible,
+    gracePeriodMinutes: grace,
+    ratePerMinute: rate,
+    deduction,
+    shiftStartTime: startRaw,
+    actualMinutes: ist.minutes,
+    checkInTime: ist.timeStr,
+    currency: policy?.currency || 'INR',
+  };
+}
+
 export interface CalculatePerMinuteLateDeductionResult {
   isEnabled: boolean;
   lateDaysCount: number;
@@ -299,14 +419,7 @@ export function calculatePerMinuteLateDeduction(input: {
     workingDays?: string[] | null;
     isNightShift?: boolean | null;
   } | null;
-  policy?: {
-    isEnabled?: boolean;
-    deductionRatePerMin?: number;
-    gracePeriodMinutes?: number;
-    maxDailyDeduction?: number | null;
-    maxMonthlyDeduction?: number | null;
-    effectiveFrom?: Date | string | null;
-  } | null;
+  policy?: LateMarkPolicyInput | null;
   leaves?: Array<{ from: Date | string; to: Date | string; unpaid?: boolean }>;
   holidays?: Array<{ date: Date | string }>;
   workingDaysPerWeek?: number;
@@ -380,25 +493,31 @@ export function calculatePerMinuteLateDeduction(input: {
     // 5. Must have punch-in or stored lateMinutes
     if (!att.punchIn && !att.lateMinutes) continue;
 
-    let actualMins = shiftStartMins;
+    let eligibleLateMinutes = 0;
+    let rawLateMins = 0;
     let punchInTimeStr: string | null = null;
+    let actualMins = shiftStartMins;
 
     if (att.punchIn) {
-      const ist = dateToMinutesInIST(att.punchIn);
-      actualMins = ist.minutes;
-      punchInTimeStr = ist.timeStr;
-    } else if (att.lateMinutes) {
-      actualMins = shiftStartMins + att.lateMinutes;
+      const evaluated = evaluateLatePunch({
+        punchIn: att.punchIn,
+        shift: input.shift,
+        policy,
+        isHoliday: holidayKeys.has(dateKey) || att.status === 'HOLIDAY',
+        isApprovedLeave: onLeave,
+        workingDaysPerWeek: input.workingDaysPerWeek,
+      });
+      if (!evaluated.applicable || evaluated.lateMinutes <= 0) continue;
+      eligibleLateMinutes = evaluated.lateMinutes;
+      rawLateMins = evaluated.rawLateMinutes;
+      actualMins = evaluated.actualMinutes;
+      punchInTimeStr = evaluated.checkInTime;
+    } else {
+      rawLateMins = Math.max(0, Number(att.lateMinutes) || 0);
+      eligibleLateMinutes = rawLateMins;
+      if (eligibleLateMinutes <= 0) continue;
+      actualMins = shiftStartMins + eligibleLateMinutes;
     }
-
-    const rawLateMins = Math.max(0, actualMins - shiftStartMins);
-
-    // If check-in is earlier than shift start, no late minutes
-    if (rawLateMins <= 0) continue;
-
-    // Formula: Late Minutes = Actual Check-in Time - Scheduled Shift Start Time - Grace Period
-    const eligibleLateMinutes = Math.max(0, rawLateMins - graceMinutes);
-    if (eligibleLateMinutes <= 0) continue;
 
     let dailyDeduction = eligibleLateMinutes * ratePerMinute;
     if (maxDaily !== null && dailyDeduction > maxDaily) {

@@ -68,6 +68,7 @@ model Customer {
   payrolls                 Payroll[]
   payrollPolicy            PayrollPolicy?
   lateMarkPolicy           LateMarkPolicy?
+  lateMarkReportSetting    LateMarkReportSetting?
   pipelines                Pipeline[]
   planEntitlements         PlanEntitlement[]
   products                 Product[]
@@ -1348,6 +1349,9 @@ model Attendance {
   breakDuration      Float             @default(0.0)
   lateMinutes        Int?              @default(0)
   isLate             Boolean?          @default(false)
+  lateDeduction      Float             @default(0)
+  lateRatePerMinute  Float             @default(0)
+  lateGraceMinutes   Int               @default(0)
   workMode           String?           @default("OFFICE")
   locationStatus     String?           @default("INSIDE_RADIUS")
   status             AttendanceStatus  @default(PRESENT)
@@ -2075,6 +2079,47 @@ model PayrollPolicy {
   customer            Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
+}
+
+model LateMarkReportSetting {
+  id                      Int      @id @default(autoincrement())
+  customerId              Int      @unique
+  timezone                String   @default("Asia/Kolkata")
+  weekStartsOn            Int      @default(1)
+  dailyEnabled            Boolean  @default(false)
+  weeklyEnabled           Boolean  @default(false)
+  monthlyEnabled          Boolean  @default(false)
+  dailySendHour           Int      @default(23)
+  dailySendMinute         Int      @default(0)
+  weeklySendHour          Int      @default(9)
+  weeklySendMinute        Int      @default(0)
+  monthlySendHour         Int      @default(9)
+  monthlySendMinute       Int      @default(0)
+  recipients              String   @default("")
+  cc                      String   @default("")
+  includeEmployeeDetails  Boolean  @default(true)
+  includeCsv              Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  customer                Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model LateMarkReportDelivery {
+  id            Int       @id @default(autoincrement())
+  customerId    Int
+  kind          String
+  periodKey     String
+  periodLabel   String
+  recipients    String    @default("")
+  status        String    @default("SCHEDULED")
+  failureReason String?
+  sentAt        DateTime?
+  attachmentName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([customerId, kind, periodKey])
+  @@index([customerId, status])
 }
 
 model LateMarkPolicy {

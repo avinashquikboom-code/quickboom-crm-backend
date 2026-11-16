@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AttendanceService } from './attendance.service';
+import { LateMarkReportService } from './late-mark-report.service';
+import { getBusinessDate } from '../../common/utils/timezone.util';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -21,7 +23,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard)
 @Controller('attendance')
 export class AttendanceController {
-  constructor(private readonly attendanceService: AttendanceService) {}
+  constructor(
+    private readonly attendanceService: AttendanceService,
+    private readonly lateMarkReports: LateMarkReportService,
+  ) {}
 
   @Get('me')
   @RequirePermissions({ module: 'ATTENDANCE', action: 'VIEW' })
@@ -41,6 +46,21 @@ export class AttendanceController {
     @CurrentCustomer() customerId: number | string | undefined,
   ) {
     return this.attendanceService.getTodayAttendance(user, customerId);
+  }
+
+  @Get('my-late-summary')
+  @RequirePermissions({ module: 'ATTENDANCE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Personal late-mark totals for the signed-in employee' })
+  async myLateSummary(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+  ) {
+    const status = await this.attendanceService.getMyAttendanceStatus(user, customerId);
+    const employeeId = Number(status?.employee?.id);
+    if (!employeeId || !customerId) {
+      return { todayLateMinutes: 0, todayDeduction: 0, weeklyLateMinutes: 0, weeklyDeduction: 0, monthlyLateDays: 0, monthlyLateMinutes: 0, monthlyDeduction: 0 };
+    }
+    return this.lateMarkReports.mine(Number(customerId), employeeId, getBusinessDate());
   }
 
   @Get('history')
