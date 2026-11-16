@@ -275,13 +275,11 @@ export async function calculateEmployeeSalaryReport(
   // Calculate working hours & breaks
   let totalWorkingHours = 0;
   let totalBreakMinutes = 0;
-  let lateMarks = 0;
   let earlyDepartures = 0;
 
   for (const att of attendances) {
     totalWorkingHours += Number(att.workingHours) || 0;
     totalBreakMinutes += Number(att.breakDuration) || 0;
-    if (att.isLate || Number(att.lateMinutes) > 0) lateMarks += 1;
     if (String(att.status || '').toUpperCase().includes('EARLY')) earlyDepartures += 1;
   }
   totalWorkingHours = Math.round(totalWorkingHours * 10) / 10;
@@ -351,7 +349,7 @@ export async function calculateEmployeeSalaryReport(
     prisma.lateMarkPolicy.findUnique({ where: { customerId } }),
     prisma.publicHoliday.findMany({ where: { customerId, isActive: true, date: { gte: startDate, lte: endDate } } }),
   ]);
-  const lateDeduction = calculatePerMinuteLateDeduction({
+  const lateCalculation = calculatePerMinuteLateDeduction({
     attendances,
     shift: employee.shift,
     policy: latePolicy,
@@ -360,7 +358,9 @@ export async function calculateEmployeeSalaryReport(
     workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek ?? 5,
     holidays,
     leaves: approvedLeaves.map((leave) => ({ from: leave.fromDate, to: leave.toDate })),
-  }).totalLateDeduction;
+  });
+  const lateMarks = lateCalculation.lateDaysCount;
+  const lateDeduction = lateCalculation.totalLateDeduction;
 
   const statutory = pf + esi + professionalTax + tds + otherDeductions + loanDeduction + lateDeduction;
   const extraEarnings = approvedReimbursements + (overtimeEarnings - structureOvertime);
