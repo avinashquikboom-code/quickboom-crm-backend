@@ -2,6 +2,7 @@ import { decryptSecret } from '../../common/utils/crypto.util';
 
 export interface WhatsAppSendResult {
   success: boolean;
+  stageProviderOutcome?: 'RETRYABLE_REJECTION' | 'DEFINITE_REJECTION' | 'AMBIGUOUS';
   provider?: string;
   messageId?: string;
   mediaId?: string;
