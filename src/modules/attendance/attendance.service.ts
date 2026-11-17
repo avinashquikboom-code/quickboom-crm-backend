@@ -1157,13 +1157,9 @@ result: SUCCESS`);
       },
     });
 
-    let assignedShift = employee.shift;
-    if (!assignedShift) {
-      assignedShift = await this.prisma.shift.findFirst({
-        where: { customerId: employee.customerId, status: 'ACTIVE' },
-        orderBy: { id: 'asc' },
-      });
-    }
+    // Never substitute a tenant-default shift: deductions must only be
+    // computed against the employee's own assigned shift.
+    const assignedShift = employee.shift;
 
     const isPunchedIn = Boolean(todayAtt && todayAtt.punchIn && !todayAtt.punchOut);
     const activeBreak = todayAtt?.breaks?.find((b: any) => !b.breakEnd);
@@ -1297,6 +1293,7 @@ result: SUCCESS`);
         lateDeduction: lateMark.lateDeduction,
         lateRatePerMinute: lateMark.lateRatePerMinute,
         lateGraceMinutes: lateMark.lateGraceMinutes,
+        lateMarkStatus: lateMark.lateMarkStatus,
       },
       lateMarkPeriodSummary,
       todayAttendance: todayAtt,
@@ -1391,16 +1388,18 @@ result: SUCCESS`);
     lateDeduction: number;
     lateRatePerMinute: number;
     lateGraceMinutes: number;
+    lateMarkStatus: string;
   }> {
-    const empty = {
+    const empty = (status: string) => ({
       isEligibleLateMark: false,
       isLate: false,
       lateMinutes: 0,
       lateDeduction: 0,
       lateRatePerMinute: 0,
       lateGraceMinutes: 0,
-    };
-    if (!todayAtt?.punchIn) return empty;
+      lateMarkStatus: status,
+    });
+    if (!todayAtt?.punchIn) return empty('no_punch_in');
 
     const shiftForEval =
       assignedShift?.startTime != null
@@ -1408,14 +1407,19 @@ result: SUCCESS`);
         : employee?.shift?.startTime != null
           ? employee.shift
           : null;
-    if (!shiftForEval?.startTime) return empty;
+    if (!shiftForEval?.startTime) {
+      console.warn(
+        `[LATE_MARK] employee=${employee?.id} customer=${employee?.customerId}: no assigned shift with a start time; skipping late evaluation`,
+      );
+      return empty('no_shift');
+    }
 
     const punchIn = new Date(todayAtt.punchIn);
     const employeeWithShift = { ...employee, shift: shiftForEval };
     const evaluation = await this.evaluatePunchLateness(employeeWithShift, attendancePolicy, punchIn);
 
     if (!evaluation.applicable || !evaluation.isLate || evaluation.lateMinutes <= 0) {
-      return empty;
+      return empty(evaluation.reason || 'not_late');
     }
 
     const storedDeduction = Number((todayAtt as any)?.lateDeduction) || 0;
@@ -1438,6 +1442,7 @@ result: SUCCESS`);
       lateDeduction,
       lateRatePerMinute,
       lateGraceMinutes,
+      lateMarkStatus: 'eligible',
     };
   }
 
