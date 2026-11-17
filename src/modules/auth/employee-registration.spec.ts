@@ -7,6 +7,7 @@ import { QBIdGenerator } from './qb-id.generator';
 import { ConflictException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { RoleType } from '@prisma/client';
 import { Msg91Service } from '../msg91/msg91.service';
+import * as bcrypt from 'bcrypt';
 
 describe('Auth Service - Employee Registration & Mobile Login Tests', () => {
   let authService: AuthService;
@@ -128,6 +129,9 @@ describe('Auth Service - Employee Registration & Mobile Login Tests', () => {
       expect(result.user.employeeType).toBe('COMPANY');
       expect(result.user.city).toBe('Mumbai');
       expect(result.tokens.accessToken).toBeDefined();
+      expect(await bcrypt.compare('Password123!', prisma.user.create.mock.calls[0][0].data.passwordHash)).toBe(true);
+      await authService.registerEmployee({ fullName: 'Rahul Sharma', city: 'Mumbai', mobile: '+919876543210', email: 'rahul.company@example.com', employeeType: 'COMPANY' });
+      expect(await bcrypt.compare('123456', prisma.user.create.mock.calls[1][0].data.passwordHash)).toBe(true);
       expect(prisma.employee.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

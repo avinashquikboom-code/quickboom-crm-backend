@@ -327,7 +327,7 @@ export class AuthService {
     if (!dto.employeeType || !['COMPANY', 'FREELANCER'].includes(dto.employeeType)) {
       throw new BadRequestException('Please select employee type.');
     }
-    if (!dto.password || dto.password.length < 6) {
+    if (dto.password != null && dto.password.length < 6) {
       throw new BadRequestException('Password must be at least 6 characters');
     }
     if (dto.confirmPassword && dto.password !== dto.confirmPassword) {
@@ -380,7 +380,7 @@ export class AuthService {
       throw new ConflictException('An account with these details already exists.');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const hashedPassword = await bcrypt.hash(dto.password ?? '123456', 10);
 
     let createdResult: any;
     try {
