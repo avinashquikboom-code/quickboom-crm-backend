@@ -2404,8 +2404,8 @@ export class EmployeeService {
     };
   }
 
-  async remove(params: EmployeeFindOneParams & { hardDelete?: boolean }) {
-    const { id, customerId, isSuperAdmin, hardDelete } = params;
+  async remove(params: EmployeeFindOneParams) {
+    const { id, customerId, isSuperAdmin } = params;
     const existing = await this.findOne({ id, customerId, isSuperAdmin });
 
     const numId = Number(existing.id);
@@ -2425,16 +2425,16 @@ export class EmployeeService {
       leaveRequestCount,
       deductionCount,
     ] = await Promise.all([
-      this.prisma.attendance?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.salarySlip?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.payrollItem?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.salaryStructure?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.employeeClaim?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.employeeLoan?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.commission?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.commissionWithdrawal?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.leaveRequest?.count({ where: { employeeId: numId } }).catch(() => 0),
-      this.prisma.employeeDeduction?.count({ where: { employeeId: numId } }).catch(() => 0),
+      this.prisma.attendance.count({ where: { employeeId: numId } }),
+      this.prisma.salarySlip.count({ where: { employeeId: numId } }),
+      this.prisma.payrollItem.count({ where: { employeeId: numId } }),
+      this.prisma.salaryStructure.count({ where: { employeeId: numId } }),
+      this.prisma.employeeClaim.count({ where: { employeeId: numId } }),
+      this.prisma.employeeLoan.count({ where: { employeeId: numId } }),
+      this.prisma.commission.count({ where: { employeeId: numId } }),
+      this.prisma.commissionWithdrawal.count({ where: { employeeId: numId } }),
+      this.prisma.leaveRequest.count({ where: { employeeId: numId } }),
+      this.prisma.employeeDeduction.count({ where: { employeeId: numId } }),
     ]);
 
     const hasProtectedHistory = Boolean(
@@ -2452,7 +2452,7 @@ export class EmployeeService {
 
     // 1. If employee has historical/financial records and caller did not explicitly force hardDelete:
     // Safely archive employee (status='DELETED' moves them out of active directory into Bin, preserving history)
-    if (hasProtectedHistory && !hardDelete) {
+    if (hasProtectedHistory) {
       await this.prisma.$transaction(async (tx) => {
         // Update employee status to DELETED and disable mobile login
         await tx.employee.update({
@@ -2569,7 +2569,7 @@ export class EmployeeService {
       };
     }
 
-    // 2. Safe permanent deletion when no protected historical records exist (or hardDelete requested)
+    // Permanently delete only after all protected-history counts confirm no history exists.
     await this.prisma.$transaction(async (tx) => {
       // Invalidate tokens/sessions
       if (userId) {
@@ -2641,7 +2641,7 @@ export class EmployeeService {
         await tx.remoteRequest.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
       }
 
-      if (hardDelete) {
+      {
         if (tx.attendanceBreak?.deleteMany) {
           await tx.attendanceBreak.deleteMany({ where: { attendance: { employeeId: numId } } }).catch(() => undefined);
         }
