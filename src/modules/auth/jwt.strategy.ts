@@ -51,6 +51,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         rawJwtToken: any,
         done: (err: any, secret?: string) => void,
       ) => {
+        // Match the access-token signer in AuthService. JWT_ACCESS_SECRET is
+        // retained only for existing tokens issued under the older configuration.
+        const signingSecret = configService.get<string>('JWT_SECRET') || process.env.JWT_SECRET;
         const rawConfigSecret = configService.get<string>('JWT_ACCESS_SECRET');
         const rawEnvSecret = process.env.JWT_ACCESS_SECRET;
         const fallbackSecret = 'quikboom_super_secret_jwt_access_key_2026';
@@ -59,7 +62,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
         const candidateSecrets = Array.from(
           new Set(
-            [rawConfigSecret, rawEnvSecret, fallbackSecret, devSecret, prodSecret]
+            [signingSecret, rawConfigSecret, rawEnvSecret, fallbackSecret, devSecret, prodSecret]
               .map((s) => (s ? s.replace(/^["']|["']$/g, '').trim() : ''))
               .filter((s): s is string => Boolean(s && s.length > 0)),
           ),
