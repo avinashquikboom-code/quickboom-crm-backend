@@ -107,10 +107,11 @@ export class RegisterEmployeeDto {
   @IsNotEmpty({ message: 'Email address is required' })
   email: string;
 
-  @ApiProperty({ example: 'Password123!' })
+  @ApiPropertyOptional({ example: 'Password123!' })
+  @IsOptional()
   @IsString()
   @MinLength(6, { message: 'Password must be at least 6 characters' })
-  password: string;
+  password?: string;
 
   @ApiPropertyOptional({ example: 'Password123!' })
   @IsString()

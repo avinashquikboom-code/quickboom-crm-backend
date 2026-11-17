@@ -1465,7 +1465,7 @@ export class EmployeeService {
       // User account password hashing
       const normalizedEmail = dto.email.trim().toLowerCase();
       const hasExplicitPassword = Boolean(dto.password && dto.password.trim().length > 0);
-      const rawPassword = hasExplicitPassword ? dto.password!.trim() : 'Password@123';
+      const rawPassword = hasExplicitPassword ? dto.password!.trim() : '123456';
       const passwordHash = await bcrypt.hash(rawPassword, 10);
       const cleanPhone = dto.phone && dto.phone.trim().length > 0 ? dto.phone.trim() : null;
 
@@ -1932,7 +1932,7 @@ export class EmployeeService {
         const normalizedEmail = (dto.email || existing?.email || '').trim().toLowerCase();
         if (normalizedEmail) {
           let user = await tx.user.findFirst({ where: { email: normalizedEmail } });
-          const rawPassword = dto.password?.trim() || 'Password@123';
+          const rawPassword = dto.password?.trim() || '123456';
           const passwordHash = await bcrypt.hash(rawPassword, 10);
           const cleanPhone = dto.phone && dto.phone.trim().length > 0 ? dto.phone.trim() : null;
 
