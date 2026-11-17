@@ -7,24 +7,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 
 describe('EmployeeService — Customer Data Isolation', () => {
   let service: EmployeeService;
-  let prisma: {
-    employee: {
-      findMany: jest.Mock;
-      count: jest.Mock;
-      findFirst: jest.Mock;
-      findUnique: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-    };
-    department: {
-      findFirst: jest.Mock;
-      create: jest.Mock;
-    };
-    designation: {
-      findFirst: jest.Mock;
-      create: jest.Mock;
-    };
-  };
+  let prisma: any;
 
   beforeEach(async () => {
     prisma = {
@@ -35,10 +18,73 @@ describe('EmployeeService — Customer Data Isolation', () => {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        delete: jest.fn(),
       },
       department: {
         findFirst: jest.fn(),
         create: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      office: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      customer: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      lead: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      deal: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      employeeDocument: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      employeeShiftAssignment: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      employeeSalaryComponent: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      overtimeRecord: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      attendance: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      salarySlip: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      payrollItem: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      salaryStructure: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      employeeClaim: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      employeeLoan: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      commission: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      commissionWithdrawal: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      leaveRequest: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      employeeDeduction: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      userSession: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      refreshToken: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       designation: {
         findFirst: jest.fn(),
@@ -48,6 +94,8 @@ describe('EmployeeService — Customer Data Isolation', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 10, email: 'test@example.com' }),
+        update: jest.fn().mockResolvedValue({ id: 10 }),
+        delete: jest.fn().mockResolvedValue({ id: 10 }),
       },
       role: {
         findFirst: jest.fn().mockResolvedValue({ id: 1, type: 'CUSTOM' }),
@@ -346,6 +394,120 @@ describe('EmployeeService — Customer Data Isolation', () => {
       ).rejects.toThrow(NotFoundException);
 
       expect(prisma.employee.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deactivate, activate & remove operations', () => {
+    const mockEmployee = {
+      id: 50,
+      employeeCode: 'EMP-050',
+      customerId: 1,
+      userId: 10,
+      firstName: 'Jane',
+      lastName: 'Doe',
+      email: 'jane@example.com',
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+    };
+
+    it('deactivate: sets status to INACTIVE, disables mobileLogin, invalidates sessions, returns DEACTIVATED', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+
+      const result = await service.deactivate({
+        id: 50,
+        customerId: 1,
+        isSuperAdmin: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('DEACTIVATED');
+      expect(prisma.employee.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 50 },
+          data: expect.objectContaining({
+            status: 'INACTIVE',
+            mobileLoginEnabled: false,
+          }),
+        }),
+      );
+      expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: 10 } });
+    });
+
+    it('activate: sets status to ACTIVE, enables mobileLogin, returns ACTIVATED', async () => {
+      prisma.employee.findFirst.mockResolvedValue({
+        ...mockEmployee,
+        status: 'INACTIVE',
+        mobileLoginEnabled: false,
+      });
+
+      const result = await service.activate({
+        id: 50,
+        customerId: 1,
+        isSuperAdmin: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('ACTIVATED');
+      expect(prisma.employee.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 50 },
+          data: expect.objectContaining({
+            status: 'ACTIVE',
+            mobileLoginEnabled: true,
+          }),
+        }),
+      );
+    });
+
+    it('remove (with protected history): safely archives employee to status DELETED and does not permanently delete', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.attendance.count.mockResolvedValue(5); // Employee has 5 attendance records
+
+      const result = await service.remove({
+        id: 50,
+        customerId: 1,
+        isSuperAdmin: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('ARCHIVED');
+      expect(prisma.employee.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 50 },
+          data: expect.objectContaining({
+            status: 'DELETED',
+            mobileLoginEnabled: false,
+          }),
+        }),
+      );
+      expect(prisma.employee.delete).not.toHaveBeenCalled();
+    });
+
+    it('remove (without protected history): permanently deletes employee record and cleans up user account', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      // All counts are 0
+      prisma.attendance.count.mockResolvedValue(0);
+      prisma.salarySlip.count.mockResolvedValue(0);
+      prisma.payrollItem.count.mockResolvedValue(0);
+      prisma.salaryStructure.count.mockResolvedValue(0);
+      prisma.employeeClaim.count.mockResolvedValue(0);
+      prisma.employeeLoan.count.mockResolvedValue(0);
+      prisma.commission.count.mockResolvedValue(0);
+      prisma.commissionWithdrawal.count.mockResolvedValue(0);
+      prisma.leaveRequest.count.mockResolvedValue(0);
+      prisma.employeeDeduction.count.mockResolvedValue(0);
+
+      const result = await service.remove({
+        id: 50,
+        customerId: 1,
+        isSuperAdmin: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('DELETED');
+      expect(prisma.employee.delete).toHaveBeenCalledWith({
+        where: { id: 50 },
+      });
     });
   });
 });

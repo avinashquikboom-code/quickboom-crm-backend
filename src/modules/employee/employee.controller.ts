@@ -375,6 +375,56 @@ export class EmployeeController {
     });
   }
 
+  @Post(':id/deactivate')
+  @Patch(':id/deactivate')
+  @ApiOperation({ summary: 'Deactivate employee employment status to INACTIVE' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async deactivate(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+    this.assertEmployeePermission(user, 'EDIT');
+
+    return this.employeeService.deactivate({
+      id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+    });
+  }
+
+  @Post(':id/activate')
+  @Patch(':id/activate')
+  @ApiOperation({ summary: 'Activate employee employment status to ACTIVE' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async activate(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+    this.assertEmployeePermission(user, 'EDIT');
+
+    return this.employeeService.activate({
+      id,
+      customerId: targetCustomerId,
+      isSuperAdmin,
+    });
+  }
+
   @Get(':id/permissions')
   @ApiOperation({ summary: 'Get employee role permissions and individual overrides' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
