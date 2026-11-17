@@ -107,7 +107,7 @@ export class MasterService {
     const existing = await this.prisma.masterItem.findUnique({
       where: { id: Number(id) },
     });
-    if (!existing) {
+    if (!existing || Number(existing.customerId) !== Number(numCustomerId)) {
       throw new NotFoundException(`Master item #${id} not found`);
     }
 
