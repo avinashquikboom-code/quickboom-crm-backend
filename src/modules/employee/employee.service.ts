@@ -1521,7 +1521,7 @@ export class EmployeeService {
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
           isVerified: true,
           deletedAt: null,
-          ...(hasExplicitPassword || !user.passwordHash ? { passwordHash } : {}),
+          passwordHash,
         };
         if (user.customerId !== null && user.customerId !== numCustomerId) {
           throw new ConflictException({
