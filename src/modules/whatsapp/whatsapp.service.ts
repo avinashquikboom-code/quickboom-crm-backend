@@ -2092,6 +2092,39 @@ export class WhatsappService {
         const val = change.value;
         if (!val || typeof val !== 'object') continue;
 
+        if (change.field === 'message_template_status_update') {
+          const templateId = val.message_template_id;
+          const templateName = String(val.message_template_name || '').trim().toLowerCase();
+          const templateLanguage = String(val.message_template_language || '').trim();
+          const templateStatus = String(val.event || val.status || '').trim().toUpperCase();
+          const wabaId = String(entry.id || '').trim();
+          if (templateStatus && (templateId || (templateName && templateLanguage))) {
+            const eventKey = `template_status:${wabaId}:${templateId || `${templateName}:${templateLanguage}`}:${templateStatus}`;
+            if (!this.isEventDuplicate(eventKey)) {
+              this.markEventProcessed(eventKey);
+              const now = new Date();
+              const where: any = templateId
+                ? { metaTemplateId: String(templateId), ...(wabaId ? { syncedWabaId: wabaId } : {}) }
+                : { templateName, language: templateLanguage, ...(wabaId ? { syncedWabaId: wabaId } : {}) };
+              await this.prisma.metaTemplate.updateMany({
+                where: { ...where, deletedAt: null },
+                data: {
+                  status: templateStatus,
+                  rejectionReason: val.reason || val.rejected_reason || null,
+                  syncStatus: 'SYNCED',
+                  syncError: null,
+                  syncedWabaId: wabaId || undefined,
+                  lastSyncAttemptAt: now,
+                  lastSyncedAt: now,
+                },
+              }).catch((err: any) => {
+                this.logger.error(`[WHATSAPP_WEBHOOK] Template status update failed for Meta template ${templateId || templateName}: ${err?.message || err}`);
+              });
+            }
+          }
+          continue;
+        }
+
         const metadata = val.metadata || {};
         const displayPhoneNumber = metadata.display_phone_number;
         const phoneNumberId = metadata.phone_number_id;

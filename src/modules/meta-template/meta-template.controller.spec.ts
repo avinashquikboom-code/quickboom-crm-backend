@@ -5,6 +5,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { QueryMetaTemplateDto, CreateMetaTemplateDto } from './dto/meta-template.dto';
+import { WhatsAppCampaignService } from './whatsapp-campaign.service';
 
 describe('MetaTemplateController & DTO Validation', () => {
   let controller: MetaTemplateController;
@@ -43,6 +44,7 @@ describe('MetaTemplateController & DTO Validation', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MetaTemplateController],
       providers: [
+        { provide: WhatsAppCampaignService, useValue: {} },
         {
           provide: MetaTemplateService,
           useValue: mockMetaTemplateService,

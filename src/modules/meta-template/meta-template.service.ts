@@ -74,7 +74,7 @@ export class MetaTemplateService {
             key: stageKey,
             language: 'en_US',
             category: 'UTILITY',
-            status: 'APPROVED',
+            status: 'NOT_SYNCED',
             metaTemplateId: `seed_${tpl.templateName}`,
             headerType: 'NONE',
             body: tpl.body,
@@ -82,6 +82,8 @@ export class MetaTemplateService {
             variables: vars,
             isLocalActive: true,
             isSystem: true,
+            syncStatus: 'NOT_SYNCED',
+            syncError: null,
           },
         }).catch(() => null);
       }
@@ -321,6 +323,43 @@ export class MetaTemplateService {
     return { config, apiKey, wabaId, apiVersion };
   }
 
+  private metaApiError(err: any, token?: string) {
+    const status = Number(err?.response?.status) || 0;
+    const code = err?.response?.data?.error?.code;
+    let message = String(err?.response?.data?.error?.message || err?.message || 'Meta Graph API request failed');
+    if (token) message = message.split(token).join('[redacted]');
+    if (status === 429 || code === 4 || code === 17 || code === 32) return `Meta rate limit reached${status ? ` (HTTP ${status})` : ''}: ${message}`;
+    if (status === 401 || code === 190) return `Meta rejected the access token${status ? ` (HTTP ${status})` : ''}: ${message}`;
+    return `Meta Graph API error${status ? ` (HTTP ${status})` : ''}: ${message}`;
+  }
+
+  private async fetchMetaTemplatesFromWaba(customerId?: number | string | null) {
+    const { config, apiKey, wabaId, apiVersion } = await this.resolveWhatsAppCredentials(customerId);
+    if (config?.isEnabled === false) throw new BadRequestException('WhatsApp integration is disabled. Enable it in Settings → Integrations → WhatsApp.');
+    if (!apiKey) throw new BadRequestException('WhatsApp / Meta integration is not configured. Access Token is missing.');
+    if (!wabaId) throw new BadRequestException('WhatsApp Business Account ID (WABA ID) is missing. Configure the WABA ID in Settings → Integrations → WhatsApp.');
+
+    const templates: any[] = [];
+    let nextUrl: string | null = `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates?limit=100&fields=id,name,language,status,category,components,rejected_reason`;
+    try {
+      while (nextUrl) {
+        const response = await axios.get(nextUrl, { headers: { Authorization: `Bearer ${apiKey}` }, timeout: 15000 });
+        if (!Array.isArray(response.data?.data)) throw new Error('Meta response did not contain a template list.');
+        templates.push(...response.data.data);
+        const next = response.data?.paging?.next;
+        if (!next) break;
+        const parsed = new URL(next);
+        parsed.searchParams.delete('access_token');
+        nextUrl = parsed.toString();
+      }
+    } catch (err: any) {
+      const error = this.metaApiError(err, apiKey);
+      this.logger.error(`[MetaTemplateService] Template sync failed for WABA ${wabaId}: ${error}`);
+      throw new BadRequestException(error);
+    }
+    return { templates, wabaId };
+  }
+
   private async submitTemplateToMeta(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
     const { config, apiKey, wabaId, apiVersion } = await this.resolveWhatsAppCredentials(customerId);
     if (config?.isEnabled === false) {
@@ -342,6 +381,23 @@ export class MetaTemplateService {
       components: this.buildMetaGraphComponents(dto),
     };
 
+    // A prior submission may have succeeded even if its response was lost. Adopt
+    // an existing exact name/language match instead of creating a duplicate.
+    const remote = await this.fetchMetaTemplatesFromWaba(customerId);
+    const alreadyExists = remote.templates.find((item) =>
+      String(item.name || '').toLowerCase() === templateName &&
+      String(item.language || '') === String(payload.language),
+    );
+    if (alreadyExists) {
+      return {
+        templateName,
+        metaTemplateId: alreadyExists.id ? String(alreadyExists.id) : null,
+        status: String(alreadyExists.status || 'UNKNOWN').toUpperCase(),
+        wabaId: remote.wabaId,
+        alreadyExists: true,
+      };
+    }
+
     try {
       const response = await axios.post(
         `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates`,
@@ -353,11 +409,12 @@ export class MetaTemplateService {
         templateName,
         metaTemplateId: data.id ? String(data.id) : null,
         status: String(data.status || 'PENDING').toUpperCase(),
+        wabaId,
+        alreadyExists: false,
         raw: data,
       };
     } catch (err: any) {
-      const errMsg = err?.response?.data?.error?.message || err?.message || 'Meta template submission failed';
-      throw new BadRequestException(`Meta API validation error: ${errMsg}`);
+      throw new BadRequestException(this.metaApiError(err, apiKey));
     }
   }
 
@@ -413,14 +470,20 @@ export class MetaTemplateService {
         : true;
 
     const submitToMeta = dto.submitToMeta !== false;
-    let metaSubmission: { templateName: string; metaTemplateId: string | null; status: string; raw?: any } | null = null;
+    let metaSubmission: { templateName: string; metaTemplateId: string | null; status: string; raw?: any; wabaId?: string; alreadyExists?: boolean } | null = null;
     if (submitToMeta) {
       metaSubmission = await this.submitTemplateToMeta(dto, customerId);
     }
 
     const resolvedTemplateName = metaSubmission?.templateName || rawTemplateName;
-    const resolvedStatus = metaSubmission?.status || (dto.status || 'PENDING').toUpperCase();
+    const resolvedStatus = metaSubmission?.status || 'NOT_SYNCED';
     const resolvedMetaId = metaSubmission?.metaTemplateId || dto.metaTemplateId || null;
+    const now = new Date();
+    const syncStatus = !submitToMeta
+      ? 'NOT_SYNCED'
+      : resolvedMetaId
+        ? 'SYNCED'
+        : 'SYNC_FAILED';
 
     return this.prisma.metaTemplate.create({
       data: {
@@ -432,6 +495,11 @@ export class MetaTemplateService {
         category: (dto.category || 'UTILITY').toUpperCase(),
         status: resolvedStatus,
         metaTemplateId: resolvedMetaId,
+        syncStatus,
+        syncError: syncStatus === 'SYNC_FAILED' ? 'Meta accepted the submission without returning a template ID.' : null,
+        lastSyncAttemptAt: submitToMeta ? now : null,
+        lastSyncedAt: resolvedMetaId ? now : null,
+        syncedWabaId: metaSubmission?.wabaId || null,
         headerType: dto.headerType || 'NONE',
         headerContent: dto.headerContent || null,
         body: rawBody,
@@ -544,70 +612,25 @@ export class MetaTemplateService {
    * Synchronizes templates from Meta Graph API using existing WhatsApp credentials.
    */
   async syncFromMeta(customerId?: number | string | null) {
-    const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP');
-    const creds = config?.credentials || {};
-    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
-    const { token: apiKey } = resolveCleanAccessToken(rawApiKey);
-    const wabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
-    const phoneNumberId = (creds.phoneNumberId || creds.phone_number_id || '').trim();
-
-    if (config && config.isEnabled === false) {
-      throw new BadRequestException('The WhatsApp integration is disabled. Enable it in Settings → Integrations → WhatsApp before syncing templates.');
-    }
-
-    if (!apiKey) {
-      throw new BadRequestException(
-        'WhatsApp / Meta integration is not configured. Please configure Access Token in Settings → Integrations → WhatsApp.',
-      );
-    }
-
-    const resolvedWabaId = wabaId;
-    if (!resolvedWabaId) {
-      throw new BadRequestException(
-        'WhatsApp Business Account ID (WABA ID) is required to sync message templates from Meta. ' +
-          'Configure the WABA ID in Settings → Integrations → WhatsApp (do not use Phone Number ID for template sync).',
-      );
-    }
-
-    const targetAccount = resolvedWabaId;
-    if (!phoneNumberId) {
-      this.logger.warn('[MetaTemplateService] Phone Number ID is missing; template sync uses WABA only.');
-    }
-
-    const apiVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
-    this.logger.log(`[MetaTemplateService] Syncing templates from Meta Graph API for account: ${targetAccount}`);
-
-    let metaTemplates: any[] = [];
-    let nextUrl = `https://graph.facebook.com/${apiVersion}/${targetAccount}/message_templates?limit=100&fields=id,name,language,status,category,components,rejected_reason`;
-    try {
-      while (nextUrl) {
-        const response = await axios.get(nextUrl, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-          timeout: 15000,
-        });
-        if (Array.isArray(response.data?.data)) metaTemplates.push(...response.data.data);
-        const next = response.data?.paging?.next;
-        if (!next) break;
-        const parsed = new URL(next);
-        parsed.searchParams.delete('access_token');
-        nextUrl = parsed.toString();
-      }
-    } catch (err: any) {
-      const errMsg = err?.response?.data?.error?.message || err?.message || 'Meta API communication error';
-      this.logger.error(`[MetaTemplateService] Meta Graph API sync failed: ${errMsg}`);
-      throw new BadRequestException(`Meta Graph API error: ${errMsg}`);
-    }
-
     const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const scope: any = { deletedAt: null, ...(parsedCustId ? { OR: [{ customerId: null }, { customerId: parsedCustId }] } : { customerId: null }) };
+    const now = new Date();
+    let metaTemplates: any[];
+    let wabaId: string;
+    try {
+      ({ templates: metaTemplates, wabaId } = await this.fetchMetaTemplatesFromWaba(customerId));
+    } catch (err: any) {
+      const error = err?.message || 'Meta Graph API request failed.';
+      await this.prisma.metaTemplate.updateMany({ where: scope, data: { syncStatus: 'SYNC_FAILED', syncError: error, lastSyncAttemptAt: now } }).catch(() => null);
+      throw err;
+    }
+
     let syncedCount = 0;
     let createdCount = 0;
     let updatedCount = 0;
     let unchangedCount = 0;
     const failed: Array<{ name: string; reason: string }> = [];
-    const scope = {
-      deletedAt: null,
-      OR: [{ customerId: null }, ...(parsedCustId ? [{ customerId: parsedCustId }] : [])],
-    };
+    const matchedLocalIds = new Set<number>();
 
     for (const mt of metaTemplates) {
       const templateName = (mt.name || '').trim().toLowerCase();
@@ -636,7 +659,7 @@ export class MetaTemplateService {
 
       const language = mt.language || 'en';
       const category = (mt.category || 'UTILITY').toUpperCase();
-      const status = (mt.status || 'APPROVED').toUpperCase();
+      const status = String(mt.status || 'UNKNOWN').toUpperCase();
       const variables = this.extractVariables(bodyText + ' ' + (headerContent || ''));
 
       const existing = (mt.id
@@ -644,35 +667,25 @@ export class MetaTemplateService {
         : null) || await this.prisma.metaTemplate.findFirst({ where: { ...scope, templateName, language } });
 
       try {
-      if (existing) {
-        const nextMetaId = mt.id ? String(mt.id) : existing.metaTemplateId;
-        const unchanged = existing.status === status
-          && existing.language === language
-          && existing.category === category
-          && String(existing.metaTemplateId || '') === String(nextMetaId || '')
-          && existing.body === (bodyText || existing.body)
-          && (existing.rejectionReason || null) === (mt.rejected_reason || null);
-        await this.prisma.metaTemplate.update({
-          where: { id: existing.id },
-          data: {
-            status,
-            language,
-            category,
-            metaTemplateId: nextMetaId,
-            body: bodyText || existing.body,
-            headerType,
-            headerContent: headerContent || existing.headerContent,
-            footer: footerText || existing.footer,
-            buttons: buttonsList.length > 0 ? buttonsList : (existing.buttons as any),
-            variables: variables.length > 0 ? variables : existing.variables,
-            rejectionReason: mt.rejected_reason || null,
-            lastSyncedAt: new Date(),
-          },
-        });
-        if (unchanged) unchangedCount++;
-        else updatedCount++;
-      } else {
-        await this.prisma.metaTemplate.create({
+        if (existing) {
+          matchedLocalIds.add(existing.id);
+          const nextMetaId = mt.id ? String(mt.id) : existing.metaTemplateId;
+          const unchanged = existing.status === status && existing.language === language && existing.category === category &&
+            String(existing.metaTemplateId || '') === String(nextMetaId || '') && existing.syncStatus === 'SYNCED' &&
+            (existing.rejectionReason || null) === (mt.rejected_reason || null);
+          await this.prisma.metaTemplate.update({
+            where: { id: existing.id },
+            data: {
+              status, language, category, metaTemplateId: nextMetaId,
+              rejectionReason: mt.rejected_reason || null,
+              syncStatus: 'SYNCED', syncError: null, syncedWabaId: wabaId,
+              lastSyncAttemptAt: now, lastSyncedAt: now,
+            },
+          });
+          if (unchanged) unchangedCount++;
+          else updatedCount++;
+        } else {
+          const created = await this.prisma.metaTemplate.create({
           data: {
             customerId: parsedCustId,
             name: (mt.name || templateName).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
@@ -690,15 +703,30 @@ export class MetaTemplateService {
             isLocalActive: status === 'APPROVED',
             isSystem: false,
             source: 'META_SYNC',
-            lastSyncedAt: new Date(),
+            syncStatus: 'SYNCED', syncError: null, syncedWabaId: wabaId,
+            lastSyncAttemptAt: now, lastSyncedAt: now,
           },
         });
-        createdCount++;
-      }
-      syncedCount++;
+          matchedLocalIds.add(created.id);
+          createdCount++;
+        }
+        syncedCount++;
       } catch (error: any) {
-        failed.push({ name: templateName, reason: error?.message || 'Could not save template' });
+        const reason = error?.message || 'Could not save template';
+        failed.push({ name: templateName, reason });
+        if (existing?.id) {
+          await this.prisma.metaTemplate.update({ where: { id: existing.id }, data: { syncStatus: 'SYNC_FAILED', syncError: reason, lastSyncAttemptAt: now } }).catch(() => null);
+        }
       }
+    }
+
+    const unmatched = await this.prisma.metaTemplate.findMany({ where: scope, select: { id: true } }).catch(() => []);
+    const unmatchedIds = unmatched.map((row: any) => row.id).filter((id: number) => !matchedLocalIds.has(id));
+    if (unmatchedIds.length) {
+      await this.prisma.metaTemplate.updateMany({
+        where: { id: { in: unmatchedIds }, ...scope },
+        data: { syncStatus: 'NOT_SYNCED', syncError: null, lastSyncAttemptAt: now },
+      });
     }
 
     return {
@@ -713,8 +741,77 @@ export class MetaTemplateService {
       pending: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'PENDING').length,
       rejected: metaTemplates.filter((item) => String(item.status || '').toUpperCase() === 'REJECTED').length,
       failed,
-      lastSyncedAt: new Date().toISOString(),
+      wabaId,
+      lastSyncedAt: now.toISOString(),
     };
+  }
+
+  async syncOne(id: number, customerId?: number | string | null) {
+    const item = await this.findOne(id, customerId);
+    const now = new Date();
+    await this.prisma.metaTemplate.update({ where: { id: item.id }, data: { lastSyncAttemptAt: now, syncError: null } });
+    let templates: any[];
+    let wabaId: string;
+    try {
+      ({ templates, wabaId } = await this.fetchMetaTemplatesFromWaba(customerId));
+    } catch (err: any) {
+      const error = err?.message || 'Meta Graph API request failed.';
+      await this.prisma.metaTemplate.update({ where: { id: item.id }, data: { syncStatus: 'SYNC_FAILED', syncError: error, lastSyncAttemptAt: now } });
+      throw err;
+    }
+    const remote = templates.find((candidate) =>
+      String(candidate.name || '').toLowerCase() === String(item.templateName || '').toLowerCase() &&
+      String(candidate.language || '') === String(item.language || ''),
+    );
+    if (!remote) {
+      return this.prisma.metaTemplate.update({
+        where: { id: item.id },
+        data: { syncStatus: 'NOT_SYNCED', syncError: null, lastSyncAttemptAt: now },
+      });
+    }
+    return this.prisma.metaTemplate.update({
+      where: { id: item.id },
+      data: {
+        metaTemplateId: remote.id ? String(remote.id) : item.metaTemplateId,
+        status: String(remote.status || 'UNKNOWN').toUpperCase(),
+        language: String(remote.language || item.language),
+        category: String(remote.category || item.category).toUpperCase(),
+        rejectionReason: remote.rejected_reason || null,
+        syncStatus: remote.id ? 'SYNCED' : 'SYNC_FAILED',
+        syncError: remote.id ? null : 'Meta returned a matching template without an ID.',
+        syncedWabaId: remote.id ? wabaId : item.syncedWabaId,
+        lastSyncAttemptAt: now,
+        lastSyncedAt: remote.id ? now : item.lastSyncedAt,
+      },
+    });
+  }
+
+  async submitOne(id: number, customerId?: number | string | null) {
+    const item = await this.findOne(id, customerId);
+    const syncResult = await this.syncOne(id, customerId);
+    if (syncResult.syncStatus === 'SYNCED') return { ...syncResult, alreadyExists: true, message: 'Template already exists on Meta; local status was refreshed.' };
+
+    const result = await this.submitTemplateToMeta({
+      name: item.name, templateName: item.templateName, language: item.language, category: item.category,
+      body: item.body, headerType: item.headerType || 'NONE', headerContent: item.headerContent || undefined,
+      footer: item.footer || undefined, buttons: Array.isArray(item.buttons) ? item.buttons as any : undefined,
+      variables: item.variables, submitToMeta: true,
+    } as CreateMetaTemplateDto, customerId);
+    const now = new Date();
+    const synced = Boolean(result.metaTemplateId);
+    const updated = await this.prisma.metaTemplate.update({
+      where: { id: item.id },
+      data: {
+        metaTemplateId: result.metaTemplateId,
+        status: result.status,
+        syncStatus: synced ? 'SYNCED' : 'SYNC_FAILED',
+        syncError: synced ? null : 'Meta accepted the submission without returning a template ID.',
+        syncedWabaId: result.wabaId || null,
+        lastSyncAttemptAt: now,
+        lastSyncedAt: synced ? now : item.lastSyncedAt,
+      },
+    });
+    return { ...updated, alreadyExists: Boolean(result.alreadyExists), message: result.alreadyExists ? 'Existing Meta template was linked; no duplicate was created.' : 'Template submitted to Meta.' };
   }
 
   /**
