@@ -34,3 +34,53 @@ export async function createStageOutbox(db: any, p: {
     ...(stage?.emailVariableMapping != null ? { variableMapping: stage.emailVariableMapping } : {}),
   } });
 }
+
+/** Queue first-contact automation in the same transaction as a lead import. */
+export async function createLeadCreatedOutbox(db: any, p: {
+  customerId: number; leadId: number; userId: number | null; stageId: number | null;
+  stageName: string; leadName?: string | null; email?: string | null; phone?: string | null;
+}) {
+  const stage = p.stageId == null ? null : await db.leadStage.findFirst({
+    where: { id: p.stageId, deletedAt: null, ...tenantLeadStageScope(p.customerId) },
+    include: { emailTemplate: true, whatsappTemplate: true },
+  });
+  if (p.stageId != null && !stage) throw new Error('Selected lead stage is unavailable for this tenant.');
+
+  const email = String(p.email || '').trim();
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) &&
+    !['contact@company.com', 'placeholder@company.com', 'example@company.com', 'test@company.com', 'user@company.com', 'admin@quikboom.com'].includes(email.toLowerCase());
+  const phone = String(p.phone || '').trim();
+  const phoneDigits = phone.replace(/\D/g, '');
+  const validPhone = /^\+?[\d\s().-]{8,25}$/.test(phone) &&
+    phoneDigits.length >= 10 && phoneDigits.length <= 15 && !/^(\d)\1+$/.test(phoneDigits);
+  const common = {
+    customerId: p.customerId, leadId: p.leadId, userId: p.userId,
+    previousStageId: null, newStageId: p.stageId,
+    previousStage: null, newStage: p.stageName, triggerSource: 'LEAD_CREATED',
+  };
+
+  if (validEmail) {
+    const idempotencyKey = `lead_created_${p.customerId}_${p.leadId}_EMAIL`;
+    await db.leadStageEmailDelivery.upsert({
+      where: { idempotencyKey }, update: {}, create: {
+        ...common, idempotencyKey, emailTemplateId: stage?.emailTemplateId ?? null,
+        templateName: stage?.emailTemplate?.name ?? null,
+        variableMapping: stage?.emailVariableMapping ?? undefined,
+        status: stage?.emailEnabled === false ? 'SKIPPED' : 'QUEUED',
+        error: stage?.emailEnabled === false ? 'Email automation is disabled for this stage.' : null,
+      },
+    });
+  }
+  if (validPhone) {
+    const idempotencyKey = `lead_created_${p.customerId}_${p.leadId}_WHATSAPP`;
+    await db.leadStageWhatsAppDelivery.upsert({
+      where: { idempotencyKey }, update: {}, create: {
+        ...common, idempotencyKey, metaTemplateId: stage?.whatsappTemplateId ?? null,
+        templateName: stage?.whatsappTemplate?.templateName ?? stage?.whatsappTemplate?.name ?? null,
+        variableMapping: stage?.whatsappVariableMapping ?? undefined,
+        status: stage?.whatsappEnabled === false ? 'SKIPPED' : 'QUEUED',
+        error: stage?.whatsappEnabled === false ? 'WhatsApp automation is disabled for this stage.' : null,
+      },
+    });
+  }
+}

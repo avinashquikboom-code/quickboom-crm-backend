@@ -12,6 +12,7 @@ import { join } from 'path';
 import { gzipSync, gunzipSync } from 'zlib';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { createLeadCreatedOutbox } from '../lead/lead-stage-outbox';
 import {
   PROTECTED_RECORDS,
   RESET_MODULES,
@@ -689,8 +690,18 @@ export class DataGovernanceService {
       let created = 0;
       try {
         await this.prisma.$transaction(async (tx) => {
+          let newStage = await tx.leadStage.findFirst({
+            where: { customerId: tenantId, key: 'NEW', deletedAt: null, isActive: true },
+            orderBy: { sortOrder: 'asc' },
+          });
+          if (!newStage) {
+            newStage = await tx.leadStage.findFirst({
+              where: { customerId: null, key: 'NEW', deletedAt: null, isActive: true },
+              orderBy: { sortOrder: 'asc' },
+            });
+          }
           for (const row of ready) {
-            await tx.lead.create({
+            const lead = await tx.lead.create({
               data: {
                 customerId: tenantId,
                 title: row.title.slice(0, 180),
@@ -699,8 +710,20 @@ export class DataGovernanceService {
                 email: row.email || null,
                 phone: row.phone || null,
                 source: 'IMPORT',
+                status: 'NEW',
+                stageId: newStage?.id || null,
                 createdById,
               },
+            });
+            await createLeadCreatedOutbox(tx, {
+              customerId: tenantId,
+              leadId: Number(lead.id),
+              userId: createdById,
+              stageId: newStage?.id ?? null,
+              stageName: newStage?.name || 'New',
+              leadName: lead.title,
+              email: lead.email,
+              phone: lead.phone,
             });
             created += 1;
           }

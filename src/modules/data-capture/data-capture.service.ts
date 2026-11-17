@@ -12,6 +12,7 @@ import { googlePhotoResource, isPlaceholderPhoto } from './google-photo';
 import { PhotoLookupCache } from './photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadService } from '../lead/lead.service';
+import { createLeadCreatedOutbox } from '../lead/lead-stage-outbox';
 import {
   ExtractPlacesDto,
   ImportToLeadsDto,
@@ -2693,6 +2694,18 @@ export class DataCaptureService implements OnModuleInit {
           }
 
           await this.copyCapturePhotosToLead(tx, created.id, dbPlace);
+          if (createdViaDirectTx) {
+            await createLeadCreatedOutbox(tx, {
+              customerId: numCustomerId,
+              leadId: Number(created.id),
+              userId: validCreatedById,
+              stageId: newStage?.id ?? null,
+              stageName: newStage?.name || 'New',
+              leadName: businessName,
+              email: normalizedEmail,
+              phone: normalizedPhone,
+            });
+          }
           return created;
         },
         { timeout: 15000, maxWait: 15000 },
@@ -2747,53 +2760,7 @@ export class DataCaptureService implements OnModuleInit {
       createdLeads.push(freshLead || leadResult);
       importedCount++;
 
-      // Trigger automatic Email & WhatsApp communication for NEW Lead (Data Capture flow)
-      if (this.leadService && freshLead) {
-        const initialStageName = freshLead.stage?.name || freshLead.status || 'New';
-        this.logger.log(
-          `[LEAD_AUTOMATION]\n` +
-          `leadId=${freshLead.id}\n` +
-          `stage=NEW\n` +
-          `tenantId=${numCustomerId}\n` +
-          `emailTemplateLookup=START\n` +
-          `whatsappTemplateLookup=START`
-        );
-
-        const emailPromise = typeof this.leadService.handleLeadStageChangeNotification === 'function'
-          ? this.leadService.handleLeadStageChangeNotification(
-              numCustomerId,
-              freshLead,
-              '',
-              initialStageName,
-              validCreatedById,
-              undefined,
-              undefined,
-              undefined,
-              'LEAD_CREATED',
-              freshLead.stageId,
-            ).catch((err: any) => {
-              this.logger.error(`[NEW_LEAD_EMAIL_NOTIFICATION_ERROR] Data capture lead #${freshLead.id}: ${err?.message}`);
-            })
-          : Promise.resolve();
-
-        const whatsappPromise = typeof this.leadService.handleLeadStageChangeWhatsappNotification === 'function'
-          ? this.leadService.handleLeadStageChangeWhatsappNotification(
-              numCustomerId,
-              freshLead,
-              '',
-              initialStageName,
-              validCreatedById,
-              undefined,
-              undefined,
-              'LEAD_CREATED',
-              freshLead.stageId,
-            ).catch((err: any) => {
-              this.logger.error(`[NEW_LEAD_WHATSAPP_NOTIFICATION_ERROR] Data capture lead #${freshLead.id}: ${err?.message}`);
-            })
-          : Promise.resolve();
-
-        await Promise.allSettled([emailPromise, whatsappPromise]);
-      }
+      this.logger.log(`[LEAD_AUTOMATION] Queued lead-created delivery for leadId=${leadResult.id} tenantId=${numCustomerId}`);
 
       // Trigger Lead Assignment push notification if assigned to an employee and created directly via tx
       if (
