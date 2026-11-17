@@ -352,7 +352,7 @@ export class EmployeeController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Deactivate employee' })
+  @ApiOperation({ summary: 'Remove employee from active directory while retaining history' })
   @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
   async remove(
     @Param('id') id: string,
