@@ -29,6 +29,8 @@ const PREVIEW_TTL_MS = 15 * 60 * 1000;
 const BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 const SENSITIVE_KEY = /password|secret|token|apiKey|credential/i;
 
+const scopedCustomer = (customerId: number | null) => customerId == null ? {} : { customerId };
+
 type PreviewRecord = {
   customerId: number | null;
   scope: 'tenant' | 'global';
@@ -114,8 +116,10 @@ export class DataGovernanceService {
       counts[table.model] = records;
       tables.push({ model: table.model, label: table.label, records });
     }
+    const dependencyWarnings = await this.dependencyWarnings(modules.map((item) => item.id), tenantId);
     const estimatedRecords = tables.reduce((sum, table) => sum + table.records, 0);
     const previewToken = randomUUID();
+    const protectedCounts = await this.countProtectedRecords(tenantId);
     this.previews.set(previewToken, {
       customerId: tenantId,
       scope: scope === 'global' ? 'global' : 'tenant',
@@ -136,11 +140,18 @@ export class DataGovernanceService {
       })),
       tables,
       estimatedRecords,
+      protectedCounts,
       dependencies: this.dependencies(modules.map((item) => item.id)),
+      dependencyWarnings,
       protected: PROTECTED_RECORDS,
       backupStatus: backup
         ? { verified: true, backupId: backup.backupId, createdAt: backup.createdAt }
-        : { verified: false, backupId: null, createdAt: null },
+        : {
+          verified: false,
+          backupId: null,
+          createdAt: null,
+          reason: 'No usable verified backup covers every selected module for this tenant within the 24-hour backup window.',
+        },
     };
   }
 
@@ -173,7 +184,7 @@ export class DataGovernanceService {
       throw new BadRequestException('Type RESET GLOBAL to confirm a reset across every tenant.');
     }
     const key = this.requireIdempotency(body.idempotencyKey);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_RESET');
     if (previous) return previous;
     const preview = this.takePreview(body.previewToken, tenantId, scope === 'global' ? 'global' : 'tenant');
     const modules = this.selectedModules(body.modules, scope === 'application' || scope === 'global');
@@ -182,6 +193,11 @@ export class DataGovernanceService {
       throw new BadRequestException('The preview does not match the selected modules. Run the preview again.');
     }
     await this.assertBackupCovers(tenantId, body.backupId, moduleIds, scope === 'global');
+    const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId);
+    const blockers = dependencyWarnings.filter((item) => item.blocking);
+    if (blockers.length) {
+      throw new BadRequestException(`Deletion is blocked by dependencies: ${blockers.map((item) => `${item.label}: ${item.records} records (select its eligible module or resolve the protected reference)`).join('; ')}.`);
+    }
     const recount = await this.countTables(tablesForModules(moduleIds), tenantId);
     if (recount.total !== preview.estimatedRecords) {
       throw new BadRequestException('Records changed after the preview. Run the preview again before deleting.');
@@ -191,6 +207,7 @@ export class DataGovernanceService {
     return this.withLock(tenantId, operationId, async () => {
       const deleted: Record<string, number> = {};
       const countsBefore: Record<string, number> = { ...recount.counts };
+      const countsAfter: Record<string, number> = {};
       const failures: string[] = [];
       try {
         await this.prisma.$transaction(async (tx) => {
@@ -211,19 +228,6 @@ export class DataGovernanceService {
             }
             deleted[table.model] = deletedCount;
           }
-          await tx.auditLog.create({
-            data: this.auditData(tenantId, userId, role, 'DATA_RESET', 'SUCCESS', {
-              operationId,
-              scope,
-              modules: moduleIds,
-              recordsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
-              tables: deleted,
-              backupId: body.backupId,
-              idempotencyKey: key,
-              reason: body.reason || 'Admin data reset',
-              status: 'SUCCESS',
-            }),
-          });
         }, { timeout: 120000, maxWait: 10000 });
 
         // Run a fresh query after PostgreSQL commits, so success reflects committed state.
@@ -231,22 +235,43 @@ export class DataGovernanceService {
           const remaining = await this.delegate(this.prisma, table.model).count({
             where: whereFor(table.where, tenantId),
           });
+          countsAfter[table.model] = remaining;
           if (remaining !== 0) {
             throw new Error(`${table.label}: ${remaining} records remain after the committed deletion.`);
           }
         }
+        await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'SUCCESS', {
+          operationId,
+          scope,
+          modules: moduleIds,
+          recordsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
+          tables: deleted,
+          countsBefore,
+          countsAfter,
+          backupId: body.backupId,
+          idempotencyKey: key,
+          reason: body.reason || 'Admin data reset',
+          verified: true,
+          status: 'SUCCESS',
+        });
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Reset failed');
         await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'FAILED', {
           operationId,
           scope,
           modules: moduleIds,
+          recordsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
+          tables: deleted,
+          countsBefore,
+          countsAfter,
           backupId: body.backupId,
           idempotencyKey: key,
+          verified: false,
+          partial: Object.values(deleted).some((count) => count > 0),
           status: 'FAILED',
           error: failures[0],
         });
-        throw new BadRequestException(`Reset failed and was rolled back. Operation ${operationId}. ${failures[0]}`);
+        throw new BadRequestException(`Reset did not complete successfully. Operation ${operationId}. ${failures[0]}`);
       }
       const recordsDeleted = Object.values(deleted).reduce((sum, count) => sum + count, 0);
       this.logger.log(`Data reset ${operationId} removed ${recordsDeleted} records`);
@@ -259,7 +284,7 @@ export class DataGovernanceService {
         recordsDeleted,
         tables: deleted,
         countsBefore,
-        countsAfter: Object.fromEntries(Object.keys(deleted).map((model) => [model, 0])),
+        countsAfter,
         verified: true,
         verifiedTables: Object.keys(deleted),
         failures,
@@ -363,6 +388,9 @@ export class DataGovernanceService {
       if (!details.backupId) continue;
       const file = this.backupPath(tenantId, String(details.backupId));
       const exists = await stat(file).then((info) => info.size > 0).catch(() => false);
+      const check = exists && details.status === 'VERIFIED'
+        ? await this.verifyFile(file, String(details.checksum || ''), tenantId, String(details.backupId))
+        : { ok: false, reason: exists ? 'Backup is not marked verified.' : 'Backup file is missing.' };
       rows.push({
         id: details.backupId,
         operationId: details.operationId || log.id,
@@ -370,7 +398,8 @@ export class DataGovernanceService {
         description: details.description || '',
         scope: details.scope || 'tenant',
         modules: details.modules || [],
-        status: exists && details.status === 'VERIFIED' ? 'VERIFIED' : 'MISSING',
+        status: check.ok ? 'VERIFIED' : exists ? 'INVALID' : 'MISSING',
+        verificationReason: check.ok ? null : check.reason,
         size: details.size || 0,
         checksum: details.checksum || '',
         recordCount: details.recordCount || 0,
@@ -434,7 +463,7 @@ export class DataGovernanceService {
     const key = this.requireIdempotency(body.idempotencyKey);
     const verified = await this.verifyBackup(customerId, backupId);
     const tenantId = verified.scope === 'global' ? null : this.requireTenant(customerId);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_RESTORE');
     if (previous) return previous;
     const payload = await this.readPayload(this.backupPath(tenantId, backupId));
     if (payload.customerId !== tenantId) throw new ForbiddenException('This backup belongs to a different tenant.');
@@ -533,7 +562,7 @@ export class DataGovernanceService {
     }
     if (String(body.confirmation || '').trim() !== 'CLEANUP') throw new BadRequestException('Type CLEANUP to confirm.');
     const key = this.requireIdempotency(body.idempotencyKey);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_CLEANUP');
     if (previous) return previous;
     const operationId = randomUUID();
     const expected = await this.cleanupCount(tenantId, operation);
@@ -619,7 +648,7 @@ export class DataGovernanceService {
     const tenantId = this.requireTenant(customerId);
     if (String(body.confirmation || '').trim() !== 'IMPORT') throw new BadRequestException('Type IMPORT to confirm.');
     const key = this.requireIdempotency(body.idempotencyKey);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_IMPORT');
     if (previous) return previous;
     const preview = await this.previewImport(tenantId, String(body.csv || ''));
     const ready = preview.rows.filter((row) => row.errors.length === 0);
@@ -678,17 +707,24 @@ export class DataGovernanceService {
     });
     return logs.map((log) => {
       const details = asObject(log.details);
+      const verifiedReset = log.action === 'DATA_RESET'
+        && details.verified === true
+        && Array.isArray(details.modules)
+        && details.modules.length > 0;
       return {
         id: details.operationId || log.id,
         operationType: log.action,
-        modules: details.modules || (details.operation ? [details.operation] : []),
+        modules: Array.isArray(details.modules) ? details.modules : (details.operation ? [details.operation] : []),
         requestedBy: log.user ? `${log.user.firstName || ''} ${log.user.lastName || ''}`.trim() || log.user.email : 'Super Admin',
         approvedBy: null,
         createdAt: log.createdAt,
-        recordsAffected: details.recordsDeleted ?? details.recordsRestored ?? details.recordsCreated ?? details.recordCount ?? 0,
+        recordsAffected: log.action === 'DATA_RESET' ? (verifiedReset ? Number(details.recordsDeleted || 0) : null) : (details.recordsDeleted ?? details.recordsRestored ?? details.recordsCreated ?? 0),
         backupId: details.backupId || details.preRestoreBackupId || null,
-        status: log.status || details.status || 'SUCCESS',
+        status: log.action === 'DATA_RESET' && log.status !== 'FAILED' && !verifiedReset
+          ? 'UNVERIFIED'
+          : log.status || details.status || 'UNVERIFIED',
         failureReason: details.error || null,
+        verified: log.action === 'DATA_RESET' ? verifiedReset : details.verified === true,
       };
     });
   }
@@ -744,6 +780,52 @@ export class DataGovernanceService {
       result.push({ id: item.id, name: item.name, records });
     }
     return result;
+  }
+
+  private async countProtectedRecords(customerId: number | null) {
+    const tenant = customerId == null ? {} : { customerId };
+    const byUserTenant = customerId == null ? {} : { user: { customerId } };
+    const byRoleTenant = customerId == null ? {} : { role: { customerId } };
+    const [customer, users, roles, userRoles, rolePermissions, sessions, refreshTokens, subscriptions, auditLogs,
+      attendancePolicies, leavePolicies] = await Promise.all([
+      this.prisma.customer.count({ where: customerId == null ? {} : { id: customerId } }),
+      this.prisma.user.count({ where: tenant }),
+      this.prisma.role.count({ where: tenant }),
+      this.prisma.userRole.count({ where: byUserTenant }),
+      this.prisma.rolePermission.count({ where: byRoleTenant }),
+      this.prisma.session.count({ where: byUserTenant }),
+      this.prisma.refreshToken.count({ where: byUserTenant }),
+      this.prisma.customerSubscription.count({ where: tenant }),
+      this.prisma.auditLog.count({ where: tenant }),
+      this.prisma.attendancePolicy.count({ where: tenant }),
+      this.prisma.leavePolicy.count({ where: tenant }),
+    ]);
+    const systemCritical = {
+      customer,
+      users,
+      roles,
+      userRoles,
+      rolePermissions,
+      sessions,
+      refreshTokens,
+      subscriptions,
+      auditLogs,
+    };
+    const remainingTenantConfiguration = {
+      attendancePolicies,
+      leavePolicies,
+    };
+    return {
+      systemCritical: {
+        tables: systemCritical,
+        records: Object.values(systemCritical).reduce((sum, count) => sum + count, 0),
+      },
+      remainingTenantConfiguration: {
+        tables: remainingTenantConfiguration,
+        records: Object.values(remainingTenantConfiguration).reduce((sum, count) => sum + count, 0),
+      },
+      note: 'Counts are row totals per protected table and are informational; shared permissions, plans, and singleton integration/payment configuration are excluded from tenant-scoped totals.',
+    };
   }
 
   private async countTables(tables: TableRule[], customerId: number | null) {
@@ -873,10 +955,11 @@ export class DataGovernanceService {
     return { ...preview, modules: [...preview.modules].sort() };
   }
 
-  private async findIdempotent(customerId: number | null, key: string) {
+  private async findIdempotent(customerId: number | null, key: string, action: string) {
     const existing = await this.prisma.auditLog.findFirst({
       where: {
         ...(customerId ? { customerId } : { customerId: null }),
+        action,
         status: 'SUCCESS',
         details: { path: ['idempotencyKey'], equals: key },
       },
@@ -884,7 +967,28 @@ export class DataGovernanceService {
     });
     if (!existing) return null;
     const details = asObject(existing.details);
-    return { success: true, duplicate: true, operationId: details.operationId || existing.id, status: 'SUCCESS', completedAt: existing.createdAt };
+    if (action === 'DATA_RESET'
+      && (details.verified !== true || !Array.isArray(details.modules) || details.modules.length === 0)) {
+      return null;
+    }
+    return {
+      success: true,
+      duplicate: true,
+      operationId: details.operationId || existing.id,
+      status: 'SUCCESS',
+      ...(action === 'DATA_RESET' ? {
+        scope: details.scope,
+        modules: details.modules,
+        recordsDeleted: Number(details.recordsDeleted || 0),
+        tables: details.tables || {},
+        countsBefore: details.countsBefore || {},
+        countsAfter: details.countsAfter || {},
+        verified: true,
+        verifiedTables: Object.keys(details.tables || {}),
+        backupId: details.backupId || null,
+      } : {}),
+      completedAt: existing.createdAt,
+    };
   }
 
   private async latestAudit(customerId: number | null, action: string) {
@@ -1025,7 +1129,56 @@ export class DataGovernanceService {
     if (moduleIds.includes('payroll') || moduleIds.includes('expenses')) {
       notes.push('Payroll slips, claims, and loans are included only because their module was selected. Cleanup never removes them for age alone.');
     }
+    if (moduleIds.includes('employees')) {
+      notes.push('Employee dependency counts are checked before deletion. Selected eligible dependent modules are deleted first; protected or unselected references block employee deletion.');
+    }
     return notes;
+  }
+
+  private async dependencyWarnings(moduleIds: string[], customerId: number | null) {
+    const selected = new Set(tablesForModules(moduleIds).map((table) => table.model));
+    const checks: Array<{ parent: string; model: string; label: string; where: Record<string, unknown> }> = [];
+    if (moduleIds.includes('employees')) {
+      const employeeWhere = { employee: customerId == null ? {} : { customerId } };
+      for (const [model, label] of [
+        ['attendance', 'Attendance'], ['leaveRequest', 'Leave applications'], ['salaryStructure', 'Salary structures'],
+        ['salarySlip', 'Payslips'], ['payrollItem', 'Payroll transactions'], ['employeeLoan', 'Employee loans'],
+        ['commission', 'Commissions'], ['commissionWithdrawal', 'Commission withdrawals'], ['task', 'Tasks'],
+        ['visit', 'Visits'], ['visitPhoto', 'Visit photos'], ['employeeClaim', 'Employee claims'], ['employeeLocation', 'Employee location history'],
+        ['remoteRequest', 'Remote work requests'], ['overtimeRequest', 'Overtime requests'],
+        ['employeeDeduction', 'Payroll deductions'], ['employeeLeaveBalance', 'Leave balances'], ['leaveAdjustmentHistory', 'Leave adjustments'],
+        ['teamMember', 'Team memberships'], ['employeeModuleOverride', 'Employee permission overrides'], ['employeeLeadLimit', 'Employee lead limits'],
+        ['salaryTargetPolicy', 'Salary target policies'], ['salaryTargetReview', 'Salary target reviews'],
+        ['hrmEmployeeMonthlyReport', 'Employee report history'], ['hrmLeaveMonthlySnapshot', 'Leave snapshots'],
+        ['hrmNotificationDelivery', 'Employee notification history'], ['hrmCommissionMonthlySnapshot', 'Commission snapshots'],
+        ['dataCaptureSearch', 'Data capture searches'], ['commissionConfig', 'Employee commission configuration'],
+      ] as const) checks.push({ parent: 'employees', model, label, where: employeeWhere });
+      checks.push({ parent: 'employees', model: 'overtimeApproval', label: 'Overtime approval history', where: { request: { employee: customerId == null ? {} : { customerId } } } });
+      checks.push({ parent: 'employees', model: 'workTask', label: 'Work task assignments', where: { assignedTo: customerId == null ? {} : { customerId } } });
+      checks.push({ parent: 'employees', model: 'lead', label: 'Lead assignment and conversion references', where: { ...scopedCustomer(customerId), OR: [{ employeeId: { not: null } }, { convertedByEmployeeId: { not: null } }] } });
+      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references (protected)', where: { ...(customerId == null ? {} : { id: customerId }), OR: [{ assignedEmployeeId: { not: null } }, { createdByEmployeeId: { not: null } }] } });
+    }
+    const scoped = scopedCustomer(customerId);
+    if (moduleIds.includes('departments')) {
+      checks.push({ parent: 'departments', model: 'employee', label: 'Employees assigned to departments', where: { ...scoped, departmentId: { not: null } } });
+      checks.push({ parent: 'departments', model: 'designation', label: 'Designations assigned to departments', where: { ...scoped, departmentId: { not: null } } });
+      checks.push({ parent: 'departments', model: 'task', label: 'Tasks assigned to departments', where: { ...scoped, departmentId: { not: null } } });
+      checks.push({ parent: 'departments', model: 'announcement', label: 'Department announcements', where: { ...scoped, departmentId: { not: null } } });
+    }
+    if (moduleIds.includes('designations')) {
+      checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { ...scoped, designationId: { not: null } } });
+      checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { ...scoped, designationId: { not: null } } });
+      checks.push({ parent: 'designations', model: 'role', label: 'Roles linked to designations (protected)', where: { ...scoped, designationId: { not: null } } });
+      checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references', where: { ...(customerId == null ? {} : { id: customerId }), mobileRoleId: { not: null } } });
+    }
+    const warnings = [];
+    for (const check of checks) {
+      const records = await this.delegate(this.prisma, check.model).count({ where: check.where });
+      if (!records) continue;
+      const explicitlyIncluded = selected.has(check.model) && check.parent !== check.model;
+      warnings.push({ module: check.parent, model: check.model, label: check.label, records, blocking: !explicitlyIncluded });
+    }
+    return warnings;
   }
 
   private auditData(

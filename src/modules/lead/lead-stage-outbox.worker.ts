@@ -51,15 +51,24 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
       this.prisma.leadStageEmailDelivery.findMany({ where: { status: 'QUEUED', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] }, orderBy: { createdAt: 'asc' }, take: 25 }),
       this.prisma.leadStageWhatsAppDelivery.findMany({ where: { status: 'QUEUED', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] }, orderBy: { createdAt: 'asc' }, take: 25 }),
     ]);
-    await Promise.allSettled([
-      ...emails.map(row => this.process('EMAIL', row)),
-      ...messages.map(row => this.process('WHATSAPP', row)),
-    ]);
+    const jobs = [
+      ...emails.map(row => ({ channel: 'EMAIL' as const, row })),
+      ...messages.map(row => ({ channel: 'WHATSAPP' as const, row })),
+    ];
+    const results = await Promise.allSettled(jobs.map(({ channel, row }) => this.process(channel, row)));
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const { channel, row } = jobs[index];
+        this.logger.error(`Outbox row dispatch rejected before completion: channel=${channel} customerId=${row.customerId} leadId=${row.leadId} deliveryId=${row.id} error=${result.reason?.message || result.reason || 'Unknown error'}`);
+      }
+    });
   }
   async process(channel: 'EMAIL' | 'WHATSAPP', row: any) {
     const service = channel === 'EMAIL' ? this.email : this.whatsapp;
-    if (!await service.claimQueued(row.id)) return;
+    let claimed = false;
     try {
+      claimed = await service.claimQueued(row.id);
+      if (!claimed) return;
       const stage = row.newStageId == null ? null : await this.prisma.leadStage.findFirst({
         where: { id: row.newStageId, deletedAt: null, ...tenantLeadStageScope(row.customerId) },
       });
@@ -106,8 +115,12 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
         data: { status, nextAttemptAt, error, ...(result.messageId ? { [messageField]: result.messageId } : {}) } });
       this.logger.log(JSON.stringify({ event: 'stage_delivery', channel, leadId: row.leadId, deliveryId: row.id, attempt: row.attemptCount + 1, status }));
     } catch (e: any) {
+      if (!claimed) {
+        this.logger.error(`Stage delivery claim failed; leaving row QUEUED for next poll: channel=${channel} customerId=${row.customerId} leadId=${row.leadId} deliveryId=${row.id} error=${e?.message || e}`);
+        return;
+      }
       const table: any = channel === 'EMAIL' ? this.prisma.leadStageEmailDelivery : this.prisma.leadStageWhatsAppDelivery;
-      await table.updateMany({ where: { id: row.id, status: 'PROCESSING' }, data: { status: 'RECONCILIATION_REQUIRED', error: 'Worker interrupted; provider outcome needs reconciliation.' } });
+      await table.updateMany({ where: { id: row.id, status: 'PROCESSING', attemptCount: row.attemptCount + 1 }, data: { status: 'RECONCILIATION_REQUIRED', error: 'Worker interrupted; provider outcome needs reconciliation.' } });
       this.logger.error(`Stage delivery needs reconciliation: channel=${channel} leadId=${row.leadId} deliveryId=${row.id} error=${e?.message}`);
     }
   }

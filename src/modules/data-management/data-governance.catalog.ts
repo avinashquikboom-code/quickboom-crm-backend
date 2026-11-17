@@ -28,17 +28,9 @@ export type ResetModule = {
 };
 
 export const PROTECTED_RECORDS = [
-  'Admin and user accounts',
-  'Authentication sessions are not part of a data reset',
-  'Roles and permissions',
-  'Tenant and organization records',
-  'Departments, designations, and employees',
-  'Salary structures and payroll policies',
-  'Integration credentials and payment settings',
-  'Subscription plans',
-  'Audit logs',
-  'Prisma migration history',
-  'System email and WhatsApp templates',
+  'SYSTEM-CRITICAL — Admin/user accounts, sessions, refresh tokens, roles, permissions, tenant configuration, subscriptions, integration/payment credentials, audit logs, system templates, and Prisma migration history are excluded from reset.',
+  'EMPLOYEE LOGIN ACCOUNTS remain protected. Employee profiles, departments, designations, attendance, leave, salary structures, and payroll policies are selectable business data. Employee deletion is blocked while any dependent history remains outside the same selected reset.',
+  'SHARED SYSTEM DATA — Global plans, permissions, and singleton integration/payment configuration are not tenant-owned reset data and are excluded.',
 ];
 
 export const FORBIDDEN_MODELS = [
@@ -52,10 +44,6 @@ export const FORBIDDEN_MODELS = [
   'customerSubscription',
   'integrationSetting',
   'paymentSetting',
-  'department',
-  'designation',
-  'employee',
-  'salaryStructure',
   'auditLog',
   'refreshToken',
   'session',
@@ -64,6 +52,26 @@ export const FORBIDDEN_MODELS = [
 const row = (model: string, table: string, label: string, where: WhereKind): TableRule => ({ model, table, label, where });
 
 export const RESET_MODULES: ResetModule[] = [
+  {
+    id: 'employees', name: 'Employees', description: 'Employee profiles. Deletion is blocked when dependencies are not selected for deletion.', available: true,
+    tables: [row('employee', 'Employee', 'Employees', 'customer')],
+  },
+  {
+    id: 'departments', name: 'Departments', description: 'Departments. Referenced departments are reported and block deletion.', available: true,
+    tables: [row('department', 'Department', 'Departments', 'customer')],
+  },
+  {
+    id: 'designations', name: 'Designations', description: 'Designations. Referenced designations are reported and block deletion.', available: true,
+    tables: [row('designation', 'Designation', 'Designations', 'customer')],
+  },
+  {
+    id: 'salary-structures', name: 'Salary Structures', description: 'Registered employee salary structures.', available: true,
+    tables: [row('salaryStructure', 'SalaryStructure', 'Salary structures', 'customer')],
+  },
+  {
+    id: 'payroll-policies', name: 'Payroll Policies', description: 'Tenant payroll policy settings.', available: true,
+    tables: [row('payrollPolicy', 'PayrollPolicy', 'Payroll policies', 'customer')],
+  },
   {
     id: 'hrm',
     name: 'HRM',
@@ -144,6 +152,7 @@ export const RESET_MODULES: ResetModule[] = [
       row('taskReview', 'TaskReview', 'Task reviews', 'task'),
       row('workTask', 'WorkTask', 'Work tasks', 'work'),
       row('ticketComment', 'TicketComment', 'Ticket comments', 'ticket'),
+      row('visitPhoto', 'visit_photos', 'Visit photos', 'customer'),
       row('visit', 'Visit', 'Visits', 'customer'),
       row('task', 'Task', 'Tasks', 'customer'),
       row('workAccessRequest', 'work_access_requests', 'Work access requests', 'customer'),
@@ -316,7 +325,8 @@ export function tablesForModules(ids: string[]): TableRule[] {
       tables.push(table);
     });
   });
-  return tables;
+  const deleteOrder: Record<string, number> = { employee: 80, designation: 90, department: 100 };
+  return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
 }
 
 export function whereFor(kind: WhereKind, customerId: number | null): Record<string, unknown> {

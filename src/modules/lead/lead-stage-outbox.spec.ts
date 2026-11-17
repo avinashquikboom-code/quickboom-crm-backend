@@ -34,6 +34,18 @@ describe('stage outbox', () => {
     await worker.process('EMAIL', { id: 1 });
     expect(lead.getLeadById).not.toHaveBeenCalled();
   });
+  it('logs claim errors and leaves the QUEUED row eligible for a later poll', async () => {
+    const email: any = { claimQueued: jest.fn().mockRejectedValue(new Error('column nextAttemptAt does not exist')) };
+    const emailTable = { updateMany: jest.fn() };
+    const logger = { error: jest.fn(), log: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+    const worker = new LeadStageOutboxWorker({ leadStageEmailDelivery: emailTable } as any, {} as any, email, {} as any);
+    Object.defineProperty(worker, 'logger', { value: logger });
+
+    await worker.process('EMAIL', { id: 8, customerId: 3, leadId: 4, attemptCount: 0 });
+
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('claim failed; leaving row QUEUED'));
+    expect(emailTable.updateMany).not.toHaveBeenCalled();
+  });
   it('marks abandoned claims for reconciliation and does not resend them', async () => {
     const makeTable = () => ({ updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]) });
     const email = makeTable(), whatsapp = makeTable();
@@ -53,6 +65,35 @@ describe('stage outbox', () => {
     await worker.process('EMAIL', { id: 1, customerId: 3, leadId: 4, newStageId: 2, emailTemplateId: 8, attemptCount: 0 });
     expect(prisma.leadStageEmailDelivery.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'SENT', providerMessageId: 'mail-1' }) }));
     expect(whatsapp.claimQueued).not.toHaveBeenCalled();
+  });
+
+  it.each(['EMAIL', 'WHATSAPP'] as const)('dispatches a claimed %s outbox event and persists provider acceptance', async (channel) => {
+    const delivery = { claimQueued: jest.fn().mockResolvedValue(true) };
+    const other = { claimQueued: jest.fn() };
+    const table = { updateMany: jest.fn() };
+    const leadService: any = {
+      getLeadById: jest.fn().mockResolvedValue({ id: 4 }),
+      handleLeadStageChangeNotification: jest.fn().mockResolvedValue({ status: 'SENT', messageId: 'email-provider-1', error: null }),
+      handleLeadStageChangeWhatsappNotification: jest.fn().mockResolvedValue({ status: 'SENT', messageId: 'wamid.provider-1', error: null }),
+    };
+    const stage = { id: 2, name: 'Connected', isActive: true, emailEnabled: true, whatsappEnabled: true, emailTemplateId: 8, whatsappTemplateId: 9 };
+    const prisma: any = { leadStage: { findFirst: jest.fn().mockResolvedValue(stage) } };
+    if (channel === 'EMAIL') prisma.leadStageEmailDelivery = table;
+    else prisma.leadStageWhatsAppDelivery = table;
+    const worker = new LeadStageOutboxWorker(prisma, leadService,
+      (channel === 'EMAIL' ? delivery : other) as any,
+      (channel === 'WHATSAPP' ? delivery : other) as any);
+    const row = { id: 10, customerId: 3, leadId: 4, newStageId: 2, previousStageId: 1,
+      newStage: 'Connected', previousStage: 'New', userId: 5, attemptCount: 0,
+      emailTemplateId: 8, metaTemplateId: 9, variableMapping: null };
+
+    await worker.process(channel, row);
+
+    const expectedMessageId = channel === 'EMAIL' ? 'email-provider-1' : 'wamid.provider-1';
+    expect(table.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'SENT', ...(channel === 'EMAIL' ? { providerMessageId: expectedMessageId } : { metaMessageId: expectedMessageId }) }),
+    }));
+    expect(channel === 'EMAIL' ? leadService.handleLeadStageChangeNotification : leadService.handleLeadStageChangeWhatsappNotification).toHaveBeenCalled();
   });
 
   it.each([
