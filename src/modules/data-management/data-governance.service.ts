@@ -189,28 +189,54 @@ export class DataGovernanceService {
     const preview = this.takePreview(body.previewToken, tenantId, scope === 'global' ? 'global' : 'tenant');
     const modules = this.selectedModules(body.modules, scope === 'application' || scope === 'global');
     const moduleIds = modules.map((item) => item.id).sort();
-    if (preview.modules.join(',') !== moduleIds.join(',')) {
+    if ([...preview.modules].sort().join(',') !== moduleIds.join(',')) {
       throw new BadRequestException('The preview does not match the selected modules. Run the preview again.');
     }
     await this.assertBackupCovers(tenantId, body.backupId, moduleIds, scope === 'global');
-    const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId);
-    const blockers = dependencyWarnings.filter((item) => item.blocking);
-    if (blockers.length) {
-      throw new BadRequestException(`Deletion is blocked by dependencies: ${blockers.map((item) => `${item.label}: ${item.records} records (select its eligible module or resolve the protected reference)`).join('; ')}.`);
-    }
-    const recount = await this.countTables(tablesForModules(moduleIds), tenantId);
-    if (recount.total !== preview.estimatedRecords) {
-      throw new BadRequestException('Records changed after the preview. Run the preview again before deleting.');
-    }
     const operationId = randomUUID();
     this.previews.delete(body.previewToken as string);
     return this.withLock(tenantId, operationId, async () => {
       const deleted: Record<string, number> = {};
-      const countsBefore: Record<string, number> = { ...recount.counts };
+      const countsBefore: Record<string, number> = {};
       const countsAfter: Record<string, number> = {};
       const failures: string[] = [];
       try {
         await this.prisma.$transaction(async (tx) => {
+          await this.acquireResetAdvisoryLock(tx, tenantId);
+          await this.lockResetRoots(tx, moduleIds, tenantId);
+          const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId, tx);
+          const blockers = dependencyWarnings.filter((item) => item.blocking);
+          if (blockers.length) {
+            throw new BadRequestException(`Deletion is blocked by dependencies: ${blockers.map((item) => `${item.label}: ${item.records} records${item.crossTenantRecords ? ` (${item.crossTenantRecords} reference other tenants)` : ''}`).join('; ')}.`);
+          }
+          const recount = await this.countTables(tablesForModules(moduleIds), tenantId, tx);
+          if (recount.total !== preview.estimatedRecords) {
+            throw new BadRequestException('Records changed after the preview. Run the preview again before deleting.');
+          }
+          Object.assign(countsBefore, recount.counts);
+
+          if (moduleIds.includes('employees')) {
+            const employeeIds = await tx.employee.findMany({
+              where: tenantId == null ? {} : { customerId: tenantId },
+              select: { id: true },
+            });
+            const ids = employeeIds.map((item) => item.id);
+            if (ids.length) {
+              if (!moduleIds.includes('departments')) {
+                await tx.department.updateMany({
+                  where: { ...(tenantId == null ? {} : { customerId: tenantId }), headId: { in: ids } },
+                  data: { headId: null },
+                });
+              }
+              if (!moduleIds.includes('visits-tasks')) {
+                await tx.taskProof.updateMany({
+                  where: { employeeId: { in: ids }, ...(tenantId == null ? {} : { task: { customerId: tenantId } }) },
+                  data: { employeeId: null },
+                });
+              }
+            }
+          }
+
           for (const table of tablesForModules(moduleIds)) {
             const delegate = this.delegate(tx, table.model);
             const where = whereFor(table.where, tenantId);
@@ -228,7 +254,7 @@ export class DataGovernanceService {
             }
             deleted[table.model] = deletedCount;
           }
-        }, { timeout: 120000, maxWait: 10000 });
+        }, { timeout: 120000, maxWait: 10000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
         // Run a fresh query after PostgreSQL commits, so success reflects committed state.
         for (const table of tablesForModules(moduleIds)) {
@@ -828,19 +854,42 @@ export class DataGovernanceService {
     };
   }
 
-  private async countTables(tables: TableRule[], customerId: number | null) {
+  private async countTables(tables: TableRule[], customerId: number | null, client: object = this.prisma) {
     const counts: Record<string, number> = {};
     let total = 0;
     for (const table of tables) {
-      const records = await this.countTable(table, customerId);
+      const records = await this.countTable(table, customerId, client);
       counts[table.model] = records;
       total += records;
     }
     return { counts, total };
   }
 
-  private async countTable(table: TableRule, customerId: number | null) {
-    return this.delegate(this.prisma, table.model).count({ where: whereFor(table.where, customerId) });
+  private async countTable(table: TableRule, customerId: number | null, client: object = this.prisma) {
+    return this.delegate(client, table.model).count({ where: whereFor(table.where, customerId) });
+  }
+
+  private async acquireResetAdvisoryLock(tx: Prisma.TransactionClient, customerId: number | null) {
+    const namespace = 1397771313;
+    if (customerId == null) {
+      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(${namespace}, 0)`);
+      return;
+    }
+    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock_shared(${namespace}, 0)`);
+    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(${namespace}, ${customerId})`);
+  }
+
+  private async lockResetRoots(tx: Prisma.TransactionClient, moduleIds: string[], customerId: number | null) {
+    const lock = async (table: string) => {
+      if (customerId == null) {
+        await tx.$queryRaw(Prisma.raw(`SELECT "id" FROM "${table}" FOR UPDATE`));
+      } else {
+        await tx.$queryRaw(Prisma.sql`SELECT "id" FROM ${Prisma.raw(`"${table}"`)} WHERE "customerId" = ${customerId} FOR UPDATE`);
+      }
+    };
+    if (moduleIds.includes('employees')) await lock('Employee');
+    if (moduleIds.includes('designations')) await lock('Designation');
+    if (moduleIds.includes('departments')) await lock('Department');
   }
 
   private delegate(client: object, model: string) {
@@ -1135,48 +1184,110 @@ export class DataGovernanceService {
     return notes;
   }
 
-  private async dependencyWarnings(moduleIds: string[], customerId: number | null) {
+  private async dependencyWarnings(moduleIds: string[], customerId: number | null, client: object = this.prisma) {
     const selected = new Set(tablesForModules(moduleIds).map((table) => table.model));
-    const checks: Array<{ parent: string; model: string; label: string; where: Record<string, unknown> }> = [];
+    const checks: Array<{
+      parent: string; model: string; label: string; where: Record<string, unknown>;
+      crossTenantWhere?: Record<string, unknown>; policy?: 'cascade' | 'set-null' | 'protected'; allowSameModelSelection?: boolean;
+    }> = [];
+    const scoped = scopedCustomer(customerId);
+    const employeeRelation = { employee: customerId == null ? {} : { customerId } };
     if (moduleIds.includes('employees')) {
-      const employeeWhere = { employee: customerId == null ? {} : { customerId } };
       for (const [model, label] of [
         ['attendance', 'Attendance'], ['leaveRequest', 'Leave applications'], ['salaryStructure', 'Salary structures'],
         ['salarySlip', 'Payslips'], ['payrollItem', 'Payroll transactions'], ['employeeLoan', 'Employee loans'],
-        ['commission', 'Commissions'], ['commissionWithdrawal', 'Commission withdrawals'], ['task', 'Tasks'],
-        ['visit', 'Visits'], ['visitPhoto', 'Visit photos'], ['employeeClaim', 'Employee claims'], ['employeeLocation', 'Employee location history'],
-        ['remoteRequest', 'Remote work requests'], ['overtimeRequest', 'Overtime requests'],
+        ['commission', 'Commissions'], ['commissionWithdrawal', 'Commission withdrawals'], ['employeeClaim', 'Employee claims'],
+        ['employeeLocation', 'Location history'], ['remoteRequest', 'Remote work requests'], ['overtimeRequest', 'Overtime requests'], ['visit', 'Visits'],
+        ['overtimeNotificationEvent', 'Overtime notification events'], ['workAccessRequest', 'Work access requests'],
         ['employeeDeduction', 'Payroll deductions'], ['employeeLeaveBalance', 'Leave balances'], ['leaveAdjustmentHistory', 'Leave adjustments'],
         ['teamMember', 'Team memberships'], ['employeeModuleOverride', 'Employee permission overrides'], ['employeeLeadLimit', 'Employee lead limits'],
         ['salaryTargetPolicy', 'Salary target policies'], ['salaryTargetReview', 'Salary target reviews'],
         ['hrmEmployeeMonthlyReport', 'Employee report history'], ['hrmLeaveMonthlySnapshot', 'Leave snapshots'],
-        ['hrmNotificationDelivery', 'Employee notification history'], ['hrmCommissionMonthlySnapshot', 'Commission snapshots'],
+        ['hrmNotificationDelivery', 'Notification history'], ['hrmCommissionMonthlySnapshot', 'Commission snapshots'],
         ['dataCaptureSearch', 'Data capture searches'], ['commissionConfig', 'Employee commission configuration'],
-      ] as const) checks.push({ parent: 'employees', model, label, where: employeeWhere });
-      checks.push({ parent: 'employees', model: 'overtimeApproval', label: 'Overtime approval history', where: { request: { employee: customerId == null ? {} : { customerId } } } });
-      checks.push({ parent: 'employees', model: 'workTask', label: 'Work task assignments', where: { assignedTo: customerId == null ? {} : { customerId } } });
-      checks.push({ parent: 'employees', model: 'lead', label: 'Lead assignment and conversion references', where: { ...scopedCustomer(customerId), OR: [{ employeeId: { not: null } }, { convertedByEmployeeId: { not: null } }] } });
-      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references (protected)', where: { ...(customerId == null ? {} : { id: customerId }), OR: [{ assignedEmployeeId: { not: null } }, { createdByEmployeeId: { not: null } }] } });
+      ] as const) {
+        const ownerRelation = model === 'teamMember' ? { team: customerId == null ? {} : { customerId } } : employeeRelation;
+        checks.push({
+          parent: 'employees', model, label, where: ownerRelation,
+          ...(customerId == null ? {} : { crossTenantWhere: model === 'teamMember'
+            ? { team: { customerId: { not: customerId } }, employee: { customerId } }
+            : { customerId: { not: customerId }, ...ownerRelation } }),
+          policy: 'cascade',
+        });
+      }
+      checks.push({ parent: 'employees', model: 'overtimeApproval', label: 'Overtime approval history', where: { request: { employee: customerId == null ? {} : { customerId } } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, request: { employee: { customerId } } } }), policy: 'cascade' });
+      checks.push({ parent: 'employees', model: 'workTask', label: 'Work task assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { work: { customerId: { not: customerId } }, assignedTo: { customerId } } }), policy: 'set-null' });
+      checks.push({ parent: 'employees', model: 'lead', label: 'Lead assignment and conversion references', where: { ...scoped, OR: [{ employee: customerId == null ? { isNot: null } : { customerId } }, { convertedByEmployee: customerId == null ? { isNot: null } : { customerId } }] }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, OR: [{ employee: { customerId } }, { convertedByEmployee: { customerId } }] } }), policy: 'set-null' });
+
+      const employeeRows = await (client as Prisma.TransactionClient).employee.findMany({ where: scoped, select: { id: true } });
+      const employeeIds = employeeRows.map((item) => Number(item.id)).filter(Number.isInteger);
+      if (employeeIds.length) {
+        checks.push({ parent: 'employees', model: 'taskProof', label: 'Task proof uploader references', where: { employeeId: { in: employeeIds }, ...(customerId == null ? {} : { task: { customerId } }) }, ...(customerId == null ? {} : { crossTenantWhere: { employeeId: { in: employeeIds }, task: { customerId: { not: customerId } } } }), policy: 'set-null' });
+        checks.push({ parent: 'employees', model: 'locationTrackingSetting', label: 'Location tracking settings', where: { employeeId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { employeeId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'cascade' });
+        checks.push({ parent: 'employees', model: 'employee', label: 'Reporting manager references', where: { managerId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { managerId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'cascade', allowSameModelSelection: true });
+        checks.push({ parent: 'employees', model: 'department', label: 'Department head references', where: { headId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { headId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'set-null' });
+        const shareRows = await (client as Prisma.TransactionClient).$queryRaw<Array<{ records: number | bigint }>>(Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" IN (${Prisma.join(employeeIds)})`);
+        const shareCount = Number(shareRows[0]?.records || 0);
+        if (shareCount) checks.push({ parent: 'employees', model: 'commission_shares', label: 'Commission shares (protected financial records)', where: {}, policy: 'protected' });
+        if (shareCount) checks[checks.length - 1].where.records = shareCount;
+      }
+      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references (protected)', where: { OR: [
+        { assignedEmployeeRel: customerId == null ? {} : { customerId } },
+        { createdByEmployeeRel: customerId == null ? {} : { customerId } },
+      ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
+        { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
+      ] } }), policy: 'protected' });
+      checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
+      checks.push({ parent: 'employees', model: 'work', label: 'Work editor references', where: { editor: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, editor: { customerId } } }), policy: 'set-null' });
+      checks.push({ parent: 'employees', model: 'team', label: 'Team leader references', where: { leader: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, leader: { customerId } } }), policy: 'set-null' });
+      checks.push({ parent: 'employees', model: 'monthlySchedule', label: 'Monthly schedule assignee references', where: { assignedEmployee: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedEmployee: { customerId } } }), policy: 'set-null' });
+      checks.push({ parent: 'employees', model: 'task', label: 'Task employee references', where: { employee: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, employee: { customerId } } }), policy: 'set-null' });
+      checks.push({ parent: 'employees', model: 'visitPhoto', label: 'Visit photo employee references', where: { employee: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, employee: { customerId } } }), policy: 'set-null' });
     }
-    const scoped = scopedCustomer(customerId);
     if (moduleIds.includes('departments')) {
-      checks.push({ parent: 'departments', model: 'employee', label: 'Employees assigned to departments', where: { ...scoped, departmentId: { not: null } } });
-      checks.push({ parent: 'departments', model: 'designation', label: 'Designations assigned to departments', where: { ...scoped, departmentId: { not: null } } });
-      checks.push({ parent: 'departments', model: 'task', label: 'Tasks assigned to departments', where: { ...scoped, departmentId: { not: null } } });
-      checks.push({ parent: 'departments', model: 'announcement', label: 'Department announcements', where: { ...scoped, departmentId: { not: null } } });
+      const rows = await (client as Prisma.TransactionClient).department.findMany({ where: scoped, select: { id: true } });
+      const ids = rows.map((item) => Number(item.id)).filter(Number.isInteger);
+      if (ids.length) {
+        checks.push({ parent: 'departments', model: 'employee', label: 'Employees assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+        checks.push({ parent: 'departments', model: 'designation', label: 'Designations assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+        checks.push({ parent: 'departments', model: 'task', label: 'Tasks assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+        checks.push({ parent: 'departments', model: 'announcement', label: 'Department announcements', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+      }
     }
     if (moduleIds.includes('designations')) {
-      checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { ...scoped, designationId: { not: null } } });
-      checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { ...scoped, designationId: { not: null } } });
-      checks.push({ parent: 'designations', model: 'role', label: 'Roles linked to designations (protected)', where: { ...scoped, designationId: { not: null } } });
-      checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references', where: { ...(customerId == null ? {} : { id: customerId }), mobileRoleId: { not: null } } });
+      const rows = await (client as Prisma.TransactionClient).designation.findMany({ where: scoped, select: { id: true } });
+      const ids = rows.map((item) => Number(item.id)).filter(Number.isInteger);
+      if (ids.length) {
+        checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { designationId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+        checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { designationId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+        checks.push({ parent: 'designations', model: 'role', label: 'Roles linked to designations (protected; deletion cascades)', where: { designationId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: ids }, customerId: { not: customerId } } }), policy: 'protected' });
+        checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references (protected)', where: { mobileRoleId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, mobileRoleId: { in: ids } } }), policy: 'protected' });
+      }
     }
-    const warnings = [];
+    const warnings: Array<Record<string, unknown>> = [];
     for (const check of checks) {
-      const records = await this.delegate(this.prisma, check.model).count({ where: check.where });
+      if (check.model === 'commission_shares') {
+        const records = Number(check.where.records || 0);
+        warnings.push({ module: check.parent, model: check.model, label: check.label, records, blocking: true, willSetNull: false, includedInSelectedModule: false, untracked: true });
+        continue;
+      }
+      const scopedRecords = Number(await this.delegate(client, check.model).count({ where: check.where }));
+      const crossTenantRecords = check.crossTenantWhere
+        ? Number(await this.delegate(client, check.model).count({ where: check.crossTenantWhere }))
+        : 0;
+      // The primary predicate follows the referenced employee/designation and can include
+      // rows owned by other tenants. Cross-tenant rows are a subset of that total.
+      const records = Math.max(scopedRecords, crossTenantRecords);
       if (!records) continue;
-      const explicitlyIncluded = selected.has(check.model) && check.parent !== check.model;
-      warnings.push({ module: check.parent, model: check.model, label: check.label, records, blocking: !explicitlyIncluded });
+      const included = selected.has(check.model) && (check.parent !== check.model || check.allowSameModelSelection === true);
+      const policy = check.policy || 'cascade';
+      const blocking = policy === 'protected' || crossTenantRecords > 0 || (policy === 'cascade' && !included);
+      warnings.push({
+        module: check.parent, model: check.model, label: check.label, records,
+        ...(crossTenantRecords ? { crossTenantRecords } : {}), blocking,
+        willSetNull: policy === 'set-null' && !included && crossTenantRecords === 0,
+        includedInSelectedModule: included,
+      });
     }
     return warnings;
   }

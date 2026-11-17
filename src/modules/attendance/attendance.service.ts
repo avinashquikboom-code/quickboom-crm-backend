@@ -640,11 +640,11 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
         },
       };
     });
-    await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'PUNCH_IN', 'Punch In Successful', `Your attendance was marked successfully at ${formatTimeInTimezone(now)}. Date: ${dateStr}. Status: ${result?.data?.status || attendanceStatus}.`, { punchInAt: now.toISOString(), attendanceDate: dateStr, status: String(result?.data?.status || attendanceStatus) });
+    await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'PUNCH_IN', 'Punch In Successful', `Your attendance was marked successfully at ${formatTimeInTimezone(now)}. Date: ${dateStr}. Status: ${result?.data?.status || attendanceStatus}.`, { punchInAt: now.toISOString(), attendanceDate: dateStr, status: String(result?.data?.status || attendanceStatus) }, user?.id);
     if (lateEvaluation.applicable && lateEvaluation.isLate && lateEvaluation.lateMinutes > 0) {
       const shiftStart = employee.shift?.startTime || 'assigned shift start';
-      await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'LATE_MARK', 'Late Mark Recorded', `You are ${result.data.lateMinutes} minutes late today. Your assigned shift started at ${shiftStart}; punch-in was ${formatTimeInTimezone(now)}.`, { lateMinutes: String(result.data.lateMinutes), shiftStart: String(shiftStart), punchInAt: now.toISOString(), attendanceDate: dateStr });
-      if (Number(result.data.lateDeduction) > 0) await this.notifyAttendanceEvent(employee, result.data.attendanceId, `LATE_DEDUCTION_${Number(result.data.lateDeduction).toFixed(2)}`, 'Late Mark Deduction Applied', `Your Late Mark deduction for today is ${this.formatLateMoney(Number(result.data.lateDeduction), lateEvaluation.currency)}. Late minutes: ${result.data.lateMinutes}. Deduction rate: ${this.formatLateMoney(Number(result.data.lateRatePerMinute), lateEvaluation.currency)}/min.`, { lateMinutes: String(result.data.lateMinutes), deductionRate: String(result.data.lateRatePerMinute), deductionAmount: String(result.data.lateDeduction), attendanceDate: dateStr });
+      await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'LATE_MARK', 'Late Mark Recorded', `You are ${result.data.lateMinutes} minutes late today. Your assigned shift started at ${shiftStart}; punch-in was ${formatTimeInTimezone(now)}.`, { lateMinutes: String(result.data.lateMinutes), shiftStart: String(shiftStart), punchInAt: now.toISOString(), attendanceDate: dateStr }, user?.id);
+      if (Number(result.data.lateDeduction) > 0) await this.notifyAttendanceEvent(employee, result.data.attendanceId, `LATE_DEDUCTION_${Number(result.data.lateDeduction).toFixed(2)}`, 'Late Mark Deduction Applied', `Your Late Mark deduction for today is ${this.formatLateMoney(Number(result.data.lateDeduction), lateEvaluation.currency)}. Late minutes: ${result.data.lateMinutes}. Deduction rate: ${this.formatLateMoney(Number(result.data.lateRatePerMinute), lateEvaluation.currency)}/min.`, { lateMinutes: String(result.data.lateMinutes), deductionRate: String(result.data.lateRatePerMinute), deductionAmount: String(result.data.lateDeduction), attendanceDate: dateStr }, user?.id);
     }
     return result;
   }
@@ -832,7 +832,7 @@ result: SUCCESS`);
       };
     });
     const punchOutAt = result.data.punchOutAt;
-    await this.notifyAttendanceEvent(employee, result.data.attendanceId, 'PUNCH_OUT', 'Punch Out Successful', `Your punch-out was recorded at ${punchOutAt ? formatTimeInTimezone(new Date(punchOutAt)) : 'the recorded time'}. Total working hours today: ${result.data.workingDuration}.`, { punchOutAt: punchOutAt || '', workingMinutes: String(result.data.workingMinutes ?? 0), attendanceDate: dateStr });
+    await this.notifyAttendanceEvent(employee, result.data.attendanceId, 'PUNCH_OUT', 'Punch Out Successful', `Your punch-out was recorded at ${punchOutAt ? formatTimeInTimezone(new Date(punchOutAt)) : 'the recorded time'}. Total working hours today: ${result.data.workingDuration}.`, { punchOutAt: punchOutAt || '', workingMinutes: String(result.data.workingMinutes ?? 0), attendanceDate: dateStr }, user?.id);
     return result;
   }
 
@@ -1543,12 +1543,17 @@ result: SUCCESS`);
     });
   }
 
-  private async notifyAttendanceEvent(employee: any, attendanceId: number | undefined, eventId: string, title: string, body: string, data: Record<string, string>) {
-    const userId = Number(employee?.userId);
+  private async notifyAttendanceEvent(employee: any, attendanceId: number | undefined, eventId: string, title: string, body: string, data: Record<string, string>, authenticatedUserId?: number | string) {
+    // Prefer the authenticated account from the attendance request. Some legacy
+    // Employee rows are matched by email and have no employee.userId mapping.
+    const userId = Number(authenticatedUserId ?? employee?.userId);
     if (!this.notificationService || !attendanceId || !Number.isInteger(userId) || userId <= 0) return;
     try {
-      const user = await this.prisma.user.findFirst({ where: { id: userId, customerId: employee.customerId, deletedAt: null }, select: { id: true } });
+      const user = await this.prisma.user.findFirst({ where: { id: userId, customerId: employee.customerId, deletedAt: null }, select: { id: true, email: true } });
       if (!user) return;
+      const linkedById = Number(employee?.userId) === userId;
+      const linkedByEmail = !employee?.userId && String(employee?.email || '').trim().toLowerCase() === String(user.email || '').trim().toLowerCase();
+      if (!linkedById && !linkedByEmail) return;
       const key = `${attendanceId}:${eventId}`;
       const prior = await this.prisma.notification.findMany({ where: { userId, customerId: employee.customerId }, orderBy: { id: 'desc' }, take: 100, select: { data: true } });
       if (prior.some((row: any) => row.data?.eventId === key)) return;

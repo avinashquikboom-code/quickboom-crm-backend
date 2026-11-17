@@ -77,7 +77,7 @@ describe('DataGovernanceService executeReset', () => {
     });
     const attendanceBreak = makeDelegate('attendanceBreak');
     const attendance = makeDelegate('attendance');
-    const tx = { attendanceBreak, attendance };
+    const tx = { attendanceBreak, attendance, $queryRaw: jest.fn().mockResolvedValue([]) };
     const prisma = {
       attendanceBreak,
       attendance,
