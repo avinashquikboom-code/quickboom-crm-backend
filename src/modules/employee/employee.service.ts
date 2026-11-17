@@ -2450,123 +2450,24 @@ export class EmployeeService {
       (deductionCount || 0) > 0
     );
 
-    // 1. If employee has historical/financial records and caller did not explicitly force hardDelete:
-    // Safely archive employee (status='DELETED' moves them out of active directory into Bin, preserving history)
+    const protectedDependencies = [
+      ["attendance", attendanceCount],
+      ["salary slips", salarySlipCount],
+      ["payroll items", payrollItemCount],
+      ["salary structures", salaryStructureCount],
+      ["claims", claimCount],
+      ["loans", loanCount],
+      ["commissions", commissionCount],
+      ["commission withdrawals", commissionWithdrawalCount],
+      ["leave requests", leaveRequestCount],
+      ["employee deductions", deductionCount],
+    ].filter(([, count]) => Number(count) > 0);
+
     if (hasProtectedHistory) {
-      await this.prisma.$transaction(async (tx) => {
-        // Update employee status to DELETED and disable mobile login
-        await tx.employee.update({
-          where: { id: numId },
-          data: {
-            status: 'DELETED',
-            mobileLoginEnabled: false,
-          },
-        });
-
-        // Invalidate active mobile sessions and user tokens
-        if (userId) {
-          if (tx.refreshToken?.deleteMany) {
-            await tx.refreshToken.deleteMany({ where: { userId } }).catch(() => undefined);
-          }
-          if (tx.session?.deleteMany) {
-            await tx.session.deleteMany({ where: { userId } }).catch(() => undefined);
-          }
-          if (tx.userDeviceToken?.deleteMany) {
-            await tx.userDeviceToken.deleteMany({ where: { userId } }).catch(() => undefined);
-          }
-          if (tx.user?.update) {
-            await tx.user.update({
-              where: { id: userId },
-              data: { isActive: false, deletedAt: new Date() },
-            }).catch(() => undefined);
-          }
-        }
-
-        // Unlink structural leadership and assignments to prevent foreign-key blocks
-        if (tx.teamMember?.deleteMany) {
-          await tx.teamMember.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
-        }
-        if (tx.team?.updateMany) {
-          await tx.team.updateMany({
-            where: { leaderId: numId },
-            data: { leaderId: null },
-          }).catch(() => undefined);
-        }
-        if (tx.department?.updateMany) {
-          await tx.department.updateMany({
-            where: { headId: numId },
-            data: { headId: null },
-          }).catch(() => undefined);
-        }
-        if (tx.employee?.updateMany) {
-          await tx.employee.updateMany({
-            where: { managerId: numId },
-            data: { managerId: null },
-          }).catch(() => undefined);
-        }
-        if (tx.customer?.updateMany) {
-          await tx.customer.updateMany({
-            where: { assignedEmployeeId: numId },
-            data: { assignedEmployeeId: null },
-          }).catch(() => undefined);
-        }
-        if (tx.lead?.updateMany) {
-          await tx.lead.updateMany({
-            where: { employeeId: numId, status: { notIn: ['WON', 'LOST', 'CONVERTED'] } },
-            data: { employeeId: null },
-          }).catch(() => undefined);
-        }
-        if (tx.monthlySchedule?.updateMany) {
-          await tx.monthlySchedule.updateMany({
-            where: { assignedEmployeeId: numId },
-            data: { assignedEmployeeId: null },
-          }).catch(() => undefined);
-        }
-        if (tx.work?.updateMany) {
-          await tx.work.updateMany({
-            where: { assignedToId: numId },
-            data: { assignedToId: null },
-          }).catch(() => undefined);
-          await tx.work.updateMany({
-            where: { editorId: numId },
-            data: { editorId: null },
-          }).catch(() => undefined);
-        }
-
-        // Record AuditLog
-        if (tx.auditLog?.create) {
-          await tx.auditLog.create({
-            data: {
-              customerId: empCustomerId,
-              userId,
-              action: 'EMPLOYEE_ARCHIVED',
-              module: 'EMPLOYEE',
-              details: {
-                employeeId: existing.id,
-                employeeCode: existing.employeeCode || existing.employeeId,
-                email: existing.email,
-                reason: 'Archived to preserve historical attendance/payroll records',
-                retainedRecords: {
-                  attendance: attendanceCount,
-                  salarySlips: salarySlipCount,
-                  payrollItems: payrollItemCount,
-                  commissions: commissionCount,
-                  loans: loanCount,
-                  claims: claimCount,
-                },
-              },
-            },
-          }).catch(() => undefined);
-        }
-      });
-
-      this.logger.log(`[EMPLOYEE_ARCHIVED] Employee #${numId} (${existing.firstName} ${existing.lastName}) archived with history preserved.`);
-      return {
-        success: true,
-        action: 'ARCHIVED',
-        employeeId: numId,
-        message: 'Employee archived successfully. Attendance and payroll history were kept.',
-      };
+      const details = protectedDependencies.map(([label, count]) => `${label}: ${count}`).join(", ");
+      throw new BadRequestException(
+        `Employee cannot be permanently deleted while protected history exists (${details}). Preserve this history and resolve the dependency first.`,
+      );
     }
 
     // Permanently delete only after all protected-history counts confirm no history exists.
@@ -2736,17 +2637,7 @@ export class EmployeeService {
           if (tx.userRole?.deleteMany) {
             await tx.userRole.deleteMany({ where: { userId } }).catch(() => undefined);
           }
-          await tx.user.delete({ where: { id: userId } }).catch(async () => {
-            await tx.user.update({
-              where: { id: userId },
-              data: { isActive: false, deletedAt: new Date() },
-            }).catch(() => undefined);
-          });
-        } else {
-          await tx.user.update({
-            where: { id: userId },
-            data: { isActive: false, deletedAt: new Date() },
-          });
+          await tx.user.delete({ where: { id: userId } });
         }
       }
     });
