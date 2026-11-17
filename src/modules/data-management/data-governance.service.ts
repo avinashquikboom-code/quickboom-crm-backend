@@ -194,8 +194,21 @@ export class DataGovernanceService {
       try {
         await this.prisma.$transaction(async (tx) => {
           for (const table of tablesForModules(moduleIds)) {
-            const result = await this.delegate(tx, table.model).deleteMany({ where: whereFor(table.where, tenantId) });
-            deleted[table.model] = Number(result?.count || 0);
+            const delegate = this.delegate(tx, table.model);
+            const where = whereFor(table.where, tenantId);
+            const expected = recount.counts[table.model] || 0;
+            const result = await delegate.deleteMany({ where });
+            const deletedCount = Number(result?.count || 0);
+            if (deletedCount !== expected) {
+              throw new Error(
+                `${table.label}: expected to delete ${expected} records but deleted ${deletedCount}.`,
+              );
+            }
+            const remaining = await delegate.count({ where });
+            if (remaining !== 0) {
+              throw new Error(`${table.label}: ${remaining} records remain after deletion.`);
+            }
+            deleted[table.model] = deletedCount;
           }
           await tx.auditLog.create({
             data: this.auditData(tenantId, userId, role, 'DATA_RESET', 'SUCCESS', {
@@ -234,6 +247,8 @@ export class DataGovernanceService {
         modules: moduleIds,
         recordsDeleted,
         tables: deleted,
+        verified: true,
+        verifiedTables: Object.keys(deleted),
         failures,
         backupId: body.backupId,
         completedAt: new Date().toISOString(),
