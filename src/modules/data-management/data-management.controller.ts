@@ -453,26 +453,6 @@ export class DataManagementController {
   }
 
   /**
-   * POST /api/v1/admin/data-management/bin/employee/:id/restore
-   * Restore a soft-deleted employee from the Bin back to active status
-   */
-  @Post('bin/employee/:id/restore')
-  @ApiOperation({ summary: 'Restore an employee from the Bin back to active status' })
-  async restoreEmployee(@Param('id') id: string) {
-    return this.dataManagementService.restoreEmployeeFromBin(id);
-  }
-
-  /**
-   * DELETE /api/v1/admin/data-management/bin/employee/:id
-   * Permanently delete an employee from the Bin (irreversible)
-   */
-  @Delete('bin/employee/:id')
-  @ApiOperation({ summary: 'Permanently delete an employee from the Bin (irreversible)' })
-  async deleteEmployeePermanently(@Param('id') id: string) {
-    return this.dataManagementService.deleteEmployeePermanently(id);
-  }
-
-  /**
    * DELETE /api/v1/admin/data-management/bin/bulk
    * Permanently delete multiple items from the Bin (irreversible)
    */

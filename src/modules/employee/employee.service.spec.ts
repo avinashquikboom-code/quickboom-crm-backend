@@ -3,7 +3,7 @@ import { EmployeeService } from './employee.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlanAccessService } from '../subscription/plan-access.service';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 describe('EmployeeService — Customer Data Isolation', () => {
   let service: EmployeeService;
@@ -459,27 +459,16 @@ describe('EmployeeService — Customer Data Isolation', () => {
       );
     });
 
-    it('remove (with protected history): safely archives employee to status DELETED and does not permanently delete', async () => {
+    it('blocks permanent deletion when protected history exists without archiving or mutating records', async () => {
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
       prisma.attendance.count.mockResolvedValue(5); // Employee has 5 attendance records
 
-      const result = await service.remove({
+      await expect(service.remove({
         id: 50,
         customerId: 1,
         isSuperAdmin: false,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.action).toBe('ARCHIVED');
-      expect(prisma.employee.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 50 },
-          data: expect.objectContaining({
-            status: 'DELETED',
-            mobileLoginEnabled: false,
-          }),
-        }),
-      );
+      })).rejects.toThrow(BadRequestException);
+      expect(prisma.employee.update).not.toHaveBeenCalled();
       expect(prisma.employee.delete).not.toHaveBeenCalled();
     });
 
