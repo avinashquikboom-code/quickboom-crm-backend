@@ -116,6 +116,7 @@ export class DataGovernanceService {
     }
     const estimatedRecords = tables.reduce((sum, table) => sum + table.records, 0);
     const previewToken = randomUUID();
+    const protectedCounts = await this.countProtectedRecords(tenantId);
     this.previews.set(previewToken, {
       customerId: tenantId,
       scope: scope === 'global' ? 'global' : 'tenant',
@@ -136,11 +137,17 @@ export class DataGovernanceService {
       })),
       tables,
       estimatedRecords,
+      protectedCounts,
       dependencies: this.dependencies(modules.map((item) => item.id)),
       protected: PROTECTED_RECORDS,
       backupStatus: backup
         ? { verified: true, backupId: backup.backupId, createdAt: backup.createdAt }
-        : { verified: false, backupId: null, createdAt: null },
+        : {
+          verified: false,
+          backupId: null,
+          createdAt: null,
+          reason: 'No usable verified backup covers every selected module for this tenant within the 24-hour backup window.',
+        },
     };
   }
 
@@ -372,6 +379,9 @@ export class DataGovernanceService {
       if (!details.backupId) continue;
       const file = this.backupPath(tenantId, String(details.backupId));
       const exists = await stat(file).then((info) => info.size > 0).catch(() => false);
+      const check = exists && details.status === 'VERIFIED'
+        ? await this.verifyFile(file, String(details.checksum || ''), tenantId, String(details.backupId))
+        : { ok: false, reason: exists ? 'Backup is not marked verified.' : 'Backup file is missing.' };
       rows.push({
         id: details.backupId,
         operationId: details.operationId || log.id,
@@ -379,7 +389,8 @@ export class DataGovernanceService {
         description: details.description || '',
         scope: details.scope || 'tenant',
         modules: details.modules || [],
-        status: exists && details.status === 'VERIFIED' ? 'VERIFIED' : 'MISSING',
+        status: check.ok ? 'VERIFIED' : exists ? 'INVALID' : 'MISSING',
+        verificationReason: check.ok ? null : check.reason,
         size: details.size || 0,
         checksum: details.checksum || '',
         recordCount: details.recordCount || 0,
@@ -760,6 +771,62 @@ export class DataGovernanceService {
       result.push({ id: item.id, name: item.name, records });
     }
     return result;
+  }
+
+  private async countProtectedRecords(customerId: number | null) {
+    const tenant = customerId == null ? {} : { customerId };
+    const byUserTenant = customerId == null ? {} : { user: { customerId } };
+    const byRoleTenant = customerId == null ? {} : { role: { customerId } };
+    const [customer, users, roles, userRoles, rolePermissions, sessions, refreshTokens, subscriptions, auditLogs,
+      departments, designations, employees, salaryStructures, attendancePolicies, leavePolicies, payrollPolicies] = await Promise.all([
+      this.prisma.customer.count({ where: customerId == null ? {} : { id: customerId } }),
+      this.prisma.user.count({ where: tenant }),
+      this.prisma.role.count({ where: tenant }),
+      this.prisma.userRole.count({ where: byUserTenant }),
+      this.prisma.rolePermission.count({ where: byRoleTenant }),
+      this.prisma.session.count({ where: byUserTenant }),
+      this.prisma.refreshToken.count({ where: byUserTenant }),
+      this.prisma.customerSubscription.count({ where: tenant }),
+      this.prisma.auditLog.count({ where: tenant }),
+      this.prisma.department.count({ where: tenant }),
+      this.prisma.designation.count({ where: tenant }),
+      this.prisma.employee.count({ where: tenant }),
+      this.prisma.salaryStructure.count({ where: tenant }),
+      this.prisma.attendancePolicy.count({ where: tenant }),
+      this.prisma.leavePolicy.count({ where: tenant }),
+      this.prisma.payrollPolicy.count({ where: tenant }),
+    ]);
+    const systemCritical = {
+      customer,
+      users,
+      roles,
+      userRoles,
+      rolePermissions,
+      sessions,
+      refreshTokens,
+      subscriptions,
+      auditLogs,
+    };
+    const organizationAndHrMaster = {
+      departments,
+      designations,
+      employees,
+      salaryStructures,
+      attendancePolicies,
+      leavePolicies,
+      payrollPolicies,
+    };
+    return {
+      systemCritical: {
+        tables: systemCritical,
+        records: Object.values(systemCritical).reduce((sum, count) => sum + count, 0),
+      },
+      organizationAndHrMaster: {
+        tables: organizationAndHrMaster,
+        records: Object.values(organizationAndHrMaster).reduce((sum, count) => sum + count, 0),
+      },
+      note: 'Counts are row totals per protected table and are informational; shared permissions, plans, and singleton integration/payment configuration are excluded from tenant-scoped totals.',
+    };
   }
 
   private async countTables(tables: TableRule[], customerId: number | null) {

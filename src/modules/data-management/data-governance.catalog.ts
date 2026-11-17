@@ -28,17 +28,9 @@ export type ResetModule = {
 };
 
 export const PROTECTED_RECORDS = [
-  'Admin and user accounts',
-  'Authentication sessions are not part of a data reset',
-  'Roles and permissions',
-  'Tenant and organization records',
-  'Departments, designations, and employees',
-  'Salary structures and payroll policies',
-  'Integration credentials and payment settings',
-  'Subscription plans',
-  'Audit logs',
-  'Prisma migration history',
-  'System email and WhatsApp templates',
+  'SYSTEM-CRITICAL — Admin/user accounts, sessions, refresh tokens, roles, permissions, tenant configuration, subscriptions, integration/payment credentials, audit logs, system templates, and Prisma migration history are excluded from reset.',
+  'ORGANIZATION / HR MASTER — Employees, departments, designations, salary structures, and attendance/leave/payroll policies are excluded from generic reset. Employee rows reference attendance, leave, payroll items/slips, claims, loans, tasks, visits, commissions, and reporting snapshots; deleting employee roots can destroy financial and legally relevant history. Department and designation rows are referenced by employee, task, role, and customer mobile-role relations.',
+  'SHARED SYSTEM DATA — Global plans, permissions, and singleton integration/payment configuration are not tenant-owned reset data and are excluded.',
 ];
 
 export const FORBIDDEN_MODELS = [
