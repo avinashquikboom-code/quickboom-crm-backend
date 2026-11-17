@@ -51,8 +51,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         rawJwtToken: any,
         done: (err: any, secret?: string) => void,
       ) => {
-        const rawConfigSecret = configService.get<string>('JWT_SECRET');
-        const rawEnvSecret = process.env.JWT_SECRET;
+        const rawConfigSecret = configService.get<string>('JWT_ACCESS_SECRET');
+        const rawEnvSecret = process.env.JWT_ACCESS_SECRET;
         const fallbackSecret = 'quikboom_super_secret_jwt_access_key_2026';
         const devSecret = 'quikboom_jwt_secret_development_key_3847291847';
         const prodSecret = 'quikboom_production_secure_token_secret_key_3847291847';
