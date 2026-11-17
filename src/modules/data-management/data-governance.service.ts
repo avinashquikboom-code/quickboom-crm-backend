@@ -29,6 +29,8 @@ const PREVIEW_TTL_MS = 15 * 60 * 1000;
 const BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 const SENSITIVE_KEY = /password|secret|token|apiKey|credential/i;
 
+const scopedCustomer = (customerId: number | null) => customerId == null ? {} : { customerId };
+
 type PreviewRecord = {
   customerId: number | null;
   scope: 'tenant' | 'global';
@@ -114,6 +116,7 @@ export class DataGovernanceService {
       counts[table.model] = records;
       tables.push({ model: table.model, label: table.label, records });
     }
+    const dependencyWarnings = await this.dependencyWarnings(modules.map((item) => item.id), tenantId);
     const estimatedRecords = tables.reduce((sum, table) => sum + table.records, 0);
     const previewToken = randomUUID();
     const protectedCounts = await this.countProtectedRecords(tenantId);
@@ -139,6 +142,7 @@ export class DataGovernanceService {
       estimatedRecords,
       protectedCounts,
       dependencies: this.dependencies(modules.map((item) => item.id)),
+      dependencyWarnings,
       protected: PROTECTED_RECORDS,
       backupStatus: backup
         ? { verified: true, backupId: backup.backupId, createdAt: backup.createdAt }
@@ -189,6 +193,11 @@ export class DataGovernanceService {
       throw new BadRequestException('The preview does not match the selected modules. Run the preview again.');
     }
     await this.assertBackupCovers(tenantId, body.backupId, moduleIds, scope === 'global');
+    const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId);
+    const blockers = dependencyWarnings.filter((item) => item.blocking);
+    if (blockers.length) {
+      throw new BadRequestException(`Deletion is blocked by dependencies: ${blockers.map((item) => `${item.label}: ${item.records} records (select its eligible module or resolve the protected reference)`).join('; ')}.`);
+    }
     const recount = await this.countTables(tablesForModules(moduleIds), tenantId);
     if (recount.total !== preview.estimatedRecords) {
       throw new BadRequestException('Records changed after the preview. Run the preview again before deleting.');
@@ -778,7 +787,7 @@ export class DataGovernanceService {
     const byUserTenant = customerId == null ? {} : { user: { customerId } };
     const byRoleTenant = customerId == null ? {} : { role: { customerId } };
     const [customer, users, roles, userRoles, rolePermissions, sessions, refreshTokens, subscriptions, auditLogs,
-      departments, designations, employees, salaryStructures, attendancePolicies, leavePolicies, payrollPolicies] = await Promise.all([
+      attendancePolicies, leavePolicies] = await Promise.all([
       this.prisma.customer.count({ where: customerId == null ? {} : { id: customerId } }),
       this.prisma.user.count({ where: tenant }),
       this.prisma.role.count({ where: tenant }),
@@ -788,13 +797,8 @@ export class DataGovernanceService {
       this.prisma.refreshToken.count({ where: byUserTenant }),
       this.prisma.customerSubscription.count({ where: tenant }),
       this.prisma.auditLog.count({ where: tenant }),
-      this.prisma.department.count({ where: tenant }),
-      this.prisma.designation.count({ where: tenant }),
-      this.prisma.employee.count({ where: tenant }),
-      this.prisma.salaryStructure.count({ where: tenant }),
       this.prisma.attendancePolicy.count({ where: tenant }),
       this.prisma.leavePolicy.count({ where: tenant }),
-      this.prisma.payrollPolicy.count({ where: tenant }),
     ]);
     const systemCritical = {
       customer,
@@ -807,23 +811,18 @@ export class DataGovernanceService {
       subscriptions,
       auditLogs,
     };
-    const organizationAndHrMaster = {
-      departments,
-      designations,
-      employees,
-      salaryStructures,
+    const remainingTenantConfiguration = {
       attendancePolicies,
       leavePolicies,
-      payrollPolicies,
     };
     return {
       systemCritical: {
         tables: systemCritical,
         records: Object.values(systemCritical).reduce((sum, count) => sum + count, 0),
       },
-      organizationAndHrMaster: {
-        tables: organizationAndHrMaster,
-        records: Object.values(organizationAndHrMaster).reduce((sum, count) => sum + count, 0),
+      remainingTenantConfiguration: {
+        tables: remainingTenantConfiguration,
+        records: Object.values(remainingTenantConfiguration).reduce((sum, count) => sum + count, 0),
       },
       note: 'Counts are row totals per protected table and are informational; shared permissions, plans, and singleton integration/payment configuration are excluded from tenant-scoped totals.',
     };
@@ -1130,7 +1129,56 @@ export class DataGovernanceService {
     if (moduleIds.includes('payroll') || moduleIds.includes('expenses')) {
       notes.push('Payroll slips, claims, and loans are included only because their module was selected. Cleanup never removes them for age alone.');
     }
+    if (moduleIds.includes('employees')) {
+      notes.push('Employee dependency counts are checked before deletion. Selected eligible dependent modules are deleted first; protected or unselected references block employee deletion.');
+    }
     return notes;
+  }
+
+  private async dependencyWarnings(moduleIds: string[], customerId: number | null) {
+    const selected = new Set(tablesForModules(moduleIds).map((table) => table.model));
+    const checks: Array<{ parent: string; model: string; label: string; where: Record<string, unknown> }> = [];
+    if (moduleIds.includes('employees')) {
+      const employeeWhere = { employee: customerId == null ? {} : { customerId } };
+      for (const [model, label] of [
+        ['attendance', 'Attendance'], ['leaveRequest', 'Leave applications'], ['salaryStructure', 'Salary structures'],
+        ['salarySlip', 'Payslips'], ['payrollItem', 'Payroll transactions'], ['employeeLoan', 'Employee loans'],
+        ['commission', 'Commissions'], ['commissionWithdrawal', 'Commission withdrawals'], ['task', 'Tasks'],
+        ['visit', 'Visits'], ['visitPhoto', 'Visit photos'], ['employeeClaim', 'Employee claims'], ['employeeLocation', 'Employee location history'],
+        ['remoteRequest', 'Remote work requests'], ['overtimeRequest', 'Overtime requests'],
+        ['employeeDeduction', 'Payroll deductions'], ['employeeLeaveBalance', 'Leave balances'], ['leaveAdjustmentHistory', 'Leave adjustments'],
+        ['teamMember', 'Team memberships'], ['employeeModuleOverride', 'Employee permission overrides'], ['employeeLeadLimit', 'Employee lead limits'],
+        ['salaryTargetPolicy', 'Salary target policies'], ['salaryTargetReview', 'Salary target reviews'],
+        ['hrmEmployeeMonthlyReport', 'Employee report history'], ['hrmLeaveMonthlySnapshot', 'Leave snapshots'],
+        ['hrmNotificationDelivery', 'Employee notification history'], ['hrmCommissionMonthlySnapshot', 'Commission snapshots'],
+        ['dataCaptureSearch', 'Data capture searches'], ['commissionConfig', 'Employee commission configuration'],
+      ] as const) checks.push({ parent: 'employees', model, label, where: employeeWhere });
+      checks.push({ parent: 'employees', model: 'overtimeApproval', label: 'Overtime approval history', where: { request: { employee: customerId == null ? {} : { customerId } } } });
+      checks.push({ parent: 'employees', model: 'workTask', label: 'Work task assignments', where: { assignedTo: customerId == null ? {} : { customerId } } });
+      checks.push({ parent: 'employees', model: 'lead', label: 'Lead assignment and conversion references', where: { ...scopedCustomer(customerId), OR: [{ employeeId: { not: null } }, { convertedByEmployeeId: { not: null } }] } });
+      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references (protected)', where: { ...(customerId == null ? {} : { id: customerId }), OR: [{ assignedEmployeeId: { not: null } }, { createdByEmployeeId: { not: null } }] } });
+    }
+    const scoped = scopedCustomer(customerId);
+    if (moduleIds.includes('departments')) {
+      checks.push({ parent: 'departments', model: 'employee', label: 'Employees assigned to departments', where: { ...scoped, departmentId: { not: null } } });
+      checks.push({ parent: 'departments', model: 'designation', label: 'Designations assigned to departments', where: { ...scoped, departmentId: { not: null } } });
+      checks.push({ parent: 'departments', model: 'task', label: 'Tasks assigned to departments', where: { ...scoped, departmentId: { not: null } } });
+      checks.push({ parent: 'departments', model: 'announcement', label: 'Department announcements', where: { ...scoped, departmentId: { not: null } } });
+    }
+    if (moduleIds.includes('designations')) {
+      checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { ...scoped, designationId: { not: null } } });
+      checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { ...scoped, designationId: { not: null } } });
+      checks.push({ parent: 'designations', model: 'role', label: 'Roles linked to designations (protected)', where: { ...scoped, designationId: { not: null } } });
+      checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references', where: { ...(customerId == null ? {} : { id: customerId }), mobileRoleId: { not: null } } });
+    }
+    const warnings = [];
+    for (const check of checks) {
+      const records = await this.delegate(this.prisma, check.model).count({ where: check.where });
+      if (!records) continue;
+      const explicitlyIncluded = selected.has(check.model) && check.parent !== check.model;
+      warnings.push({ module: check.parent, model: check.model, label: check.label, records, blocking: !explicitlyIncluded });
+    }
+    return warnings;
   }
 
   private auditData(

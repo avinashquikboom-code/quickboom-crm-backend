@@ -97,6 +97,9 @@ describe('DataGovernanceService executeReset', () => {
     } as unknown as PrismaService;
     const service = new DataGovernanceService(prisma);
     Object.defineProperty(service, 'assertBackupCovers', { value: jest.fn().mockResolvedValue(undefined) });
+    Object.defineProperty(service, 'countProtectedRecords', {
+      value: jest.fn().mockResolvedValue({ systemCritical: { records: 0, tables: {} }, organizationAndHrMaster: { records: 0, tables: {} } }),
+    });
     const preview = await service.previewReset(12, { modules: ['attendance'] });
 
     const result = await service.executeReset(12, 7, 'SUPER_ADMIN', {
@@ -124,5 +127,38 @@ describe('DataGovernanceService executeReset', () => {
         details: expect.objectContaining({ verified: true, recordsDeleted: 8 }),
       }),
     }));
+  });
+});
+
+describe('DataGovernanceService backup gate', () => {
+  it('rejects a missing or unverified backup before any destructive operation', async () => {
+    const service = new DataGovernanceService({} as PrismaService);
+    Object.defineProperty(service, 'backupMeta', {
+      value: jest.fn().mockResolvedValue({ status: 'MISSING', scope: 'tenant', createdAt: new Date().toISOString() }),
+    });
+
+    await expect(service.assertBackupCovers(12, 'backup-id-1234', ['attendance']))
+      .rejects.toThrow('The selected backup is not verified.');
+  });
+
+  it('accepts a recent, verified backup only when it covers the selected module', async () => {
+    const service = new DataGovernanceService({} as PrismaService);
+    Object.defineProperty(service, 'backupMeta', {
+      value: jest.fn().mockResolvedValue({
+        status: 'VERIFIED',
+        scope: 'tenant',
+        createdAt: new Date().toISOString(),
+        modules: ['attendance'],
+        customerId: 12,
+        checksum: 'checksum',
+      }),
+    });
+    Object.defineProperty(service, 'verifyFile', {
+      value: jest.fn().mockResolvedValue({ ok: true, reason: '', size: 100 }),
+    });
+
+    await expect(service.assertBackupCovers(12, 'backup-id-1234', ['attendance'])).resolves.toBeUndefined();
+    await expect(service.assertBackupCovers(12, 'backup-id-1234', ['payroll']))
+      .rejects.toThrow('The backup does not include: payroll');
   });
 });
