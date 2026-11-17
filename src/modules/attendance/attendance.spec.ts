@@ -632,6 +632,58 @@ describe('late punch-in notification', () => {
   });
 });
 
+describe('attendance push recipient mapping', () => {
+  it('uses the authenticated user for an email-matched legacy Employee with no userId', async () => {
+    const send = jest.fn().mockResolvedValue({ delivered: true });
+    const prisma: any = {
+      user: { findFirst: jest.fn().mockResolvedValue({ id: 5, email: 'worker@example.com' }) },
+      notification: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new AttendanceService(prisma, { sendPushNotification: send } as any);
+
+    await (service as any).notifyAttendanceEvent(
+      { id: 10, userId: null, customerId: 1, email: ' Worker@Example.com ' },
+      44,
+      'PUNCH_IN',
+      'Punch In Successful',
+      'Attendance recorded',
+      { attendanceDate: '2026-11-18' },
+      5,
+    );
+
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 5, customerId: 1, deletedAt: null },
+    }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 5,
+      customerId: 1,
+      type: 'ATTENDANCE',
+      data: expect.objectContaining({ attendanceId: '44', employeeId: '10' }),
+    }));
+  });
+
+  it('does not send to an authenticated account that does not map to the matched Employee', async () => {
+    const send = jest.fn();
+    const prisma: any = {
+      user: { findFirst: jest.fn().mockResolvedValue({ id: 5, email: 'different@example.com' }) },
+      notification: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new AttendanceService(prisma, { sendPushNotification: send } as any);
+
+    await (service as any).notifyAttendanceEvent(
+      { id: 10, userId: null, customerId: 1, email: 'worker@example.com' },
+      44,
+      'LATE_MARK',
+      'Late Mark Recorded',
+      'Late by 10 minutes',
+      { lateMinutes: '10' },
+      5,
+    );
+
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
 
 describe('today late deduction for legacy attendance', () => {
   it('uses the eligible calculation when the stored deduction is zero or missing', async () => {

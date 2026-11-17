@@ -2472,6 +2472,47 @@ export class EmployeeService {
 
     // Permanently delete only after all protected-history counts confirm no history exists.
     await this.prisma.$transaction(async (tx) => {
+      // Serialize against new FK references, then recheck every employee-owned cascade
+      // before any cleanup. The ordinary DELETE endpoint has no module-selection input,
+      // so it must never silently remove dependent HR or historical records.
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Employee" WHERE "id" = ${numId} AND "customerId" = ${empCustomerId} FOR UPDATE`);
+      const cascadeDependencies: Array<[string, string]> = [
+        ['attendance', 'Attendance'], ['salarySlip', 'Payslips'], ['payrollItem', 'Payroll transactions'],
+        ['salaryStructure', 'Salary structures'], ['employeeClaim', 'Claims'], ['employeeLoan', 'Loans'],
+        ['commission', 'Commissions'], ['commissionWithdrawal', 'Commission withdrawals'],
+        ['leaveRequest', 'Leave applications'], ['employeeDeduction', 'Payroll deductions'],
+        ['remoteRequest', 'Remote work requests'], ['overtimeRequest', 'Overtime requests'], ['visit', 'Visits'],
+        ['employeeLocation', 'Location history'], ['employeeLeaveBalance', 'Leave balances'],
+        ['leaveAdjustmentHistory', 'Leave adjustments'], ['teamMember', 'Team memberships'],
+        ['employeeModuleOverride', 'Permission overrides'], ['employeeLeadLimit', 'Lead limits'],
+        ['locationTrackingSetting', 'Location tracking settings'], ['workAccessRequest', 'Work access requests'],
+        ['overtimeNotificationEvent', 'Overtime notification events'], ['dataCaptureSearch', 'Data capture searches'],
+        ['commissionConfig', 'Commission configuration'], ['salaryTargetPolicy', 'Salary target policies'],
+        ['salaryTargetReview', 'Salary target reviews'], ['hrmEmployeeMonthlyReport', 'Employee report history'],
+        ['hrmLeaveMonthlySnapshot', 'Leave snapshots'], ['hrmNotificationDelivery', 'Notification history'],
+        ['hrmCommissionMonthlySnapshot', 'Commission snapshots'],
+      ];
+      const blockers: string[] = [];
+      for (const [model, label] of cascadeDependencies) {
+        const delegate = (tx as any)[model];
+        if (!delegate?.count) throw new InternalServerErrorException(`Cannot verify ${label} before employee deletion.`);
+        const count = await delegate.count({ where: { employeeId: numId } });
+        if (count > 0) blockers.push(`${label}: ${count}`);
+      }
+      const shareRows = await tx.$queryRaw<Array<{ records: number | bigint }>>(Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" = ${numId}`);
+      const shareCount = Number(shareRows[0]?.records || 0);
+      if (shareCount) blockers.push(`Commission shares: ${shareCount}`);
+      const externalCustomerReferences = await tx.customer.count({
+        where: {
+          id: { not: empCustomerId },
+          OR: [{ assignedEmployeeId: numId }, { createdByEmployeeId: numId }],
+        },
+      });
+      if (externalCustomerReferences) blockers.push(`Customer references in other tenants: ${externalCustomerReferences}`);
+      if (blockers.length) {
+        throw new BadRequestException(`Employee cannot be permanently deleted while dependent records remain (${blockers.join(', ')}). Resolve or explicitly reset eligible dependencies first.`);
+      }
+
       // Invalidate tokens/sessions
       if (userId) {
         if (tx.refreshToken?.deleteMany) {
