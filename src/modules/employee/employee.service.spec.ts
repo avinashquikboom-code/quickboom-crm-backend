@@ -86,6 +86,26 @@ describe('EmployeeService — Customer Data Isolation', () => {
     service = module.get<EmployeeService>(EmployeeService);
   });
 
+  describe('reporting manager validation', () => {
+    it('accepts a manager in the same tenant', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce({ id: 2, managerId: null, status: 'ACTIVE' });
+      await expect((service as any).validateReportingManager(prisma, 1, 2, 1)).resolves.toBeUndefined();
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 2, customerId: 1 } }));
+    });
+    it('rejects missing or cross-tenant managers', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce(null);
+      await expect((service as any).validateReportingManager(prisma, 1, 2, 1)).rejects.toThrow();
+    });
+    it('rejects self-reporting and cycles', async () => {
+      await expect((service as any).validateReportingManager(prisma, 1, 1, 1)).rejects.toThrow();
+      prisma.employee.findFirst.mockResolvedValueOnce({ id: 2, managerId: 1, status: 'ACTIVE' });
+      await expect((service as any).validateReportingManager(prisma, 1, 2, 1)).rejects.toThrow();
+    });
+    it('allows an unassigned manager', async () => {
+      await expect((service as any).validateReportingManager(prisma, 1, null, 1)).resolves.toBeUndefined();
+    });
+  });
+
   describe('findAll (Customer Isolation)', () => {
     it('Customer A: queries only customerId = 1 employees and counts with customerId = 1', async () => {
       const mockCustomerAEmployees = [
