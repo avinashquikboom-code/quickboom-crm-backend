@@ -483,6 +483,14 @@ describe('EmployeeService — Customer Data Isolation', () => {
       expect(prisma.employee.delete).not.toHaveBeenCalled();
     });
 
+    it('does not delete when protected-history audit fails', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.attendance.count.mockRejectedValue(new Error('database unavailable'));
+      await expect(service.remove({ id: 50, customerId: 1, isSuperAdmin: false })).rejects.toThrow('database unavailable');
+      expect(prisma.employee.delete).not.toHaveBeenCalled();
+      expect(prisma.employee.update).not.toHaveBeenCalled();
+    });
+
     it('remove (without protected history): permanently deletes employee record and cleans up user account', async () => {
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
       // All counts are 0
