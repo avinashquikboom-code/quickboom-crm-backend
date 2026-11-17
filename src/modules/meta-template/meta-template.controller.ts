@@ -168,6 +168,18 @@ export class MetaTemplateController {
     return this.metaTemplateService.syncFromMeta(user?.customerId);
   }
 
+  @Post(':id/sync')
+  @ApiOperation({ summary: 'Refresh one template status from its connected Meta WABA' })
+  async syncOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.metaTemplateService.syncOne(id, user?.customerId);
+  }
+
+  @Post(':id/submit')
+  @ApiOperation({ summary: 'Sync or submit one local template to Meta without creating duplicates' })
+  async submitOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.metaTemplateService.submitOne(id, user?.customerId);
+  }
+
   @Post('preview')
   @ApiOperation({ summary: 'Preview Meta message template with interpolated variables' })
   async preview(@Body() dto: PreviewMetaTemplateDto, @CurrentUser() user: any) {

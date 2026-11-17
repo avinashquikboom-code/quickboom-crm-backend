@@ -45,6 +45,9 @@ describe('WhatsappWebhook', () => {
       leadStage: {
         findFirst: jest.fn(),
       },
+      metaTemplate: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
 
     integrationSettings = {
@@ -384,6 +387,23 @@ describe('WhatsappWebhook', () => {
   });
 
   describe('POST Webhook Incoming Messages & Customer/Lead Matching', () => {
+    it('updates synced Meta template approval status from status webhooks', async () => {
+      const payload = {
+        object: 'whatsapp_business_account',
+        entry: [{ id: 'waba-1', changes: [{
+          field: 'message_template_status_update',
+          value: { message_template_id: 'meta-tpl-1', message_template_name: 'welcome_lead', message_template_language: 'en_US', event: 'REJECTED', reason: 'Policy violation' },
+        }] }],
+      };
+
+      const result = await service.processWebhookPayload(payload);
+      expect(result.processed).toBe(true);
+      expect(prisma.metaTemplate.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { metaTemplateId: 'meta-tpl-1', syncedWabaId: 'waba-1', deletedAt: null },
+        data: expect.objectContaining({ status: 'REJECTED', rejectionReason: 'Policy violation', syncStatus: 'SYNCED', syncedWabaId: 'waba-1' }),
+      }));
+    });
+
     it('matches existing Lead by normalized phone number and logs WHATSAPP_INBOUND timeline + Notification', async () => {
       const messageId = 'wamid.HBgLOTE3MDU4NzAwNzU1FQIAEhggINBOUND001';
       const senderPhone = '917058700755';

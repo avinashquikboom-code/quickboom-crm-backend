@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import axios from 'axios';
 import { MetaTemplateService } from './meta-template.service';
 
 describe('MetaTemplateService', () => {
@@ -15,6 +16,7 @@ describe('MetaTemplateService', () => {
         count: jest.fn().mockResolvedValue(1),
         create: jest.fn().mockResolvedValue({}),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       leadStage: {
         findFirst: jest.fn(),
@@ -78,6 +80,8 @@ describe('MetaTemplateService', () => {
     it('formats template name and extracts variables from body', async () => {
       mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
       mockPrisma.metaTemplate.create.mockImplementation(({ data }) => Promise.resolve({ id: 10, ...data }));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { id: 'meta-10', status: 'PENDING' } } as any);
 
       const res = await service.create(
         {
@@ -93,6 +97,8 @@ describe('MetaTemplateService', () => {
       expect(res.templateName).toBe('visit_scheduled_notice');
       expect(res.variables).toEqual(expect.arrayContaining(['leadName', 'companyName', 'startDate']));
       expect(res.isLocalActive).toBe(true);
+      expect(res.syncStatus).toBe('SYNCED');
+      jest.restoreAllMocks();
     });
 
     it('rejects duplicate template name and language', async () => {
@@ -108,6 +114,86 @@ describe('MetaTemplateService', () => {
           1,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Meta synchronization', () => {
+    const localTemplate = {
+      id: 24, customerId: 1, name: 'Welcome', templateName: 'welcome_lead', key: 'NEW',
+      language: 'en_US', category: 'UTILITY', status: 'NOT_SYNCED', metaTemplateId: null,
+      body: 'Hello {{leadName}}', headerType: 'NONE', headerContent: null, footer: null,
+      buttons: null, variables: ['leadName'], isLocalActive: true, syncStatus: 'NOT_SYNCED',
+    };
+
+    it.each(['APPROVED', 'PENDING', 'REJECTED'])('persists the actual Meta %s status and rejection reason', async (status) => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(localTemplate);
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }) => Promise.resolve({ ...localTemplate, ...data }));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [{ id: 'meta-24', name: 'welcome_lead', language: 'en_US', category: 'UTILITY', status, rejected_reason: status === 'REJECTED' ? 'Policy violation' : undefined }] } } as any);
+
+      const result = await service.syncOne(24, 1);
+      expect(result.status).toBe(status);
+      expect(result.syncStatus).toBe('SYNCED');
+      expect(result.metaTemplateId).toBe('meta-24');
+      expect(result.lastSyncedAt).toEqual(expect.any(Date));
+      expect(result.rejectionReason).toBe(status === 'REJECTED' ? 'Policy violation' : null);
+      expect(mockPrisma.metaTemplate.update).toHaveBeenLastCalledWith(expect.objectContaining({
+        where: { id: 24 }, data: expect.not.objectContaining({ body: expect.anything(), key: expect.anything(), variables: expect.anything() }),
+      }));
+      jest.restoreAllMocks();
+    });
+
+    it('keeps approval status and reports Not Synced when Meta does not contain the local template', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(localTemplate);
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }) => Promise.resolve({ ...localTemplate, ...data }));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+
+      const result = await service.syncOne(24, 1);
+      expect(result.syncStatus).toBe('NOT_SYNCED');
+      expect(result.status).toBe('NOT_SYNCED');
+      expect(result.lastSyncedAt).toBeUndefined();
+      jest.restoreAllMocks();
+    });
+
+    it('stores a sanitized Sync Failed error when Meta rejects the token', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(localTemplate);
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }) => Promise.resolve({ ...localTemplate, ...data }));
+      jest.spyOn(axios, 'get').mockRejectedValueOnce({ response: { status: 401, data: { error: { code: 190, message: 'Invalid OAuth access token' } } } });
+
+      await expect(service.syncOne(24, 1)).rejects.toThrow(/Meta rejected the access token/);
+      expect(mockPrisma.metaTemplate.update).toHaveBeenLastCalledWith(expect.objectContaining({
+        where: { id: 24 }, data: expect.objectContaining({ syncStatus: 'SYNC_FAILED', syncError: expect.stringContaining('Meta rejected the access token') }),
+      }));
+      jest.restoreAllMocks();
+    });
+
+    it('links an existing remote template rather than posting a duplicate', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(localTemplate);
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }) => Promise.resolve({ ...localTemplate, ...data }));
+      const get = jest.spyOn(axios, 'get').mockResolvedValue({ data: { data: [{ id: 'meta-24', name: 'welcome_lead', language: 'en_US', category: 'UTILITY', status: 'APPROVED' }] } } as any);
+      const post = jest.spyOn(axios, 'post');
+
+      const result = await service.submitOne(24, 1);
+      expect(result.alreadyExists).toBe(true);
+      expect(post).not.toHaveBeenCalled();
+      expect(get).toHaveBeenCalledTimes(1);
+      jest.restoreAllMocks();
+    });
+
+    it('syncs the complete WABA catalog without creating duplicates', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(localTemplate);
+      mockPrisma.metaTemplate.findMany.mockResolvedValue([]);
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }) => Promise.resolve({ ...localTemplate, ...data }));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [
+        { id: 'meta-24', name: 'welcome_lead', language: 'en_US', category: 'UTILITY', status: 'APPROVED', components: [] },
+      ] } } as any);
+
+      const result = await service.syncFromMeta(1);
+      expect(result.fetched).toBe(1);
+      expect(result.updated).toBe(1);
+      expect(result.created).toBe(0);
+      expect(result.wabaId).toBe('987654321');
+      expect(mockPrisma.metaTemplate.create).not.toHaveBeenCalled();
+      jest.restoreAllMocks();
     });
   });
 

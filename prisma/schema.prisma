@@ -3808,6 +3808,10 @@ model MetaTemplate {
   isSystem           Boolean   @default(false)
   source             String    @default("META_SYNC") // META_SYNC | QB_SINGLE | QB_CAMPAIGN
   lastSyncedAt       DateTime?
+  lastSyncAttemptAt  DateTime?
+  syncStatus         String    @default("NOT_SYNCED") // SYNCED | NOT_SYNCED | SYNC_FAILED
+  syncError          String?   @db.Text
+  syncedWabaId       String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
