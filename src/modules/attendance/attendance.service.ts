@@ -640,7 +640,12 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
         },
       };
     });
-    await this.notifyLatePunchIn(employee, result?.data?.attendanceId, lateEvaluation);
+    await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'PUNCH_IN', 'Punch In Successful', `Your attendance was marked successfully at ${formatTimeInTimezone(now)}. Date: ${dateStr}. Status: ${result?.data?.status || attendanceStatus}.`, { punchInAt: now.toISOString(), attendanceDate: dateStr, status: String(result?.data?.status || attendanceStatus) });
+    if (lateEvaluation.applicable && lateEvaluation.isLate && lateEvaluation.lateMinutes > 0) {
+      const shiftStart = employee.shift?.startTime || employee.shift?.start || 'assigned shift start';
+      await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'LATE_MARK', 'Late Mark Recorded', `You are ${result.data.lateMinutes} minutes late today. Your assigned shift started at ${shiftStart}; punch-in was ${formatTimeInTimezone(now)}.`, { lateMinutes: String(result.data.lateMinutes), shiftStart: String(shiftStart), punchInAt: now.toISOString(), attendanceDate: dateStr });
+      if (Number(result.data.lateDeduction) > 0) await this.notifyAttendanceEvent(employee, result.data.attendanceId, `LATE_DEDUCTION_${Number(result.data.lateDeduction).toFixed(2)}`, 'Late Mark Deduction Applied', `Your Late Mark deduction for today is ${this.formatLateMoney(Number(result.data.lateDeduction), lateEvaluation.currency)}. Late minutes: ${result.data.lateMinutes}. Deduction rate: ${this.formatLateMoney(Number(result.data.lateRatePerMinute), lateEvaluation.currency)}/min.`, { lateMinutes: String(result.data.lateMinutes), deductionRate: String(result.data.lateRatePerMinute), deductionAmount: String(result.data.lateDeduction), attendanceDate: dateStr });
+    }
     return result;
   }
 
@@ -826,7 +831,8 @@ result: SUCCESS`);
         },
       };
     });
-
+    await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'PUNCH_OUT', 'Punch Out Successful', `Your punch-out was recorded at ${formatTimeInTimezone(new Date(result.data.punchOutAt))}. Total working hours today: ${result.data.workingDuration}.`, { punchOutAt: result.data.punchOutAt, workingMinutes: String(result.data.workingMinutes), attendanceDate: dateStr });
+    return result;
   }
 
   async getTodayAttendance(user: any, customerId: number | string | undefined) {
@@ -1534,6 +1540,20 @@ result: SUCCESS`);
       employeeId: employee.id,
       employeeRole: employee.designation?.name || employee.designation?.code || null,
     });
+  }
+
+  private async notifyAttendanceEvent(employee: any, attendanceId: number | undefined, eventId: string, title: string, body: string, data: Record<string, string>) {
+    const userId = Number(employee?.userId);
+    if (!this.notificationService || !attendanceId || !Number.isInteger(userId) || userId <= 0) return;
+    try {
+      const user = await this.prisma.user.findFirst({ where: { id: userId, customerId: employee.customerId, deletedAt: null }, select: { id: true } });
+      if (!user) return;
+      const key = `${attendanceId}:${eventId}`;
+      const prior = await this.prisma.notification.findMany({ where: { userId, customerId: employee.customerId }, orderBy: { id: 'desc' }, take: 100, select: { data: true } });
+      if (prior.some((row: any) => row.data?.eventId === key)) return;
+      const type = eventId.startsWith('LATE') ? 'LATE_MARK' : 'ATTENDANCE';
+      await this.notificationService.sendPushNotification({ userId, customerId: employee.customerId, title, body, type, data: { ...data, type, eventId: key, attendanceId: String(attendanceId), employeeId: String(employee.id), route: type === 'LATE_MARK' ? '/attendance/late-marks' : '/attendance' } });
+    } catch (error: any) { console.error(`[ATTENDANCE_NOTIFICATION] event=${eventId} attendance=${attendanceId} failed: ${error?.message || 'dispatch error'}`); }
   }
 
   private async notifyLatePunchIn(employee: any, attendanceId: number | undefined, evaluation: { applicable: boolean; isLate: boolean; lateMinutes: number; deduction: number; currency?: string }) {
