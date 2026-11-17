@@ -190,6 +190,7 @@ export class DataGovernanceService {
     this.previews.delete(body.previewToken as string);
     return this.withLock(tenantId, operationId, async () => {
       const deleted: Record<string, number> = {};
+      const countsBefore: Record<string, number> = { ...recount.counts };
       const failures: string[] = [];
       try {
         await this.prisma.$transaction(async (tx) => {
@@ -224,6 +225,16 @@ export class DataGovernanceService {
             }),
           });
         }, { timeout: 120000, maxWait: 10000 });
+
+        // Run a fresh query after PostgreSQL commits, so success reflects committed state.
+        for (const table of tablesForModules(moduleIds)) {
+          const remaining = await this.delegate(this.prisma, table.model).count({
+            where: whereFor(table.where, tenantId),
+          });
+          if (remaining !== 0) {
+            throw new Error(`${table.label}: ${remaining} records remain after the committed deletion.`);
+          }
+        }
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Reset failed');
         await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'FAILED', {
@@ -247,6 +258,8 @@ export class DataGovernanceService {
         modules: moduleIds,
         recordsDeleted,
         tables: deleted,
+        countsBefore,
+        countsAfter: Object.fromEntries(Object.keys(deleted).map((model) => [model, 0])),
         verified: true,
         verifiedTables: Object.keys(deleted),
         failures,

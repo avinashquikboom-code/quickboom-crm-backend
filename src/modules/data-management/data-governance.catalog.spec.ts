@@ -27,4 +27,12 @@ describe('data governance catalog', () => {
     expect(whereFor('template', 12)).toEqual({ customerId: 12, isSystem: false });
     expect(whereFor('lead', 12)).toEqual({ lead: { customerId: 12 } });
   });
+
+  it('includes overtime notification events before deleting overtime requests', () => {
+    const tables = tablesForModules(['hrm']);
+    const eventIndex = tables.findIndex((table) => table.model === 'overtimeNotificationEvent');
+    const requestIndex = tables.findIndex((table) => table.model === 'overtimeRequest');
+    expect(eventIndex).toBeGreaterThanOrEqual(0);
+    expect(eventIndex).toBeLessThan(requestIndex);
+  });
 });

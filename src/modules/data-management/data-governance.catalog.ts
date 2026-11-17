@@ -71,6 +71,7 @@ export const RESET_MODULES: ResetModule[] = [
     available: true,
     tables: [
       row('overtimeApproval', 'OvertimeApproval', 'Overtime approvals', 'customer'),
+      row('overtimeNotificationEvent', 'overtime_notification_events', 'Overtime notification events', 'customer'),
       row('overtimeRequest', 'OvertimeRequest', 'Overtime requests', 'customer'),
       row('attendanceBreak', 'AttendanceBreak', 'Attendance breaks', 'attendance'),
       row('attendance', 'Attendance', 'Attendance', 'customer'),
