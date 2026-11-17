@@ -250,17 +250,30 @@ export class DataManagementService {
       take: 50,
     });
 
-    return logs.map((log) => ({
-      id: log.id,
-      module: log.module,
-      details: log.details,
-      performedBy: log.user
-        ? `${log.user.firstName} ${log.user.lastName}`
-        : 'System Admin',
-      performedByEmail: log.user?.email || 'N/A',
-      timestamp: log.createdAt,
-      ipAddress: log.ipAddress || '127.0.0.1',
-    }));
+    return logs.map((log) => {
+      const details = log.details && typeof log.details === 'object' && !Array.isArray(log.details)
+        ? log.details as Record<string, unknown>
+        : {};
+      const verified = details.verified === true
+        && Array.isArray(details.modules)
+        && details.modules.length > 0;
+      return {
+        id: log.id,
+        module: log.module,
+        details: {
+          ...details,
+          recordsDeleted: verified ? Number(details.recordsDeleted || 0) : null,
+          status: verified ? log.status : 'UNVERIFIED',
+          verified,
+        },
+        performedBy: log.user
+          ? `${log.user.firstName} ${log.user.lastName}`
+          : 'System Admin',
+        performedByEmail: log.user?.email || 'N/A',
+        timestamp: log.createdAt,
+        ipAddress: log.ipAddress || '127.0.0.1',
+      };
+    });
   }
 
   /**

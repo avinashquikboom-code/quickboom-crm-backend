@@ -173,7 +173,7 @@ export class DataGovernanceService {
       throw new BadRequestException('Type RESET GLOBAL to confirm a reset across every tenant.');
     }
     const key = this.requireIdempotency(body.idempotencyKey);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_RESET');
     if (previous) return previous;
     const preview = this.takePreview(body.previewToken, tenantId, scope === 'global' ? 'global' : 'tenant');
     const modules = this.selectedModules(body.modules, scope === 'application' || scope === 'global');
@@ -191,6 +191,7 @@ export class DataGovernanceService {
     return this.withLock(tenantId, operationId, async () => {
       const deleted: Record<string, number> = {};
       const countsBefore: Record<string, number> = { ...recount.counts };
+      const countsAfter: Record<string, number> = {};
       const failures: string[] = [];
       try {
         await this.prisma.$transaction(async (tx) => {
@@ -211,19 +212,6 @@ export class DataGovernanceService {
             }
             deleted[table.model] = deletedCount;
           }
-          await tx.auditLog.create({
-            data: this.auditData(tenantId, userId, role, 'DATA_RESET', 'SUCCESS', {
-              operationId,
-              scope,
-              modules: moduleIds,
-              recordsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
-              tables: deleted,
-              backupId: body.backupId,
-              idempotencyKey: key,
-              reason: body.reason || 'Admin data reset',
-              status: 'SUCCESS',
-            }),
-          });
         }, { timeout: 120000, maxWait: 10000 });
 
         // Run a fresh query after PostgreSQL commits, so success reflects committed state.
@@ -231,22 +219,43 @@ export class DataGovernanceService {
           const remaining = await this.delegate(this.prisma, table.model).count({
             where: whereFor(table.where, tenantId),
           });
+          countsAfter[table.model] = remaining;
           if (remaining !== 0) {
             throw new Error(`${table.label}: ${remaining} records remain after the committed deletion.`);
           }
         }
+        await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'SUCCESS', {
+          operationId,
+          scope,
+          modules: moduleIds,
+          recordsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
+          tables: deleted,
+          countsBefore,
+          countsAfter,
+          backupId: body.backupId,
+          idempotencyKey: key,
+          reason: body.reason || 'Admin data reset',
+          verified: true,
+          status: 'SUCCESS',
+        });
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Reset failed');
         await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'FAILED', {
           operationId,
           scope,
           modules: moduleIds,
+          recordsDeleted: Object.values(deleted).reduce((sum, count) => sum + count, 0),
+          tables: deleted,
+          countsBefore,
+          countsAfter,
           backupId: body.backupId,
           idempotencyKey: key,
+          verified: false,
+          partial: Object.values(deleted).some((count) => count > 0),
           status: 'FAILED',
           error: failures[0],
         });
-        throw new BadRequestException(`Reset failed and was rolled back. Operation ${operationId}. ${failures[0]}`);
+        throw new BadRequestException(`Reset did not complete successfully. Operation ${operationId}. ${failures[0]}`);
       }
       const recordsDeleted = Object.values(deleted).reduce((sum, count) => sum + count, 0);
       this.logger.log(`Data reset ${operationId} removed ${recordsDeleted} records`);
@@ -259,7 +268,7 @@ export class DataGovernanceService {
         recordsDeleted,
         tables: deleted,
         countsBefore,
-        countsAfter: Object.fromEntries(Object.keys(deleted).map((model) => [model, 0])),
+        countsAfter,
         verified: true,
         verifiedTables: Object.keys(deleted),
         failures,
@@ -434,7 +443,7 @@ export class DataGovernanceService {
     const key = this.requireIdempotency(body.idempotencyKey);
     const verified = await this.verifyBackup(customerId, backupId);
     const tenantId = verified.scope === 'global' ? null : this.requireTenant(customerId);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_RESTORE');
     if (previous) return previous;
     const payload = await this.readPayload(this.backupPath(tenantId, backupId));
     if (payload.customerId !== tenantId) throw new ForbiddenException('This backup belongs to a different tenant.');
@@ -533,7 +542,7 @@ export class DataGovernanceService {
     }
     if (String(body.confirmation || '').trim() !== 'CLEANUP') throw new BadRequestException('Type CLEANUP to confirm.');
     const key = this.requireIdempotency(body.idempotencyKey);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_CLEANUP');
     if (previous) return previous;
     const operationId = randomUUID();
     const expected = await this.cleanupCount(tenantId, operation);
@@ -619,7 +628,7 @@ export class DataGovernanceService {
     const tenantId = this.requireTenant(customerId);
     if (String(body.confirmation || '').trim() !== 'IMPORT') throw new BadRequestException('Type IMPORT to confirm.');
     const key = this.requireIdempotency(body.idempotencyKey);
-    const previous = await this.findIdempotent(tenantId, key);
+    const previous = await this.findIdempotent(tenantId, key, 'DATA_IMPORT');
     if (previous) return previous;
     const preview = await this.previewImport(tenantId, String(body.csv || ''));
     const ready = preview.rows.filter((row) => row.errors.length === 0);
@@ -678,17 +687,24 @@ export class DataGovernanceService {
     });
     return logs.map((log) => {
       const details = asObject(log.details);
+      const verifiedReset = log.action === 'DATA_RESET'
+        && details.verified === true
+        && Array.isArray(details.modules)
+        && details.modules.length > 0;
       return {
         id: details.operationId || log.id,
         operationType: log.action,
-        modules: details.modules || (details.operation ? [details.operation] : []),
+        modules: Array.isArray(details.modules) ? details.modules : (details.operation ? [details.operation] : []),
         requestedBy: log.user ? `${log.user.firstName || ''} ${log.user.lastName || ''}`.trim() || log.user.email : 'Super Admin',
         approvedBy: null,
         createdAt: log.createdAt,
-        recordsAffected: details.recordsDeleted ?? details.recordsRestored ?? details.recordsCreated ?? details.recordCount ?? 0,
+        recordsAffected: log.action === 'DATA_RESET' ? (verifiedReset ? Number(details.recordsDeleted || 0) : null) : (details.recordsDeleted ?? details.recordsRestored ?? details.recordsCreated ?? 0),
         backupId: details.backupId || details.preRestoreBackupId || null,
-        status: log.status || details.status || 'SUCCESS',
+        status: log.action === 'DATA_RESET' && log.status !== 'FAILED' && !verifiedReset
+          ? 'UNVERIFIED'
+          : log.status || details.status || 'UNVERIFIED',
         failureReason: details.error || null,
+        verified: log.action === 'DATA_RESET' ? verifiedReset : details.verified === true,
       };
     });
   }
@@ -873,10 +889,11 @@ export class DataGovernanceService {
     return { ...preview, modules: [...preview.modules].sort() };
   }
 
-  private async findIdempotent(customerId: number | null, key: string) {
+  private async findIdempotent(customerId: number | null, key: string, action: string) {
     const existing = await this.prisma.auditLog.findFirst({
       where: {
         ...(customerId ? { customerId } : { customerId: null }),
+        action,
         status: 'SUCCESS',
         details: { path: ['idempotencyKey'], equals: key },
       },
@@ -884,7 +901,28 @@ export class DataGovernanceService {
     });
     if (!existing) return null;
     const details = asObject(existing.details);
-    return { success: true, duplicate: true, operationId: details.operationId || existing.id, status: 'SUCCESS', completedAt: existing.createdAt };
+    if (action === 'DATA_RESET'
+      && (details.verified !== true || !Array.isArray(details.modules) || details.modules.length === 0)) {
+      return null;
+    }
+    return {
+      success: true,
+      duplicate: true,
+      operationId: details.operationId || existing.id,
+      status: 'SUCCESS',
+      ...(action === 'DATA_RESET' ? {
+        scope: details.scope,
+        modules: details.modules,
+        recordsDeleted: Number(details.recordsDeleted || 0),
+        tables: details.tables || {},
+        countsBefore: details.countsBefore || {},
+        countsAfter: details.countsAfter || {},
+        verified: true,
+        verifiedTables: Object.keys(details.tables || {}),
+        backupId: details.backupId || null,
+      } : {}),
+      completedAt: existing.createdAt,
+    };
   }
 
   private async latestAudit(customerId: number | null, action: string) {
