@@ -210,7 +210,10 @@ export class DataGovernanceService {
             throw new BadRequestException(`Deletion is blocked by dependencies: ${blockers.map((item) => `${item.label}: ${item.records} records${item.crossTenantRecords ? ` (${item.crossTenantRecords} reference other tenants)` : ''}`).join('; ')}.`);
           }
           const recount = await this.countTables(tablesForModules(moduleIds), tenantId, tx);
-          if (recount.total !== preview.estimatedRecords) {
+          const changedTables = Object.entries(recount.counts)
+            .filter(([model, records]) => records !== (preview.counts[model] || 0))
+            .map(([model]) => model);
+          if (recount.total !== preview.estimatedRecords || changedTables.length) {
             throw new BadRequestException('Records changed after the preview. Run the preview again before deleting.');
           }
           Object.assign(countsBefore, recount.counts);

@@ -58,15 +58,19 @@ describe('Data Governance HR module physical deletes', () => {
       get: (_target, key) => {
         const model = String(key);
         if (model === '$queryRaw') return async () => [];
-        if (model === 'employee') return { findMany: async () => [{ id: 7 }] };
+        if (model === 'employee') return { count: async () => 0, findMany: async () => [{ id: 7 }], deleteMany: async () => ({ count: 0 }) };
         return {
           count: async (args: { where?: Record<string, unknown> } = {}) => {
+            if (args.where?.customerId && typeof args.where.customerId === 'object') return 0;
+            if (model !== 'customer' && args.where?.id && typeof args.where.id === 'object') return 0;
             if (model === 'overtimeNotificationEvent') return 3;
             if (model === 'workAccessRequest') return 2;
             if (model === 'work' || model === 'team' || model === 'monthlySchedule') return 1;
             if (model === 'customer' && args.where?.id && typeof args.where.id === 'object') return 2;
             return 0;
           },
+          findMany: async () => [],
+          deleteMany: async () => ({ count: 0 }),
         };
       },
     });
@@ -90,8 +94,8 @@ describe('Data Governance HR module physical deletes', () => {
       get: (_target, key) => {
         const model = String(key);
         if (model === '$queryRaw') return async () => [];
-        if (model === 'designation') return { findMany: async () => [{ id: 99 }] };
-        return { count: async () => model === 'role' ? 1 : 0 };
+        if (model === 'designation') return { count: async () => 0, findMany: async () => [{ id: 99 }], deleteMany: async () => ({ count: 0 }) };
+        return { count: async () => model === 'role' ? 1 : 0, findMany: async () => [], deleteMany: async () => ({ count: 0 }) };
       },
     });
     const service = new DataGovernanceService(client as PrismaService);
