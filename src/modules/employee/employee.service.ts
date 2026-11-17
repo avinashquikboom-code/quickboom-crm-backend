@@ -2509,6 +2509,24 @@ export class EmployeeService {
         },
       });
       if (externalCustomerReferences) blockers.push(`Customer references in other tenants: ${externalCustomerReferences}`);
+      const crossTenantReferences = [
+        ['work', { customerId: { not: empCustomerId }, OR: [{ assignedToId: numId }, { editorId: numId }] }, 'Work references'],
+        ['team', { customerId: { not: empCustomerId }, leaderId: numId }, 'Team leader references'],
+        ['monthlySchedule', { customerId: { not: empCustomerId }, assignedEmployeeId: numId }, 'Schedule references'],
+        ['task', { customerId: { not: empCustomerId }, employeeId: numId }, 'Task references'],
+        ['visitPhoto', { customerId: { not: empCustomerId }, employeeId: numId }, 'Visit photo references'],
+        ['workTask', { work: { customerId: { not: empCustomerId } }, assignedToId: numId }, 'Work task references'],
+        ['lead', { customerId: { not: empCustomerId }, OR: [{ employeeId: numId }, { convertedByEmployeeId: numId }] }, 'Lead references'],
+        ['taskProof', { employeeId: numId, task: { customerId: { not: empCustomerId } } }, 'Task proof references'],
+        ['employee', { customerId: { not: empCustomerId }, managerId: numId }, 'Reporting manager references'],
+        ['department', { customerId: { not: empCustomerId }, headId: numId }, 'Department head references'],
+      ] as const;
+      for (const [model, where, label] of crossTenantReferences) {
+        const delegate = (tx as any)[model];
+        if (!delegate?.count) throw new InternalServerErrorException(`Cannot verify ${label} before employee deletion.`);
+        const count = await delegate.count({ where });
+        if (count > 0) blockers.push(`${label} in other tenants: ${count}`);
+      }
       if (blockers.length) {
         throw new BadRequestException(`Employee cannot be permanently deleted while dependent records remain (${blockers.join(', ')}). Resolve or explicitly reset eligible dependencies first.`);
       }
@@ -2516,112 +2534,113 @@ export class EmployeeService {
       // Invalidate tokens/sessions
       if (userId) {
         if (tx.refreshToken?.deleteMany) {
-          await tx.refreshToken.deleteMany({ where: { userId } }).catch(() => undefined);
+          await tx.refreshToken.deleteMany({ where: { userId } });
         }
         if (tx.session?.deleteMany) {
-          await tx.session.deleteMany({ where: { userId } }).catch(() => undefined);
+          await tx.session.deleteMany({ where: { userId } });
         }
         if (tx.userDeviceToken?.deleteMany) {
-          await tx.userDeviceToken.deleteMany({ where: { userId } }).catch(() => undefined);
+          await tx.userDeviceToken.deleteMany({ where: { userId } });
         }
       }
 
       // Unlink structural references
       if (tx.task?.updateMany) {
-        await tx.task.updateMany({ where: { employeeId: numId }, data: { employeeId: null } }).catch(() => undefined);
+        await tx.task.updateMany({ where: { customerId: empCustomerId, employeeId: numId }, data: { employeeId: null } });
       }
       if (tx.taskProof?.updateMany) {
-        await tx.taskProof.updateMany({ where: { employeeId: numId }, data: { employeeId: null } }).catch(() => undefined);
+        await tx.taskProof.updateMany({ where: { employeeId: numId, task: { customerId: empCustomerId } }, data: { employeeId: null } });
       }
       if (tx.work?.updateMany) {
-        await tx.work.updateMany({ where: { assignedToId: numId }, data: { assignedToId: null } }).catch(() => undefined);
-        await tx.work.updateMany({ where: { editorId: numId }, data: { editorId: null } }).catch(() => undefined);
+        await tx.work.updateMany({ where: { customerId: empCustomerId, assignedToId: numId }, data: { assignedToId: null } });
+        await tx.work.updateMany({ where: { customerId: empCustomerId, editorId: numId }, data: { editorId: null } });
       }
       if (tx.workTask?.updateMany) {
-        await tx.workTask.updateMany({ where: { assignedToId: numId }, data: { assignedToId: null } }).catch(() => undefined);
+        await tx.workTask.updateMany({ where: { assignedToId: numId, work: { customerId: empCustomerId } }, data: { assignedToId: null } });
       }
       if (tx.workAccessRequest?.deleteMany) {
-        await tx.workAccessRequest.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.workAccessRequest.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.employeeModuleOverride?.deleteMany) {
-        await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.employeeModuleOverride.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.employeeLeadLimit?.deleteMany) {
-        await tx.employeeLeadLimit.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.employeeLeadLimit.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.locationTrackingSetting?.deleteMany) {
-        await tx.locationTrackingSetting.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.locationTrackingSetting.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.teamMember?.deleteMany) {
-        await tx.teamMember.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.teamMember.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.team?.updateMany) {
-        await tx.team.updateMany({ where: { leaderId: numId }, data: { leaderId: null } }).catch(() => undefined);
+        await tx.team.updateMany({ where: { customerId: empCustomerId, leaderId: numId }, data: { leaderId: null } });
       }
       if (tx.department?.updateMany) {
-        await tx.department.updateMany({ where: { headId: numId }, data: { headId: null } }).catch(() => undefined);
+        await tx.department.updateMany({ where: { customerId: empCustomerId, headId: numId }, data: { headId: null } });
       }
       if (tx.employee?.updateMany) {
-        await tx.employee.updateMany({ where: { managerId: numId }, data: { managerId: null } }).catch(() => undefined);
+        await tx.employee.updateMany({ where: { customerId: empCustomerId, managerId: numId }, data: { managerId: null } });
       }
       if (tx.customer?.updateMany) {
-        await tx.customer.updateMany({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } }).catch(() => undefined);
+        await tx.customer.updateMany({ where: { id: empCustomerId, assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
       }
       if (tx.lead?.updateMany) {
-        await tx.lead.updateMany({ where: { employeeId: numId }, data: { employeeId: null } }).catch(() => undefined);
+        await tx.lead.updateMany({ where: { customerId: empCustomerId, employeeId: numId }, data: { employeeId: null } });
+        await tx.lead.updateMany({ where: { customerId: empCustomerId, convertedByEmployeeId: numId }, data: { convertedByEmployeeId: null } });
       }
       if (tx.visit?.deleteMany) {
-        await tx.visit.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.visit.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.monthlySchedule?.updateMany) {
-        await tx.monthlySchedule.updateMany({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } }).catch(() => undefined);
+        await tx.monthlySchedule.updateMany({ where: { customerId: empCustomerId, assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
       }
       if (tx.employeeLocation?.deleteMany) {
-        await tx.employeeLocation.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.employeeLocation.deleteMany({ where: { employeeId: numId } });
       }
       if (tx.remoteRequest?.deleteMany) {
-        await tx.remoteRequest.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+        await tx.remoteRequest.deleteMany({ where: { employeeId: numId } });
       }
 
       {
         if (tx.attendanceBreak?.deleteMany) {
-          await tx.attendanceBreak.deleteMany({ where: { attendance: { employeeId: numId } } }).catch(() => undefined);
+          await tx.attendanceBreak.deleteMany({ where: { attendance: { employeeId: numId } } });
         }
         if (tx.attendance?.deleteMany) {
-          await tx.attendance.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.attendance.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.salarySlip?.deleteMany) {
-          await tx.salarySlip.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.salarySlip.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.salaryStructure?.deleteMany) {
-          await tx.salaryStructure.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.salaryStructure.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.payrollItem?.deleteMany) {
-          await tx.payrollItem.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.payrollItem.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.employeeClaim?.deleteMany) {
-          await tx.employeeClaim.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.employeeClaim.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.employeeLoan?.deleteMany) {
-          await tx.employeeLoan.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.employeeLoan.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.employeeDeduction?.deleteMany) {
-          await tx.employeeDeduction.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.employeeDeduction.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.commissionWithdrawal?.deleteMany) {
-          await tx.commissionWithdrawal.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.commissionWithdrawal.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.commission?.deleteMany) {
-          await tx.commission.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.commission.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.leaveAdjustmentHistory?.deleteMany) {
-          await tx.leaveAdjustmentHistory.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.leaveAdjustmentHistory.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.employeeLeaveBalance?.deleteMany) {
-          await tx.employeeLeaveBalance.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.employeeLeaveBalance.deleteMany({ where: { employeeId: numId } });
         }
         if (tx.leaveRequest?.deleteMany) {
-          await tx.leaveRequest.deleteMany({ where: { employeeId: numId } }).catch(() => undefined);
+          await tx.leaveRequest.deleteMany({ where: { employeeId: numId } });
         }
       }
 
@@ -2638,7 +2657,7 @@ export class EmployeeService {
               email: existing.email,
             },
           },
-        }).catch(() => undefined);
+        });
       }
 
       // Delete the employee record
@@ -2670,18 +2689,18 @@ export class EmployeeService {
             await tx.auditLog.updateMany({
               where: { userId },
               data: { userId: null },
-            }).catch(() => undefined);
+            });
           }
           if (tx.notification?.deleteMany) {
-            await tx.notification.deleteMany({ where: { userId } }).catch(() => undefined);
+            await tx.notification.deleteMany({ where: { userId } });
           }
           if (tx.userRole?.deleteMany) {
-            await tx.userRole.deleteMany({ where: { userId } }).catch(() => undefined);
+            await tx.userRole.deleteMany({ where: { userId } });
           }
           await tx.user.delete({ where: { id: userId } });
         }
       }
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     const check = await this.prisma.employee.findUnique({ where: { id: numId } });
     if (check) {

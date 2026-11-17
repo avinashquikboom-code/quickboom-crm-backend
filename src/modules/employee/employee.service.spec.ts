@@ -22,6 +22,7 @@ describe('EmployeeService — Customer Data Isolation', () => {
         delete: jest.fn(),
       },
       department: {
+        count: jest.fn().mockResolvedValue(0),
         findFirst: jest.fn(),
         create: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -30,9 +31,11 @@ describe('EmployeeService — Customer Data Isolation', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       customer: {
+        count: jest.fn().mockResolvedValue(0),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       lead: {
+        count: jest.fn().mockResolvedValue(0),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       deal: {
@@ -110,7 +113,19 @@ describe('EmployeeService — Customer Data Isolation', () => {
         create: jest.fn().mockResolvedValue({ id: 1, name: 'Head Office' }),
       },
       $transaction: jest.fn((cb: any) => typeof cb === 'function' ? cb(prisma) : Promise.all(cb)),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     } as any;
+
+    for (const model of [
+      'remoteRequest', 'overtimeRequest', 'visit', 'employeeLocation', 'employeeLeaveBalance',
+      'leaveAdjustmentHistory', 'teamMember', 'employeeModuleOverride', 'employeeLeadLimit',
+      'locationTrackingSetting', 'workAccessRequest', 'overtimeNotificationEvent', 'dataCaptureSearch',
+      'commissionConfig', 'salaryTargetPolicy', 'salaryTargetReview', 'hrmEmployeeMonthlyReport',
+      'hrmLeaveMonthlySnapshot', 'hrmNotificationDelivery', 'hrmCommissionMonthlySnapshot',
+      'work', 'team', 'monthlySchedule', 'task', 'visitPhoto', 'workTask', 'taskProof',
+    ]) {
+      prisma[model] = { count: jest.fn().mockResolvedValue(0) };
+    }
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -469,6 +484,18 @@ describe('EmployeeService — Customer Data Isolation', () => {
         isSuperAdmin: false,
       })).rejects.toThrow(BadRequestException);
       expect(prisma.employee.update).not.toHaveBeenCalled();
+      expect(prisma.employee.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion when a dependent cascade record is outside a selected reset workflow', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.workAccessRequest.count.mockResolvedValue(2);
+
+      await expect(service.remove({
+        id: 50,
+        customerId: 1,
+        isSuperAdmin: false,
+      })).rejects.toThrow('Work access requests: 2');
       expect(prisma.employee.delete).not.toHaveBeenCalled();
     });
 

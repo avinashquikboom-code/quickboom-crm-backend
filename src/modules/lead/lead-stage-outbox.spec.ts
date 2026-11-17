@@ -1,4 +1,4 @@
-import { createStageOutbox } from './lead-stage-outbox';
+import { createLeadCreatedOutbox, createStageOutbox } from './lead-stage-outbox';
 import { LeadStageOutboxWorker } from './lead-stage-outbox.worker';
 
 describe('stage outbox', () => {
@@ -13,6 +13,34 @@ describe('stage outbox', () => {
   it('propagates an outbox insertion failure so the transaction can roll back', async () => {
     const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({}) }, leadStageWhatsAppDelivery: { create: jest.fn().mockResolvedValue({}) }, leadStageEmailDelivery: { create: jest.fn().mockRejectedValue(new Error('write failed')) } };
     await expect(createStageOutbox(db, params)).rejects.toThrow('write failed');
+  });
+  it('queues valid lead-created channels with stable tenant-scoped keys and skips invalid contacts', async () => {
+    const email = { upsert: jest.fn() };
+    const whatsapp = { upsert: jest.fn() };
+    const db: any = {
+      leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, name: 'New', emailEnabled: true, whatsappEnabled: true, emailTemplateId: 8, whatsappTemplateId: 9 }) },
+      leadStageEmailDelivery: email,
+      leadStageWhatsAppDelivery: whatsapp,
+    };
+    await createLeadCreatedOutbox(db, {
+      customerId: 3, leadId: 4, userId: 5, stageId: 2, stageName: 'New',
+      email: 'invalid-address', phone: '---',
+    });
+    expect(email.upsert).not.toHaveBeenCalled();
+    expect(whatsapp.upsert).not.toHaveBeenCalled();
+
+    await createLeadCreatedOutbox(db, {
+      customerId: 3, leadId: 4, userId: 5, stageId: 2, stageName: 'New',
+      email: 'lead@example.test', phone: '+919876543210',
+    });
+    expect(email.upsert.mock.calls[0][0]).toMatchObject({
+      where: { idempotencyKey: 'lead_created_3_4_EMAIL' },
+      create: { triggerSource: 'LEAD_CREATED', status: 'QUEUED', emailTemplateId: 8 },
+    });
+    expect(whatsapp.upsert.mock.calls[0][0]).toMatchObject({
+      where: { idempotencyKey: 'lead_created_3_4_WHATSAPP' },
+      create: { triggerSource: 'LEAD_CREATED', status: 'QUEUED', metaTemplateId: 9 },
+    });
   });
   it.each([
     [true, true, 8, 9, 'QUEUED', 'QUEUED'],
@@ -94,6 +122,29 @@ describe('stage outbox', () => {
       data: expect.objectContaining({ status: 'SENT', ...(channel === 'EMAIL' ? { providerMessageId: expectedMessageId } : { metaMessageId: expectedMessageId }) }),
     }));
     expect(channel === 'EMAIL' ? leadService.handleLeadStageChangeNotification : leadService.handleLeadStageChangeWhatsappNotification).toHaveBeenCalled();
+  });
+
+  it('dispatches lead-created events even when the lead has no explicit stage mapping', async () => {
+    const email: any = { claimQueued: jest.fn().mockResolvedValue(true) };
+    const table = { updateMany: jest.fn() };
+    const lead: any = {
+      getLeadById: jest.fn().mockResolvedValue({ id: 4, stageId: null }),
+      handleLeadStageChangeNotification: jest.fn().mockResolvedValue({ status: 'SENT', messageId: 'accepted', error: null }),
+    };
+    const prisma: any = { leadStage: { findFirst: jest.fn().mockResolvedValue(null) }, leadStageEmailDelivery: table };
+    const worker = new LeadStageOutboxWorker(prisma, lead, email, {} as any);
+    await worker.process('EMAIL', {
+      id: 11, customerId: 3, leadId: 4, newStageId: null, previousStageId: null,
+      newStage: 'New', previousStage: null, triggerSource: 'LEAD_CREATED',
+      emailTemplateId: null, variableMapping: null, attemptCount: 0,
+    });
+    expect(lead.handleLeadStageChangeNotification).toHaveBeenCalledWith(
+      3, { id: 4, stageId: null }, '', 'New', undefined, undefined, undefined, undefined,
+      'LEAD_CREATED', undefined, null, 11, true,
+    );
+    expect(table.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'SENT', providerMessageId: 'accepted' }),
+    }));
   });
 
   it.each([

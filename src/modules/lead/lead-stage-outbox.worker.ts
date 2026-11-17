@@ -72,6 +72,7 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
       const stage = row.newStageId == null ? null : await this.prisma.leadStage.findFirst({
         where: { id: row.newStageId, deletedAt: null, ...tenantLeadStageScope(row.customerId) },
       });
+      const leadCreated = row.triggerSource === 'LEAD_CREATED';
       const currentTemplate = channel === 'EMAIL' ? stage?.emailTemplateId : stage?.whatsappTemplateId;
       const recordedTemplate = channel === 'EMAIL' ? row.emailTemplateId : row.metaTemplateId;
       const currentMapping = channel === 'EMAIL' ? stage?.emailVariableMapping : stage?.whatsappVariableMapping;
@@ -80,21 +81,22 @@ export class LeadStageOutboxWorker implements OnModuleInit, OnModuleDestroy {
         await service.markResult(row.id, { status: 'SKIPPED', error: 'Channel or stage automation is disabled.' });
         return;
       }
-      if (stage && currentTemplate == null && recordedTemplate == null) {
+      if (stage && !leadCreated && currentTemplate == null && recordedTemplate == null) {
         const table: any = channel === 'EMAIL' ? this.prisma.leadStageEmailDelivery : this.prisma.leadStageWhatsAppDelivery;
         await table.updateMany({ where: { id: row.id, status: 'PROCESSING', attemptCount: row.attemptCount + 1 },
           data: { status: 'NOT_CONFIGURED', error: 'No template configured for this stage.' } });
         return;
       }
-      if (!stage || stage.isActive === false || (currentTemplate ?? null) !== (recordedTemplate ?? null) ||
-          JSON.stringify(currentMapping ?? null) !== JSON.stringify(row.variableMapping ?? null)) {
+      if ((!stage && !leadCreated) || stage?.isActive === false ||
+          (stage && (currentTemplate ?? null) !== (recordedTemplate ?? null) && !(leadCreated && recordedTemplate == null)) ||
+          (JSON.stringify(currentMapping ?? null) !== JSON.stringify(row.variableMapping ?? null) && !(leadCreated && row.variableMapping == null))) {
         await service.markResult(row.id, { status: 'SKIPPED', error: 'Stage is unavailable or inactive, or its template mapping changed after the transition; review configuration.' });
         return;
       }
       const lead = await this.lead.getLeadById(row.customerId, row.leadId);
       const result = channel === 'EMAIL'
-        ? await this.lead.handleLeadStageChangeNotification(row.customerId, lead, row.previousStage || 'Previous', row.newStage || stage.name, row.userId, undefined, undefined, undefined, 'LEAD_STAGE_CHANGED', row.newStageId, row.previousStageId, row.id, true)
-        : await this.lead.handleLeadStageChangeWhatsappNotification(row.customerId, lead, row.previousStage || 'Previous', row.newStage || stage.name, row.userId, undefined, undefined, 'LEAD_STAGE_CHANGED', row.newStageId, undefined, row.previousStageId, row.id, true);
+        ? await this.lead.handleLeadStageChangeNotification(row.customerId, lead, row.previousStage || '', row.newStage || stage?.name || 'New', row.userId, undefined, undefined, undefined, leadCreated ? 'LEAD_CREATED' : 'LEAD_STAGE_CHANGED', row.newStageId ?? undefined, row.previousStageId, row.id, true)
+        : await this.lead.handleLeadStageChangeWhatsappNotification(row.customerId, lead, row.previousStage || '', row.newStage || stage?.name || 'New', row.userId, undefined, undefined, leadCreated ? 'LEAD_CREATED' : 'LEAD_STAGE_CHANGED', row.newStageId ?? undefined, undefined, row.previousStageId, row.id, true);
       const error = result.error || (result.status !== 'SENT' ? result.message : null);
       const table: any = channel === 'EMAIL' ? this.prisma.leadStageEmailDelivery : this.prisma.leadStageWhatsAppDelivery;
       let status = result.status;
