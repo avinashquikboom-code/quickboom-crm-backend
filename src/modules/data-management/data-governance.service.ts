@@ -312,11 +312,11 @@ export class DataGovernanceService {
               // optional employee links use ON DELETE SET NULL. Clear only
               // same-tenant links; dependencyWarnings rejects cross-tenant refs.
               await tx.customer.updateMany({
-                where: { ...(tenantId == null ? {} : { customerId: tenantId }), assignedEmployeeId: { in: ids } },
+                where: { ...(tenantId == null ? {} : { id: tenantId }), assignedEmployeeId: { in: ids } },
                 data: { assignedEmployeeId: null },
               });
               await tx.customer.updateMany({
-                where: { ...(tenantId == null ? {} : { customerId: tenantId }), createdByEmployeeId: { in: ids } },
+                where: { ...(tenantId == null ? {} : { id: tenantId }), createdByEmployeeId: { in: ids } },
                 data: { createdByEmployeeId: null },
               });
               if (!moduleIds.includes('departments')) {
@@ -1566,7 +1566,7 @@ export class DataGovernanceService {
       checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references', where: { OR: [
         { assignedEmployeeRel: customerId == null ? {} : { customerId } },
         { createdByEmployeeRel: customerId == null ? {} : { customerId } },
-      ] }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, OR: [
+      ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
         { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
       ] } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
@@ -1650,7 +1650,8 @@ export class DataGovernanceService {
         : undefined;
       warnings.push({
         module: check.parent, model: check.model, label: check.label, records,
-        ...(crossTenantRecords ? { crossTenantRecords } : {}), blocking,
+        crossTenantRecords,
+        blocking,
         resolvedRecords,
         unresolvedRecords,
         policy,
