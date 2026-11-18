@@ -23,7 +23,6 @@ import { CurrentCustomer } from '../../common/decorators/current-customer.decora
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DataManagementService } from './data-management.service';
 import { DataGovernanceService } from './data-governance.service';
-import { availableModules, resolveModuleId } from './data-governance.catalog';
 import {
   ModuleResetDto,
   ResetAllDto,
@@ -70,7 +69,7 @@ export class DataManagementController {
   }
 
   @Post('reset')
-  @ApiOperation({ summary: 'Delete approved module data after backup, preview, and confirmation' })
+  @ApiOperation({ summary: 'Delete approved module data after preview, dependency validation, and confirmation' })
   reset(
     @CurrentCustomer() customerId: string,
     @CurrentUser('id') userId: string,
@@ -230,7 +229,6 @@ export class DataManagementController {
     @CurrentUser('role') userRole: string,
     @Body() dto: ModuleResetDto,
   ) {
-    await this.governance.assertBackupCovers(this.tenantId(customerId), dto.backupId, [resolveModuleId(dto.module)]);
     return this.dataManagementService.resetModule(
       customerId,
       userId,
@@ -251,11 +249,6 @@ export class DataManagementController {
     @CurrentUser('role') userRole: string,
     @Body() dto: ResetAllDto,
   ) {
-    await this.governance.assertBackupCovers(
-      this.tenantId(customerId),
-      dto.backupId,
-      availableModules().map((item) => item.id),
-    );
     return this.dataManagementService.resetAllTransactional(
       customerId,
       userId,

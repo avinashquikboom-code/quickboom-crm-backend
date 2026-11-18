@@ -27,7 +27,6 @@ import {
 
 const MAX_ROWS = 10000;
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
-const BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 const SENSITIVE_KEY = /password|secret|token|apiKey|credential/i;
 
 const scopedCustomer = (customerId: number | null) => customerId == null ? {} : { customerId };
@@ -130,7 +129,6 @@ export class DataGovernanceService {
       estimatedRecords,
       expiresAt: Date.now() + PREVIEW_TTL_MS,
     });
-    const backup = await this.latestVerifiedBackup(tenantId, modules.map((item) => item.id), scope === 'global');
     return {
       previewToken,
       expiresAt: new Date(Date.now() + PREVIEW_TTL_MS).toISOString(),
@@ -146,14 +144,6 @@ export class DataGovernanceService {
       dependencies: this.dependencies(modules.map((item) => item.id)),
       dependencyWarnings,
       protected: PROTECTED_RECORDS,
-      backupStatus: backup
-        ? { verified: true, backupId: backup.backupId, createdAt: backup.createdAt }
-        : {
-          verified: false,
-          backupId: null,
-          createdAt: null,
-          reason: 'No usable verified backup covers every selected module for this tenant within the 24-hour backup window.',
-        },
     };
   }
 
@@ -165,7 +155,6 @@ export class DataGovernanceService {
       modules?: string[];
       scope?: string;
       previewToken?: string;
-      backupId?: string;
       confirmation?: string;
       acknowledgement?: string;
       globalConfirmation?: string;
@@ -199,7 +188,6 @@ export class DataGovernanceService {
     if ([...preview.modules].sort().join(',') !== moduleIds.join(',')) {
       throw new BadRequestException('The preview does not match the selected modules. Run the preview again.');
     }
-    await this.assertBackupCovers(tenantId, body.backupId, moduleIds, scope === 'global');
     const operationId = randomUUID();
     this.consumingPreviews.add(previewToken);
     return this.withLock(tenantId, operationId, async () => {
@@ -287,7 +275,6 @@ export class DataGovernanceService {
           tables: deleted,
           countsBefore,
           countsAfter,
-          backupId: body.backupId,
           idempotencyKey: key,
           reason: body.reason || 'Admin data reset',
           verified: true,
@@ -304,7 +291,6 @@ export class DataGovernanceService {
           tables: deleted,
           countsBefore,
           countsAfter,
-          backupId: body.backupId,
           idempotencyKey: key,
           verified: false,
           partial: Object.values(deleted).some((count) => count > 0),
@@ -330,7 +316,6 @@ export class DataGovernanceService {
         verified: true,
         verifiedTables: Object.keys(deleted),
         failures,
-        backupId: body.backupId,
         completedAt: new Date().toISOString(),
       };
     });
@@ -795,37 +780,6 @@ export class DataGovernanceService {
 
   job(jobId: string) {
     return this.jobs.get(jobId) || null;
-  }
-
-  async assertBackupCovers(customerId: number | null, backupId: string | undefined, moduleIds: string[], global = false) {
-    if (!backupId) throw new BadRequestException('A verified backup is required before this reset.');
-    const meta = await this.backupMeta(global ? null : customerId, backupId);
-    if (meta.status !== 'VERIFIED') throw new BadRequestException('The selected backup is not verified.');
-    if (global && meta.scope !== 'global') throw new BadRequestException('A global reset requires a verified global backup.');
-    if (!global && meta.scope === 'global') throw new BadRequestException('A tenant reset cannot use a global backup.');
-    const createdAt = new Date(String(meta.createdAt || 0)).getTime();
-    if (!createdAt || createdAt > Date.now() || Date.now() - createdAt > BACKUP_TTL_MS) {
-      throw new BadRequestException('The backup is older than 24 hours. Create a new backup before deleting data.');
-    }
-    const covered = new Set((meta.modules as string[]) || []);
-    const missing = moduleIds.filter((id) => !covered.has(id));
-    if (missing.length) throw new BadRequestException(`The backup does not include: ${missing.join(', ')}`);
-    const file = this.backupPath(meta.customerId, backupId);
-    const checked = await this.verifyFile(file, String(meta.checksum || ''), meta.customerId, backupId);
-    if (!checked.ok) throw new BadRequestException(`Backup verification failed. ${checked.reason}`);
-  }
-
-  private async latestVerifiedBackup(customerId: number | null, moduleIds: string[], global: boolean) {
-    const rows = await this.listBackups(customerId);
-    return rows.find((row) => {
-      if (row.status !== 'VERIFIED') return false;
-      if (global && row.scope !== 'global') return false;
-      if (!global && row.scope === 'global') return false;
-      const createdAt = new Date(row.createdAt).getTime();
-      if (!createdAt || createdAt > Date.now() || Date.now() - createdAt > BACKUP_TTL_MS) return false;
-      const covered = new Set(row.modules as string[]);
-      return moduleIds.every((id) => covered.has(id));
-    }) || null;
   }
 
   private selectedModules(ids: string[] | undefined, all: boolean) {
