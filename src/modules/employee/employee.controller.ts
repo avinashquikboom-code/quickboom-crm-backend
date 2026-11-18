@@ -73,9 +73,20 @@ export class EmployeeController {
     @Query('limit') limit?: string,
     @Query('excludeAdmins') excludeAdmins?: string,
     @Query('bpoOnly') bpoOnly?: string,
+    @Query('managerOptions') managerOptions?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    let targetCustomerId = isSuperAdmin
+      ? (customerIdQuery || customerId || user?.customerId)
+      : (customerId ?? user?.customerId);
+
+    // The global employee directory may remain unscoped for Super Admins, but
+    // manager choices must use the same tenant fallback as employee creation.
+    // Otherwise a manager from any tenant can be selected while POST /employees
+    // creates under resolveDefaultCustomerId(), causing a misleading org error.
+    if (isSuperAdmin && managerOptions === 'true' && !targetCustomerId) {
+      targetCustomerId = await this.employeeService.resolveDefaultCustomerId();
+    }
 
     if (!isSuperAdmin && !targetCustomerId) {
       throw new ForbiddenException('User does not belong to any customer');
@@ -108,7 +119,9 @@ export class EmployeeController {
     @Query('prefix') prefix?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    const targetCustomerId = isSuperAdmin
+      ? (customerIdQuery || customerId || user?.customerId)
+      : (customerId ?? user?.customerId);
     const defaultPrefix = process.env.EMPLOYEE_ID_PREFIX || 'EMP';
     return this.employeeService.getNextEmployeeCode(targetCustomerId, prefix || defaultPrefix);
   }
@@ -308,7 +321,9 @@ export class EmployeeController {
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    let targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId || user?.customerId) : user?.customerId;
+    let targetCustomerId = isSuperAdmin
+      ? (customerIdQuery || customerId || user?.customerId)
+      : (customerId ?? user?.customerId);
 
     if (!targetCustomerId && isSuperAdmin) {
       targetCustomerId = await this.employeeService.resolveDefaultCustomerId();
