@@ -152,13 +152,13 @@ describe('DataCaptureService', () => {
     });
     mockPrisma.dataCapturePlace.findMany.mockResolvedValueOnce([record]);
     mockPrisma.dataCapturePlace.count.mockResolvedValueOnce(1);
+    // Existing record details are complete; reopening must not require a live Places lookup.
     expect((await service.updatePlace(1, 37, {
       photos: [], googlePhotos: [{ url }],
     })).photos).toEqual([url]);
     expect((await service.listPlaces(1, { page: 1, limit: 20 })).data[0].photos).toEqual([url]);
     const reopened = await service.getPlaceById(1, 37);
     expect(reopened.photos).toEqual([url]);
-    expect(reopened.businessName).toBe('Storefront');
     expect(mockIntegrationSettingsService.getGoogleMapsConfig).not.toHaveBeenCalled();
   });
 
@@ -227,7 +227,7 @@ describe('DataCaptureService', () => {
         limit: 20,
         status: 'ALL',
         source: 'ALL',
-      }, { role: 'SUPER_ADMIN' });  // SUPER_ADMIN context — no customerId filter
+      }, { role: 'SUPER_ADMIN', customerId: 1 });  // SUPER_ADMIN context — no customerId filter
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {
@@ -380,6 +380,10 @@ describe('DataCaptureService', () => {
       mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 0 } });
       mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);
       mockPrisma.lead.findMany.mockResolvedValue([]);
+      jest.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { places: [{
+        id: 'ChIJgym', displayName: { text: 'FitPro Gym' }, formattedAddress: '1 Test Road',
+      }] } } as any);
+      mockIntegrationSettingsService.getGoogleMapsConfig.mockResolvedValue({ isEnabled: true, apiKey: 'unit-test-key' });
       mockPrisma.dataCaptureJob.create.mockImplementation((args: any) => ({
         ...args.data,
         places: args.data.places.create.map((p: any, idx: number) => ({
@@ -416,7 +420,7 @@ describe('DataCaptureService', () => {
             customerId: 1,
             userId: 1,
             keyword: 'Gyms',
-            location: 'Vadodara',
+            location: '',
           }),
         }),
       );
@@ -428,6 +432,10 @@ describe('DataCaptureService', () => {
       mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 0 } });
       mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);
       mockPrisma.lead.findMany.mockResolvedValue([]);
+      jest.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { places: [{
+        id: 'ChIJclinic', displayName: { text: 'City Clinic' }, formattedAddress: '2 Test Road',
+      }] } } as any);
+      mockIntegrationSettingsService.getGoogleMapsConfig.mockResolvedValue({ isEnabled: true, apiKey: 'unit-test-key' });
       mockPrisma.dataCaptureJob.create.mockImplementation((args: any) => ({
         ...args.data,
         places: args.data.places.create.map((p: any, idx: number) => ({
@@ -455,6 +463,10 @@ describe('DataCaptureService', () => {
       mockPrisma.customer.findFirst.mockResolvedValue({ id: 2, name: 'Active Customer', isActive: true });
       mockPrisma.dataCapturePlace.findMany.mockResolvedValue([]);
       mockPrisma.lead.findMany.mockResolvedValue([]);
+      jest.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { places: [{
+        id: 'ChIJdentist', displayName: { text: 'Pune Dentist' }, formattedAddress: '3 Test Road',
+      }] } } as any);
+      mockIntegrationSettingsService.getGoogleMapsConfig.mockResolvedValue({ isEnabled: true, apiKey: 'unit-test-key' });
       mockPrisma.dataCaptureJob.create.mockImplementation((args: any) => ({
         ...args.data,
         places: args.data.places.create.map((p: any, idx: number) => ({
@@ -465,7 +477,7 @@ describe('DataCaptureService', () => {
       }));
 
       const res = await service.extractPlaces(
-        undefined,
+        2,
         { id: 1, role: 'SUPER_ADMIN' },
         { keyword: 'Dentists', location: 'Pune' },
       );

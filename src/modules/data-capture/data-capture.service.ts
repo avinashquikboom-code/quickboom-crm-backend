@@ -1378,7 +1378,11 @@ export class DataCaptureService implements OnModuleInit {
       const isSuperAdmin = isUserSuperAdmin(user);
       // SUPER_ADMIN may optionally pass an explicit target customerId via query param / header
       // (CustomerGuard resolves that into request.customerId; stays undefined for platform-wide view)
-      const numCustomerId = this.requireTenant(customerId);
+      // Only an authenticated platform administrator may intentionally list
+      // across tenants; tenant users must resolve a concrete tenant scope.
+      const numCustomerId = isSuperAdmin && customerId == null
+        ? Number.NaN
+        : this.requireTenant(customerId || user?.customerId);
       const hasExplicitCustomer = !isNaN(numCustomerId) && numCustomerId > 0;
 
       const page = Math.max(Number(query.page) || 1, 1);
@@ -1804,7 +1808,8 @@ export class DataCaptureService implements OnModuleInit {
     let rawDataPatch: any = undefined;
     if (dto.rawData !== undefined || updatedPhotosField !== undefined) {
       const preservedCaptureAt = (existingRaw as { capturedAt?: string }).capturedAt
-        || this.captureTimestamp(existing).toISOString();
+        || this.captureTimestamp(existing)?.toISOString()
+        || new Date().toISOString();
       rawDataPatch = {
         ...existingRaw,
         ...(dto.rawData && typeof dto.rawData === 'object' ? dto.rawData : {}),
