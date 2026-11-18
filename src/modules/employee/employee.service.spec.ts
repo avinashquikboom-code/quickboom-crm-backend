@@ -159,6 +159,27 @@ describe('EmployeeService — Customer Data Isolation', () => {
       prisma.employee.findFirst.mockResolvedValueOnce(null);
       await expect((service as any).validateReportingManager(prisma, 1, 2, 1)).rejects.toThrow();
     });
+    it('rejects an inactive manager in the same tenant', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce({ id: 2, managerId: null, status: 'INACTIVE' });
+      await expect((service as any).validateReportingManager(prisma, 1, 2, 1))
+        .rejects.toThrow('Reporting manager must be active');
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 2, customerId: 1 },
+      }));
+    });
+    it('treats managerId as an Employee primary key and rejects a non-numeric employee code', async () => {
+      await expect((service as any).validateReportingManager(prisma, 1, 'EMP-002', 1))
+        .rejects.toThrow('Invalid reporting manager');
+      expect(prisma.employee.findFirst).not.toHaveBeenCalled();
+    });
+    it('rejects a user ID when that number is not an Employee primary key in the tenant', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce(null);
+      await expect((service as any).validateReportingManager(prisma, 1, 7002, 1))
+        .rejects.toThrow('Reporting manager is not in this organization');
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 7002, customerId: 1 },
+      }));
+    });
     it('rejects self-reporting and cycles', async () => {
       await expect((service as any).validateReportingManager(prisma, 1, 1, 1)).rejects.toThrow();
       prisma.employee.findFirst.mockResolvedValueOnce({ id: 2, managerId: 1, status: 'ACTIVE' });

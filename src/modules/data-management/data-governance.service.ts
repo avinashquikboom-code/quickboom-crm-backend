@@ -1566,7 +1566,7 @@ export class DataGovernanceService {
       checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references', where: { OR: [
         { assignedEmployeeRel: customerId == null ? {} : { customerId } },
         { createdByEmployeeRel: customerId == null ? {} : { customerId } },
-      ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
+      ] }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, OR: [
         { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
       ] } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
