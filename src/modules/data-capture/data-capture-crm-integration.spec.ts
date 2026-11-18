@@ -31,6 +31,8 @@ describe('Data Capture CRM reference imports', () => {
       leadActivityTimeline: { create: jest.fn() },
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn().mockResolvedValue([]),
+      leadStageWhatsAppDelivery: { upsert: jest.fn() },
+      leadStageEmailDelivery: { upsert: jest.fn() },
     };
     let queue = Promise.resolve();
     prisma.$transaction = jest.fn((callback) => { const result = queue.then(() => callback(prisma)); queue = result.catch(() => undefined); return result; });
@@ -112,6 +114,25 @@ describe('Data Capture CRM reference imports', () => {
     })).rejects.toMatchObject({ response: expect.objectContaining({ error: 'DATA_CAPTURE_IMPORT_FAILED' }) });
   });
 
+  it('uses a saved non-Google business name without requiring Google Place details', async () => {
+    captures[0] = {
+      ...captures[0], googlePlaceId: null, sourceRecordId: '1',
+      source: 'MANUAL', businessName: 'Visible Existing Business', status: 'CAPTURED',
+    };
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1 }],
+    });
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Visible Existing Business', companyName: 'Visible Existing Business' });
+  });
+
+  it('rejects a record that has no business name and is not a resolvable Google reference', async () => {
+    captures[0] = { ...captures[0], googlePlaceId: null, source: 'MANUAL', businessName: '' };
+    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, { places: [{ id: 1 }] }))
+      .rejects.toMatchObject({ response: expect.objectContaining({ message: expect.stringContaining('Business name is missing') }) });
+    expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+
   it('saves user-provided social URLs as unverified profiles with provenance', async () => {
     const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
       places: [{ id: 1, independentFields: {
@@ -155,6 +176,20 @@ describe('Data Capture CRM reference imports', () => {
       latitude: null,
       rating: null,
     });
+  });
+
+  it('returns a per-record business-name failure without aborting valid records in the same request', async () => {
+    captures[0] = { ...captures[0], googlePlaceId: null, source: 'MANUAL', businessName: '' };
+    captures[1] = { ...captures[1], googlePlaceId: null, source: 'MANUAL', businessName: 'Importable record' };
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1 }, { id: 2 }],
+    });
+    expect(result.imported).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceRecordId: '1', failed: true, error: expect.stringContaining('Business name is missing') }),
+      expect.objectContaining({ sourceRecordId: '2', imported: true }),
+    ]));
   });
 
   it('isolates missing and foreign tenant/record context', async () => {
