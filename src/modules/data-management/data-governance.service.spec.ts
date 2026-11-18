@@ -150,6 +150,49 @@ describe('DataGovernanceService executeReset', () => {
       }),
     }));
   });
+
+  it('requires a fresh preview when dependency references change without changing selected table counts', async () => {
+    const employeeTenants = new Map([[99, 12]]);
+    const customerRows: Array<Record<string, any>> = [];
+    const employee = {
+      count: jest.fn(async ({ where }: { where?: Record<string, any> } = {}) => where?.customerId === 12 ? 1 : 0),
+      findMany: jest.fn().mockResolvedValue([{ id: 99 }]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    const customer = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => customerRows.filter((row) =>
+        matchesCustomerEmployeeReference(row, where, employeeTenants),
+      ).length),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    const auditLog = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+    };
+    let prisma: PrismaService;
+    prisma = new Proxy({ employee, customer, auditLog }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$transaction') return (work: (tx: unknown) => Promise<unknown>) => work(prisma);
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(12, { modules: ['employees'] });
+    customerRows.push({ id: 12, assignedEmployeeId: 99, createdByEmployeeId: null });
+
+    await expect(service.executeReset(12, 7, 'SUPER_ADMIN', {
+      modules: ['employees'], previewToken: preview.previewToken, confirmation: 'RESET', idempotencyKey: 'stale-dependency-preview',
+    })).rejects.toThrow('Dependencies changed after the preview. Run a fresh preview before deleting.');
+    expect(employee.deleteMany).not.toHaveBeenCalled();
+    expect(customer.updateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe('DataGovernanceService reset preview', () => {
