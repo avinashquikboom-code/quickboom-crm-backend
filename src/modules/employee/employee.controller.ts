@@ -59,6 +59,7 @@ export class EmployeeController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
   @ApiQuery({ name: 'bpoOnly', required: false, description: 'Filter only BPO eligible employees' })
+  @ApiQuery({ name: 'managerOptions', required: false, description: 'Scope manager choices to the employee creation tenant' })
   async findAll(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
