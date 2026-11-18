@@ -9,7 +9,8 @@ export type WhereKind =
   | 'ticket'
   | 'generation'
   | 'invoice'
-  | 'template';
+  | 'template'
+  | 'teamMember';
 
 export type TableRule = {
   model: string;
@@ -171,7 +172,7 @@ export const RESET_MODULES: ResetModule[] = [
       row('monthlySchedule', 'monthly_schedules', 'Schedules', 'customer'),
       row('work', 'Work', 'Work items', 'customer'),
       row('supportTicket', 'SupportTicket', 'Support tickets', 'customer'),
-      row('teamMember', 'TeamMember', 'Team memberships', 'customer'),
+      row('teamMember', 'TeamMember', 'Team memberships', 'teamMember'),
       row('team', 'Team', 'Teams', 'customer'),
       row('announcement', 'Announcement', 'Announcements', 'customer'),
     ],
@@ -381,6 +382,8 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
       return { generation: { customerId } };
     case 'invoice':
       return { invoice: { customerId } };
+    case 'teamMember':
+      return { team: { customerId } };
     default:
       return { customerId };
   }

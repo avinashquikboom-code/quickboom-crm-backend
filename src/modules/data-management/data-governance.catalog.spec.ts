@@ -28,6 +28,14 @@ describe('data governance catalog', () => {
     expect(whereFor('lead', 12)).toEqual({ lead: { customerId: 12 } });
   });
 
+  it('scopes team memberships through their actual Team relation', () => {
+    expect(whereFor('teamMember', 12)).toEqual({ team: { customerId: 12 } });
+    expect(whereFor('teamMember', 99)).toEqual({ team: { customerId: 99 } });
+    expect(whereFor('teamMember', null)).toEqual({});
+    const membership = RESET_MODULES.flatMap((item) => item.tables).find((table) => table.model === 'teamMember');
+    expect(membership?.where).toBe('teamMember');
+  });
+
   it('includes overtime notification events before deleting overtime requests', () => {
     const tables = tablesForModules(['hrm']);
     const eventIndex = tables.findIndex((table) => table.model === 'overtimeNotificationEvent');

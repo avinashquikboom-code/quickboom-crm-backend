@@ -76,7 +76,7 @@ describe('DataGovernanceService executeReset', () => {
     });
     const attendanceBreak = makeDelegate('attendanceBreak');
     const attendance = makeDelegate('attendance');
-    const tx = { attendanceBreak, attendance, $queryRaw: jest.fn().mockResolvedValue([]) };
+    const tx = { attendanceBreak, attendance, $queryRaw: jest.fn().mockResolvedValue([]), $executeRaw: jest.fn().mockResolvedValue(0) };
     const prisma = {
       attendanceBreak,
       attendance,
@@ -132,6 +132,7 @@ describe('DataGovernanceService reset preview', () => {
     const client = new Proxy({}, {
       get: (_target, key) => {
         if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
         return {
           count: jest.fn().mockResolvedValue(0),
           findMany: jest.fn().mockResolvedValue([]),
@@ -139,7 +140,7 @@ describe('DataGovernanceService reset preview', () => {
           deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
         };
       },
-    }) as PrismaService;
+    }) as unknown as PrismaService;
     const service = new DataGovernanceService(client);
 
     const preview = await service.previewReset(12, { modules: ['attendance'] });
@@ -209,5 +210,35 @@ describe('DataGovernanceService reset advisory locks', () => {
     const [globalLock] = tx.$executeRaw.mock.results.map((result) => result.value);
     expect(globalLock.strings.join('?')).toContain('pg_advisory_xact_lock(?::integer, 0::integer)');
     expect(globalLock.values).toEqual([1397771313]);
+  });
+});
+
+describe('DataGovernanceService TeamMember tenant filters', () => {
+  it('counts employee memberships and detects memberships linked to another tenant team', async () => {
+    const teamMember = {
+      count: jest.fn().mockResolvedValue(2),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const employee = {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([{ id: 101 }]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const prisma = new Proxy({ teamMember, employee }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    const warnings = await (service as any).dependencyWarnings(['employees'], 12, prisma);
+    const teamMembership = warnings.find((item: any) => item.model === 'teamMember');
+
+    expect(teamMember.count).toHaveBeenCalledWith({ where: { employee: { customerId: 12 } } });
+    expect(teamMember.count).toHaveBeenCalledWith({ where: { team: { customerId: { not: 12 } }, employee: { customerId: 12 } } });
+    expect(teamMembership).toMatchObject({ records: 2, crossTenantRecords: 2, blocking: true });
   });
 });
