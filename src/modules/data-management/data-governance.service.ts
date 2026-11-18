@@ -262,6 +262,14 @@ export class DataGovernanceService {
         parentTaskIds: number[];
         reason?: string;
       } | null = null;
+      let visitPhotoDiagnostic: {
+        expectedCount: number;
+        matchingBeforeDelete: number;
+        deletedCount?: number;
+        visitIds: number[];
+        deletionFilter: Record<string, unknown>;
+        reason?: string;
+      } | null = null;
       try {
         if (!previewRecord || this.previews.get(previewToken) !== previewRecord) {
           throw new BadRequestException('The reset preview is no longer available. Run it again.');
@@ -340,6 +348,36 @@ export class DataGovernanceService {
               continue;
             }
             const expected = recount.counts[table.model] || 0;
+            if (table.model === 'visitPhoto') {
+              const matchingRows = await tx.visitPhoto.findMany({
+                where,
+                select: { id: true, visitId: true },
+              });
+              visitPhotoDiagnostic = {
+                expectedCount: expected,
+                matchingBeforeDelete: matchingRows.length,
+                visitIds: [...new Set(matchingRows.map((row) => Number(row.visitId)).filter(Number.isInteger))],
+                deletionFilter: where,
+              };
+              this.logger.log(`Visit photos reset step ${JSON.stringify({
+                operationId,
+                tenantId,
+                selectedModules: moduleIds,
+                ...visitPhotoDiagnostic,
+                transactionStatus: 'IN_PROGRESS',
+              })}`);
+              if (visitPhotoDiagnostic.matchingBeforeDelete !== expected) {
+                visitPhotoDiagnostic.reason = 'The matching rows immediately before deletion differ from the transaction recount.';
+                this.logger.error(`Visit photos reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...visitPhotoDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+                throw new Error(`Visit photos: expected ${expected} rows immediately before deletion but found ${visitPhotoDiagnostic.matchingBeforeDelete}.`);
+              }
+            }
             if (table.model === 'taskHistory') {
               const matchingRows = await tx.taskHistory.findMany({ where, select: { id: true, taskId: true } });
               taskHistoryDiagnostic = {
@@ -371,6 +409,27 @@ export class DataGovernanceService {
               : expected;
             const result = await delegate.deleteMany({ where });
             const deletedCount = Number(result?.count || 0);
+            if (table.model === 'visitPhoto' && visitPhotoDiagnostic) {
+              visitPhotoDiagnostic.deletedCount = deletedCount;
+              if (deletedCount !== expectedToDelete) {
+                visitPhotoDiagnostic.reason = 'The deleteMany affected-row count differs from the expected eligible count.';
+                this.logger.error(`Visit photos reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...visitPhotoDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+              } else {
+                this.logger.log(`Visit photos reset deleted ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...visitPhotoDiagnostic,
+                  transactionStatus: 'IN_PROGRESS',
+                })}`);
+              }
+            }
             if (table.model === 'taskHistory' && taskHistoryDiagnostic) {
               taskHistoryDiagnostic.deletedCount = deletedCount;
               if (deletedCount !== expectedToDelete) {
@@ -421,6 +480,15 @@ export class DataGovernanceService {
             transactionStatus: 'COMMITTED',
           })}`);
         }
+        if (visitPhotoDiagnostic) {
+          this.logger.log(`Visit photos reset committed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...visitPhotoDiagnostic,
+            transactionStatus: 'COMMITTED',
+          })}`);
+        }
 
         // Run a fresh query after PostgreSQL commits, so success reflects committed state.
         for (const table of tablesForModules(moduleIds)) {
@@ -465,6 +533,23 @@ export class DataGovernanceService {
             transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
           })}`);
         }
+        if (visitPhotoDiagnostic) {
+          this.logger.warn(`Visit photos reset rolled back or failed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...visitPhotoDiagnostic,
+            transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
+            error: failures[0],
+          })}`);
+        }
+        this.logger.error(`Data reset operation failed ${JSON.stringify({
+          operationId,
+          tenantId,
+          selectedModules: moduleIds,
+          transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
+          error: failures[0],
+        })}`);
         await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'FAILED', {
           operationId,
           scope,
