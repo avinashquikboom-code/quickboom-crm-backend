@@ -48,7 +48,7 @@ describe('EmployeeController reporting-manager tenant context', () => {
 
     expect(employeeService.resolveDefaultCustomerId).not.toHaveBeenCalled();
     expect(employeeService.findAll).toHaveBeenCalledWith(expect.objectContaining({
-      customerId: undefined,
+      customerId: null,
       isSuperAdmin: true,
     }));
   });
