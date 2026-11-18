@@ -36,6 +36,12 @@ describe('data governance catalog', () => {
     expect(membership?.where).toBe('teamMember');
   });
 
+  it('offers commissions as an explicitly selectable employee dependency module', () => {
+    const module = moduleById('commissions');
+    expect(module?.tables.map((table) => table.model)).toEqual(['commission', 'commissionWithdrawal']);
+    expect(tablesForModules(['commissions']).map((table) => table.model)).toEqual(['commissionWithdrawal', 'commission']);
+  });
+
   it('includes overtime notification events before deleting overtime requests', () => {
     const tables = tablesForModules(['hrm']);
     const eventIndex = tables.findIndex((table) => table.model === 'overtimeNotificationEvent');

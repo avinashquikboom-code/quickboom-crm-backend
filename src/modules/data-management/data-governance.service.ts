@@ -28,6 +28,8 @@ import {
 const MAX_ROWS = 10000;
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
 const SENSITIVE_KEY = /password|secret|token|apiKey|credential/i;
+const matchesConfirmation = (provided: string | undefined, expected: string) =>
+  String(provided || '').trim().toUpperCase() === expected;
 
 const scopedCustomer = (customerId: number | null) => customerId == null ? {} : { customerId };
 
@@ -175,13 +177,13 @@ export class DataGovernanceService {
     this.assertSuperAdmin(role);
     const scope = body.scope === 'global' ? 'global' : body.scope === 'application' ? 'application' : 'selected';
     const tenantId = scope === 'global' ? null : this.requireTenant(customerId);
-    if (String(body.confirmation || '').trim() !== 'RESET') {
+    if (!matchesConfirmation(body.confirmation, 'RESET')) {
       throw new BadRequestException('Type RESET to confirm deletion.');
     }
-    if (scope !== 'selected' && String(body.acknowledgement || '').trim() !== 'RESET ALL DATA') {
+    if (scope !== 'selected' && !matchesConfirmation(body.acknowledgement, 'RESET ALL DATA')) {
       throw new BadRequestException('Type RESET ALL DATA to confirm a full data reset.');
     }
-    if (scope === 'global' && String(body.globalConfirmation || '').trim() !== 'RESET GLOBAL') {
+    if (scope === 'global' && !matchesConfirmation(body.globalConfirmation, 'RESET GLOBAL')) {
       throw new BadRequestException('Type RESET GLOBAL to confirm a reset across every tenant.');
     }
     const key = this.requireIdempotency(body.idempotencyKey);
@@ -233,6 +235,17 @@ export class DataGovernanceService {
             });
             const ids = employeeIds.map((item) => item.id);
             if (ids.length) {
+              // These tenant-owned customer records are protected, but their
+              // optional employee links use ON DELETE SET NULL. Clear only
+              // same-tenant links; dependencyWarnings rejects cross-tenant refs.
+              await tx.customer.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), assignedEmployeeId: { in: ids } },
+                data: { assignedEmployeeId: null },
+              });
+              await tx.customer.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), createdByEmployeeId: { in: ids } },
+                data: { createdByEmployeeId: null },
+              });
               if (!moduleIds.includes('departments')) {
                 await tx.department.updateMany({
                   where: { ...(tenantId == null ? {} : { customerId: tenantId }), headId: { in: ids } },
@@ -1257,12 +1270,12 @@ export class DataGovernanceService {
         if (shareCount) checks.push({ parent: 'employees', model: 'commission_shares', label: 'Commission shares (protected financial records)', where: {}, policy: 'protected' });
         if (shareCount) checks[checks.length - 1].where.records = shareCount;
       }
-      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references (protected)', where: { OR: [
+      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references', where: { OR: [
         { assignedEmployeeRel: customerId == null ? {} : { customerId } },
         { createdByEmployeeRel: customerId == null ? {} : { customerId } },
       ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
         { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
-      ] } }), policy: 'protected' });
+      ] } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work editor references', where: { editor: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, editor: { customerId } } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'team', label: 'Team leader references', where: { leader: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, leader: { customerId } } }), policy: 'set-null' });
@@ -1308,10 +1321,26 @@ export class DataGovernanceService {
       const included = selected.has(check.model) && (check.parent !== check.model || check.allowSameModelSelection === true);
       const policy = check.policy || 'cascade';
       const blocking = policy === 'protected' || crossTenantRecords > 0 || (policy === 'cascade' && !included);
+      const sameTenantRecords = Math.max(0, scopedRecords - crossTenantRecords);
+      const resolvedRecords = policy === 'protected'
+        ? 0
+        : policy === 'set-null'
+          ? sameTenantRecords
+          : included
+            ? sameTenantRecords
+            : 0;
+      const unresolvedRecords = Math.max(0, records - resolvedRecords);
+      const resolutionModule = !included && policy === 'cascade'
+        ? RESET_MODULES.find((item) => item.tables.some((table) => table.model === check.model))
+        : undefined;
       warnings.push({
         module: check.parent, model: check.model, label: check.label, records,
         ...(crossTenantRecords ? { crossTenantRecords } : {}), blocking,
-        willSetNull: policy === 'set-null' && !included && crossTenantRecords === 0,
+        resolvedRecords,
+        unresolvedRecords,
+        policy,
+        ...(resolutionModule ? { resolutionModule: { id: resolutionModule.id, name: resolutionModule.name } } : {}),
+        willSetNull: policy === 'set-null' && sameTenantRecords > 0,
         includedInSelectedModule: included,
       });
     }
