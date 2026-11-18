@@ -1045,23 +1045,26 @@ export class DataCaptureService implements OnModuleInit {
       customerId: effectiveCustomerId,
       googlePlaceId: place.googlePlaceId,
       sourceRecordId: place.googlePlaceId,
-      businessName: place.businessName,
-      category: place.category || null,
-      address: place.address || null,
-      phone: place.phone || null,
-      website: place.website || null,
-      rating: place.rating ?? null,
-      reviewCount: place.reviewCount ?? null,
-      latitude: place.latitude ?? null,
-      longitude: place.longitude ?? null,
-      googleMapsUrl: place.googleMapsUrl || null,
-      businessStatus: place.businessStatus || 'OPERATIONAL',
+      // Google Places content is returned to the client as an attributed live
+      // preview. Persist only the Place ID (permitted identifier) for later
+      // resolution; do not copy Google content into CRM or capture columns.
+      businessName: '',
+      category: null,
+      address: null,
+      phone: null,
+      website: null,
+      rating: null,
+      reviewCount: null,
+      latitude: null,
+      longitude: null,
+      googleMapsUrl: null,
+      businessStatus: null,
       source: 'GOOGLE_PLACES',
       createdFrom: resolvedCreatedFrom,
       status: place.googlePlaceId && existingPlaceIds.has(place.googlePlaceId) ? 'DUPLICATE' : 'CAPTURED',
-      photos: place.photos || undefined,
-      socialMedia: place.socialMedia || undefined,
-      rawData: place.rawData || undefined,
+      photos: undefined,
+      socialMedia: undefined,
+      rawData: undefined,
     }));
 
     // 6. Persist Job and Places to PostgreSQL
@@ -1148,7 +1151,13 @@ export class DataCaptureService implements OnModuleInit {
       status: p.status || 'CAPTURED',
       createdFrom: resolvedCreatedFrom,
       capturedAt: this.captureTimestamp(p),
-      rawData: { attributions: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.attributions || [] },
+      rawData: {
+        city: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.city || null,
+        state: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.state || null,
+        country: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.country || null,
+        pincode: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.pincode || null,
+        attributions: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.attributions || [],
+      },
     }));
 
     const tDbDuration = Date.now() - tDbStart;
@@ -1338,7 +1347,8 @@ export class DataCaptureService implements OnModuleInit {
           photos: photos.length ? this.mergeStoredPhotos(place.photos, place.rawData?.photos, place.rawData?.googlePhotos, photos).googlePhotos.map((photo) => ({ ...photo })) : undefined,
           rawData: { ...place.rawData, googleReferenceOnly: false, ...location, openingHours: live.regularOpeningHours?.weekdayDescriptions || null, attributions: live.attributions || [] },
         };
-        await this.prisma.dataCapturePlace.update({ where: { id: place.id }, data });
+        // The refreshed Google response is transient UI content. Keep it in
+        // this request's object only; persist only the Google Place ID.
         Object.assign(place, data);
       } catch (error: any) {
         this.logger.warn(`[Google Places API] Place details failed for capture ${place.id} status=${error.response?.status || 'none'} code=${error.code || 'none'}`);
@@ -2153,6 +2163,7 @@ export class DataCaptureService implements OnModuleInit {
       tiktok: 'TIKTOK',
       pinterest: 'PINTEREST',
       whatsapp: 'WHATSAPP',
+      other: 'OTHER',
     };
     for (const [key, platform] of Object.entries(mapping)) {
       const val = (socialMedia as any)[key];
@@ -2272,6 +2283,34 @@ export class DataCaptureService implements OnModuleInit {
       catch { throw new BadRequestException('Website must be an http or https URL.'); }
     }
     return fields;
+  }
+
+  private validateUserSocialProfiles(input: any): Record<string, string> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+    const platforms: Record<string, string[]> = {
+      instagram: ['instagram.com'],
+      facebook: ['facebook.com', 'fb.com'],
+      linkedin: ['linkedin.com'],
+      youtube: ['youtube.com', 'youtu.be'],
+      twitter: ['x.com', 'twitter.com'],
+      tiktok: ['tiktok.com'],
+      pinterest: ['pinterest.com'],
+      whatsapp: ['wa.me', 'whatsapp.com'],
+      other: [],
+    };
+    const profiles: Record<string, string> = {};
+    for (const [platform, hosts] of Object.entries(platforms)) {
+      const value = input[platform];
+      if (value == null || value === '') continue;
+      if (typeof value !== 'string' || value.length > 2048) throw new BadRequestException(`Invalid ${platform} profile URL.`);
+      let parsed: URL;
+      try { parsed = new URL(value.trim()); } catch { throw new BadRequestException(`${platform} profile must be an https URL.`); }
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || (hosts.length && !hosts.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`)))) {
+        throw new BadRequestException(`Invalid ${platform} profile URL.`);
+      }
+      profiles[platform] = parsed.toString();
+    }
+    return profiles;
   }
 
   async importToLeads(
@@ -2431,7 +2470,7 @@ export class DataCaptureService implements OnModuleInit {
           imported: false, duplicate: false, failed: true, error: 'Captured record not found in this tenant/session.' });
         continue;
       }
-      if (!dbPlace.businessName || (dbPlace.rawData as any)?.googleReferenceOnly) {
+      if (!dbPlace.googlePlaceId && (!dbPlace.businessName || (dbPlace.rawData as any)?.googleReferenceOnly)) {
         await this.refreshReferencePlaces([dbPlace]);
         dbPlace = await this.prisma.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } }) || dbPlace;
       }
@@ -2440,6 +2479,7 @@ export class DataCaptureService implements OnModuleInit {
 
       // 2. Authoritative field mapping from candidate and dbPlace (Sections 4, 5, 6, 7, 8)
       let fields: any;
+      let userSocialMedia: Record<string, string> = {};
       try {
         const location = dbPlace.rawData && typeof dbPlace.rawData === 'object' ? dbPlace.rawData : {};
         const storedFields = {
@@ -2459,15 +2499,16 @@ export class DataCaptureService implements OnModuleInit {
           !Array.isArray(candidate.independentFields)
           ? candidate.independentFields
           : {};
-        // Google results are references. Use explicit user-entered fields unless
-        // the record was validated through the tenant's review workflow. For
-        // other capture sources, allow safe overrides to stored values.
-        const reviewedRecord = String(dbPlace.status || '').toUpperCase() === 'VALIDATED';
+        // Google results are references. Always require independent CRM data
+        // from the user; review status does not authorize copying Google
+        // content into persistent Lead fields. Other capture sources may use
+        // their tenant-owned stored values with explicit overrides.
         fields = this.validateIndependentLeadFields(
-          googleReference && !reviewedRecord
+          googleReference
             ? suppliedFields
             : { ...storedFields, ...suppliedFields },
         );
+        userSocialMedia = this.validateUserSocialProfiles(suppliedFields.socialMedia);
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
         perRecordResults.push({ googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
@@ -2491,14 +2532,16 @@ export class DataCaptureService implements OnModuleInit {
 
       const resolvedAddress = fields.address || null;
       const resolvedCategory = fields.category || null;
-      const resolvedRating = dbPlace.rating ?? null;
-      const resolvedReviewCount = dbPlace.reviewCount ?? null;
-      const resolvedLatitude = dbPlace.latitude ?? null;
-      const resolvedLongitude = dbPlace.longitude ?? null;
+      const resolvedRating = googleReference ? null : (dbPlace.rating ?? null);
+      const resolvedReviewCount = googleReference ? null : (dbPlace.reviewCount ?? null);
+      const resolvedLatitude = googleReference ? null : (dbPlace.latitude ?? null);
+      const resolvedLongitude = googleReference ? null : (dbPlace.longitude ?? null);
       const parsedAddress = { city: fields.city || null, state: fields.state || null, pincode: fields.pincode || null };
       const genuineFirstName = '';
       const genuineLastName = '';
-      const placeSocialMedia = this.extractSocialMediaFromPlace(dbPlace) || null;
+      const placeSocialMedia = googleReference
+        ? (Object.keys(userSocialMedia).length ? userSocialMedia : null)
+        : (this.extractSocialMediaFromPlace(dbPlace) || (Object.keys(userSocialMedia).length ? userSocialMedia : null));
 
       // 3. Duplicate Detection against CRM Leads (Section 13)
       const leadOrConditions: any[] = [];
@@ -2690,6 +2733,9 @@ export class DataCaptureService implements OnModuleInit {
                   leadId: created.id,
                   platform: sp.platform,
                   url: sp.url,
+                  source: googleReference ? 'USER_PROVIDED' : 'CAPTURE_SOURCE',
+                  verificationStatus: 'UNVERIFIED',
+                  lastCheckedAt: null,
                 },
               });
             }

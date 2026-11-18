@@ -535,14 +535,17 @@ model LeadImage {
 }
 
 model LeadSocialProfile {
-  id        Int      @id @default(autoincrement())
-  leadId    Int
-  platform  String
-  url       String
-  username  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  id                 Int      @id @default(autoincrement())
+  leadId             Int
+  platform           String
+  url                String
+  username           String?
+  source             String   @default("LEGACY_UNKNOWN")
+  verificationStatus String   @default("UNVERIFIED")
+  lastCheckedAt      DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  lead               Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@unique([leadId, platform])
   @@index([leadId])

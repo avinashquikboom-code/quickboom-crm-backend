@@ -420,9 +420,15 @@ export class LeadRepository {
               leadId: lead.id,
               platform: sp.platform,
               url: sp.url,
+              source: 'USER_PROVIDED',
+              verificationStatus: 'UNVERIFIED',
+              lastCheckedAt: null,
             },
             update: {
               url: sp.url,
+              source: 'USER_PROVIDED',
+              verificationStatus: 'UNVERIFIED',
+              lastCheckedAt: null,
             },
           });
         } catch (_) {}
@@ -2151,9 +2157,15 @@ export class LeadRepository {
                 leadId: numId,
                 platform: sp.platform,
                 url: sp.url,
+                source: 'USER_PROVIDED',
+                verificationStatus: 'UNVERIFIED',
+                lastCheckedAt: null,
               },
               update: {
                 url: sp.url,
+                source: 'USER_PROVIDED',
+                verificationStatus: 'UNVERIFIED',
+                lastCheckedAt: null,
               },
             });
           } catch (_) {}

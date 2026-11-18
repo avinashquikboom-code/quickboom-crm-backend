@@ -377,6 +377,17 @@ describe('DataCaptureService', () => {
       expect(res.keyword).toBe('Gyms');
       expect(res.location).toBe('Vadodara');
       expect(res.captured).toBeGreaterThan(0);
+      const persisted = mockPrisma.dataCaptureJob.create.mock.calls[0][0].data.places.create[0];
+      expect(persisted).toMatchObject({
+        googlePlaceId: expect.any(String),
+        businessName: '',
+        category: null,
+        address: null,
+        phone: null,
+        website: null,
+        photos: undefined,
+      });
+      expect(res.places[0].businessName).toBeTruthy();
       expect(mockPrisma.dataCaptureJob.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
