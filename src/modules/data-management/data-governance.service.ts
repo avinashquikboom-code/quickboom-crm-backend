@@ -40,6 +40,7 @@ type PreviewRecord = {
   counts: Record<string, number>;
   estimatedRecords: number;
   totalEligibleRecords: number;
+  dependencySnapshot: string;
   protectedDesignationIds: number[];
   protectedRoleIds: number[];
   expiresAt: number;
@@ -153,6 +154,7 @@ export class DataGovernanceService {
         : null;
     }
     const dependencyWarnings = await this.dependencyWarnings(modules.map((item) => item.id), tenantId);
+    const dependencySnapshot = this.dependencySnapshot(dependencyWarnings);
     const estimatedRecords = tables.reduce((sum, table) => sum + table.records, 0);
     const totalEligibleRecords = estimatedRecords - preservedDesignationCount;
     const preservation = designationPreservation.roles.length
@@ -181,6 +183,7 @@ export class DataGovernanceService {
       counts,
       estimatedRecords,
       totalEligibleRecords,
+      dependencySnapshot,
       protectedDesignationIds: preservedDesignationIds,
       protectedRoleIds: designationPreservation.roles.map((role) => role.id).sort((a, b) => a - b),
       expiresAt: Date.now() + PREVIEW_TTL_MS,
@@ -278,6 +281,9 @@ export class DataGovernanceService {
           await this.acquireResetAdvisoryLock(tx, tenantId);
           await this.lockResetRoots(tx, moduleIds, tenantId);
           const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId, tx);
+          if (this.dependencySnapshot(dependencyWarnings) !== previewRecord.dependencySnapshot) {
+            throw new BadRequestException('Dependencies changed after the preview. Run a fresh preview before deleting.');
+          }
           const blockers = dependencyWarnings.filter((item) => item.blocking);
           if (blockers.length) {
             throw new BadRequestException(`Deletion is blocked by dependencies: ${blockers.map((item) => `${item.label}: ${item.records} records${item.crossTenantRecords ? ` (${item.crossTenantRecords} reference other tenants)` : ''}`).join('; ')}.`);
@@ -1508,6 +1514,31 @@ export class DataGovernanceService {
     return notes;
   }
 
+  private dependencySnapshot(warnings: Array<Record<string, unknown>>) {
+    const snapshot = warnings.map((item) => {
+      const resolutionModule = item.resolutionModule && typeof item.resolutionModule === 'object'
+        ? item.resolutionModule as Record<string, unknown>
+        : {};
+      return {
+        module: String(item.module || ''),
+        model: String(item.model || ''),
+        records: Number(item.records || 0),
+        crossTenantRecords: Number(item.crossTenantRecords || 0),
+        resolvedRecords: Number(item.resolvedRecords || 0),
+        unresolvedRecords: Number(item.unresolvedRecords || 0),
+        preservedRecords: Number(item.preservedRecords || 0),
+        blocking: Boolean(item.blocking),
+        policy: typeof item.policy === 'string' ? item.policy : null,
+        willSetNull: Boolean(item.willSetNull),
+        includedInSelectedModule: Boolean(item.includedInSelectedModule),
+        preserved: Boolean(item.preserved),
+        untracked: Boolean(item.untracked),
+        resolutionModuleId: typeof resolutionModule.id === 'string' ? resolutionModule.id : null,
+      };
+    }).sort((left, right) => `${left.module}:${left.model}`.localeCompare(`${right.module}:${right.model}`));
+    return JSON.stringify(snapshot);
+  }
+
   private async dependencyWarnings(moduleIds: string[], customerId: number | null, client: object = this.prisma) {
     const selected = new Set(tablesForModules(moduleIds).map((table) => table.model));
     const checks: Array<{
@@ -1563,10 +1594,11 @@ export class DataGovernanceService {
         if (shareCount) checks.push({ parent: 'employees', model: 'commission_shares', label: 'Commission shares (protected financial records)', where: {}, policy: 'protected' });
         if (shareCount) checks[checks.length - 1].where.records = shareCount;
       }
+      // Customer is the tenant root: Employee.customerId references Customer.id.
       checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references', where: { OR: [
         { assignedEmployeeRel: customerId == null ? {} : { customerId } },
         { createdByEmployeeRel: customerId == null ? {} : { customerId } },
-      ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
+      ] }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, OR: [
         { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
       ] } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
