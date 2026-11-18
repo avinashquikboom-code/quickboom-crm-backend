@@ -2545,12 +2545,13 @@ export class DataCaptureService implements OnModuleInit {
           !Array.isArray(candidate.independentFields)
           ? candidate.independentFields
           : {};
-        // Google results are references. Always require independent CRM data
-        // from the user; review status does not authorize copying Google
-        // content into persistent Lead fields. Other capture sources may use
-        // their tenant-owned stored values with explicit overrides.
+        // The saved business name belongs to this tenant's Data Capture row
+        // and is the canonical Lead title fallback for Google references.
+        // Do not copy other Google/provider fields into CRM Lead contact data;
+        // those still require independently supplied values. Explicit
+        // independentFields.businessName may override the saved name.
         const trustedStoredFields = googleReference
-          ? { ...storedFields, businessName: undefined, phone: undefined, email: undefined, website: undefined,
+          ? { ...storedFields, phone: undefined, email: undefined, website: undefined,
             address: undefined, category: undefined, city: undefined, state: undefined, country: undefined, pincode: undefined }
           : storedFields;
         fields = this.validateIndependentLeadFields({ ...trustedStoredFields, ...suppliedFields });
