@@ -246,7 +246,35 @@ describe('DataGovernanceService TeamMember tenant filters', () => {
 describe('DataGovernanceService employee reset dependencies', () => {
   it('separates safe same-tenant customer references from cross-tenant blockers', async () => {
     const customer = {
-      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.id?.not === 12 ? 13 : 14),
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.customerId?.not === 12 ? 0 : 14),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ customer }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+
+    const warnings = await (service as any).dependencyWarnings(['employees'], 12, client);
+    const assignment = warnings.find((item: any) => item.model === 'customer');
+
+    expect(assignment).toMatchObject({
+      records: 14,
+      crossTenantRecords: 0,
+      resolvedRecords: 14,
+      unresolvedRecords: 0,
+      willSetNull: true,
+      blocking: false,
+    });
+  });
+
+  it('keeps genuinely cross-tenant customer employee references blocked', async () => {
+    const customer = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.customerId?.not === 12 ? 13 : 14),
       findMany: jest.fn().mockResolvedValue([]),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     };
