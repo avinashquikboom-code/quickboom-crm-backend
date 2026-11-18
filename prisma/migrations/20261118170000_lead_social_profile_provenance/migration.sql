@@ -1,0 +1,4 @@
+ALTER TABLE "lead_social_profiles"
+  ADD COLUMN "source" TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+  ADD COLUMN "verificationStatus" TEXT NOT NULL DEFAULT 'UNVERIFIED',
+  ADD COLUMN "lastCheckedAt" TIMESTAMP(3);

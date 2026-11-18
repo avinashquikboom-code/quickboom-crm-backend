@@ -26,6 +26,7 @@ describe('Data Capture CRM reference imports', () => {
         create: jest.fn(async ({ data }) => { const row = { id: leads.length + 100, ...data }; leads.push(row); return row; }),
         update: jest.fn(),
       },
+      leadSocialProfile: { create: jest.fn() },
       leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 12 }) },
       leadActivityTimeline: { create: jest.fn() },
       $executeRaw: jest.fn().mockResolvedValue(1),
@@ -62,20 +63,57 @@ describe('Data Capture CRM reference imports', () => {
     }));
   });
 
-  it('uses stored Google reference fields only after the record is tenant-validated', async () => {
+  it('requires independently supplied CRM fields even when a Google capture was reviewed', async () => {
     captures[0].status = 'VALIDATED';
     captures[0].phone = null;
-    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
-    });
+    })).rejects.toMatchObject({ response: expect.objectContaining({ error: 'DATA_CAPTURE_IMPORT_FAILED' }) });
+  });
 
+  it('saves user-provided social URLs as unverified profiles with provenance', async () => {
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1, independentFields: {
+        businessName: 'Customer-supplied name',
+        socialMedia: { instagram: 'https://instagram.com/example_business' },
+      } }],
+    });
+    expect(result.imported).toBe(1);
+    expect(leads[0].socialMedia).toEqual({ instagram: 'https://instagram.com/example_business' });
+    expect(prisma.leadSocialProfile.create).toHaveBeenCalledWith({ data: {
+      leadId: leads[0].id,
+      platform: 'INSTAGRAM',
+      url: 'https://instagram.com/example_business',
+      source: 'USER_PROVIDED',
+      verificationStatus: 'UNVERIFIED',
+      lastCheckedAt: null,
+    } });
+  });
+
+  it('rejects a social URL that does not match its platform', async () => {
+    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1, independentFields: {
+        businessName: 'Customer-supplied name',
+        socialMedia: { instagram: 'https://facebook.com/impersonator' },
+      } }],
+    })).rejects.toThrow('Invalid instagram profile URL.');
+    expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-copy Google Places fields from a reviewed capture to a lead', async () => {
+    captures[0].status = 'VALIDATED';
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1, independentFields: { businessName: 'Verified from our records' } }],
+    });
     expect(result.imported).toBe(1);
     expect(leads[0]).toMatchObject({
-      customerId: 7,
-      title: 'Google-only name',
-      source: 'Google Maps',
-      status: 'NEW',
+      title: 'Verified from our records',
+      phone: null,
+      address: null,
+      category: null,
+      latitude: null,
+      rating: null,
     });
   });
 
