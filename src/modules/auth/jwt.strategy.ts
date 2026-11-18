@@ -56,13 +56,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         const signingSecret = configService.get<string>('JWT_SECRET') || process.env.JWT_SECRET;
         const rawConfigSecret = configService.get<string>('JWT_ACCESS_SECRET');
         const rawEnvSecret = process.env.JWT_ACCESS_SECRET;
-        const fallbackSecret = 'quikboom_super_secret_jwt_access_key_2026';
-        const devSecret = 'quikboom_jwt_secret_development_key_3847291847';
-        const prodSecret = 'quikboom_production_secure_token_secret_key_3847291847';
-
         const candidateSecrets = Array.from(
           new Set(
-            [signingSecret, rawConfigSecret, rawEnvSecret, fallbackSecret, devSecret, prodSecret]
+            [signingSecret, rawConfigSecret, rawEnvSecret]
               .map((s) => (s ? s.replace(/^["']|["']$/g, '').trim() : ''))
               .filter((s): s is string => Boolean(s && s.length > 0)),
           ),
@@ -82,7 +78,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           }
         }
 
-        done(null, candidateSecrets[0] || fallbackSecret);
+        if (candidateSecrets.length === 0) {
+          return done(new Error('JWT access token signing secret is not configured'));
+        }
+
+        done(null, candidateSecrets[0]);
       },
     });
   }

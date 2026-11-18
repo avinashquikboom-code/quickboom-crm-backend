@@ -218,8 +218,10 @@ describe('MetaTemplateService', () => {
     beforeEach(() => {
       record = { ...baseTemplate };
       mockPrisma.metaTemplate.findFirst.mockImplementation(({ where }: any) => {
-        const allowed = (where.OR || []).some((cond: any) =>
-          cond.customerId === null || (record.customerId != null && cond.customerId === record.customerId));
+        const allowed = where.OR
+          ? where.OR.some((cond: any) =>
+              cond.customerId === null || (record.customerId != null && cond.customerId === record.customerId))
+          : where.customerId === record.customerId;
         return Promise.resolve(where.id === record.id && allowed ? record : null);
       });
       mockPrisma.metaTemplate.update.mockImplementation(({ data }: any) => {
@@ -371,11 +373,27 @@ describe('MetaTemplateService', () => {
       expect(record.deletedAt).toBeTruthy();
     });
 
+    it('scopes the lookup to the caller tenant so another tenant template is not found', async () => {
+      const del = jest.spyOn(axios, 'delete');
+      await expect(service.remove(40, otherTenantAdmin)).rejects.toThrow(NotFoundException);
+      expect(del).not.toHaveBeenCalled();
+    });
+
+    it('does not call Meta for a template that was never submitted (seed placeholder)', async () => {
+      record.metaTemplateId = 'seed_welcome_lead';
+      const del = jest.spyOn(axios, 'delete');
+      const res = await service.remove(40, admin);
+      expect(del).not.toHaveBeenCalled();
+      expect(res.metaResult).toBe('NOT_REQUIRED');
+      expect(record.deletedAt).toBeTruthy();
+    });
+
     it('prevents a tenant admin from deleting another tenant or a platform template', async () => {
       const del = jest.spyOn(axios, 'delete');
-      await expect(service.remove(40, otherTenantAdmin)).rejects.toThrow(ForbiddenException);
+      // Other tenants' rows and platform rows are invisible to tenant admins (not found, no Meta call).
+      await expect(service.remove(40, otherTenantAdmin)).rejects.toThrow(NotFoundException);
       record.customerId = null;
-      await expect(service.remove(40, tenantAdmin)).rejects.toThrow(ForbiddenException);
+      await expect(service.remove(40, tenantAdmin)).rejects.toThrow(NotFoundException);
       expect(del).not.toHaveBeenCalled();
       expect(record.deletedAt).toBeNull();
     });
