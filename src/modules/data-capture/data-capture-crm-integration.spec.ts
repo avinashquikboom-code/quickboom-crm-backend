@@ -63,6 +63,46 @@ describe('Data Capture CRM reference imports', () => {
     }));
   });
 
+  it('pairs an ID-less places descriptor with the corresponding selected placeIds entry', async () => {
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      jobId: 'session',
+      placeIds: ['1'],
+      places: [{ independentFields: { businessName: 'Independently supplied name' } }],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Independently supplied name', customerId: 7 });
+  });
+
+  it('recovers a null places entry from its paired selected ID instead of rejecting the descriptor', async () => {
+    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
+      jobId: 'session',
+      placeIds: ['1'],
+      places: [null],
+    })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        message: expect.stringContaining('Business name is missing'),
+      }),
+    });
+    expect(prisma.dataCapturePlace.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 1, customerId: 7, deletedAt: null }),
+    }));
+  });
+
+  it('unwraps a nested capture record descriptor and still resolves it by its database ID', async () => {
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      jobId: 'session',
+      places: [{
+        place: { id: 1 },
+        independentFields: { businessName: 'Wrapped capture record' },
+      }],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Wrapped capture record', customerId: 7 });
+  });
+
   it('requires independently supplied CRM fields even when a Google capture was reviewed', async () => {
     captures[0].status = 'VALIDATED';
     captures[0].phone = null;
