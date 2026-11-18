@@ -89,6 +89,18 @@ export const RESET_MODULES: ResetModule[] = [
       row('leaveAdjustmentHistory', 'LeaveAdjustmentHistory', 'Leave adjustments', 'customer'),
       row('employeeLeaveBalance', 'EmployeeLeaveBalance', 'Leave balances', 'customer'),
       row('leaveRequest', 'LeaveRequest', 'Leave requests', 'customer'),
+      row('employeeModuleOverride', 'employee_module_overrides', 'Employee permission overrides', 'customer'),
+      row('employeeLeadLimit', 'employee_lead_limits', 'Employee lead limits', 'customer'),
+      row('salaryTargetPolicy', 'salary_target_policies', 'Salary target policies', 'customer'),
+      row('salaryTargetReview', 'salary_target_reviews', 'Salary target reviews', 'customer'),
+      row('dataCaptureSearch', 'DataCaptureSearch', 'Data capture searches', 'customer'),
+      row('hrmEmployeeMonthlyReport', 'hrm_employee_monthly_reports', 'Employee report history', 'customer'),
+      row('hrmLeaveMonthlySnapshot', 'hrm_leave_monthly_snapshots', 'Leave snapshots', 'customer'),
+      row('hrmNotificationDelivery', 'hrm_notification_deliveries', 'Notification delivery history', 'customer'),
+      row('hrmCommissionMonthlySnapshot', 'hrm_commission_monthly_snapshots', 'Commission snapshots', 'customer'),
+      row('hrmMonthlyReportRun', 'hrm_monthly_report_runs', 'Monthly report runs', 'customer'),
+      row('hrmMonthlyCycle', 'hrm_monthly_cycles', 'HRM monthly cycles', 'customer'),
+      row('hrmNotificationOutbox', 'hrm_notification_outbox', 'Notification outbox', 'customer'),
     ],
   },
   {
@@ -159,6 +171,9 @@ export const RESET_MODULES: ResetModule[] = [
       row('monthlySchedule', 'monthly_schedules', 'Schedules', 'customer'),
       row('work', 'Work', 'Work items', 'customer'),
       row('supportTicket', 'SupportTicket', 'Support tickets', 'customer'),
+      row('teamMember', 'TeamMember', 'Team memberships', 'customer'),
+      row('team', 'Team', 'Teams', 'customer'),
+      row('announcement', 'Announcement', 'Announcements', 'customer'),
     ],
   },
   {
@@ -244,6 +259,7 @@ export const RESET_MODULES: ResetModule[] = [
       row('salarySlip', 'SalarySlip', 'Salary slips', 'customer'),
       row('payrollItem', 'PayrollItem', 'Payroll items', 'customer'),
       row('payroll', 'Payroll', 'Payroll runs', 'customer'),
+      row('employeeDeduction', 'EmployeeDeduction', 'Payroll deductions', 'customer'),
     ],
   },
   {
@@ -275,6 +291,7 @@ export const RESET_MODULES: ResetModule[] = [
     tables: [
       row('employeeClaim', 'EmployeeClaim', 'Claims', 'customer'),
       row('employeeLoan', 'EmployeeLoan', 'Loans', 'customer'),
+      row('employeeDeduction', 'EmployeeDeduction', 'Payroll deductions', 'customer'),
     ],
   },
   {
@@ -325,7 +342,14 @@ export function tablesForModules(ids: string[]): TableRule[] {
       tables.push(table);
     });
   });
-  const deleteOrder: Record<string, number> = { employee: 80, designation: 90, department: 100 };
+  const deleteOrder: Record<string, number> = {
+    attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7, taskHistory: 8, taskProof: 9, taskReview: 10,
+    visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmEmployeeMonthlyReport: 14,
+    employeeModuleOverride: 15, employeeLeadLimit: 16, salaryTargetPolicy: 17, salaryTargetReview: 18,
+    employeeDeduction: 19, employeeClaim: 20, employeeLoan: 21, salarySlip: 22, payrollItem: 23,
+    overtimeRequest: 24, attendance: 25, leaveRequest: 26, employeeLeaveBalance: 27, leaveAdjustmentHistory: 28,
+    employeeLocation: 29, remoteRequest: 30, employee: 80, designation: 90, department: 100,
+  };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
 }
 
