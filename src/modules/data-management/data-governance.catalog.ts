@@ -264,6 +264,16 @@ export const RESET_MODULES: ResetModule[] = [
     ],
   },
   {
+    id: 'commission-configurations',
+    name: 'Commission Configuration',
+    description: 'Tenant commission rules, employee configuration, and rate slabs. Cross-tenant-linked rules stay protected.',
+    available: true,
+    tables: [
+      row('commissionSlab', 'commission_slabs', 'Commission rate slabs', 'customer'),
+      row('commissionConfig', 'commission_configs', 'Employee commission configuration', 'customer'),
+    ],
+  },
+  {
     id: 'commissions',
     name: 'Commissions',
     description: 'Tenant commission transactions and withdrawal requests. Cross-tenant employee references remain protected.',
@@ -356,9 +366,9 @@ export function tablesForModules(ids: string[]): TableRule[] {
   const deleteOrder: Record<string, number> = {
     attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7, taskHistory: 8, taskProof: 9, taskReview: 10,
     visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmEmployeeMonthlyReport: 14,
-    employeeModuleOverride: 15, employeeLeadLimit: 16, salaryTargetPolicy: 17, salaryTargetReview: 18,
-    employeeDeduction: 19, commissionWithdrawal: 20, commission: 21, employeeClaim: 22, employeeLoan: 23, salarySlip: 24, payrollItem: 25,
-    overtimeRequest: 24, attendance: 25, leaveRequest: 26, employeeLeaveBalance: 27, leaveAdjustmentHistory: 28,
+    employeeModuleOverride: 15, employeeLeadLimit: 16, commissionSlab: 17, commissionConfig: 18, salaryTargetPolicy: 19, salaryTargetReview: 20,
+    employeeDeduction: 21, commissionWithdrawal: 22, commission: 23, employeeClaim: 24, employeeLoan: 25, salarySlip: 26, payrollItem: 27,
+    overtimeRequest: 28, attendance: 29, leaveRequest: 30, employeeLeaveBalance: 31, leaveAdjustmentHistory: 32,
     employeeLocation: 29, remoteRequest: 30, employee: 80, designation: 90, department: 100,
   };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
