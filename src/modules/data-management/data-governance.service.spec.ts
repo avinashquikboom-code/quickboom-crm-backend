@@ -150,3 +150,38 @@ describe('DataGovernanceService reset preview', () => {
     expect(preview).not.toHaveProperty('backupStatus');
   });
 });
+
+describe('DataGovernanceService overview', () => {
+  it('returns a partial tenant overview when an optional catalog table is unavailable', async () => {
+    const prisma = new Proxy({}, {
+      get: (_target, key) => {
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([{ name: 'test', bytes: 1n, tables: 10n, estimate: 20n }]);
+        if (key === 'auditLog') return { findFirst: jest.fn().mockResolvedValue(null) };
+        if (key === 'metaTemplate') return {
+          count: jest.fn().mockRejectedValue(new Error('table does not exist')),
+          findMany: jest.fn(),
+          deleteMany: jest.fn(),
+        };
+        return { count: jest.fn().mockResolvedValue(1), findMany: jest.fn(), deleteMany: jest.fn() };
+      },
+    }) as PrismaService;
+    const service = new DataGovernanceService(prisma);
+
+    const overview = await service.overview(31);
+
+    expect(overview).toMatchObject({ databaseName: 'test', tenantRecordsComplete: false, health: 'Healthy' });
+    expect(overview.modules.find((item) => item.id === 'templates')).toMatchObject({ complete: false });
+  });
+
+  it('returns an overview for global administrators without a selected tenant', async () => {
+    const prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ name: 'test', bytes: 1n, tables: 10n, estimate: 20n }]),
+      auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+
+    const overview = await service.overview(undefined);
+
+    expect(overview).toMatchObject({ databaseName: 'test', tenantRecords: 0, tenantRecordsComplete: true, modules: [] });
+  });
+});

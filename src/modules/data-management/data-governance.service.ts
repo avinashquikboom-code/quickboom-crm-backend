@@ -65,10 +65,19 @@ export class DataGovernanceService {
   async overview(customerId: number | string | null | undefined) {
     const tenantId = this.optionalTenant(customerId);
     const meta = await this.databaseMeta();
-    const modules = tenantId ? await this.countModules(tenantId) : [];
-    const uniqueTables = tenantId ? tablesForModules(availableModules().map((item) => item.id)) : [];
+    // The reset catalog spans optional feature tables and can be ahead of a
+    // rolling database migration. Keep the overview available when one such
+    // count fails, while preserving tenant scoping for every successful count.
+    let tenantRecordsComplete = true;
+    const modules = tenantId
+      ? await this.countModules(tenantId, () => { tenantRecordsComplete = false; })
+      : [];
     let tenantRecords = 0;
-    for (const table of uniqueTables) tenantRecords += await this.countTable(table, tenantId);
+    if (tenantId) {
+      const uniqueTables = tablesForModules(availableModules().map((item) => item.id));
+      const tableCounts = await Promise.all(uniqueTables.map((table) => this.countOverviewTable(table, tenantId, () => { tenantRecordsComplete = false; })));
+      tenantRecords = tableCounts.reduce((sum, count) => sum + count, 0);
+    }
     const [lastBackup, lastReset] = await Promise.all([
       this.latestAudit(tenantId, 'DATA_BACKUP'),
       this.latestAudit(tenantId, 'DATA_RESET'),
@@ -81,6 +90,7 @@ export class DataGovernanceService {
       databaseSize: formatBytes(meta.bytes),
       estimatedDatabaseRows: meta.estimate,
       tenantRecords,
+      tenantRecordsComplete,
       modules,
       lastBackup: lastBackup?.createdAt || null,
       lastReset: lastReset?.createdAt || null,
@@ -791,14 +801,33 @@ export class DataGovernanceService {
     return modules as typeof RESET_MODULES;
   }
 
-  private async countModules(customerId: number | null) {
+  private async countModules(customerId: number | null, onUnavailable?: () => void) {
     const result = [];
     for (const item of availableModules()) {
       let records = 0;
-      for (const table of item.tables) records += await this.countTable(table, customerId);
-      result.push({ id: item.id, name: item.name, records });
+      let complete = true;
+      for (const table of item.tables) {
+        try {
+          records += await this.countTable(table, customerId);
+        } catch (error) {
+          complete = false;
+          onUnavailable?.();
+          this.logger.warn(`Overview count unavailable for ${table.model}: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
+      }
+      result.push({ id: item.id, name: item.name, records, complete });
     }
     return result;
+  }
+
+  private async countOverviewTable(table: TableRule, customerId: number, onUnavailable: () => void) {
+    try {
+      return await this.countTable(table, customerId);
+    } catch (error) {
+      onUnavailable();
+      this.logger.warn(`Overview count unavailable for ${table.model}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return 0;
+    }
   }
 
   private async countProtectedRecords(customerId: number | null) {
