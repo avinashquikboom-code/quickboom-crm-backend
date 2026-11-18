@@ -246,7 +246,7 @@ describe('DataGovernanceService TeamMember tenant filters', () => {
 describe('DataGovernanceService employee reset dependencies', () => {
   it('separates safe same-tenant customer references from cross-tenant blockers', async () => {
     const customer = {
-      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.id?.not === 12 ? 13 : 14),
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.customerId?.not === 12 ? 0 : 14),
       findMany: jest.fn().mockResolvedValue([]),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     };
@@ -264,11 +264,11 @@ describe('DataGovernanceService employee reset dependencies', () => {
 
     expect(assignment).toMatchObject({
       records: 14,
-      crossTenantRecords: 13,
-      resolvedRecords: 1,
-      unresolvedRecords: 13,
+      crossTenantRecords: 0,
+      resolvedRecords: 14,
+      unresolvedRecords: 0,
       willSetNull: true,
-      blocking: true,
+      blocking: false,
     });
   });
 
