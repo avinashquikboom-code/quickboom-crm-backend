@@ -264,6 +264,16 @@ export const RESET_MODULES: ResetModule[] = [
     ],
   },
   {
+    id: 'commissions',
+    name: 'Commissions',
+    description: 'Tenant commission transactions and withdrawal requests. Cross-tenant employee references remain protected.',
+    available: true,
+    tables: [
+      row('commission', 'commissions', 'Commissions', 'customer'),
+      row('commissionWithdrawal', 'commission_withdrawals', 'Commission withdrawals', 'customer'),
+    ],
+  },
+  {
     id: 'attendance',
     name: 'Attendance',
     description: 'Attendance punches and breaks for this tenant.',
@@ -347,7 +357,7 @@ export function tablesForModules(ids: string[]): TableRule[] {
     attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7, taskHistory: 8, taskProof: 9, taskReview: 10,
     visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmEmployeeMonthlyReport: 14,
     employeeModuleOverride: 15, employeeLeadLimit: 16, salaryTargetPolicy: 17, salaryTargetReview: 18,
-    employeeDeduction: 19, employeeClaim: 20, employeeLoan: 21, salarySlip: 22, payrollItem: 23,
+    employeeDeduction: 19, commissionWithdrawal: 20, commission: 21, employeeClaim: 22, employeeLoan: 23, salarySlip: 24, payrollItem: 25,
     overtimeRequest: 24, attendance: 25, leaveRequest: 26, employeeLeaveBalance: 27, leaveAdjustmentHistory: 28,
     employeeLocation: 29, remoteRequest: 30, employee: 80, designation: 90, department: 100,
   };

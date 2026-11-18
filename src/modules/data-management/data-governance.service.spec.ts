@@ -103,7 +103,7 @@ describe('DataGovernanceService executeReset', () => {
     const result = await service.executeReset(12, 7, 'SUPER_ADMIN', {
       modules: ['attendance'],
       previewToken: preview.previewToken,
-      confirmation: 'RESET',
+      confirmation: ' reset ',
       idempotencyKey: 'reset-test-1',
     });
 
@@ -240,5 +240,101 @@ describe('DataGovernanceService TeamMember tenant filters', () => {
     expect(teamMember.count).toHaveBeenCalledWith({ where: { employee: { customerId: 12 } } });
     expect(teamMember.count).toHaveBeenCalledWith({ where: { team: { customerId: { not: 12 } }, employee: { customerId: 12 } } });
     expect(teamMembership).toMatchObject({ records: 2, crossTenantRecords: 2, blocking: true });
+  });
+});
+
+describe('DataGovernanceService employee reset dependencies', () => {
+  it('separates safe same-tenant customer references from cross-tenant blockers', async () => {
+    const customer = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.id?.not === 12 ? 13 : 14),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ customer }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+
+    const warnings = await (service as any).dependencyWarnings(['employees'], 12, client);
+    const assignment = warnings.find((item: any) => item.model === 'customer');
+
+    expect(assignment).toMatchObject({
+      records: 14,
+      crossTenantRecords: 13,
+      resolvedRecords: 1,
+      unresolvedRecords: 13,
+      willSetNull: true,
+      blocking: true,
+    });
+  });
+
+  it('resolves same-tenant commission dependencies when the Commissions module is selected', async () => {
+    const commission = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.customerId?.not === 12 ? 0 : 4),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ commission }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+
+    const warnings = await (service as any).dependencyWarnings(['employees', 'commissions'], 12, client);
+    const commissions = warnings.find((item: any) => item.model === 'commission');
+
+    expect(commissions).toMatchObject({ records: 4, resolvedRecords: 4, unresolvedRecords: 0, blocking: false, includedInSelectedModule: true });
+  });
+
+  it('clears only same-tenant customer employee links during employee reset', async () => {
+    let employeeCount = 1;
+    const makeDelegate = (count = 0) => ({
+      count: jest.fn(async () => count),
+      findMany: jest.fn(async () => []),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+      create: jest.fn(async () => ({})),
+    });
+    const employee = makeDelegate();
+    employee.count.mockImplementation(async ({ where }: { where?: Record<string, any> } = {}) => {
+      if (where?.customerId?.not) return 0;
+      return where?.customerId === 12 ? employeeCount : 0;
+    });
+    employee.findMany.mockImplementation(async () => [{ id: 99 }]);
+    employee.deleteMany.mockImplementation(async () => { employeeCount = 0; return { count: 1 }; });
+    const customer = makeDelegate();
+    const auditLog = { ...makeDelegate(), findFirst: jest.fn().mockResolvedValue(null) };
+    const prisma = new Proxy({ employee, customer, auditLog }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$transaction') return (work: (tx: unknown) => Promise<unknown>) => work(prisma);
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        return makeDelegate();
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(12, { modules: ['employees'] });
+    await service.executeReset(12, 7, 'SUPER_ADMIN', {
+      modules: ['employees'], previewToken: preview.previewToken, confirmation: 'RESET', idempotencyKey: 'employee-reset-12',
+    });
+
+    expect(customer.updateMany).toHaveBeenCalledWith({
+      where: { customerId: 12, assignedEmployeeId: { in: [99] } },
+      data: { assignedEmployeeId: null },
+    });
+    expect(customer.updateMany).toHaveBeenCalledWith({
+      where: { customerId: 12, createdByEmployeeId: { in: [99] } },
+      data: { createdByEmployeeId: null },
+    });
   });
 });
