@@ -42,6 +42,14 @@ describe('data governance catalog', () => {
     expect(tablesForModules(['commissions']).map((table) => table.model)).toEqual(['commissionWithdrawal', 'commission']);
   });
 
+  it('includes commission slabs before tenant commission configurations and employees', () => {
+    const rows = tablesForModules(['commission-configurations', 'employees']);
+    const index = (model: string) => rows.findIndex((table) => table.model === model);
+    expect(index('commissionSlab')).toBeLessThan(index('commissionConfig'));
+    expect(index('commissionConfig')).toBeLessThan(index('employee'));
+    expect(moduleById('commission-configurations')?.tables.map((table) => table.model)).toEqual(['commissionSlab', 'commissionConfig']);
+  });
+
   it('includes overtime notification events before deleting overtime requests', () => {
     const tables = tablesForModules(['hrm']);
     const eventIndex = tables.findIndex((table) => table.model === 'overtimeNotificationEvent');

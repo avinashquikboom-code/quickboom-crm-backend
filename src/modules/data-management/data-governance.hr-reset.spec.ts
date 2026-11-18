@@ -3,20 +3,25 @@ import { moduleById, tablesForModules } from './data-governance.catalog';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const requestedModules = [
-  'employees', 'departments', 'designations', 'attendance', 'leave', 'salary-structures', 'payroll-policies', 'visits-tasks',
+  'employees', 'departments', 'designations', 'attendance', 'leave', 'salary-structures', 'payroll-policies', 'visits-tasks', 'commission-configurations',
 ];
 
 describe('Data Governance HR module physical deletes', () => {
   it.each(requestedModules)('physically deletes and verifies selected %s records', async (moduleId) => {
     const moduleTables = moduleById(moduleId)!.tables;
     const counts = new Map(moduleTables.map((table) => [table.model, 2]));
+    const deleteOrder: string[] = [];
     const deleteMany = jest.fn(async (model: string) => {
+      deleteOrder.push(model);
       const count = counts.get(model) || 0;
       counts.set(model, 0);
       return { count };
     });
     const delegateFor = (model: string) => ({
-      count: jest.fn(async () => counts.get(model) || 0),
+      count: jest.fn(async (args?: { where?: Record<string, any> }) => {
+        if (model === 'commissionSlab' && args?.where?.configuration?.customerId?.not) return 0;
+        return counts.get(model) || 0;
+      }),
       findMany: jest.fn(async () => []),
       findFirst: jest.fn(async () => null),
       deleteMany: jest.fn((args: unknown) => deleteMany(model)),
@@ -51,6 +56,11 @@ describe('Data Governance HR module physical deletes', () => {
     }
     if (moduleId === 'visits-tasks') {
       expect(delegates.get('teamMember')!.deleteMany).toHaveBeenCalledWith({ where: { team: { customerId: 42 } } });
+    }
+    if (moduleId === 'commission-configurations') {
+      expect(delegates.get('commissionConfig')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
+      expect(delegates.get('commissionSlab')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
+      expect(deleteOrder.indexOf('commissionSlab')).toBeLessThan(deleteOrder.indexOf('commissionConfig'));
     }
   });
 
@@ -92,14 +102,15 @@ describe('Data Governance HR module physical deletes', () => {
     ]));
   });
 
-  it('blocks designation deletion when a protected role references it', async () => {
+  it('preserves a designation referenced by a protected role without blocking the reset', async () => {
     const client = new Proxy({}, {
       get: (_target, key) => {
         const model = String(key);
         if (model === '$queryRaw') return async () => [];
         if (model === '$executeRaw') return async () => 0;
         if (model === 'designation') return { count: async () => 0, findMany: async () => [{ id: 99 }], deleteMany: async () => ({ count: 0 }) };
-        return { count: async () => model === 'role' ? 1 : 0, findMany: async () => [], deleteMany: async () => ({ count: 0 }) };
+        if (model === 'role') return { count: async () => 1, findMany: async () => [{ id: 8, designationId: 99, customerId: 42, type: 'CUSTOM', name: 'Protected custom' }], deleteMany: async () => ({ count: 0 }) };
+        return { count: async () => 0, findMany: async () => [], deleteMany: async () => ({ count: 0 }) };
       },
     });
     const service = new DataGovernanceService(client as PrismaService);
@@ -107,7 +118,9 @@ describe('Data Governance HR module physical deletes', () => {
     expect(result).toContainEqual(expect.objectContaining({
       model: 'role',
       records: 1,
-      blocking: true,
+      blocking: false,
+      preserved: true,
+      preservedRecords: 1,
       label: expect.stringContaining('protected'),
     }));
   });

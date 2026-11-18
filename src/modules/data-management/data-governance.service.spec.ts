@@ -272,6 +272,141 @@ describe('DataGovernanceService employee reset dependencies', () => {
     });
   });
 
+  it('previews commission configurations using only the selected tenant scope', async () => {
+    const countCalls: Array<Record<string, unknown>> = [];
+    const client = new Proxy({}, {
+      get: (_target, key: string | symbol) => {
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === 'auditLog') return { findFirst: jest.fn().mockResolvedValue(null) };
+        if (key === 'commissionConfig') return {
+          count: jest.fn(async ({ where }: { where: Record<string, unknown> }) => { countCalls.push(where); return where.customerId === 12 ? 2 : 0; }),
+          findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        };
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(12, { modules: ['commission-configurations'] });
+
+    expect(countCalls).toContainEqual({ customerId: 12 });
+    expect(preview.tables.find((table) => table.model === 'commissionConfig')).toMatchObject({ records: 2 });
+    expect(preview.modules.find((item) => item.id === 'commission-configurations')?.records).toBe(2);
+  });
+
+  it('keeps cross-tenant commission configurations blocking employee deletion', async () => {
+    const commissionConfig = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.customerId?.not === 12 ? 1 : 2),
+      findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ commissionConfig }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+
+    const warnings = await (service as any).dependencyWarnings(['employees', 'commission-configurations'], 12, client);
+    const warning = warnings.find((item: any) => item.model === 'commissionConfig');
+
+    expect(warning).toMatchObject({ records: 2, crossTenantRecords: 1, blocking: true, includedInSelectedModule: true });
+  });
+
+  it('previews protected roles and linked designations as preserved, not blockers', async () => {
+    const roleRows = Array.from({ length: 11 }, (_, index) => ({
+      id: index + 1, designationId: index + 1, customerId: index < 8 ? 12 : null,
+      type: index < 8 ? 'CUSTOM' : 'SUPER_ADMIN', name: `Role ${index + 1}`,
+    }));
+    const client = new Proxy({}, {
+      get: (_target, key: string | symbol) => {
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === 'auditLog') return { findFirst: jest.fn().mockResolvedValue(null) };
+        if (key === 'role') return { count: jest.fn().mockResolvedValue(11), findMany: jest.fn().mockResolvedValue(roleRows), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+        if (key === 'designation') return {
+          count: jest.fn().mockResolvedValue(13),
+          findMany: jest.fn().mockResolvedValue(Array.from({ length: 13 }, (_, index) => ({ id: index + 1 }))),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        };
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(12, { modules: ['designations'] });
+    const roleWarning = preview.dependencyWarnings.find((item) => item.model === 'role');
+
+    expect(preview.totalEligibleRecords).toBe(2);
+    expect(preview.totalPreservedRecords).toBe(22);
+    expect(preview.preservation).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: 'role', records: 11, roleOwnership: { system: 3, tenant: 8, otherTenant: 0 } }),
+      expect.objectContaining({ model: 'designation', records: 11 }),
+    ]));
+    expect(roleWarning).toMatchObject({ records: 11, blocking: false, preserved: true, preservedRecords: 11 });
+    expect(preview.preservation[0].roles).toHaveLength(11);
+  });
+
+  it('partially deletes unreferenced designations and verifies all protected role links remain', async () => {
+    let designationCount = 13;
+    const roles = Array.from({ length: 11 }, (_, index) => ({
+      id: index + 1, designationId: index + 1, customerId: 12, type: 'CUSTOM', name: `Tenant Role ${index + 1}`,
+    }));
+    const makeDelegate = () => ({
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn(async () => []),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      create: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    });
+    const designation = makeDelegate();
+    designation.count.mockImplementation(async ({ where }: { where?: Record<string, any> } = {}) => {
+        if (where?.id?.notIn) return 0;
+        if (where?.id?.in) return 11;
+        return designationCount;
+    });
+    designation.findMany.mockImplementation(async () => Array.from({ length: 13 }, (_, index) => ({ id: index + 1 })));
+    designation.deleteMany.mockImplementation(async (...args: any[]) => {
+      const { where } = args[0] as { where: Record<string, any> };
+      expect(where).toEqual({ customerId: 12, id: { notIn: Array.from({ length: 11 }, (_, index) => index + 1) } });
+      designationCount = 11;
+      return { count: 2 };
+    });
+    const role = makeDelegate();
+    role.findMany.mockImplementation(async () => roles);
+    role.count.mockImplementation(async () => 11);
+    const auditLog = { ...makeDelegate(), findFirst: jest.fn().mockResolvedValue(null) };
+    let prisma: PrismaService;
+    const proxy = new Proxy({ designation, role, auditLog }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$transaction') return (work: (tx: unknown) => Promise<unknown>) => work(prisma);
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        return makeDelegate();
+      },
+    });
+    prisma = proxy as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(12, { modules: ['designations'] });
+    const result = await service.executeReset(12, 7, 'SUPER_ADMIN', {
+      modules: ['designations'], previewToken: preview.previewToken, confirmation: 'RESET', idempotencyKey: 'partial-designation-reset',
+    });
+
+    expect(result).toMatchObject({
+      recordsDeleted: 2,
+      recordsPreserved: 22,
+      preservedCounts: { role: 11, designation: 11 },
+      countsAfter: { designation: 11 },
+      verified: true,
+    });
+    expect(role.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('resolves same-tenant commission dependencies when the Commissions module is selected', async () => {
     const commission = {
       count: jest.fn(async ({ where }: { where: Record<string, any> }) => where.customerId?.not === 12 ? 0 : 4),
