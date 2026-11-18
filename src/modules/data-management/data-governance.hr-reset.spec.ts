@@ -3,7 +3,7 @@ import { moduleById, tablesForModules } from './data-governance.catalog';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const requestedModules = [
-  'employees', 'departments', 'designations', 'attendance', 'leave', 'salary-structures', 'payroll-policies',
+  'employees', 'departments', 'designations', 'attendance', 'leave', 'salary-structures', 'payroll-policies', 'visits-tasks',
 ];
 
 describe('Data Governance HR module physical deletes', () => {
@@ -28,6 +28,7 @@ describe('Data Governance HR module physical deletes', () => {
         const model = String(key);
         if (model === '$transaction') return async (work: (tx: unknown) => Promise<unknown>) => work(client);
         if (model === '$queryRaw') return async () => [];
+        if (model === '$executeRaw') return async () => 0;
         if (!delegates.has(model)) delegates.set(model, delegateFor(model));
         return delegates.get(model);
       },
@@ -48,6 +49,9 @@ describe('Data Governance HR module physical deletes', () => {
       expect(delegates.get(table.model)!.deleteMany).toHaveBeenCalledWith({ where: expect.any(Object) });
       expect(result.countsAfter[table.model]).toBe(0);
     }
+    if (moduleId === 'visits-tasks') {
+      expect(delegates.get('teamMember')!.deleteMany).toHaveBeenCalledWith({ where: { team: { customerId: 42 } } });
+    }
   });
 
   it('reports cascade history, SET NULL references, and cross-tenant customer dependencies', async () => {
@@ -56,6 +60,7 @@ describe('Data Governance HR module physical deletes', () => {
       get: (_target, key) => {
         const model = String(key);
         if (model === '$queryRaw') return async () => [];
+        if (model === '$executeRaw') return async () => 0;
         if (model === 'employee') return { count: async () => 0, findMany: async () => [{ id: 7 }], deleteMany: async () => ({ count: 0 }) };
         return {
           count: async (args: { where?: Record<string, unknown> } = {}) => {
@@ -92,6 +97,7 @@ describe('Data Governance HR module physical deletes', () => {
       get: (_target, key) => {
         const model = String(key);
         if (model === '$queryRaw') return async () => [];
+        if (model === '$executeRaw') return async () => 0;
         if (model === 'designation') return { count: async () => 0, findMany: async () => [{ id: 99 }], deleteMany: async () => ({ count: 0 }) };
         return { count: async () => model === 'role' ? 1 : 0, findMany: async () => [], deleteMany: async () => ({ count: 0 }) };
       },

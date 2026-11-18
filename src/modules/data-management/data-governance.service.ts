@@ -1228,7 +1228,11 @@ export class DataGovernanceService {
         ['hrmNotificationDelivery', 'Notification history'], ['hrmCommissionMonthlySnapshot', 'Commission snapshots'],
         ['dataCaptureSearch', 'Data capture searches'], ['commissionConfig', 'Employee commission configuration'],
       ] as const) {
-        const ownerRelation = model === 'teamMember' ? { team: customerId == null ? {} : { customerId } } : employeeRelation;
+        // TeamMember has no customerId: tenant ownership is through Team.
+        // Employee ownership identifies the memberships affected by an employee reset.
+        const ownerRelation = model === 'teamMember'
+          ? { employee: customerId == null ? {} : { customerId } }
+          : employeeRelation;
         checks.push({
           parent: 'employees', model, label, where: ownerRelation,
           ...(customerId == null ? {} : { crossTenantWhere: model === 'teamMember'
