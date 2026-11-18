@@ -1260,9 +1260,32 @@ export class LeadService {
       ? await this.leadRepository.unassignedStatusCounts(customerId)
       : {};
 
+    const channelConfiguration = (stage: any, channel: 'EMAIL' | 'WHATSAPP') => {
+      const enabled = channel === 'EMAIL' ? stage.emailEnabled !== false : stage.whatsappEnabled !== false;
+      const templateId = channel === 'EMAIL' ? stage.emailTemplateId : stage.whatsappTemplateId;
+      const template = channel === 'EMAIL' ? stage.emailTemplate : stage.whatsappTemplate;
+      let status = 'NOT_CONFIGURED';
+      if (!enabled || stage.isActive === false || template?.isActive === false || template?.isLocalActive === false || template?.deletedAt) {
+        status = 'INACTIVE';
+      } else if (templateId != null && template && Number(template.id) === Number(templateId)) {
+        if (channel === 'WHATSAPP') {
+          const approval = String(template.status || '').toUpperCase();
+          if (['PENDING', 'PENDING_APPROVAL', 'APPROVAL_PENDING'].includes(approval)) status = 'PENDING_APPROVAL';
+          else if (approval === 'REJECTED') status = 'REJECTED';
+          else if (approval === 'APPROVED' && template.metaTemplateId && !String(template.metaTemplateId).startsWith('seed_')) status = 'CONFIGURED';
+          else status = 'INACTIVE';
+        } else status = 'CONFIGURED';
+      } else if (templateId != null) status = 'INACTIVE';
+      return { status, configured: status === 'CONFIGURED' };
+    };
+
     return dbStages
-      .map((stage: any) => ({
+      .map((stage: any) => {
+        const emailConfiguration = channelConfiguration(stage, 'EMAIL');
+        const whatsappConfiguration = channelConfiguration(stage, 'WHATSAPP');
+        return ({
         id: stage.id,
+        customerId: stage.customerId ?? null,
         key: stage.key,
         name: stage.name,
         label: stage.name,
@@ -1276,12 +1299,16 @@ export class LeadService {
         emailEnabled: stage.emailEnabled !== undefined ? Boolean(stage.emailEnabled) : true,
         emailTemplateId: stage.emailTemplateId ?? null,
         emailTemplate: stage.emailTemplate ?? null,
+        emailConfigurationStatus: emailConfiguration.status,
+        emailConfigured: emailConfiguration.configured,
         emailVariableMapping: stage.emailVariableMapping ?? null,
         whatsappEnabled: stage.whatsappEnabled !== undefined ? Boolean(stage.whatsappEnabled) : true,
         whatsappTemplateId: stage.whatsappTemplateId ?? null,
         whatsappTemplate: stage.whatsappTemplate ?? null,
+        whatsappConfigurationStatus: whatsappConfiguration.status,
+        whatsappConfigured: whatsappConfiguration.configured,
         whatsappVariableMapping: stage.whatsappVariableMapping ?? null,
-      }))
+      }); })
       .sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }
 
