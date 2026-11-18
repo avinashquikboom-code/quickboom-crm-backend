@@ -22,7 +22,9 @@ describe('Data Governance HR module physical deletes', () => {
         if (model === 'commissionSlab' && args?.where?.configuration?.customerId?.not) return 0;
         return counts.get(model) || 0;
       }),
-      findMany: jest.fn(async () => []),
+      findMany: jest.fn(async () => model === 'taskHistory'
+        ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, taskId: 1 }))
+        : []),
       findFirst: jest.fn(async () => null),
       deleteMany: jest.fn((args: unknown) => deleteMany(model)),
       create: jest.fn(async () => ({})),

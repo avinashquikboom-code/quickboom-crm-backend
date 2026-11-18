@@ -369,7 +369,7 @@ export function tablesForModules(ids: string[]): TableRule[] {
     employeeModuleOverride: 15, employeeLeadLimit: 16, commissionSlab: 17, commissionConfig: 18, salaryTargetPolicy: 19, salaryTargetReview: 20,
     employeeDeduction: 21, commissionWithdrawal: 22, commission: 23, employeeClaim: 24, employeeLoan: 25, salarySlip: 26, payrollItem: 27,
     overtimeRequest: 28, attendance: 29, leaveRequest: 30, employeeLeaveBalance: 31, leaveAdjustmentHistory: 32,
-    employeeLocation: 29, remoteRequest: 30, employee: 80, designation: 90, department: 100,
+    employeeLocation: 29, remoteRequest: 30, task: 79, employee: 80, designation: 90, department: 100,
   };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
 }
