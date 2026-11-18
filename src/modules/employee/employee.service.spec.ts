@@ -169,6 +169,63 @@ describe('EmployeeService — Customer Data Isolation', () => {
     });
   });
 
+  describe('employee creation duplicate validation', () => {
+    it('returns the existing same-tenant employee ID for an active duplicate', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce({
+        id: 41, customerId: 1, employeeCode: 'EMP-041', status: 'ACTIVE',
+      });
+
+      await expect((service as any).assertNoExistingEmployee(
+        prisma, 1, { id: 9 }, 'person@example.com',
+      )).rejects.toMatchObject({
+        response: expect.objectContaining({
+          error: 'EMPLOYEE_ALREADY_EXISTS', existingEmployeeId: 41,
+        }),
+      });
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ customerId: 1 }),
+      }));
+    });
+
+    it('reports inactive or deleted employees without creating a second record', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce({
+        id: 42, customerId: 1, employeeCode: 'EMP-042', status: 'DELETED',
+      });
+
+      await expect((service as any).assertNoExistingEmployee(
+        prisma, 1, { id: 10 }, 'deleted@example.com',
+      )).rejects.toMatchObject({
+        response: expect.objectContaining({
+          error: 'EMPLOYEE_ALREADY_EXISTS_INACTIVE', existingEmployeeId: 42,
+          employeeStatus: 'DELETED',
+        }),
+      });
+    });
+
+    it('does not disclose or treat another tenant email as a same-tenant duplicate', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce(null);
+      prisma.employee.findUnique.mockResolvedValueOnce({ id: 88, customerId: 2 });
+
+      await expect((service as any).assertNoExistingEmployee(
+        prisma, 1, { id: 12 }, 'person@example.com',
+      )).rejects.toMatchObject({
+        response: expect.objectContaining({ error: 'EMPLOYEE_ACCOUNT_BELONGS_TO_ANOTHER_TENANT' }),
+      });
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ customerId: 1 }),
+      }));
+    });
+
+    it('allows an existing user without an employee profile to be reused', async () => {
+      prisma.employee.findFirst.mockResolvedValueOnce(null);
+      prisma.employee.findUnique.mockResolvedValueOnce(null);
+
+      await expect((service as any).assertNoExistingEmployee(
+        prisma, 1, { id: 13 }, 'existing-user@example.com',
+      )).resolves.toBeUndefined();
+    });
+  });
+
   describe('findAll (Customer Isolation)', () => {
     it('Customer A: queries only customerId = 1 employees and counts with customerId = 1', async () => {
       const mockCustomerAEmployees = [
@@ -356,11 +413,12 @@ describe('EmployeeService — Customer Data Isolation', () => {
     it('Creating employee with email that already has an Employee record throws ConflictException (409)', async () => {
       // findMany for getNextEmployeeCode
       prisma.employee.findMany.mockResolvedValue([]);
-      // The duplicate guard: findUnique returns an existing employee for this user
-      prisma.employee.findUnique.mockResolvedValue({
+      // Duplicate email matching is tenant-scoped and now uses findFirst.
+      prisma.employee.findFirst.mockResolvedValueOnce({
         id: 99,
         employeeCode: 'EMP-001',
         customerId: 1,
+        status: 'ACTIVE',
       });
 
       await expect(

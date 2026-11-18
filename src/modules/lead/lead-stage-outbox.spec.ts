@@ -1,10 +1,12 @@
-import { createLeadCreatedOutbox, createStageOutbox } from './lead-stage-outbox';
+import { createLeadCreatedOutbox, createStageOutbox, resolveStageChannelState } from './lead-stage-outbox';
 import { LeadStageOutboxWorker } from './lead-stage-outbox.worker';
 
 describe('stage outbox', () => {
   const params = { customerId: 3, leadId: 4, userId: 5, transitionId: 6, previousStageId: 1, newStageId: 2, previousStage: 'New', newStage: 'Connected' };
   it('records two uniquely keyed channel events using the transaction client', async () => {
-    const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, emailTemplateId: 8, whatsappTemplateId: 9 }) },
+    const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, customerId: 3, emailTemplateId: 8, whatsappTemplateId: 9,
+      emailTemplate: { id: 8, customerId: 3, isActive: true },
+      whatsappTemplate: { id: 9, customerId: 3, isLocalActive: true, status: 'APPROVED', metaTemplateId: 'meta-9' } }) },
       leadStageWhatsAppDelivery: { create: jest.fn() }, leadStageEmailDelivery: { create: jest.fn() } };
     await createStageOutbox(db, params);
     expect(db.leadStageWhatsAppDelivery.create.mock.calls[0][0].data).toMatchObject({ metaTemplateId: 9, idempotencyKey: 'stage_3_4_event_6_WHATSAPP' });
@@ -18,7 +20,9 @@ describe('stage outbox', () => {
     const email = { upsert: jest.fn() };
     const whatsapp = { upsert: jest.fn() };
     const db: any = {
-      leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, name: 'New', emailEnabled: true, whatsappEnabled: true, emailTemplateId: 8, whatsappTemplateId: 9 }) },
+      leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, customerId: 3, name: 'New', emailEnabled: true, whatsappEnabled: true, emailTemplateId: 8, whatsappTemplateId: 9,
+        emailTemplate: { id: 8, customerId: 3, isActive: true },
+        whatsappTemplate: { id: 9, customerId: 3, isLocalActive: true, status: 'APPROVED', metaTemplateId: 'meta-9' } }) },
       leadStageEmailDelivery: email,
       leadStageWhatsAppDelivery: whatsapp,
     };
@@ -47,13 +51,41 @@ describe('stage outbox', () => {
     [true, false, 8, 9, 'QUEUED', 'SKIPPED'],
     [false, true, 8, 9, 'SKIPPED', 'QUEUED'],
     [true, true, null, null, 'NOT_CONFIGURED', 'NOT_CONFIGURED'],
+    [true, true, null, 9, 'NOT_CONFIGURED', 'QUEUED'],
+    [true, true, 8, null, 'QUEUED', 'NOT_CONFIGURED'],
     [false, false, null, null, 'SKIPPED', 'SKIPPED'],
   ])('records only configured enabled channels as queued', async (emailEnabled, whatsappEnabled, emailTemplateId, whatsappTemplateId, emailStatus, whatsappStatus) => {
-    const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, emailEnabled, whatsappEnabled, emailTemplateId, whatsappTemplateId }) },
+    const db: any = { leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 2, customerId: 3, isActive: true, emailEnabled, whatsappEnabled, emailTemplateId, whatsappTemplateId,
+      emailTemplate: emailTemplateId == null ? null : { id: emailTemplateId, customerId: 3, isActive: true },
+      whatsappTemplate: whatsappTemplateId == null ? null : { id: whatsappTemplateId, customerId: 3, isLocalActive: true, status: 'APPROVED', metaTemplateId: `meta-${whatsappTemplateId}` } }) },
       leadStageWhatsAppDelivery: { create: jest.fn() }, leadStageEmailDelivery: { create: jest.fn() } };
     await createStageOutbox(db, params);
     expect(db.leadStageEmailDelivery.create.mock.calls[0][0].data.status).toBe(emailStatus);
     expect(db.leadStageWhatsAppDelivery.create.mock.calls[0][0].data.status).toBe(whatsappStatus);
+  });
+  it('maps Details Send to differently named templates by the stage foreign keys', async () => {
+    const db: any = {
+      leadStage: { findFirst: jest.fn().mockResolvedValue({
+        id: 31, customerId: 3, name: 'Details Send', key: 'DETAILS_SEND', emailEnabled: true, whatsappEnabled: true,
+        emailTemplateId: 501, whatsappTemplateId: 902,
+        emailTemplate: { id: 501, customerId: 3, name: 'Sales follow-up email', isActive: true },
+        whatsappTemplate: { id: 902, customerId: 3, name: 'WA utility', templateName: 'lead_details_sent', isLocalActive: true, status: 'APPROVED', metaTemplateId: 'meta-902' },
+      }) },
+      leadStageWhatsAppDelivery: { create: jest.fn() }, leadStageEmailDelivery: { create: jest.fn() },
+    };
+    await createStageOutbox(db, { ...params, newStageId: 31, newStage: 'Details Send' });
+    expect(db.leadStageWhatsAppDelivery.create.mock.calls[0][0].data).toMatchObject({ status: 'QUEUED', metaTemplateId: 902, templateName: 'lead_details_sent' });
+    expect(db.leadStageEmailDelivery.create.mock.calls[0][0].data).toMatchObject({ status: 'QUEUED', emailTemplateId: 501, templateName: 'Sales follow-up email' });
+  });
+  it.each([
+    ['missing mapping', 'EMAIL', { customerId: 3, isActive: true, emailEnabled: true, emailTemplateId: null }, 'NOT_CONFIGURED'],
+    ['inactive email', 'EMAIL', { customerId: 3, isActive: true, emailEnabled: true, emailTemplateId: 8, emailTemplate: { id: 8, customerId: 3, isActive: false } }, 'INACTIVE'],
+    ['inactive WhatsApp', 'WHATSAPP', { customerId: 3, isActive: true, whatsappEnabled: true, whatsappTemplateId: 9, whatsappTemplate: { id: 9, customerId: 3, isLocalActive: false, status: 'APPROVED', metaTemplateId: 'meta-9' } }, 'INACTIVE'],
+    ['pending Meta approval', 'WHATSAPP', { customerId: 3, isActive: true, whatsappEnabled: true, whatsappTemplateId: 9, whatsappTemplate: { id: 9, customerId: 3, isLocalActive: true, status: 'PENDING', metaTemplateId: 'meta-9' } }, 'PENDING_APPROVAL'],
+    ['rejected Meta template', 'WHATSAPP', { customerId: 3, isActive: true, whatsappEnabled: true, whatsappTemplateId: 9, whatsappTemplate: { id: 9, customerId: 3, isLocalActive: true, status: 'REJECTED', metaTemplateId: 'meta-9' } }, 'REJECTED'],
+    ['cross-tenant mapping', 'EMAIL', { customerId: 3, isActive: true, emailEnabled: true, emailTemplateId: 8, emailTemplate: { id: 8, customerId: 44, isActive: true } }, 'FAILED'],
+  ])('classifies %s using its channel-specific relation', (_label, channel, stage, expected) => {
+    expect(resolveStageChannelState(channel as 'EMAIL' | 'WHATSAPP', 3, stage)).toMatchObject({ status: expected });
   });
   it('does not process a row already claimed by another worker', async () => {
     const email: any = { claimQueued: jest.fn().mockResolvedValue(false) };
