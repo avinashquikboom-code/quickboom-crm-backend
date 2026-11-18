@@ -2459,11 +2459,14 @@ export class DataCaptureService implements OnModuleInit {
           !Array.isArray(candidate.independentFields)
           ? candidate.independentFields
           : {};
-        // Google results are references. Use only fields explicitly entered by
-        // the user; for other captured sources, allow safe explicit overrides
-        // to the stored values. The validator whitelists field names/types.
+        // Google results are references. Use explicit user-entered fields unless
+        // the record was validated through the tenant's review workflow. For
+        // other capture sources, allow safe overrides to stored values.
+        const reviewedRecord = String(dbPlace.status || '').toUpperCase() === 'VALIDATED';
         fields = this.validateIndependentLeadFields(
-          googleReference ? suppliedFields : { ...storedFields, ...suppliedFields },
+          googleReference && !reviewedRecord
+            ? suppliedFields
+            : { ...storedFields, ...suppliedFields },
         );
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
@@ -2828,10 +2831,18 @@ export class DataCaptureService implements OnModuleInit {
     const primaryLead = createdLeads[0] || firstDuplicateLead || null;
     const failedCount = perRecordResults.filter((record) => record.failed).length;
     if (importedCount === 0 && skippedDuplicates === 0 && failedCount > 0) {
+      const failureReasons = perRecordResults
+        .filter((record) => record.failed && record.error)
+        .slice(0, 3)
+        .map((record, index) => `Record ${index + 1}: ${String(record.error).slice(0, 240)}`);
       throw new BadRequestException({
         success: false,
         error: 'DATA_CAPTURE_IMPORT_FAILED',
-        message: 'No selected Data Capture records could be imported.',
+        message: [
+          'No selected Data Capture records could be imported.',
+          ...failureReasons,
+          failedCount > failureReasons.length ? `${failedCount - failureReasons.length} more record(s) failed.` : '',
+        ].filter(Boolean).join(' '),
         data: {
           totalRequested: rawCandidates.length,
           imported: 0,

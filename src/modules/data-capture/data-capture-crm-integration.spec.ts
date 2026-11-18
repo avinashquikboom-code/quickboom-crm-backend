@@ -62,6 +62,23 @@ describe('Data Capture CRM reference imports', () => {
     }));
   });
 
+  it('uses stored Google reference fields only after the record is tenant-validated', async () => {
+    captures[0].status = 'VALIDATED';
+    captures[0].phone = null;
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      jobId: 'session',
+      placeIds: ['1'],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({
+      customerId: 7,
+      title: 'Google-only name',
+      source: 'Google Maps',
+      status: 'NEW',
+    });
+  });
+
   it('isolates missing and foreign tenant/record context', async () => {
     await expect(service.importToLeads(undefined as any, 9, { places: [{ id: 1 }] })).rejects.toThrow();
     await expect(service.importToLeads(8, 9, { places: [{ id: 1 }] })).rejects.toThrow();
@@ -70,6 +87,7 @@ describe('Data Capture CRM reference imports', () => {
       response: expect.objectContaining({
         success: false,
         error: 'DATA_CAPTURE_IMPORT_FAILED',
+        message: expect.stringContaining('Record 1:'),
         data: expect.objectContaining({ failed: 1 }),
       }),
     });
@@ -86,6 +104,22 @@ describe('Data Capture CRM reference imports', () => {
           imported: 0,
           failed: 1,
           records: [expect.objectContaining({ failed: true, error: expect.stringContaining('Selected item') })],
+        }),
+      }),
+    });
+  });
+
+  it('explains when a Google reference still needs a user-entered CRM business name', async () => {
+    await expect(service.importToLeads(7, 9, { places: [{ id: 1 }] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        message: expect.stringContaining('Business name is missing.'),
+        data: expect.objectContaining({
+          failed: 1,
+          records: [expect.objectContaining({
+            failed: true,
+            error: 'Business name is missing. Place details could not be retrieved.',
+          })],
         }),
       }),
     });
