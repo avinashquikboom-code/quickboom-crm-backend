@@ -1314,8 +1314,16 @@ export class DataCaptureService implements OnModuleInit {
     return Boolean(place?.googlePlaceId) || /GOOGLE/i.test(String(place?.source || ''));
   }
 
+  private normalizedGooglePlaceId(value: any): string | null {
+    const placeId = String(value || '').trim().replace(/^places\//, '');
+    if (!placeId || placeId.startsWith('custom_') || ['N/A', 'NULL', 'UNDEFINED', 'UNKNOWN'].includes(placeId.toUpperCase())) {
+      return null;
+    }
+    return placeId;
+  }
+
   private async refreshReferencePlaces(records: any[]) {
-    const stale = records.filter((place) => place.googlePlaceId && (!place.businessName || place.rawData?.googleReferenceOnly));
+    const stale = records.filter((place) => this.normalizedGooglePlaceId(place.googlePlaceId) && (!place.businessName || place.rawData?.googleReferenceOnly));
     if (!stale.length) return records;
     const config = await this.integrationSettingsService.getGoogleMapsConfig().catch(() => null);
     if (!config?.isEnabled || !config.apiKey) {
@@ -1324,7 +1332,9 @@ export class DataCaptureService implements OnModuleInit {
     }
     await Promise.all(stale.slice(0, 20).map(async (place) => {
       try {
-        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(place.googlePlaceId)}`, {
+        const placeId = this.normalizedGooglePlaceId(place.googlePlaceId);
+        if (!placeId) return;
+        const response = await axios.get(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
           headers: {
             'X-Goog-Api-Key': config.apiKey,
             'X-Goog-FieldMask': 'id,displayName,formattedAddress,addressComponents,location,primaryType,primaryTypeDisplayName,businessStatus,googleMapsUri,internationalPhoneNumber,nationalPhoneNumber,websiteUri,rating,userRatingCount,photos,regularOpeningHours,attributions',
@@ -2506,14 +2516,27 @@ export class DataCaptureService implements OnModuleInit {
 
       const activeJobId = dbPlace?.jobId;
       if (!dbPlace || (dto.jobId && dbPlace.jobId !== dto.jobId)) {
-        perRecordResults.push({ googlePlaceId: candGoogleId, sourceRecordId: candSourceId,
+        perRecordResults.push({
+          captureId: Number.isSafeInteger(candidateNumId) && candidateNumId > 0 ? candidateNumId : undefined,
+          googlePlaceId: candGoogleId, sourceRecordId: candSourceId,
           imported: false, duplicate: false, failed: true, error: 'Captured record not found in this tenant/session.' });
         continue;
       }
       const googlePlaceReference = this.isGoogleReference(dbPlace);
-      if (googlePlaceReference && !dbPlace.businessName?.trim()) {
-        const [refreshed] = await this.refreshReferencePlaces([dbPlace]);
-        if (refreshed) dbPlace = refreshed;
+      const isValidCapturedName = (value: any) => typeof value === 'string' &&
+        value.trim().length > 0 &&
+        !['N/A', 'NOT AVAILABLE', 'UNKNOWN', 'BUSINESS LEAD'].includes(value.trim().toUpperCase());
+      let googlePreviewName: string | undefined;
+      if (googlePlaceReference && !isValidCapturedName(dbPlace.businessName)) {
+        const savedPlaceId = this.normalizedGooglePlaceId(dbPlace.googlePlaceId);
+        if (savedPlaceId) {
+          try {
+            const [refreshed] = await this.refreshReferencePlaces([dbPlace]);
+            googlePreviewName = (refreshed as any)?.__googlePreview?.businessName;
+          } catch (lookupError: any) {
+            this.logger.warn(`[Data Capture import] Google name lookup unavailable for captureId=${dbPlace.id}: ${lookupError?.message || lookupError}`);
+          }
+        }
       }
       const googleReference = googlePlaceReference;
 
@@ -2525,11 +2548,10 @@ export class DataCaptureService implements OnModuleInit {
       let userSocialMedia: Record<string, string> = {};
       try {
         const location = dbPlace.rawData && typeof dbPlace.rawData === 'object' ? dbPlace.rawData : {};
-        const isValidCapturedName = (value: any) => typeof value === 'string' &&
-          value.trim().length > 0 &&
-          !['N/A', 'NOT AVAILABLE', 'UNKNOWN', 'BUSINESS LEAD'].includes(value.trim().toUpperCase());
         const storedFields = {
-          businessName: isValidCapturedName(dbPlace.businessName) ? dbPlace.businessName : undefined,
+          businessName: isValidCapturedName(dbPlace.businessName)
+            ? dbPlace.businessName
+            : (isValidCapturedName(googlePreviewName) ? googlePreviewName : undefined),
           phone: dbPlace.phone,
           email: dbPlace.email,
           website: dbPlace.website,
@@ -2545,19 +2567,26 @@ export class DataCaptureService implements OnModuleInit {
           !Array.isArray(candidate.independentFields)
           ? candidate.independentFields
           : {};
-        // Google results are references. Always require independent CRM data
-        // from the user; review status does not authorize copying Google
-        // content into persistent Lead fields. Other capture sources may use
-        // their tenant-owned stored values with explicit overrides.
+        // The saved business name belongs to this tenant's Data Capture row
+        // and is the canonical Lead title fallback for Google references.
+        // Do not copy other Google/provider fields into CRM Lead contact data;
+        // those still require independently supplied values. Explicit
+        // independentFields.businessName may override the saved name.
         const trustedStoredFields = googleReference
-          ? { ...storedFields, businessName: undefined, phone: undefined, email: undefined, website: undefined,
+          ? { ...storedFields, phone: undefined, email: undefined, website: undefined,
             address: undefined, category: undefined, city: undefined, state: undefined, country: undefined, pincode: undefined }
           : storedFields;
+        if (googleReference && !isValidCapturedName(storedFields.businessName)) {
+          const savedPlaceId = this.normalizedGooglePlaceId(dbPlace.googlePlaceId);
+          throw new BadRequestException(savedPlaceId
+            ? 'Business name is missing: Google Places details could not be retrieved for the saved Place ID.'
+            : 'Business name is missing: the saved record has no valid Google Place ID for lookup.');
+        }
         fields = this.validateIndependentLeadFields({ ...trustedStoredFields, ...suppliedFields });
         userSocialMedia = this.validateUserSocialProfiles(suppliedFields.socialMedia);
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
-        perRecordResults.push({ googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
+        perRecordResults.push({ captureId: dbPlace.id, googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
           imported: false, duplicate: false, failed: true, error: error.message });
         continue;
       }
@@ -2846,6 +2875,7 @@ export class DataCaptureService implements OnModuleInit {
           }
         } catch (_) {}
         perRecordResults.push({
+          captureId: dbPlace.id,
           sourceRecordId,
           googlePlaceId: googlePlaceId || undefined,
           businessName,
@@ -2861,7 +2891,7 @@ export class DataCaptureService implements OnModuleInit {
         skippedDuplicates++;
         duplicateNames.push(businessName);
         createdLeads.push(leadResult);
-        perRecordResults.push({ sourceRecordId, googlePlaceId, businessName,
+        perRecordResults.push({ captureId: dbPlace.id, sourceRecordId, googlePlaceId, businessName,
           imported: false, duplicate: true, existingLeadId: leadResult.id, leadId: leadResult.id,
           duplicateMatchReason });
         continue;
@@ -2874,6 +2904,7 @@ export class DataCaptureService implements OnModuleInit {
         : leadResult;
 
       perRecordResults.push({
+        captureId: dbPlace.id,
         sourceRecordId,
         googlePlaceId: googlePlaceId || undefined,
         businessName,
@@ -2926,7 +2957,7 @@ export class DataCaptureService implements OnModuleInit {
       const failureReasons = perRecordResults
         .filter((record) => record.failed && record.error)
         .slice(0, 3)
-        .map((record, index) => `Record ${index + 1}: ${String(record.error).slice(0, 240)}`);
+        .map((record, index) => `Record ${record.captureId ? `ID ${record.captureId}` : index + 1}: ${String(record.error).slice(0, 240)}`);
       throw new BadRequestException({
         success: false,
         error: 'DATA_CAPTURE_IMPORT_FAILED',

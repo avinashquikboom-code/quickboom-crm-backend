@@ -15,6 +15,9 @@ describe('Data Governance HR module physical deletes', () => {
       deleteOrder.push(model);
       const count = counts.get(model) || 0;
       counts.set(model, 0);
+      // VisitPhoto.visit uses ON DELETE CASCADE. Deleting visits first would
+      // make the later VisitPhoto.deleteMany report zero despite preview=2.
+      if (model === 'visit') counts.set('visitPhoto', 0);
       return { count };
     });
     const delegateFor = (model: string) => ({
@@ -24,7 +27,9 @@ describe('Data Governance HR module physical deletes', () => {
       }),
       findMany: jest.fn(async () => model === 'taskHistory'
         ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, taskId: 1 }))
-        : []),
+        : model === 'visitPhoto'
+          ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, visitId: index + 10 }))
+          : []),
       findFirst: jest.fn(async () => null),
       deleteMany: jest.fn((args: unknown) => deleteMany(model)),
       create: jest.fn(async () => ({})),
@@ -58,6 +63,8 @@ describe('Data Governance HR module physical deletes', () => {
     }
     if (moduleId === 'visits-tasks') {
       expect(delegates.get('teamMember')!.deleteMany).toHaveBeenCalledWith({ where: { team: { customerId: 42 } } });
+      expect(deleteOrder.indexOf('visitPhoto')).toBeLessThan(deleteOrder.indexOf('visit'));
+      expect(delegates.get('visitPhoto')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
     }
     if (moduleId === 'commission-configurations') {
       expect(delegates.get('commissionConfig')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });

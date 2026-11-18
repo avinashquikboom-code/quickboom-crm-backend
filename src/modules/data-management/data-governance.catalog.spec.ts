@@ -80,6 +80,11 @@ describe('data governance catalog', () => {
     employeeOwned.forEach((model) => expect(catalogModels).toContain(model));
   });
 
+  it('deletes visit photos before visits so the visit cascade cannot consume the expected photo rows', () => {
+    const order = tablesForModules(['visits-tasks']).map((table) => table.model);
+    expect(order.indexOf('visitPhoto')).toBeLessThan(order.indexOf('visit'));
+  });
+
   it('deletes employee and department children before parent rows', () => {
     const tables = tablesForModules(['hrm', 'payroll', 'expenses', 'visits-tasks', 'employees', 'designations', 'departments']);
     const index = (model: string) => tables.findIndex((table) => table.model === model);

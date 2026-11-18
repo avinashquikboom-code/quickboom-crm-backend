@@ -77,6 +77,8 @@ describe('Data Capture CRM reference imports', () => {
   });
 
   it('recovers a null places entry from its paired selected ID instead of rejecting the descriptor', async () => {
+    captures[0].businessName = '';
+    jest.spyOn(service as any, 'refreshReferencePlaces').mockImplementation(async (rows: any[]) => rows);
     await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
@@ -105,13 +107,32 @@ describe('Data Capture CRM reference imports', () => {
     expect(leads[0]).toMatchObject({ title: 'Wrapped capture record', customerId: 7 });
   });
 
-  it('requires independently supplied CRM fields even when a Google capture was reviewed', async () => {
+  it('uses the saved database business name before requiring a Google lookup', async () => {
     captures[0].status = 'VALIDATED';
+    captures[0].businessName = 'Saved database name';
     captures[0].phone = null;
-    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
+    const lookup = jest.spyOn(service as any, 'refreshReferencePlaces');
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
-    })).rejects.toMatchObject({ response: expect.objectContaining({ error: 'DATA_CAPTURE_IMPORT_FAILED' }) });
+    });
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Saved database name', phone: null });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('uses Google Places business name when the saved record has only a valid Place ID', async () => {
+    captures[0].businessName = '';
+    const lookup = jest.spyOn(service as any, 'refreshReferencePlaces').mockImplementation(async (rows: any[]) => {
+      rows[0].__googlePreview = { businessName: 'Resolved from Google Places' };
+      return rows;
+    });
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      placeIds: ['1'],
+    });
+    expect(lookup).toHaveBeenCalledWith([captures[0]]);
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Resolved from Google Places', phone: null, address: null });
   });
 
   it('uses a saved non-Google business name without requiring Google Place details', async () => {
@@ -130,6 +151,18 @@ describe('Data Capture CRM reference imports', () => {
     captures[0] = { ...captures[0], googlePlaceId: null, source: 'MANUAL', businessName: '' };
     await expect(service.importToLeads(7, { id: 9, customerId: 7 }, { places: [{ id: 1 }] }))
       .rejects.toMatchObject({ response: expect.objectContaining({ message: expect.stringContaining('Business name is missing') }) });
+    expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+
+  it('does not call Google Places with a custom or invalid Place ID', async () => {
+    captures[0] = { ...captures[0], googlePlaceId: 'custom_1', source: 'GOOGLE_PLACES', businessName: '' };
+    const lookup = jest.spyOn(service as any, 'refreshReferencePlaces');
+    await expect(service.importToLeads(7, 9, { placeIds: ['1'] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        message: expect.stringContaining('no valid Google Place ID for lookup'),
+      }),
+    });
+    expect(lookup).not.toHaveBeenCalled();
     expect(prisma.lead.create).not.toHaveBeenCalled();
   });
 
@@ -200,7 +233,7 @@ describe('Data Capture CRM reference imports', () => {
       response: expect.objectContaining({
         success: false,
         error: 'DATA_CAPTURE_IMPORT_FAILED',
-        message: expect.stringContaining('Record 1:'),
+        message: expect.stringContaining('Record ID 1:'),
         data: expect.objectContaining({ failed: 1 }),
       }),
     });
@@ -222,16 +255,19 @@ describe('Data Capture CRM reference imports', () => {
     });
   });
 
-  it('explains when a Google reference still needs a user-entered CRM business name', async () => {
+  it('returns a per-record reason when Google lookup cannot resolve a missing name', async () => {
+    captures[0].businessName = '';
+    jest.spyOn(service as any, 'refreshReferencePlaces').mockImplementation(async (rows: any[]) => rows);
     await expect(service.importToLeads(7, 9, { places: [{ id: 1 }] })).rejects.toMatchObject({
       response: expect.objectContaining({
         error: 'DATA_CAPTURE_IMPORT_FAILED',
-        message: expect.stringContaining('Business name is missing.'),
+        message: expect.stringContaining('Business name is missing: Google Places details could not be retrieved'),
         data: expect.objectContaining({
           failed: 1,
           records: [expect.objectContaining({
+            captureId: 1,
             failed: true,
-            error: 'Business name is missing. Place details could not be retrieved.',
+            error: 'Business name is missing: Google Places details could not be retrieved for the saved Place ID.',
           })],
         }),
       }),
@@ -253,13 +289,13 @@ describe('Data Capture CRM reference imports', () => {
     });
   });
 
-  it('keeps partial counts accurate and never copies provider content when independent data is absent', async () => {
+  it('keeps partial counts accurate using saved Google names and validating supplied fields', async () => {
     const result = await service.importToLeads(7, 9, { places: [{ id: 1 },
       { id: 2, independentFields: { businessName: 'Good record' } },
       { id: 3, independentFields: { businessName: 'Invalid record', email: 'invalid' } }] });
-    expect(result).toMatchObject({ totalRequested: 3, imported: 1, failed: 2, skippedDuplicates: 0 });
+    expect(result).toMatchObject({ totalRequested: 3, imported: 2, failed: 1, skippedDuplicates: 0 });
     expect(result.records).toHaveLength(3);
-    expect(captures.map((row) => row.status)).toEqual(['IMPORT_FAILED', 'LEAD_CREATED', 'IMPORT_FAILED']);
+    expect(captures.map((row) => row.status)).toEqual(['LEAD_CREATED', 'LEAD_CREATED', 'IMPORT_FAILED']);
   });
 
   it('serializes concurrent retries, preserves history and never reassigns an existing lead', async () => {
