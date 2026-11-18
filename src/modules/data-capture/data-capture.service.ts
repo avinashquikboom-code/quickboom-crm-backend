@@ -2365,15 +2365,36 @@ export class DataCaptureService implements OnModuleInit {
       // Normalize those values into lookup descriptors; never trust their data
       // as a Lead payload. Every candidate is still resolved from this tenant's
       // DataCapturePlace row below.
-      rawCandidates = dto.places.map((candidate: any) => {
+      const fallbackDescriptor = (rawId: any) => {
+        if (rawId == null || String(rawId).trim() === '') return null;
+        const identifier = String(rawId).trim();
+        return /^\d+$/.test(identifier)
+          ? { id: identifier }
+          : { googlePlaceId: identifier, sourceRecordId: identifier };
+      };
+      rawCandidates = dto.places.map((candidate: any, index: number) => {
+        const fallback = fallbackDescriptor(dto.placeIds?.[index]);
         if (typeof candidate === 'number' || typeof candidate === 'string') {
-          const identifier = String(candidate).trim();
-          if (!identifier) return candidate;
-          return /^\d+$/.test(identifier)
-            ? { id: identifier }
-            : { googlePlaceId: identifier, sourceRecordId: identifier };
+          return fallbackDescriptor(candidate) || fallback || candidate;
         }
-        return candidate;
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+          // Support clients that wrap a capture row in `record`, `place`, or
+          // `dataCapturePlace`, as well as flat descriptors. If that wrapper
+          // omitted its ID, pair it with the same-index placeIds entry.
+          const nested = candidate.record || candidate.place || candidate.dataCapturePlace;
+          const descriptor = nested && typeof nested === 'object' && !Array.isArray(nested)
+            ? { ...nested, independentFields: candidate.independentFields ?? nested.independentFields }
+            : candidate;
+          const hasIdentifier = [
+            descriptor.id, descriptor.dataCaptureId, descriptor.dataCapturePlaceId,
+            descriptor.captureId, descriptor.capturePlaceId, descriptor.placeId,
+            descriptor.googlePlaceId, descriptor.sourceRecordId,
+          ].some((value) => value != null && String(value).trim() !== '');
+          return hasIdentifier || !fallback
+            ? descriptor
+            : { ...fallback, independentFields: descriptor.independentFields };
+        }
+        return fallback || candidate;
       });
     } else if (dto.placeIds && Array.isArray(dto.placeIds) && dto.placeIds.length > 0) {
       rawCandidates = dto.placeIds.map((id) => ({ ...dto, id, googlePlaceId: id, sourceRecordId: id }));
@@ -2418,13 +2439,13 @@ export class DataCaptureService implements OnModuleInit {
 
       // 1. Authoritative resolution of DataCapturePlace from database (Sections 2, 3, 4, 14)
       let dbPlace: any = null;
-      const candidateNumId = Number(candidate.id || candidate.dataCaptureId || candidate.dataCapturePlaceId || candidate.sourceRecordId);
+      const candidateNumId = Number(candidate.id || candidate.dataCaptureId || candidate.dataCapturePlaceId || candidate.captureId || candidate.capturePlaceId || candidate.placeId || candidate.sourceRecordId);
       const candGoogleId =
-        candidate.googlePlaceId &&
-        String(candidate.googlePlaceId).trim().length > 0 &&
-        String(candidate.googlePlaceId).trim() !== 'N/A' &&
-        !String(candidate.googlePlaceId).startsWith('custom_')
-          ? String(candidate.googlePlaceId).trim()
+        (candidate.googlePlaceId || candidate.google_place_id || candidate.place_id || candidate.placeId) &&
+        String(candidate.googlePlaceId || candidate.google_place_id || candidate.place_id || candidate.placeId).trim().length > 0 &&
+        String(candidate.googlePlaceId || candidate.google_place_id || candidate.place_id || candidate.placeId).trim() !== 'N/A' &&
+        !String(candidate.googlePlaceId || candidate.google_place_id || candidate.place_id || candidate.placeId).startsWith('custom_')
+          ? String(candidate.googlePlaceId || candidate.google_place_id || candidate.place_id || candidate.placeId).trim()
           : null;
       const candSourceId =
         candidate.sourceRecordId &&
