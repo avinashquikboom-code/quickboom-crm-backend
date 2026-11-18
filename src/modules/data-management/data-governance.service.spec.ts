@@ -61,7 +61,6 @@ describe('DataGovernanceService history', () => {
     });
   });
 });
-
 describe('DataGovernanceService executeReset', () => {
   it('uses physical deletes, then verifies committed table counts before writing SUCCESS', async () => {
     const remaining = { attendanceBreak: 3, attendance: 5 };
@@ -96,7 +95,6 @@ describe('DataGovernanceService executeReset', () => {
       }),
     } as unknown as PrismaService;
     const service = new DataGovernanceService(prisma);
-    Object.defineProperty(service, 'assertBackupCovers', { value: jest.fn().mockResolvedValue(undefined) });
     Object.defineProperty(service, 'countProtectedRecords', {
       value: jest.fn().mockResolvedValue({ systemCritical: { records: 0, tables: {} }, organizationAndHrMaster: { records: 0, tables: {} } }),
     });
@@ -105,7 +103,6 @@ describe('DataGovernanceService executeReset', () => {
     const result = await service.executeReset(12, 7, 'SUPER_ADMIN', {
       modules: ['attendance'],
       previewToken: preview.previewToken,
-      backupId: 'verified-backup',
       confirmation: 'RESET',
       idempotencyKey: 'reset-test-1',
     });
@@ -130,35 +127,26 @@ describe('DataGovernanceService executeReset', () => {
   });
 });
 
-describe('DataGovernanceService backup gate', () => {
-  it('rejects a missing or unverified backup before any destructive operation', async () => {
-    const service = new DataGovernanceService({} as PrismaService);
-    Object.defineProperty(service, 'backupMeta', {
-      value: jest.fn().mockResolvedValue({ status: 'MISSING', scope: 'tenant', createdAt: new Date().toISOString() }),
-    });
+describe('DataGovernanceService reset preview', () => {
+  it('returns a usable reset preview without querying backup metadata', async () => {
+    const client = new Proxy({}, {
+      get: (_target, key) => {
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return {
+          count: jest.fn().mockResolvedValue(0),
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockResolvedValue(null),
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        };
+      },
+    }) as PrismaService;
+    const service = new DataGovernanceService(client);
 
-    await expect(service.assertBackupCovers(12, 'backup-id-1234', ['attendance']))
-      .rejects.toThrow('The selected backup is not verified.');
-  });
+    const preview = await service.previewReset(12, { modules: ['attendance'] });
 
-  it('accepts a recent, verified backup only when it covers the selected module', async () => {
-    const service = new DataGovernanceService({} as PrismaService);
-    Object.defineProperty(service, 'backupMeta', {
-      value: jest.fn().mockResolvedValue({
-        status: 'VERIFIED',
-        scope: 'tenant',
-        createdAt: new Date().toISOString(),
-        modules: ['attendance'],
-        customerId: 12,
-        checksum: 'checksum',
-      }),
-    });
-    Object.defineProperty(service, 'verifyFile', {
-      value: jest.fn().mockResolvedValue({ ok: true, reason: '', size: 100 }),
-    });
-
-    await expect(service.assertBackupCovers(12, 'backup-id-1234', ['attendance'])).resolves.toBeUndefined();
-    await expect(service.assertBackupCovers(12, 'backup-id-1234', ['payroll']))
-      .rejects.toThrow('The backup does not include: payroll');
+    expect(preview).toMatchObject({ scope: 'tenant', estimatedRecords: 0, modules: [{ id: 'attendance' }] });
+    expect(preview.previewToken).toBeTruthy();
+    expect(preview.expiresAt).toBeTruthy();
+    expect(preview).not.toHaveProperty('backupStatus');
   });
 });

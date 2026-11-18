@@ -12,10 +12,6 @@ export class ModuleResetDto {
   @IsString()
   @IsOptional()
   reason?: string;
-
-  @IsOptional()
-  @IsString()
-  backupId?: string;
 }
 
 export class MultipleModulesResetDto {
@@ -45,10 +41,6 @@ export class ResetAllDto {
   @IsString()
   @IsOptional()
   reason?: string;
-
-  @IsOptional()
-  @IsString()
-  backupId?: string;
 }
 
 export class EmployeeModuleResetDto {
@@ -90,10 +82,6 @@ export class ExecuteResetDto extends ResetPreviewDto {
   @IsString()
   @IsNotEmpty()
   previewToken: string;
-
-  @IsString()
-  @IsNotEmpty()
-  backupId: string;
 
   @IsString()
   @IsNotEmpty()

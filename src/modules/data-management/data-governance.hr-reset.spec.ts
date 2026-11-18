@@ -33,13 +33,11 @@ describe('Data Governance HR module physical deletes', () => {
       },
     }) as PrismaService;
     const service = new DataGovernanceService(client);
-    Object.defineProperty(service, 'assertBackupCovers', { value: jest.fn().mockResolvedValue(undefined) });
 
     const preview = await service.previewReset(42, { modules: [moduleId] });
     const result = await service.executeReset(42, 9, 'SUPER_ADMIN', {
       modules: [moduleId],
       previewToken: preview.previewToken,
-      backupId: 'verified-backup',
       confirmation: 'RESET',
       idempotencyKey: `hr-reset-${moduleId}`,
     });
