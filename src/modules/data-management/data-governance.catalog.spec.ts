@@ -1,4 +1,4 @@
-import { FORBIDDEN_MODELS, RESET_MODULES, tablesForModules, whereFor } from './data-governance.catalog';
+import { FORBIDDEN_MODELS, RESET_MODULES, moduleById, tablesForModules, whereFor } from './data-governance.catalog';
 
 describe('data governance catalog', () => {
   it('does not include accounts, tenants, secrets, audit logs, or migration tables', () => {
@@ -34,5 +34,29 @@ describe('data governance catalog', () => {
     const requestIndex = tables.findIndex((table) => table.model === 'overtimeRequest');
     expect(eventIndex).toBeGreaterThanOrEqual(0);
     expect(eventIndex).toBeLessThan(requestIndex);
+  });
+
+  it('includes eligible employee dependency records in tenant reset modules', () => {
+    const employeeOwned = new Set([
+      'employeeLocation', 'locationTrackingSetting', 'remoteRequest', 'overtimeRequest',
+      'overtimeApproval', 'overtimeNotificationEvent', 'employeeDeduction', 'teamMember',
+      'employeeModuleOverride', 'employeeLeadLimit', 'salaryTargetPolicy', 'salaryTargetReview',
+      'dataCaptureSearch', 'hrmEmployeeMonthlyReport', 'hrmLeaveMonthlySnapshot',
+      'hrmNotificationDelivery', 'hrmCommissionMonthlySnapshot', 'hrmMonthlyReportRun',
+      'hrmMonthlyCycle', 'hrmNotificationOutbox',
+    ]);
+    const catalogModels = new Set(RESET_MODULES.flatMap((item) => item.tables.map((table) => table.model)));
+    employeeOwned.forEach((model) => expect(catalogModels).toContain(model));
+  });
+
+  it('deletes employee and department children before parent rows', () => {
+    const tables = tablesForModules(['hrm', 'payroll', 'expenses', 'visits-tasks', 'employees', 'designations', 'departments']);
+    const index = (model: string) => tables.findIndex((table) => table.model === model);
+    for (const child of ['employeeModuleOverride', 'salaryTargetReview', 'employeeDeduction', 'overtimeNotificationEvent', 'teamMember']) {
+      expect(index(child)).toBeGreaterThanOrEqual(0);
+      expect(index(child)).toBeLessThan(index('employee'));
+    }
+    expect(index('designation')).toBeLessThan(index('department'));
+    expect(index('announcement')).toBeLessThan(index('department'));
   });
 });

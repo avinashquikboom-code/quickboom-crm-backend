@@ -56,6 +56,7 @@ export class DataGovernanceService {
   private readonly logger = new Logger(DataGovernanceService.name);
   private readonly active = new Map<string, string>();
   private readonly previews = new Map<string, PreviewRecord>();
+  private readonly consumingPreviews = new Set<string>();
   private readonly jobs = new Map<string, Record<string, unknown>>();
 
   constructor(private readonly prisma: PrismaService) {
@@ -187,6 +188,11 @@ export class DataGovernanceService {
     const key = this.requireIdempotency(body.idempotencyKey);
     const previous = await this.findIdempotent(tenantId, key, 'DATA_RESET');
     if (previous) return previous;
+    const previewToken = String(body.previewToken || '');
+    if (this.consumingPreviews.has(previewToken)) {
+      throw new BadRequestException('This reset preview is already being used by another operation.');
+    }
+    const previewRecord = this.previews.get(previewToken);
     const preview = this.takePreview(body.previewToken, tenantId, scope === 'global' ? 'global' : 'tenant');
     const modules = this.selectedModules(body.modules, scope === 'application' || scope === 'global');
     const moduleIds = modules.map((item) => item.id).sort();
@@ -195,13 +201,16 @@ export class DataGovernanceService {
     }
     await this.assertBackupCovers(tenantId, body.backupId, moduleIds, scope === 'global');
     const operationId = randomUUID();
-    this.previews.delete(body.previewToken as string);
+    this.consumingPreviews.add(previewToken);
     return this.withLock(tenantId, operationId, async () => {
       const deleted: Record<string, number> = {};
       const countsBefore: Record<string, number> = {};
       const countsAfter: Record<string, number> = {};
       const failures: string[] = [];
       try {
+        if (!previewRecord || this.previews.get(previewToken) !== previewRecord) {
+          throw new BadRequestException('The reset preview is no longer available. Run it again.');
+        }
         await this.prisma.$transaction(async (tx) => {
           await this.acquireResetAdvisoryLock(tx, tenantId);
           await this.lockResetRoots(tx, moduleIds, tenantId);
@@ -284,6 +293,7 @@ export class DataGovernanceService {
           verified: true,
           status: 'SUCCESS',
         });
+        this.previews.delete(previewToken);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Reset failed');
         await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'FAILED', {
@@ -302,6 +312,8 @@ export class DataGovernanceService {
           error: failures[0],
         });
         throw new BadRequestException(`Reset did not complete successfully. Operation ${operationId}. ${failures[0]}`);
+      } finally {
+        this.consumingPreviews.delete(previewToken);
       }
       const recordsDeleted = Object.values(deleted).reduce((sum, count) => sum + count, 0);
       this.logger.log(`Data reset ${operationId} removed ${recordsDeleted} records`);
@@ -792,7 +804,7 @@ export class DataGovernanceService {
     if (global && meta.scope !== 'global') throw new BadRequestException('A global reset requires a verified global backup.');
     if (!global && meta.scope === 'global') throw new BadRequestException('A tenant reset cannot use a global backup.');
     const createdAt = new Date(String(meta.createdAt || 0)).getTime();
-    if (!createdAt || Date.now() - createdAt > BACKUP_TTL_MS) {
+    if (!createdAt || createdAt > Date.now() || Date.now() - createdAt > BACKUP_TTL_MS) {
       throw new BadRequestException('The backup is older than 24 hours. Create a new backup before deleting data.');
     }
     const covered = new Set((meta.modules as string[]) || []);
@@ -809,7 +821,8 @@ export class DataGovernanceService {
       if (row.status !== 'VERIFIED') return false;
       if (global && row.scope !== 'global') return false;
       if (!global && row.scope === 'global') return false;
-      if (Date.now() - new Date(row.createdAt).getTime() > BACKUP_TTL_MS) return false;
+      const createdAt = new Date(row.createdAt).getTime();
+      if (!createdAt || createdAt > Date.now() || Date.now() - createdAt > BACKUP_TTL_MS) return false;
       const covered = new Set(row.modules as string[]);
       return moduleIds.every((id) => covered.has(id));
     }) || null;
