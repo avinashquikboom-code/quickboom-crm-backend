@@ -185,3 +185,29 @@ describe('DataGovernanceService overview', () => {
     expect(overview).toMatchObject({ databaseName: 'test', tenantRecords: 0, tenantRecordsComplete: true, modules: [] });
   });
 });
+
+describe('DataGovernanceService reset advisory locks', () => {
+  const rawTemplate = (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings: [...strings], values });
+
+  it('uses explicit integer arguments for tenant and global advisory locks', async () => {
+    const service = new DataGovernanceService({} as PrismaService);
+    const tx = {
+      $executeRaw: jest.fn().mockResolvedValue(0),
+    };
+    const acquire = (service as any).acquireResetAdvisoryLock.bind(service);
+    tx.$executeRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => rawTemplate(strings, ...values));
+
+    await acquire(tx, 31);
+    const [sharedLock, tenantLock] = tx.$executeRaw.mock.results.map((result) => result.value);
+    expect(sharedLock.strings.join('?')).toContain('pg_advisory_xact_lock_shared(?::integer, 0::integer)');
+    expect(sharedLock.values).toEqual([1397771313]);
+    expect(tenantLock.strings.join('?')).toContain('pg_advisory_xact_lock(?::integer, ?::integer)');
+    expect(tenantLock.values).toEqual([1397771313, 31]);
+
+    tx.$executeRaw.mockClear();
+    await acquire(tx, null);
+    const [globalLock] = tx.$executeRaw.mock.results.map((result) => result.value);
+    expect(globalLock.strings.join('?')).toContain('pg_advisory_xact_lock(?::integer, 0::integer)');
+    expect(globalLock.values).toEqual([1397771313]);
+  });
+});

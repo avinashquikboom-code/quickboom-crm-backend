@@ -894,11 +894,11 @@ export class DataGovernanceService {
   private async acquireResetAdvisoryLock(tx: Prisma.TransactionClient, customerId: number | null) {
     const namespace = 1397771313;
     if (customerId == null) {
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(${namespace}, 0)`);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${namespace}::integer, 0::integer)`;
       return;
     }
-    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock_shared(${namespace}, 0)`);
-    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(${namespace}, ${customerId})`);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(${namespace}::integer, 0::integer)`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${namespace}::integer, ${customerId}::integer)`;
   }
 
   private async lockResetRoots(tx: Prisma.TransactionClient, moduleIds: string[], customerId: number | null) {
