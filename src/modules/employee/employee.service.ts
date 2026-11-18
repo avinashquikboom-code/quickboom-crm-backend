@@ -1285,6 +1285,51 @@ export class EmployeeService {
     }
   }
 
+  private async assertNoExistingEmployee(tx: any, customerId: number, user: any, normalizedEmail: string) {
+    const existingEmployee = await tx.employee.findFirst({
+      where: {
+        customerId,
+        OR: [
+          ...(user ? [{ userId: user.id }] : []),
+          { email: { equals: normalizedEmail, mode: 'insensitive' as Prisma.QueryMode } },
+        ],
+      },
+      select: { id: true, employeeCode: true, customerId: true, status: true },
+    });
+
+    if (existingEmployee) {
+      const inactive = ['INACTIVE', 'DELETED'].includes(
+        String(existingEmployee.status || '').toUpperCase(),
+      );
+      throw new ConflictException({
+        success: false,
+        message: inactive
+          ? `Employee ${existingEmployee.employeeCode || `#${existingEmployee.id}`} already exists in this organization and is inactive. Open that record and use the employee reactivation workflow.`
+          : `This user is already registered as employee ${existingEmployee.employeeCode || `#${existingEmployee.id}`} in this organization.`,
+        error: inactive ? 'EMPLOYEE_ALREADY_EXISTS_INACTIVE' : 'EMPLOYEE_ALREADY_EXISTS',
+        existingEmployeeId: existingEmployee.id,
+        existingEmployeeCode: existingEmployee.employeeCode,
+        employeeStatus: existingEmployee.status,
+      });
+    }
+
+    // Employee.userId is globally unique. A legacy cross-tenant link must not
+    // disclose the other tenant's employee ID or code.
+    if (user && tx.employee.findUnique) {
+      const employeeForUser = await tx.employee.findUnique({
+        where: { userId: user.id } as any,
+        select: { id: true, customerId: true },
+      });
+      if (employeeForUser && Number(employeeForUser.customerId) !== customerId) {
+        throw new ConflictException({
+          success: false,
+          message: 'This user account is already associated with an employee in another organization.',
+          error: 'EMPLOYEE_ACCOUNT_BELONGS_TO_ANOTHER_TENANT',
+        });
+      }
+    }
+  }
+
   async create(params: CreateEmployeeParams) {
     const { customerId, dto } = params;
     const numCustomerId = Number(customerId);
@@ -1475,6 +1520,24 @@ export class EmployeeService {
         where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
       });
 
+      if (user?.customerId != null && Number(user.customerId) !== numCustomerId) {
+        throw new ConflictException({
+          success: false,
+          message: 'A user account with this email already belongs to another organization.',
+          error: 'USER_BELONGS_TO_ANOTHER_TENANT',
+        });
+      }
+      if (user?.deletedAt) {
+        throw new ConflictException({
+          success: false,
+          message: 'The user account is deleted. Restore the account through the authorized account recovery workflow before creating an employee profile.',
+          error: 'USER_ACCOUNT_DELETED',
+        });
+      }
+
+      // Check duplicates before changing/reactivating the User account.
+      await this.assertNoExistingEmployee(tx, numCustomerId, user, normalizedEmail);
+
       if (!user) {
         if (cleanPhone) {
           const duplicatePhoneUser = await tx.user.findFirst({
@@ -1522,15 +1585,8 @@ export class EmployeeService {
           isActive: (dto.status || 'ACTIVE') === 'ACTIVE',
           isVerified: true,
           deletedAt: null,
-          passwordHash,
+          ...(hasExplicitPassword ? { passwordHash } : {}),
         };
-        if (user.customerId !== null && user.customerId !== numCustomerId) {
-          throw new ConflictException({
-            success: false,
-            message: 'A user account with this email already belongs to another organization.',
-            error: 'USER_BELONGS_TO_ANOTHER_TENANT',
-          });
-        }
         if (user.customerId === null) {
           updateUserData.customerId = numCustomerId;
         }
@@ -1538,37 +1594,6 @@ export class EmployeeService {
         user = await tx.user.update({
           where: { id: user.id },
           data: updateUserData,
-        });
-      }
-
-      // ─────────────────────────────────────────────────────────────────────
-      // DUPLICATE GUARD: Check if this User or email already has an Employee record.
-      // Employee.userId is @unique — a second create() would throw P2002.
-      // We detect and reject it here with a clean 409 BEFORE calling create().
-      // ─────────────────────────────────────────────────────────────────────
-      let existingEmployeeForUser = await tx.employee.findFirst({
-        where: {
-          OR: [
-            { userId: user.id },
-            { email: normalizedEmail, customerId: numCustomerId },
-          ],
-        },
-        select: { id: true, employeeCode: true, customerId: true },
-      });
-
-      if (!existingEmployeeForUser && tx.employee.findUnique) {
-        existingEmployeeForUser = await tx.employee.findUnique({
-          where: { userId: user.id } as any,
-          select: { id: true, employeeCode: true, customerId: true },
-        });
-      }
-
-      if (existingEmployeeForUser) {
-        throw new ConflictException({
-          success: false,
-          message: 'This user is already registered as an employee',
-          error: 'EMPLOYEE_ALREADY_EXISTS',
-          existingEmployeeCode: existingEmployeeForUser.employeeCode,
         });
       }
 

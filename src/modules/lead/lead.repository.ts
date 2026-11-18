@@ -3214,10 +3214,10 @@ export class LeadRepository {
         ...stageQuery,
         include: {
           emailTemplate: {
-            select: { id: true, name: true, key: true, subject: true, isActive: true, deletedAt: true },
+            select: { id: true, customerId: true, name: true, key: true, subject: true, isActive: true, deletedAt: true },
           },
           whatsappTemplate: {
-            select: { id: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true },
+            select: { id: true, customerId: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true, rejectionReason: true },
           },
           _count: {
             select: {
@@ -3254,10 +3254,10 @@ export class LeadRepository {
       where: { id: Number(id), deletedAt: null },
       include: {
         emailTemplate: {
-          select: { id: true, name: true, key: true, subject: true, isActive: true, deletedAt: true },
+          select: { id: true, customerId: true, name: true, key: true, subject: true, isActive: true, deletedAt: true },
         },
         whatsappTemplate: {
-          select: { id: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true },
+          select: { id: true, customerId: true, name: true, templateName: true, language: true, status: true, body: true, metaTemplateId: true, isLocalActive: true, rejectionReason: true },
         },
         _count: {
           select: {
@@ -3540,22 +3540,7 @@ export class LeadRepository {
     if (existingCount > 0) return; // Keep the stages already configured for this workspace.
     if (typeof this.prisma.leadStage?.upsert !== 'function') return;
 
-    // Load available default templates to associate
-    const [metaTemplates, emailTemplates] = await Promise.all([
-      typeof this.prisma.metaTemplate?.findMany === 'function'
-        ? this.prisma.metaTemplate.findMany({ where: { deletedAt: null } }).catch(() => [])
-        : [],
-      typeof this.prisma.emailTemplate?.findMany === 'function'
-        ? this.prisma.emailTemplate.findMany({ where: { deletedAt: null } }).catch(() => [])
-        : [],
-    ]);
-
     for (const stage of DEFAULT_STAGES) {
-      const matchedMeta = (metaTemplates as any[]).find((m) => m.key === stage.key);
-      const matchedEmail = (emailTemplates as any[]).find((e) =>
-        e.key.includes(stage.key) || stage.key.includes(e.key.replace('QUIKBOOM_', ''))
-      );
-
       await this.prisma.leadStage.upsert({
         where: {
           customerId_key: { customerId: customerId as any, key: stage.key },
@@ -3572,9 +3557,11 @@ export class LeadRepository {
           isActive: true,
           isSystem: true,
           emailEnabled: true,
-          emailTemplateId: matchedEmail?.id ?? null,
+          // Template mappings are explicit foreign-key choices in Stage Management.
+          // Do not infer them from stage/template names or attach another tenant's template.
+          emailTemplateId: null,
           whatsappEnabled: true,
-          whatsappTemplateId: matchedMeta?.id ?? null,
+          whatsappTemplateId: null,
         },
       });
     }

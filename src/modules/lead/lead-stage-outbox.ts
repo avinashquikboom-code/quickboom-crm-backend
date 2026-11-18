@@ -1,5 +1,64 @@
 import { buildStageAutomationIdempotencyKey, tenantLeadStageScope } from './lead-stage-automation.util';
 
+type StageChannel = 'EMAIL' | 'WHATSAPP';
+
+/** Resolve channel configuration from the stage's FK relation, never template/stage names. */
+export function resolveStageChannelState(
+  channel: StageChannel,
+  customerId: number,
+  stage: any,
+): { status: string; error: string | null } {
+  const enabled = channel === 'EMAIL' ? stage?.emailEnabled : stage?.whatsappEnabled;
+  const templateId = channel === 'EMAIL' ? stage?.emailTemplateId : stage?.whatsappTemplateId;
+  const template = channel === 'EMAIL' ? stage?.emailTemplate : stage?.whatsappTemplate;
+
+  if (!stage) {
+    return { status: 'NOT_CONFIGURED', error: 'No lead stage is associated with this event.' };
+  }
+  if (stage.isActive === false || enabled === false) {
+    return { status: 'SKIPPED', error: 'Stage or channel automation is disabled.' };
+  }
+  if (templateId == null) {
+    return { status: 'NOT_CONFIGURED', error: 'No template is mapped to this stage for this channel.' };
+  }
+  if (!template || Number(template.id) !== Number(templateId)) {
+    return { status: 'INACTIVE', error: 'The mapped template is unavailable.' };
+  }
+
+  const templateCustomerId = template.customerId == null ? null : Number(template.customerId);
+  const stageCustomerId = stage.customerId == null ? null : Number(stage.customerId);
+  if ((templateCustomerId != null && templateCustomerId !== customerId) ||
+      (stageCustomerId == null && templateCustomerId != null)) {
+    return { status: 'FAILED', error: 'The mapped template belongs to another workspace.' };
+  }
+
+  if (channel === 'EMAIL') {
+    if (template.deletedAt || template.isActive !== true) {
+      return { status: 'INACTIVE', error: 'The mapped email template is inactive.' };
+    }
+    return { status: 'QUEUED', error: null };
+  }
+
+  if (template.isLocalActive === false) {
+    return { status: 'INACTIVE', error: 'The mapped WhatsApp template is inactive.' };
+  }
+  const metaStatus = String(template.status || '').toUpperCase();
+  if (['PENDING', 'PENDING_APPROVAL', 'APPROVAL_PENDING'].includes(metaStatus)) {
+    return { status: 'PENDING_APPROVAL', error: 'The mapped WhatsApp template is awaiting Meta approval.' };
+  }
+  if (metaStatus === 'REJECTED') {
+    return { status: 'REJECTED', error: template.rejectionReason || 'Meta rejected the mapped WhatsApp template.' };
+  }
+  if (['PAUSED', 'DISABLED'].includes(metaStatus)) {
+    return { status: 'INACTIVE', error: `The mapped WhatsApp template is ${metaStatus.toLowerCase()}.` };
+  }
+  const providerTemplateId = String(template.metaTemplateId || '').trim();
+  if (metaStatus !== 'APPROVED' || !providerTemplateId || providerTemplateId.startsWith('seed_')) {
+    return { status: 'INACTIVE', error: 'The mapped WhatsApp template is not synced and approved on Meta.' };
+  }
+  return { status: 'QUEUED', error: null };
+}
+
 /** Called inside the same transaction that creates LeadStatusHistory. */
 export async function createStageOutbox(db: any, p: {
   customerId: number; leadId: number; userId: number | null; transitionId: number;
@@ -17,19 +76,15 @@ export async function createStageOutbox(db: any, p: {
     previousStage: p.previousStage, newStage: p.newStage,
     triggerSource: 'LEAD_STAGE_CHANGED',
   };
-  const channelState = (enabled: boolean | undefined, templateId: number | null | undefined) =>
-    enabled === false || stage?.isActive === false
-      ? { status: 'SKIPPED', error: 'Channel or stage automation is disabled.' }
-      : !stage || !templateId
-        ? { status: 'NOT_CONFIGURED', error: 'No template configured for this stage.' }
-        : { status: 'QUEUED', error: null };
+  const emailState = resolveStageChannelState('EMAIL', p.customerId, stage);
+  const whatsappState = resolveStageChannelState('WHATSAPP', p.customerId, stage);
   await db.leadStageWhatsAppDelivery.create({ data: {
-    ...common, ...channelState(stage?.whatsappEnabled, stage?.whatsappTemplateId), idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'WHATSAPP' }),
+    ...common, ...whatsappState, idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'WHATSAPP' }),
     metaTemplateId: stage?.whatsappTemplateId ?? null, templateName: stage?.whatsappTemplate?.templateName ?? stage?.whatsappTemplate?.name ?? null,
     ...(stage?.whatsappVariableMapping != null ? { variableMapping: stage.whatsappVariableMapping } : {}),
   } });
   await db.leadStageEmailDelivery.create({ data: {
-    ...common, ...channelState(stage?.emailEnabled, stage?.emailTemplateId), idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'EMAIL' }),
+    ...common, ...emailState, idempotencyKey: buildStageAutomationIdempotencyKey({ ...p, channel: 'EMAIL' }),
     emailTemplateId: stage?.emailTemplateId ?? null, templateName: stage?.emailTemplate?.name ?? null,
     ...(stage?.emailVariableMapping != null ? { variableMapping: stage.emailVariableMapping } : {}),
   } });
@@ -61,25 +116,25 @@ export async function createLeadCreatedOutbox(db: any, p: {
 
   if (validEmail) {
     const idempotencyKey = `lead_created_${p.customerId}_${p.leadId}_EMAIL`;
+    const emailState = resolveStageChannelState('EMAIL', p.customerId, stage);
     await db.leadStageEmailDelivery.upsert({
       where: { idempotencyKey }, update: {}, create: {
         ...common, idempotencyKey, emailTemplateId: stage?.emailTemplateId ?? null,
         templateName: stage?.emailTemplate?.name ?? null,
         variableMapping: stage?.emailVariableMapping ?? undefined,
-        status: stage?.emailEnabled === false ? 'SKIPPED' : 'QUEUED',
-        error: stage?.emailEnabled === false ? 'Email automation is disabled for this stage.' : null,
+        ...emailState,
       },
     });
   }
   if (validPhone) {
     const idempotencyKey = `lead_created_${p.customerId}_${p.leadId}_WHATSAPP`;
+    const whatsappState = resolveStageChannelState('WHATSAPP', p.customerId, stage);
     await db.leadStageWhatsAppDelivery.upsert({
       where: { idempotencyKey }, update: {}, create: {
         ...common, idempotencyKey, metaTemplateId: stage?.whatsappTemplateId ?? null,
         templateName: stage?.whatsappTemplate?.templateName ?? stage?.whatsappTemplate?.name ?? null,
         variableMapping: stage?.whatsappVariableMapping ?? undefined,
-        status: stage?.whatsappEnabled === false ? 'SKIPPED' : 'QUEUED',
-        error: stage?.whatsappEnabled === false ? 'WhatsApp automation is disabled for this stage.' : null,
+        ...whatsappState,
       },
     });
   }

@@ -82,6 +82,16 @@ function maskPhone(phone?: string | null): string {
   return `****${clean.slice(-4)}`;
 }
 
+function stageTemplateConfigurationStatus(channel: 'EMAIL' | 'WHATSAPP', row: any): string {
+  const status = String(row?.status || '').toUpperCase();
+  if (['NOT_CONFIGURED', 'INACTIVE', 'PENDING_APPROVAL', 'REJECTED'].includes(status)) return status;
+  if (status === 'FAILED' && String(row?.error || '').toLowerCase().includes('another workspace')) return 'FAILED';
+  if (status === 'SKIPPED' && /disabled|inactive/i.test(String(row?.error || ''))) return 'INACTIVE';
+  const templateId = channel === 'EMAIL' ? row?.emailTemplateId : row?.metaTemplateId;
+  if (templateId == null) return 'NOT_CONFIGURED';
+  return 'CONFIGURED';
+}
+
 @Injectable()
 export class LeadService {
   private readonly logger = new Logger(LeadService.name);
@@ -2668,7 +2678,11 @@ export class LeadService {
     if (row) {
       return {
         sent: ['SENT', 'DELIVERED', 'READ'].includes(row.status),
-        status: row.status, deliveryId: row.id, templateName: row.templateName,
+        status: row.status,
+        configurationStatus: stageTemplateConfigurationStatus(channel, row),
+        deliveryId: row.id,
+        templateId: channel === 'EMAIL' ? row.emailTemplateId : row.metaTemplateId,
+        templateName: row.templateName,
         recipient: null, messageId: 'metaMessageId' in row ? row.metaMessageId : row.providerMessageId,
         error: row.error, message: row.error || (row.status === 'QUEUED' ? 'Notification queued for delivery' : `Notification ${row.status.toLowerCase()}`),
       };
