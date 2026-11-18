@@ -76,14 +76,19 @@ describe('Data Capture CRM reference imports', () => {
     expect(leads[0]).toMatchObject({ title: 'Independently supplied name', customerId: 7 });
   });
 
-  it('recovers a null places entry from its paired selected ID and imports the saved Google business name', async () => {
-    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+  it('recovers a null places entry from its paired selected ID instead of rejecting the descriptor', async () => {
+    captures[0].businessName = '';
+    jest.spyOn(service as any, 'refreshReferencePlaces').mockImplementation(async (rows: any[]) => rows);
+    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
       places: [null],
+    })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        message: expect.stringContaining('Business name is missing'),
+      }),
     });
-    expect(result.imported).toBe(1);
-    expect(leads[0]).toMatchObject({ title: 'Google-only name', customerId: 7 });
     expect(prisma.dataCapturePlace.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 1, customerId: 7, deletedAt: null }),
     }));
@@ -102,22 +107,32 @@ describe('Data Capture CRM reference imports', () => {
     expect(leads[0]).toMatchObject({ title: 'Wrapped capture record', customerId: 7 });
   });
 
-  it('uses the saved Google business name for a reviewed capture without copying provider contact fields', async () => {
+  it('uses the saved database business name before requiring a Google lookup', async () => {
     captures[0].status = 'VALIDATED';
+    captures[0].businessName = 'Saved database name';
     captures[0].phone = null;
+    const lookup = jest.spyOn(service as any, 'refreshReferencePlaces');
     const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
     });
     expect(result.imported).toBe(1);
-    expect(leads[0]).toMatchObject({
-      title: 'Google-only name',
-      companyName: 'Google-only name',
-      phone: null,
-      email: null,
-      website: null,
-      address: null,
+    expect(leads[0]).toMatchObject({ title: 'Saved database name', phone: null });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('uses Google Places business name when the saved record has only a valid Place ID', async () => {
+    captures[0].businessName = '';
+    const lookup = jest.spyOn(service as any, 'refreshReferencePlaces').mockImplementation(async (rows: any[]) => {
+      rows[0].__googlePreview = { businessName: 'Resolved from Google Places' };
+      return rows;
     });
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      placeIds: ['1'],
+    });
+    expect(lookup).toHaveBeenCalledWith([captures[0]]);
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Resolved from Google Places', phone: null, address: null });
   });
 
   it('uses a saved non-Google business name without requiring Google Place details', async () => {
@@ -136,6 +151,18 @@ describe('Data Capture CRM reference imports', () => {
     captures[0] = { ...captures[0], googlePlaceId: null, source: 'MANUAL', businessName: '' };
     await expect(service.importToLeads(7, { id: 9, customerId: 7 }, { places: [{ id: 1 }] }))
       .rejects.toMatchObject({ response: expect.objectContaining({ message: expect.stringContaining('Business name is missing') }) });
+    expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+
+  it('does not call Google Places with a custom or invalid Place ID', async () => {
+    captures[0] = { ...captures[0], googlePlaceId: 'custom_1', source: 'GOOGLE_PLACES', businessName: '' };
+    const lookup = jest.spyOn(service as any, 'refreshReferencePlaces');
+    await expect(service.importToLeads(7, 9, { placeIds: ['1'] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        message: expect.stringContaining('no valid Google Place ID for lookup'),
+      }),
+    });
+    expect(lookup).not.toHaveBeenCalled();
     expect(prisma.lead.create).not.toHaveBeenCalled();
   });
 
@@ -206,7 +233,7 @@ describe('Data Capture CRM reference imports', () => {
       response: expect.objectContaining({
         success: false,
         error: 'DATA_CAPTURE_IMPORT_FAILED',
-        message: expect.stringContaining('Record 1:'),
+        message: expect.stringContaining('Record ID 1:'),
         data: expect.objectContaining({ failed: 1 }),
       }),
     });
@@ -228,11 +255,23 @@ describe('Data Capture CRM reference imports', () => {
     });
   });
 
-  it('imports a Google reference using its saved business name without requiring a duplicate client field', async () => {
-    const result = await service.importToLeads(7, 9, { places: [{ id: 1 }] });
-    expect(result.imported).toBe(1);
-    expect(result.failed).toBe(0);
-    expect(leads[0]).toMatchObject({ title: 'Google-only name', companyName: 'Google-only name' });
+  it('returns a per-record reason when Google lookup cannot resolve a missing name', async () => {
+    captures[0].businessName = '';
+    jest.spyOn(service as any, 'refreshReferencePlaces').mockImplementation(async (rows: any[]) => rows);
+    await expect(service.importToLeads(7, 9, { places: [{ id: 1 }] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        message: expect.stringContaining('Business name is missing: Google Places details could not be retrieved'),
+        data: expect.objectContaining({
+          failed: 1,
+          records: [expect.objectContaining({
+            captureId: 1,
+            failed: true,
+            error: 'Business name is missing: Google Places details could not be retrieved for the saved Place ID.',
+          })],
+        }),
+      }),
+    });
   });
 
   it('rejects malformed numeric IDs as per-record not-found failures without Prisma type errors', async () => {
@@ -250,13 +289,12 @@ describe('Data Capture CRM reference imports', () => {
     });
   });
 
-  it('keeps partial counts accurate while using saved Google names and rejecting invalid independent contact data', async () => {
+  it('keeps partial counts accurate using saved Google names and validating supplied fields', async () => {
     const result = await service.importToLeads(7, 9, { places: [{ id: 1 },
       { id: 2, independentFields: { businessName: 'Good record' } },
       { id: 3, independentFields: { businessName: 'Invalid record', email: 'invalid' } }] });
     expect(result).toMatchObject({ totalRequested: 3, imported: 2, failed: 1, skippedDuplicates: 0 });
     expect(result.records).toHaveLength(3);
-    expect(leads.map((lead) => lead.title)).toEqual(['Google-only name', 'Good record']);
     expect(captures.map((row) => row.status)).toEqual(['LEAD_CREATED', 'LEAD_CREATED', 'IMPORT_FAILED']);
   });
 
