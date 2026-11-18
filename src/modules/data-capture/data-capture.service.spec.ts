@@ -156,8 +156,30 @@ describe('DataCaptureService', () => {
       photos: [], googlePhotos: [{ url }],
     })).photos).toEqual([url]);
     expect((await service.listPlaces(1, { page: 1, limit: 20 })).data[0].photos).toEqual([url]);
-    expect((await service.getPlaceById(1, 37)).photos).toEqual([url]);
+    const reopened = await service.getPlaceById(1, 37);
+    expect(reopened.photos).toEqual([url]);
+    expect(reopened.businessName).toBe('Storefront');
     expect(mockIntegrationSettingsService.getGoogleMapsConfig).not.toHaveBeenCalled();
+  });
+
+  it('returns a live Google name as a transient list preview when the persisted capture name is blank', async () => {
+    const record = {
+      id: 42, customerId: 1, googlePlaceId: 'ChIJreference', businessName: '',
+      source: 'GOOGLE_PLACES', status: 'CAPTURED', rawData: {}, photos: [],
+    };
+    mockPrisma.dataCapturePlace.count.mockResolvedValueOnce(1);
+    mockPrisma.dataCapturePlace.findMany.mockResolvedValueOnce([record]);
+    mockIntegrationSettingsService.getGoogleMapsConfig.mockResolvedValueOnce({ isEnabled: true, apiKey: 'test-key' });
+    const get = jest.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: {
+      id: 'ChIJreference', displayName: { text: 'Visible Business' },
+      formattedAddress: '10 Main Street', addressComponents: [],
+    } });
+    try {
+      const response = await service.listPlaces(1, { page: 1, limit: 20 });
+      expect(response.data[0]).toMatchObject({ id: 42, businessName: 'Visible Business', address: '10 Main Street' });
+      expect(mockPrisma.dataCapturePlace.update).not.toHaveBeenCalled();
+      expect(record.businessName).toBe('');
+    } finally { get.mockRestore(); }
   });
 
   it('copies saved capture uploads and Google photo references onto the lead', async () => {

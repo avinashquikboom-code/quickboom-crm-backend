@@ -381,7 +381,7 @@ export class DataCaptureService implements OnModuleInit {
       });
     }
 
-    const placeId = String(place?.googlePlaceId || rawId).trim().replace(/^places\//, '');
+        const placeId = String(place?.googlePlaceId || rawId).trim().replace(/^places\//, '');
     if (!placeId || placeId.startsWith('custom_') || placeId === 'N/A') {
       res.status(404).send('Place not found');
       return;
@@ -1151,6 +1151,9 @@ export class DataCaptureService implements OnModuleInit {
       status: p.status || 'CAPTURED',
       createdFrom: resolvedCreatedFrom,
       capturedAt: this.captureTimestamp(p),
+          sourceRecordId: p.sourceRecordId || undefined,
+          isImported: Boolean(p.isImported),
+          importedLeadId: p.importedLeadId || undefined,
       rawData: {
         city: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.city || null,
         state: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.state || null,
@@ -1307,6 +1310,10 @@ export class DataCaptureService implements OnModuleInit {
     };
   }
 
+  private isGoogleReference(place: any): boolean {
+    return Boolean(place?.googlePlaceId) || /GOOGLE/i.test(String(place?.source || ''));
+  }
+
   private async refreshReferencePlaces(records: any[]) {
     const stale = records.filter((place) => place.googlePlaceId && (!place.businessName || place.rawData?.googleReferenceOnly));
     if (!stale.length) return records;
@@ -1333,23 +1340,25 @@ export class DataCaptureService implements OnModuleInit {
         const location = this.addressParts(live.addressComponents || []);
         const photos = this.resolveGooglePhotos(live, config.apiKey).map((photo) => photo.url);
         const data = {
-          businessName: name,
-          category: live.primaryTypeDisplayName?.text || live.primaryType || place.category || null,
-          address: live.formattedAddress || null,
-          phone: ContactExtractor.normalizePhoneNumber(live.internationalPhoneNumber || live.nationalPhoneNumber) || null,
-          website: ContactExtractor.normalizeWebsiteUrl(live.websiteUri) || null,
-          rating: live.rating ?? null,
-          reviewCount: live.userRatingCount ?? null,
-          latitude: live.location?.latitude ?? null,
-          longitude: live.location?.longitude ?? null,
-          googleMapsUrl: live.googleMapsUri || place.googleMapsUrl || null,
-          businessStatus: live.businessStatus || place.businessStatus || 'OPERATIONAL',
-          photos: photos.length ? this.mergeStoredPhotos(place.photos, place.rawData?.photos, place.rawData?.googlePhotos, photos).googlePhotos.map((photo) => ({ ...photo })) : undefined,
-          rawData: { ...place.rawData, googleReferenceOnly: false, ...location, openingHours: live.regularOpeningHours?.weekdayDescriptions || null, attributions: live.attributions || [] },
+          preview: {
+            businessName: name,
+            category: live.primaryTypeDisplayName?.text || live.primaryType || undefined,
+            address: live.formattedAddress || undefined,
+            phone: ContactExtractor.normalizePhoneNumber(live.internationalPhoneNumber || live.nationalPhoneNumber) || undefined,
+            website: ContactExtractor.normalizeWebsiteUrl(live.websiteUri) || undefined,
+            rating: live.rating ?? undefined,
+            reviewCount: live.userRatingCount ?? undefined,
+            latitude: live.location?.latitude ?? undefined,
+            longitude: live.location?.longitude ?? undefined,
+            googleMapsUrl: live.googleMapsUri || undefined,
+            businessStatus: live.businessStatus || undefined,
+            googlePhotos: photos.length ? this.mergeStoredPhotos([], undefined, undefined, photos).googlePhotos : [],
+            rawData: { ...location, attributions: live.attributions || [] },
+          },
         };
-        // The refreshed Google response is transient UI content. Keep it in
-        // this request's object only; persist only the Google Place ID.
-        Object.assign(place, data);
+        // Return the refreshed result to this request without persisting Google
+        // content in the tenant's saved capture row.
+        (place as any).__googlePreview = data.preview;
       } catch (error: any) {
         this.logger.warn(`[Google Places API] Place details failed for capture ${place.id} status=${error.response?.status || 'none'} code=${error.code || 'none'}`);
       }
@@ -1470,6 +1479,7 @@ export class DataCaptureService implements OnModuleInit {
 
       const records = await this.refreshReferencePlaces(stored);
       const data: CapturedPlace[] = records.map((p) => {
+        const preview = (p as any).__googlePreview || {};
         const { googlePhotos: normGP, photos: normPhotoUrls } = this.mergeStoredPhotos(
           p.photos, (p.rawData as any)?.photos, (p.rawData as any)?.googlePhotos,
         );
@@ -1487,32 +1497,32 @@ export class DataCaptureService implements OnModuleInit {
           id: p.id,
           provider: p.source || 'GOOGLE_PLACES',
           googlePlaceId: p.googlePlaceId || undefined,
-          businessName: p.businessName,
-          category: p.category || undefined,
-          address: p.address || undefined,
-          phone: p.phone || undefined,
+          businessName: this.isGoogleReference(p) ? (preview.businessName || '') : p.businessName,
+          category: this.isGoogleReference(p) ? preview.category : (p.category || undefined),
+          address: this.isGoogleReference(p) ? preview.address : (p.address || undefined),
+          phone: this.isGoogleReference(p) ? preview.phone : (p.phone || undefined),
           email: p.email || undefined,
-          website: p.website || undefined,
-          rating: p.rating || undefined,
-          reviewCount: p.reviewCount || undefined,
-          latitude: p.latitude || undefined,
-          longitude: p.longitude || undefined,
-          googleMapsUrl: p.googleMapsUrl || undefined,
+          website: this.isGoogleReference(p) ? preview.website : (p.website || undefined),
+          rating: this.isGoogleReference(p) ? preview.rating : (p.rating || undefined),
+          reviewCount: this.isGoogleReference(p) ? preview.reviewCount : (p.reviewCount || undefined),
+          latitude: this.isGoogleReference(p) ? preview.latitude : (p.latitude || undefined),
+          longitude: this.isGoogleReference(p) ? preview.longitude : (p.longitude || undefined),
+          googleMapsUrl: this.isGoogleReference(p) ? preview.googleMapsUrl : (p.googleMapsUrl || undefined),
           businessStatus: p.businessStatus || 'OPERATIONAL',
           source: p.source || 'GOOGLE_PLACES',
           createdFrom: p.createdFrom || undefined,
           status: p.status || 'CAPTURED',
           notes: p.notes || undefined,
-          rawData: p.rawData || undefined,
+          rawData: this.isGoogleReference(p) ? preview.rawData : (p.rawData || undefined),
           isImported: p.isImported,
           importedLeadId: p.importedLeadId || undefined,
           capturedAt: this.captureTimestamp(p),
           updatedAt: p.updatedAt,
           customerId: String(p.customerId),
           extractionJobId: p.jobId || undefined,
-          googlePhotos: normGP.length > 0 ? normGP : [],
+          googlePhotos: normGP.length > 0 ? normGP : (preview.googlePhotos || []),
           photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
-          socialMedia: this.extractSocialMediaFromPlace(p),
+          socialMedia: this.isGoogleReference(p) ? undefined : this.extractSocialMediaFromPlace(p),
         };
       });
 
@@ -1569,9 +1579,13 @@ export class DataCaptureService implements OnModuleInit {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
-    // Saved records and their photos remain available during a Places outage.
-    // Only incomplete references need a live lookup.
-    await this.refreshReferencePlaces([place]);
+    // Saved non-Google records remain usable without Google. Google Place
+    // details are fetched only as transient preview content for this response.
+    if (this.isGoogleReference(place) && !place.businessName?.trim()) {
+      const [refreshed] = await this.refreshReferencePlaces([place]);
+      if (refreshed) Object.assign(place, { __googlePreview: (refreshed as any).__googlePreview });
+    }
+    const preview = (place as any).__googlePreview || {};
 
     // Run duplicate detection against CRM entities (Lead, Company, Contact)
     const duplicateMatches = await this.findDuplicateMatches(numCustomerId || place.customerId, place);
@@ -1593,23 +1607,23 @@ export class DataCaptureService implements OnModuleInit {
       id: place.id,
       provider: place.source || 'GOOGLE_PLACES',
       googlePlaceId: place.googlePlaceId || undefined,
-      businessName: place.businessName,
-      category: place.category || undefined,
-      address: place.address || undefined,
-      phone: place.phone || undefined,
+      businessName: this.isGoogleReference(place) ? (preview.businessName || '') : place.businessName,
+      category: this.isGoogleReference(place) ? preview.category : (place.category || undefined),
+      address: this.isGoogleReference(place) ? preview.address : (place.address || undefined),
+      phone: this.isGoogleReference(place) ? preview.phone : (place.phone || undefined),
       email: place.email || undefined,
-      website: place.website || undefined,
-      rating: place.rating || undefined,
-      reviewCount: place.reviewCount || undefined,
-      latitude: place.latitude || undefined,
-      longitude: place.longitude || undefined,
-      googleMapsUrl: place.googleMapsUrl || undefined,
+      website: this.isGoogleReference(place) ? preview.website : (place.website || undefined),
+      rating: this.isGoogleReference(place) ? preview.rating : (place.rating || undefined),
+      reviewCount: this.isGoogleReference(place) ? preview.reviewCount : (place.reviewCount || undefined),
+      latitude: this.isGoogleReference(place) ? preview.latitude : (place.latitude || undefined),
+      longitude: this.isGoogleReference(place) ? preview.longitude : (place.longitude || undefined),
+      googleMapsUrl: this.isGoogleReference(place) ? preview.googleMapsUrl : (place.googleMapsUrl || undefined),
       businessStatus: place.businessStatus || 'OPERATIONAL',
       source: place.source || 'GOOGLE_PLACES',
       createdFrom: place.createdFrom || undefined,
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
-      rawData: place.rawData || undefined,
+      rawData: this.isGoogleReference(place) ? preview.rawData : (place.rawData || undefined),
       isImported: place.isImported,
       importedLeadId: place.importedLeadId || undefined,
       capturedAt: this.captureTimestamp(place),
@@ -1617,7 +1631,7 @@ export class DataCaptureService implements OnModuleInit {
       customerId: String(place.customerId),
       extractionJobId: place.jobId || undefined,
       duplicateMatches,
-      googlePhotos: placeGP.length > 0 ? placeGP : [],
+      googlePhotos: placeGP.length > 0 ? placeGP : (preview.googlePhotos || []),
       photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
       socialMedia: this.extractSocialMediaFromPlace(place),
     };
@@ -2491,20 +2505,26 @@ export class DataCaptureService implements OnModuleInit {
           imported: false, duplicate: false, failed: true, error: 'Captured record not found in this tenant/session.' });
         continue;
       }
-      if (!dbPlace.googlePlaceId && (!dbPlace.businessName || (dbPlace.rawData as any)?.googleReferenceOnly)) {
-        await this.refreshReferencePlaces([dbPlace]);
-        dbPlace = await this.prisma.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } }) || dbPlace;
+      const googlePlaceReference = this.isGoogleReference(dbPlace);
+      if (googlePlaceReference && !dbPlace.businessName?.trim()) {
+        const [refreshed] = await this.refreshReferencePlaces([dbPlace]);
+        if (refreshed) dbPlace = refreshed;
       }
-      dbPlace = await this.ensureGooglePlacePhotos(dbPlace);
-      const googleReference = Boolean(dbPlace.googlePlaceId) || /GOOGLE/i.test(dbPlace.source || '');
+      const googleReference = googlePlaceReference;
 
-      // 2. Authoritative field mapping from candidate and dbPlace (Sections 4, 5, 6, 7, 8)
+      // 2. Authoritative field mapping from candidate and dbPlace. A name
+      // retrieved from Google is only a transient reference preview, not an
+      // independently supplied CRM name. Existing tenant-owned non-Google
+      // capture data remains a valid fallback when no explicit field is sent.
       let fields: any;
       let userSocialMedia: Record<string, string> = {};
       try {
         const location = dbPlace.rawData && typeof dbPlace.rawData === 'object' ? dbPlace.rawData : {};
+        const isValidCapturedName = (value: any) => typeof value === 'string' &&
+          value.trim().length > 0 &&
+          !['N/A', 'NOT AVAILABLE', 'UNKNOWN', 'BUSINESS LEAD'].includes(value.trim().toUpperCase());
         const storedFields = {
-          businessName: dbPlace.businessName,
+          businessName: isValidCapturedName(dbPlace.businessName) ? dbPlace.businessName : undefined,
           phone: dbPlace.phone,
           email: dbPlace.email,
           website: dbPlace.website,
@@ -2524,11 +2544,11 @@ export class DataCaptureService implements OnModuleInit {
         // from the user; review status does not authorize copying Google
         // content into persistent Lead fields. Other capture sources may use
         // their tenant-owned stored values with explicit overrides.
-        fields = this.validateIndependentLeadFields(
-          googleReference
-            ? suppliedFields
-            : { ...storedFields, ...suppliedFields },
-        );
+        const trustedStoredFields = googleReference
+          ? { ...storedFields, businessName: undefined, phone: undefined, email: undefined, website: undefined,
+            address: undefined, category: undefined, city: undefined, state: undefined, country: undefined, pincode: undefined }
+          : storedFields;
+        fields = this.validateIndependentLeadFields({ ...trustedStoredFields, ...suppliedFields });
         userSocialMedia = this.validateUserSocialProfiles(suppliedFields.socialMedia);
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
@@ -2566,7 +2586,7 @@ export class DataCaptureService implements OnModuleInit {
 
       // 3. Duplicate Detection against CRM Leads (Section 13)
       const leadOrConditions: any[] = [];
-      if (googlePlaceId) {
+      if (!googleReference && googlePlaceId) {
         leadOrConditions.push({ googlePlaceId });
         leadOrConditions.push({ sourceRecordId: googlePlaceId });
       }
