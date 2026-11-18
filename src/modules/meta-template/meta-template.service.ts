@@ -579,12 +579,20 @@ export class MetaTemplateService {
     });
   }
 
-  private async findTemplateForUser(id: number, customerId?: number | string | null) {
+  /**
+   * Loads a template for a destructive or preview operation. Non-platform users
+   * only ever see their own tenant's rows; platform (customerId = null) templates
+   * are visible to Super Admins only, so one tenant can never reach another's data.
+   */
+  private async findTemplateForUser(id: number, customerId?: number | string | null, user?: any) {
     const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const platformWide = !user || this.isSuperAdmin(user);
     const item = await this.prisma.metaTemplate.findFirst({
       where: {
         id,
-        OR: [{ customerId: null }, ...(parsedCustId ? [{ customerId: parsedCustId }] : [])],
+        ...(platformWide
+          ? { OR: [{ customerId: null }, ...(parsedCustId ? [{ customerId: parsedCustId }] : [])] }
+          : { customerId: parsedCustId }),
       },
     });
     if (!item) throw new NotFoundException(`Meta template #${id} not found.`);
@@ -640,7 +648,7 @@ export class MetaTemplateService {
   }
 
   async previewDelete(id: number, user: any) {
-    const item = await this.findTemplateForUser(id, user?.customerId);
+    const item = await this.findTemplateForUser(id, user?.customerId, user);
     this.assertTemplateAccess(item, user);
     const references = await this.findTemplateReferences(item);
     const syncedToMeta = Boolean(item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_'));
@@ -689,7 +697,7 @@ export class MetaTemplateService {
    */
   async remove(id: number, user: any, dto?: DeleteMetaTemplateDto) {
     const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
-    let item = await this.findTemplateForUser(id, customerId);
+    let item = await this.findTemplateForUser(id, customerId, user);
     this.assertTemplateAccess(item, user);
     let alreadyArchived = Boolean(item.deletedAt);
     let previouslyDeletedOnMeta = item.deletionState === 'META_DELETED' || item.deletionState === 'LOCAL_DELETED';
@@ -698,7 +706,7 @@ export class MetaTemplateService {
     }
     if (!alreadyArchived && item.deletionState === 'PENDING') {
       const cleaned = await this.completeLocalDeletion(item, user, dto?.reason);
-      const fresh = await this.findTemplateForUser(id, customerId);
+      const fresh = await this.findTemplateForUser(id, customerId, user);
       await this.writeDeletionAudit(fresh, user, this.actorLabel(user), 'META_DELETED', await this.findTemplateReferences(fresh), dto?.reason);
       return { success: true, message: 'Template deleted successfully. Local record archived after retry.', metaResult: 'META_DELETED', templateId: item.id, ...cleaned };
     }
@@ -732,7 +740,7 @@ export class MetaTemplateService {
         deletedByName: actor,
       },
     });
-    item = await this.findTemplateForUser(id, customerId);
+    item = await this.findTemplateForUser(id, customerId, user);
     alreadyArchived = Boolean(item.deletedAt);
     previouslyDeletedOnMeta = item.deletionState === 'META_DELETED' || item.deletionState === 'LOCAL_DELETED';
 
