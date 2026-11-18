@@ -76,17 +76,14 @@ describe('Data Capture CRM reference imports', () => {
     expect(leads[0]).toMatchObject({ title: 'Independently supplied name', customerId: 7 });
   });
 
-  it('recovers a null places entry from its paired selected ID instead of rejecting the descriptor', async () => {
-    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
+  it('recovers a null places entry from its paired selected ID and imports the saved Google business name', async () => {
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
       places: [null],
-    })).rejects.toMatchObject({
-      response: expect.objectContaining({
-        error: 'DATA_CAPTURE_IMPORT_FAILED',
-        message: expect.stringContaining('Business name is missing'),
-      }),
     });
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({ title: 'Google-only name', customerId: 7 });
     expect(prisma.dataCapturePlace.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 1, customerId: 7, deletedAt: null }),
     }));
@@ -105,13 +102,22 @@ describe('Data Capture CRM reference imports', () => {
     expect(leads[0]).toMatchObject({ title: 'Wrapped capture record', customerId: 7 });
   });
 
-  it('requires independently supplied CRM fields even when a Google capture was reviewed', async () => {
+  it('uses the saved Google business name for a reviewed capture without copying provider contact fields', async () => {
     captures[0].status = 'VALIDATED';
     captures[0].phone = null;
-    await expect(service.importToLeads(7, { id: 9, customerId: 7 }, {
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
       jobId: 'session',
       placeIds: ['1'],
-    })).rejects.toMatchObject({ response: expect.objectContaining({ error: 'DATA_CAPTURE_IMPORT_FAILED' }) });
+    });
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({
+      title: 'Google-only name',
+      companyName: 'Google-only name',
+      phone: null,
+      email: null,
+      website: null,
+      address: null,
+    });
   });
 
   it('uses a saved non-Google business name without requiring Google Place details', async () => {
@@ -222,20 +228,11 @@ describe('Data Capture CRM reference imports', () => {
     });
   });
 
-  it('explains when a Google reference still needs a user-entered CRM business name', async () => {
-    await expect(service.importToLeads(7, 9, { places: [{ id: 1 }] })).rejects.toMatchObject({
-      response: expect.objectContaining({
-        error: 'DATA_CAPTURE_IMPORT_FAILED',
-        message: expect.stringContaining('Business name is missing.'),
-        data: expect.objectContaining({
-          failed: 1,
-          records: [expect.objectContaining({
-            failed: true,
-            error: 'Business name is missing. Place details could not be retrieved.',
-          })],
-        }),
-      }),
-    });
+  it('imports a Google reference using its saved business name without requiring a duplicate client field', async () => {
+    const result = await service.importToLeads(7, 9, { places: [{ id: 1 }] });
+    expect(result.imported).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(leads[0]).toMatchObject({ title: 'Google-only name', companyName: 'Google-only name' });
   });
 
   it('rejects malformed numeric IDs as per-record not-found failures without Prisma type errors', async () => {
@@ -253,13 +250,14 @@ describe('Data Capture CRM reference imports', () => {
     });
   });
 
-  it('keeps partial counts accurate and never copies provider content when independent data is absent', async () => {
+  it('keeps partial counts accurate while using saved Google names and rejecting invalid independent contact data', async () => {
     const result = await service.importToLeads(7, 9, { places: [{ id: 1 },
       { id: 2, independentFields: { businessName: 'Good record' } },
       { id: 3, independentFields: { businessName: 'Invalid record', email: 'invalid' } }] });
-    expect(result).toMatchObject({ totalRequested: 3, imported: 1, failed: 2, skippedDuplicates: 0 });
+    expect(result).toMatchObject({ totalRequested: 3, imported: 2, failed: 1, skippedDuplicates: 0 });
     expect(result.records).toHaveLength(3);
-    expect(captures.map((row) => row.status)).toEqual(['IMPORT_FAILED', 'LEAD_CREATED', 'IMPORT_FAILED']);
+    expect(leads.map((lead) => lead.title)).toEqual(['Google-only name', 'Good record']);
+    expect(captures.map((row) => row.status)).toEqual(['LEAD_CREATED', 'LEAD_CREATED', 'IMPORT_FAILED']);
   });
 
   it('serializes concurrent retries, preserves history and never reassigns an existing lead', async () => {
