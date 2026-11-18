@@ -45,13 +45,65 @@ describe('Data Capture CRM reference imports', () => {
     expect(captures[0]).toMatchObject({ importedLeadId: leads[0].id, status: 'LEAD_CREATED' });
   });
 
+  it('resolves primitive selected IDs through the tenant-scoped Data Capture primary key', async () => {
+    captures[0].source = 'MANUAL';
+    captures[0].googlePlaceId = null;
+    captures[0].sourceRecordId = '1';
+    captures[0].phone = null;
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      jobId: 'session',
+      places: ['1'],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.records[0]).toMatchObject({ imported: true, leadId: leads[0].id });
+    expect(prisma.dataCapturePlace.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 1, customerId: 7, deletedAt: null }),
+    }));
+  });
+
   it('isolates missing and foreign tenant/record context', async () => {
     await expect(service.importToLeads(undefined as any, 9, { places: [{ id: 1 }] })).rejects.toThrow();
     await expect(service.importToLeads(8, 9, { places: [{ id: 1 }] })).rejects.toThrow();
     captures[0].customerId = 8;
-    const result = await service.importToLeads(7, 9, { places: [{ id: 1 }] });
-    expect(result.failed).toBe(1);
+    await expect(service.importToLeads(7, 9, { places: [{ id: 1 }] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        success: false,
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        data: expect.objectContaining({ failed: 1 }),
+      }),
+    });
     expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a failure response with per-record reasons when every selected item is invalid', async () => {
+    await expect(service.importToLeads(7, 9, { places: [null as any] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        success: false,
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        data: expect.objectContaining({
+          totalRequested: 1,
+          imported: 0,
+          failed: 1,
+          records: [expect.objectContaining({ failed: true, error: expect.stringContaining('Selected item') })],
+        }),
+      }),
+    });
+  });
+
+  it('rejects malformed numeric IDs as per-record not-found failures without Prisma type errors', async () => {
+    await expect(service.importToLeads(7, 9, { places: [1.5 as any] })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        data: expect.objectContaining({
+          failed: 1,
+          records: [expect.objectContaining({
+            failed: true,
+            error: 'Captured record not found in this tenant/session.',
+          })],
+        }),
+      }),
+    });
   });
 
   it('keeps partial counts accurate and never copies provider content when independent data is absent', async () => {

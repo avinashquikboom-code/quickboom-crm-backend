@@ -2260,7 +2260,9 @@ export class DataCaptureService implements OnModuleInit {
       const value = input[key];
       if (value == null || value === '') continue;
       if (typeof value !== 'string' || value.length > (key === 'address' ? 2000 : 500)) throw new BadRequestException(`Invalid ${key}.`);
-      fields[key] = value.trim();
+      const normalized = value.trim();
+      if (!normalized || ['N/A', 'NOT AVAILABLE', 'UNKNOWN'].includes(normalized.toUpperCase())) continue;
+      fields[key] = normalized;
     }
     if (!fields.businessName) throw new BadRequestException('Business name is missing. Place details could not be retrieved.');
     if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) throw new BadRequestException('Invalid email.');
@@ -2320,7 +2322,20 @@ export class DataCaptureService implements OnModuleInit {
     // Gather candidate descriptors from DTO (Section 3)
     let rawCandidates: any[] = [];
     if (dto.places && Array.isArray(dto.places) && dto.places.length > 0) {
-      rawCandidates = dto.places;
+      // Some clients send the selected IDs in `places` instead of `placeIds`.
+      // Normalize those values into lookup descriptors; never trust their data
+      // as a Lead payload. Every candidate is still resolved from this tenant's
+      // DataCapturePlace row below.
+      rawCandidates = dto.places.map((candidate: any) => {
+        if (typeof candidate === 'number' || typeof candidate === 'string') {
+          const identifier = String(candidate).trim();
+          if (!identifier) return candidate;
+          return /^\d+$/.test(identifier)
+            ? { id: identifier }
+            : { googlePlaceId: identifier, sourceRecordId: identifier };
+        }
+        return candidate;
+      });
     } else if (dto.placeIds && Array.isArray(dto.placeIds) && dto.placeIds.length > 0) {
       rawCandidates = dto.placeIds.map((id) => ({ ...dto, id, googlePlaceId: id, sourceRecordId: id }));
     } else if (dto.dataCaptureId || dto.dataCapturePlaceId || dto.placeId || dto.id) {
@@ -2353,7 +2368,12 @@ export class DataCaptureService implements OnModuleInit {
     for (let idx = 0; idx < rawCandidates.length; idx++) {
       const candidate = rawCandidates[idx];
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
-        perRecordResults.push({ imported: false, duplicate: false, failed: true, error: 'Invalid selected record.' });
+        perRecordResults.push({
+          imported: false,
+          duplicate: false,
+          failed: true,
+          error: 'Selected item must be a Data Capture record ID or a record descriptor.',
+        });
         continue;
       }
 
@@ -2376,7 +2396,7 @@ export class DataCaptureService implements OnModuleInit {
           : null;
 
       // Priority A: Match by primary key id
-      if (!isNaN(candidateNumId) && candidateNumId > 0) {
+      if (Number.isSafeInteger(candidateNumId) && candidateNumId > 0) {
         dbPlace = await this.prisma.dataCapturePlace.findFirst({
           where: { id: candidateNumId, customerId: numCustomerId, deletedAt: null },
         });
@@ -2397,7 +2417,7 @@ export class DataCaptureService implements OnModuleInit {
             customerId: numCustomerId,
             deletedAt: null,
             OR: [
-              ...(!isNaN(numCandidateSrc) && numCandidateSrc > 0 ? [{ id: numCandidateSrc }] : []),
+              ...(Number.isSafeInteger(numCandidateSrc) && numCandidateSrc > 0 ? [{ id: numCandidateSrc }] : []),
               { sourceRecordId: candSourceId },
               { googlePlaceId: candSourceId },
             ],
@@ -2422,7 +2442,7 @@ export class DataCaptureService implements OnModuleInit {
       let fields: any;
       try {
         const location = dbPlace.rawData && typeof dbPlace.rawData === 'object' ? dbPlace.rawData : {};
-        fields = this.validateIndependentLeadFields({
+        const storedFields = {
           businessName: dbPlace.businessName,
           phone: dbPlace.phone,
           email: dbPlace.email,
@@ -2433,7 +2453,18 @@ export class DataCaptureService implements OnModuleInit {
           state: location.state,
           country: location.country,
           pincode: location.pincode,
-        });
+        };
+        const suppliedFields = candidate.independentFields &&
+          typeof candidate.independentFields === 'object' &&
+          !Array.isArray(candidate.independentFields)
+          ? candidate.independentFields
+          : {};
+        // Google results are references. Use only fields explicitly entered by
+        // the user; for other captured sources, allow safe explicit overrides
+        // to the stored values. The validator whitelists field names/types.
+        fields = this.validateIndependentLeadFields(
+          googleReference ? suppliedFields : { ...storedFields, ...suppliedFields },
+        );
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
         perRecordResults.push({ googlePlaceId: dbPlace.googlePlaceId, sourceRecordId: String(dbPlace.id),
@@ -2795,12 +2826,27 @@ export class DataCaptureService implements OnModuleInit {
     }
 
     const primaryLead = createdLeads[0] || firstDuplicateLead || null;
+    const failedCount = perRecordResults.filter((record) => record.failed).length;
+    if (importedCount === 0 && skippedDuplicates === 0 && failedCount > 0) {
+      throw new BadRequestException({
+        success: false,
+        error: 'DATA_CAPTURE_IMPORT_FAILED',
+        message: 'No selected Data Capture records could be imported.',
+        data: {
+          totalRequested: rawCandidates.length,
+          imported: 0,
+          skippedDuplicates: 0,
+          failed: failedCount,
+          records: perRecordResults,
+        },
+      });
+    }
 
     return {
       success: true,
       totalRequested: rawCandidates.length,
       imported: importedCount,
-      failed: perRecordResults.filter((r) => r.failed).length,
+      failed: failedCount,
       skippedDuplicates,
       duplicateNames,
       records: perRecordResults,
@@ -2811,7 +2857,7 @@ export class DataCaptureService implements OnModuleInit {
         totalRequested: rawCandidates.length,
         imported: importedCount,
         skippedDuplicates,
-        failed: Math.max(rawCandidates.length - importedCount - skippedDuplicates, 0),
+        failed: failedCount,
         duplicateNames,
         records: perRecordResults,
       },
