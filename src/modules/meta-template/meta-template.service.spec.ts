@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import axios from 'axios';
 import { MetaTemplateService } from './meta-template.service';
 
@@ -20,6 +20,8 @@ describe('MetaTemplateService', () => {
       },
       leadStage: {
         findFirst: jest.fn(),
+        findMany: jest.fn(),
+        updateMany: jest.fn(),
       },
     };
 
@@ -197,45 +199,214 @@ describe('MetaTemplateService', () => {
     });
   });
 
-  describe('remove (delete protection)', () => {
-    it('prevents deletion if template is currently used by an active lead stage', async () => {
-      mockPrisma.metaTemplate.findFirst.mockResolvedValue({
-        id: 3,
-        name: 'Contacted Template',
-        key: 'CONTACTED',
-        isLocalActive: true,
-      });
+  describe('remove (two-system Meta + local deletion)', () => {
+    const admin = { id: 7, customerId: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'], firstName: 'Ava', lastName: 'Admin' };
+    const tenantAdmin = { id: 8, customerId: 1, role: 'TENANT_ADMIN', roles: ['TENANT_ADMIN'] };
+    const otherTenantAdmin = { id: 9, customerId: 2, role: 'TENANT_ADMIN', roles: ['TENANT_ADMIN'] };
+    const employee = { id: 10, customerId: 1, role: 'SALES_EXECUTIVE', roles: ['SALES_EXECUTIVE'] };
 
-      mockPrisma.leadStage.findFirst.mockResolvedValue({
-        id: 2,
-        name: 'Contacted',
-        key: 'CONTACTED',
-        isActive: true,
-      });
+    const baseTemplate = {
+      id: 40, customerId: 1, name: 'Welcome Lead', templateName: 'welcome_lead', key: 'WELCOME',
+      language: 'en_US', category: 'UTILITY', status: 'APPROVED', metaTemplateId: 'meta-40',
+      syncedWabaId: '987654321', body: 'Hello {{leadName}}', variables: ['leadName'], isLocalActive: true,
+      isSystem: false, deletedAt: null, deletionState: 'NONE', deletionError: null, syncStatus: 'SYNCED',
+    };
 
-      await expect(service.remove(3, 1)).rejects.toThrow(
-        /This template is currently in use for pipeline stage "Contacted" and cannot be deleted/,
-      );
+    let record: any;
+    let tx: any;
+
+    beforeEach(() => {
+      record = { ...baseTemplate };
+      mockPrisma.metaTemplate.findFirst.mockImplementation(({ where }: any) => {
+        const allowed = (where.OR || []).some((cond: any) =>
+          cond.customerId === null || (record.customerId != null && cond.customerId === record.customerId));
+        return Promise.resolve(where.id === record.id && allowed ? record : null);
+      });
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }: any) => {
+        record = { ...record, ...data };
+        return Promise.resolve(record);
+      });
+      mockPrisma.leadStage.findMany.mockResolvedValue([]);
+      mockPrisma.leadStage.findMany.mockClear();
+      mockPrisma.leadStage.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.whatsAppCampaign = { count: jest.fn().mockResolvedValue(0), updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      mockPrisma.leadStageWhatsAppDelivery = { count: jest.fn().mockResolvedValue(3) };
+      mockPrisma.auditLog = { create: jest.fn().mockResolvedValue({}) };
+      tx = {
+        leadStage: { findMany: jest.fn().mockImplementation((args?: any) => mockPrisma.leadStage.findMany(args)), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        whatsAppCampaign: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        metaTemplate: { update: jest.fn().mockImplementation(({ data }: any) => { record = { ...record, ...data }; return Promise.resolve(record); }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (work: any) => work(tx));
+      jest.spyOn(axios, 'get').mockResolvedValue({ data: { data: [{ id: 'meta-40', name: 'welcome_lead', language: 'en_US', status: 'APPROVED' }] } } as any);
     });
 
-    it('soft deletes template when not actively referenced by a stage', async () => {
-      mockPrisma.metaTemplate.findFirst.mockResolvedValue({
-        id: 4,
-        name: 'Obsolete Template',
-        key: 'OBSOLETE',
-        isLocalActive: false,
-      });
-      mockPrisma.leadStage.findFirst.mockResolvedValue(null);
-      mockPrisma.metaTemplate.update.mockResolvedValue({ id: 4, deletedAt: new Date() });
+    afterEach(() => jest.restoreAllMocks());
 
-      const res = await service.remove(4, 1);
-      expect(res.success).toBe(true);
-      expect(mockPrisma.metaTemplate.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 4 },
-          data: expect.objectContaining({ deletedAt: expect.any(Date) }),
-        }),
+    it('deletes an approved template from Meta, then archives the local record and preserves delivery history', async () => {
+      const del = jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+
+      const res = await service.remove(40, admin, { reason: 'Cleanup' });
+
+      expect(del).toHaveBeenCalledWith(
+        'https://graph.facebook.com/v21.0/987654321/message_templates/meta-40',
+        expect.objectContaining({ headers: { Authorization: 'Bearer EAABsampletoken12345' }, timeout: 20000 }),
       );
+      expect(record.deletedAt).toEqual(expect.any(Date));
+      expect(record.deletionState).toBe('LOCAL_DELETED');
+      expect(record.deletedByName).toBe('Ava Admin');
+      expect(record.isLocalActive).toBe(false);
+      expect(res).toMatchObject({ success: true, message: expect.stringContaining('Template deleted successfully') });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'DELETE', entityId: '40', status: 'SUCCESS',
+          details: expect.objectContaining({ deliveryRecordsPreserved: 3, metaResult: 'DELETED', deletedBy: 'Ava Admin' }),
+        }),
+      }));
+      expect(tx.metaTemplate.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ deletedAt: expect.any(Date) }) }));
+    });
+
+    it('deletes a rejected template the same way', async () => {
+      record.status = 'REJECTED';
+      record.rejectionReason = 'Policy';
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      const res = await service.remove(40, admin);
+      expect(res.success).toBe(true);
+      expect(record.deletedAt).toBeTruthy();
+    });
+
+    it('deletes a not-synced template locally without calling Meta', async () => {
+      record.metaTemplateId = null;
+      record.syncedWabaId = null;
+      record.syncStatus = 'NOT_SYNCED';
+      const del = jest.spyOn(axios, 'delete');
+      const res = await service.remove(40, tenantAdmin);
+      expect(del).not.toHaveBeenCalled();
+      expect(axios.get).not.toHaveBeenCalled();
+      expect(res.metaResult).toBe('NOT_REQUIRED');
+      expect(record.deletedAt).toBeTruthy();
+      expect(record.deletionState).toBe('LOCAL_DELETED');
+    });
+
+    it('cleans up locally when Meta reports the template is already absent from the WABA', async () => {
+      jest.spyOn(axios, 'delete').mockRejectedValue({ response: { status: 400, data: { error: { code: 100, message: '(#100) Object does not exist' } } } } as any);
+      jest.spyOn(axios, 'get').mockResolvedValue({ data: { data: [] } } as any);
+      const res = await service.remove(40, admin);
+      expect(res.success).toBe(true);
+      expect(record.deletedAt).toBeTruthy();
+      expect(record.deletionState).toBe('LOCAL_DELETED');
+    });
+
+    it('refuses deletion when the connected WABA differs from the synced WABA', async () => {
+      mockIntegrationSettingsService.getIntegrationConfig.mockResolvedValueOnce({
+        isEnabled: true,
+        credentials: { accessToken: 'EAABsampletoken12345', businessAccountId: '111222333' },
+      });
+      const del = jest.spyOn(axios, 'delete');
+      await expect(service.remove(40, admin)).rejects.toThrow(/connected WABA is 111222333/);
+      expect(del).not.toHaveBeenCalled();
+      expect(record.deletedAt).toBeNull();
+    });
+
+    it('preserves the local record and surfaces the Meta permission error', async () => {
+      jest.spyOn(axios, 'delete').mockRejectedValue({ response: { status: 403, data: { error: { code: 200, message: '(#200) Permissions error' } } } } as any);
+      await expect(service.remove(40, admin)).rejects.toThrow(/Meta deletion failed; the local template was preserved/);
+      expect(record.deletedAt).toBeNull();
+      expect(record.deletionState).toBe('NONE');
+    });
+
+    it('verifies Meta after a network timeout and only cleans up when the template is gone', async () => {
+      jest.spyOn(axios, 'delete').mockRejectedValue({ code: 'ECONNABORTED', message: 'timeout of 20000ms exceeded' } as any);
+      jest.spyOn(axios, 'get').mockResolvedValue({ data: { data: [] } } as any);
+      const res = await service.remove(40, admin);
+      expect(res.success).toBe(true);
+      expect(record.deletedAt).toBeTruthy();
+    });
+
+    it('does not assume success on timeout when Meta still lists the template', async () => {
+      jest.spyOn(axios, 'delete').mockRejectedValue({ code: 'ETIMEDOUT' } as any);
+      await expect(service.remove(40, admin)).rejects.toThrow(/did not confirm the deletion/);
+      expect(record.deletedAt).toBeNull();
+    });
+
+    it('keeps a deletion-pending state when local cleanup fails after Meta deletion, and retries safely', async () => {
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error('deadlock detected'));
+      const first = await service.remove(40, admin);
+      expect(first).toMatchObject({ success: false, deletionPending: true });
+      expect(record.deletedAt).toBeNull();
+      expect(record.deletionState).toBe('PENDING');
+      expect(record.deletionError).toContain('deadlock detected');
+
+      const del = jest.spyOn(axios, 'delete');
+      del.mockClear();
+      const second = await service.remove(40, admin);
+      expect(second.success).toBe(true);
+      expect(del).not.toHaveBeenCalled();
+      expect(record.deletedAt).toBeTruthy();
+      expect(record.deletionState).toBe('LOCAL_DELETED');
+    });
+
+    it('blocks deletion when an active lead stage is mapped to the template', async () => {
+      const del = jest.spyOn(axios, 'delete');
+      mockPrisma.leadStage.findMany
+        .mockResolvedValueOnce([{ id: 5, name: 'Contacted', key: 'CONTACTED', isActive: true }])
+        .mockResolvedValueOnce([]);
+      await expect(service.remove(40, admin)).rejects.toThrow(/Lead stage "Contacted" is actively mapped/);
+      expect(del).not.toHaveBeenCalled();
+      expect(record.deletedAt).toBeNull();
+    });
+
+    it('unmaps inactive or key-only stage references during cleanup', async () => {
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      mockPrisma.leadStage.findMany
+        .mockResolvedValueOnce([{ id: 6, name: 'Old', key: 'OLD', isActive: false }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 6 }]);
+      const res = await service.remove(40, admin);
+      expect(res.success).toBe(true);
+      expect(tx.leadStage.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: { whatsappTemplateId: null, whatsappEnabled: false },
+      }));
+      expect(record.deletedAt).toBeTruthy();
+    });
+
+    it('prevents a tenant admin from deleting another tenant or a platform template', async () => {
+      const del = jest.spyOn(axios, 'delete');
+      await expect(service.remove(40, otherTenantAdmin)).rejects.toThrow(ForbiddenException);
+      record.customerId = null;
+      await expect(service.remove(40, tenantAdmin)).rejects.toThrow(ForbiddenException);
+      expect(del).not.toHaveBeenCalled();
+      expect(record.deletedAt).toBeNull();
+    });
+
+    it('allows a tenant admin to delete their own template', async () => {
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      const res = await service.remove(40, tenantAdmin);
+      expect(res.success).toBe(true);
+    });
+
+    it('allows a super admin to delete a platform template', async () => {
+      record.customerId = null;
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      const res = await service.remove(40, admin);
+      expect(res.success).toBe(true);
+    });
+
+    it('reports references in the delete preview without changing anything', async () => {
+      const del = jest.spyOn(axios, 'delete');
+      mockPrisma.leadStage.findMany
+        .mockResolvedValueOnce([{ id: 5, name: 'Contacted', key: 'CONTACTED', isActive: true }])
+        .mockResolvedValueOnce([]);
+      const preview = await service.previewDelete(40, admin);
+      expect(preview).toMatchObject({
+        id: 40, name: 'Welcome Lead', language: 'en_US', category: 'UTILITY', syncStatus: 'SYNCED',
+        syncedToMeta: true, canDelete: false, whatsappCampaigns: 0, deliveryRecords: 3,
+      });
+      expect(preview.blockers[0]).toContain('Contacted');
+      expect(preview.references.leadStages).toHaveLength(1);
+      expect(del).not.toHaveBeenCalled();
+      expect(record.deletedAt).toBeNull();
     });
   });
 

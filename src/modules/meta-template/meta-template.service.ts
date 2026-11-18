@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -13,6 +14,7 @@ import {
   QueryMetaTemplateDto,
   PreviewMetaTemplateDto,
   TestSendMetaTemplateDto,
+  DeleteMetaTemplateDto,
 } from './dto/meta-template.dto';
 import { LEAD_STAGE_WHATSAPP_TEMPLATES, WhatsappService } from '../whatsapp/whatsapp.service';
 import { isLocalPlaceholderTemplate, isSendableMetaTemplate, resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
@@ -577,35 +579,303 @@ export class MetaTemplateService {
     });
   }
 
+  private async findTemplateForUser(id: number, customerId?: number | string | null) {
+    const parsedCustId = customerId !== undefined && customerId !== null ? Number(customerId) : null;
+    const item = await this.prisma.metaTemplate.findFirst({
+      where: {
+        id,
+        OR: [{ customerId: null }, ...(parsedCustId ? [{ customerId: parsedCustId }] : [])],
+      },
+    });
+    if (!item) throw new NotFoundException(`Meta template #${id} not found.`);
+    return item;
+  }
+
+  private static normalizeRole(value: unknown) {
+    return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  }
+
+  private isSuperAdmin(user: any) {
+    const roles = [user?.role, user?.roleType, ...(Array.isArray(user?.roles) ? user.roles : [])];
+    return roles.some((role) => MetaTemplateService.normalizeRole(role) === 'SUPER_ADMIN');
+  }
+
+  private assertTemplateAccess(item: any, user: any) {
+    const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
+    const ownedByTenant = customerId != null && Number(item.customerId) === customerId;
+    if (!ownedByTenant && !this.isSuperAdmin(user)) {
+      throw new ForbiddenException('You cannot delete a template that belongs to another tenant or the platform.');
+    }
+  }
+
+  private async findTemplateReferences(item: any) {
+    const [byLink, byKey, campaigns, deliveries] = await Promise.all([
+      this.prisma.leadStage.findMany({
+        where: { deletedAt: null, whatsappTemplateId: item.id },
+        select: { id: true, name: true, key: true, isActive: true },
+      }),
+      item.key
+        ? this.prisma.leadStage.findMany({
+            where: { deletedAt: null, key: { equals: item.key, mode: 'insensitive' } },
+            select: { id: true, name: true, key: true, isActive: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.whatsAppCampaign?.count
+        ? this.prisma.whatsAppCampaign.count({ where: { metaTemplateId: item.id } })
+        : Promise.resolve(0),
+      this.prisma.leadStageWhatsAppDelivery?.count
+        ? this.prisma.leadStageWhatsAppDelivery.count({ where: { metaTemplateId: item.id } })
+        : Promise.resolve(0),
+    ]);
+    const linkedIds = new Set(byLink.map((s) => s.id));
+    const stages = [...byLink, ...byKey.filter((stage) => !linkedIds.has(stage.id))];
+    return {
+      leadStages: stages,
+      whatsappCampaigns: campaigns,
+      deliveryRecords: deliveries,
+      blockers: stages
+        .filter((stage) => stage.isActive && (linkedIds.has(stage.id) || stage.whatsappTemplateId === item.id || (!stage.whatsappTemplateId && stage.key && item.key && String(stage.key).toUpperCase() === String(item.key).toUpperCase())))
+        .map((stage) => `Lead stage "${stage.name}" is actively mapped to this template.`),
+    };
+  }
+
+  async previewDelete(id: number, user: any) {
+    const item = await this.findTemplateForUser(id, user?.customerId);
+    this.assertTemplateAccess(item, user);
+    const references = await this.findTemplateReferences(item);
+    const syncedToMeta = Boolean(item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_'));
+    return {
+      id: item.id,
+      name: item.name,
+      templateName: item.templateName,
+      language: item.language,
+      category: item.category,
+      status: item.status,
+      syncStatus: item.syncStatus,
+      isSystem: item.isSystem,
+      syncedToMeta,
+      deletionState: item.deletionState,
+      deletedAt: item.deletedAt,
+      references,
+      canDelete: references.blockers.length === 0,
+      blockers: references.blockers,
+      whatsappCampaigns: references.whatsappCampaigns,
+      deliveryRecords: references.deliveryRecords,
+    };
+  }
+
+  private isMetaNotFoundError(err: any) {
+    const error = err?.response?.data?.error;
+    if (!error) return false;
+    const code = Number(error.code);
+    const subcode = Number(error.error_subcode);
+    if (code === 100 || code === 803) return true;
+    if (code === 10 && (subcode === 33 || subcode === 200 || subcode === 201)) return true;
+    return /does not exist|not found|unsupported (get|delete) request/i.test(String(error.message || ''));
+  }
+
+  private async isTemplateOnMeta(customerId: number | string | null | undefined, templateName: string, language: string) {
+    const { templates } = await this.fetchMetaTemplatesFromWaba(customerId);
+    const target = String(templateName || '').trim().toLowerCase();
+    return templates.some((remote) =>
+      String(remote.name || '').trim().toLowerCase() === target &&
+      String(remote.language || '') === String(language || ''),
+    );
+  }
+
   /**
-   * Deletes a Meta template with delete protection if in active use.
+   * Deletes the template from Meta first, then archives the local record.
+   * Local state is never removed unless Meta confirms the template is gone.
    */
-  async remove(id: number, customerId?: number | string | null) {
-    const item = await this.findOne(id, customerId);
-
-    // Delete protection: Check if template key or templateName is currently configured/in-use by CRM lead stages
-    if (item.key) {
-      const activeStage = await this.prisma.leadStage.findFirst({
-        where: {
-          deletedAt: null,
-          isActive: true,
-          key: { equals: item.key, mode: 'insensitive' },
-        },
-      });
-
-      if (activeStage && item.isLocalActive) {
-        throw new BadRequestException(
-          `This template is currently in use for pipeline stage "${activeStage.name}" and cannot be deleted. You can deactivate it instead.`,
-        );
-      }
+  async remove(id: number, user: any, dto?: DeleteMetaTemplateDto) {
+    const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
+    let item = await this.findTemplateForUser(id, customerId);
+    this.assertTemplateAccess(item, user);
+    let alreadyArchived = Boolean(item.deletedAt);
+    let previouslyDeletedOnMeta = item.deletionState === 'META_DELETED' || item.deletionState === 'LOCAL_DELETED';
+    if (alreadyArchived && !previouslyDeletedOnMeta) {
+      throw new BadRequestException(`Meta template "${item.name}" was already archived locally.`);
+    }
+    if (!alreadyArchived && item.deletionState === 'PENDING') {
+      const cleaned = await this.completeLocalDeletion(item, user, dto?.reason);
+      const fresh = await this.findTemplateForUser(id, customerId);
+      await this.writeDeletionAudit(fresh, user, this.actorLabel(user), 'META_DELETED', await this.findTemplateReferences(fresh), dto?.reason);
+      return { success: true, message: 'Template deleted successfully. Local record archived after retry.', metaResult: 'META_DELETED', templateId: item.id, ...cleaned };
     }
 
+    const references = await this.findTemplateReferences(item);
+    if (references.blockers.length) {
+      throw new BadRequestException(`Template cannot be deleted: ${references.blockers.join(' ')}`);
+    }
+
+    const actor = this.actorLabel(user);
+    let metaResult: 'NOT_REQUIRED' | 'DELETED' | 'ALREADY_ABSENT';
+    const syncedToMeta = Boolean(item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_'));
+
+    if (alreadyArchived) {
+      metaResult = 'DELETED';
+    } else if (previouslyDeletedOnMeta || !syncedToMeta) {
+      metaResult = 'NOT_REQUIRED';
+    } else {
+      metaResult = await this.deleteFromMeta(item, customerId);
+    }
+
+    const now = new Date();
     await this.prisma.metaTemplate.update({
       where: { id: item.id },
-      data: { deletedAt: new Date() },
+      data: {
+        deletionState: metaResult === 'DELETED' || metaResult === 'ALREADY_ABSENT' ? 'META_DELETED' : 'NONE',
+        deletionError: null,
+        deletionAttempts: { increment: 1 },
+        lastDeletionAt: now,
+        deletedByUserId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+        deletedByName: actor,
+      },
     });
+    item = await this.findTemplateForUser(id, customerId);
+    alreadyArchived = Boolean(item.deletedAt);
+    previouslyDeletedOnMeta = item.deletionState === 'META_DELETED' || item.deletionState === 'LOCAL_DELETED';
 
-    return { success: true, message: `Meta template "${item.name}" deleted successfully.` };
+    try {
+      await this.completeLocalDeletion(item, user, dto?.reason);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Local template cleanup failed';
+      await this.prisma.metaTemplate.update({
+        where: { id: item.id },
+        data: { deletionState: 'PENDING', deletionError: message },
+      });
+      this.logger.error(`[MetaTemplateService] Local deletion pending for template ${item.id}: ${message}`);
+      return {
+        success: false,
+        deletionPending: true,
+        message: `The template was ${metaResult === 'ALREADY_ABSENT' ? 'already absent from' : 'deleted from'} Meta, but the local record could not be archived: ${message}. Use Retry to finish the local cleanup.`,
+        metaResult,
+        templateId: item.id,
+      };
+    }
+
+    await this.writeDeletionAudit(item, user, actor, metaResult, references, dto?.reason);
+    return {
+      success: true,
+      message: `Template deleted successfully. Removed from ${metaResult === 'NOT_REQUIRED' ? 'QB Suite (template was not synced to Meta)' : 'Meta and QB Suite'}.`,
+      metaResult,
+      templateId: item.id,
+    };
+  }
+
+  private actorLabel(user: any) {
+    const name = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
+    return name || user?.email || user?.username || (user?.id ? `User #${user.id}` : 'Unknown user');
+  }
+
+  private async deleteFromMeta(item: any, customerId: number | null): Promise<'DELETED' | 'ALREADY_ABSENT'> {
+    const { config, apiKey, wabaId, apiVersion } = await this.resolveWhatsAppCredentials(customerId);
+    if (config?.isEnabled === false) {
+      throw new BadRequestException('WhatsApp integration is disabled, so the Meta template cannot be deleted. Re-enable it in Settings → Integrations → WhatsApp and retry.');
+    }
+    if (!apiKey) throw new BadRequestException('WhatsApp / Meta integration is not configured. Access Token is missing, so the Meta template was not deleted.');
+    if (!wabaId) throw new BadRequestException('WhatsApp Business Account ID (WABA ID) is missing, so the Meta template was not deleted.');
+    if (item.syncedWabaId && String(item.syncedWabaId) !== String(wabaId)) {
+      throw new BadRequestException(`This template was synced from WABA ${item.syncedWabaId}, but the connected WABA is ${wabaId}. Switch to the correct WhatsApp account before deleting it.`);
+    }
+
+    const remoteId = item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_') ? String(item.metaTemplateId) : null;
+    const base = `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates`;
+    const headers = { Authorization: `Bearer ${apiKey}` };
+    try {
+      if (remoteId) {
+        await axios.delete(`${base}/${encodeURIComponent(remoteId)}`, { headers, timeout: 20000 });
+      } else {
+        await axios.delete(base, { headers, params: { name: item.templateName, language: item.language }, timeout: 20000 });
+      }
+      return 'DELETED';
+    } catch (error: any) {
+      const safeMessage = this.metaApiError(error, apiKey);
+      if (this.isMetaNotFoundError(error)) {
+        const stillThere = await this.isTemplateOnMeta(customerId, item.templateName, item.language).catch(() => true);
+        if (!stillThere) return 'ALREADY_ABSENT';
+        throw new BadRequestException(`Meta reported the template as missing, but it still exists in WABA ${wabaId}. Local record was preserved. ${safeMessage}`);
+      }
+      if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT' || !error?.response) {
+        // The request may have reached Meta. Verify before deciding anything.
+        const stillThere = await this.isTemplateOnMeta(customerId, item.templateName, item.language);
+        if (!stillThere) return 'ALREADY_ABSENT';
+        throw new BadRequestException(`Meta did not confirm the deletion (${safeMessage}). The template is still present in WABA ${wabaId}; local record was preserved. Check the connection and retry.`);
+      }
+      throw new BadRequestException(`Meta deletion failed; the local template was preserved. ${safeMessage}`);
+    }
+  }
+
+  private async completeLocalDeletion(item: any, user: any, reason?: string) {
+    const now = new Date();
+    const actor = this.actorLabel(user);
+    await this.prisma.$transaction(async (tx) => {
+      const stages = await tx.leadStage.findMany({
+        where: { deletedAt: null, whatsappTemplateId: item.id },
+        select: { id: true },
+      });
+      if (stages.length) {
+        await tx.leadStage.updateMany({
+          where: { id: { in: stages.map((stage) => stage.id) } },
+          data: { whatsappTemplateId: null, whatsappEnabled: false },
+        });
+      }
+      if (tx.whatsAppCampaign) {
+        await tx.whatsAppCampaign.updateMany({
+          where: { metaTemplateId: item.id, status: { notIn: ['COMPLETED', 'FAILED', 'CANCELLED'] } },
+          data: { status: 'CANCELLED', lastError: 'Cancelled because the WhatsApp template was deleted.', completedAt: now },
+        });
+      }
+      await tx.metaTemplate.update({
+        where: { id: item.id },
+        data: {
+          deletedAt: now,
+          isLocalActive: false,
+          deletionState: 'LOCAL_DELETED',
+          deletionError: null,
+          deletedByUserId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+          deletedByName: actor,
+        },
+      });
+    });
+    return { deletedAt: now, reason };
+  }
+
+  private async writeDeletionAudit(item: any, user: any, actor: string, metaResult: string, references: any, reason?: string) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: item.customerId ?? null,
+          userId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+          userName: actor,
+          userRole: user?.role || user?.roleType || null,
+          source: 'ADMIN_PANEL',
+          action: 'DELETE',
+          module: 'Meta Templates',
+          description: `Deleted WhatsApp template "${item.name}" (${item.templateName}, ${item.language}) from Meta and QB Suite`,
+          entityType: 'MetaTemplate',
+          entityId: String(item.id),
+          method: 'DELETE',
+          status: 'SUCCESS',
+          details: {
+            templateId: item.id,
+            templateName: item.templateName,
+            language: item.language,
+            category: item.category,
+            metaResult,
+            wabaId: item.syncedWabaId || null,
+            leadStagesUnmapped: references.leadStages.map((stage) => stage.name),
+            whatsappCampaignsCancelled: references.whatsappCampaigns,
+            deliveryRecordsPreserved: references.deliveryRecords,
+            reason: reason || null,
+            deletedBy: actor,
+            deletedAt: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.warn(`[MetaTemplateService] Could not write deletion audit for template ${item.id}: ${error instanceof Error ? error.message : error}`);
+    }
   }
 
   /**
