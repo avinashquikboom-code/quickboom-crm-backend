@@ -254,6 +254,14 @@ export class DataGovernanceService {
       const countsBefore: Record<string, number> = {};
       const countsAfter: Record<string, number> = {};
       const failures: string[] = [];
+      let resetTransactionCommitted = false;
+      let taskHistoryDiagnostic: {
+        expectedCount: number;
+        matchingBeforeDelete: number;
+        deletedCount?: number;
+        parentTaskIds: number[];
+        reason?: string;
+      } | null = null;
       try {
         if (!previewRecord || this.previews.get(previewToken) !== previewRecord) {
           throw new BadRequestException('The reset preview is no longer available. Run it again.');
@@ -283,6 +291,7 @@ export class DataGovernanceService {
             throw new BadRequestException('Records changed after the preview. Run the preview again before deleting.');
           }
           Object.assign(countsBefore, recount.counts);
+          const deletionLedger = new Set<string>();
 
           if (moduleIds.includes('employees')) {
             const employeeIds = await tx.employee.findMany({
@@ -323,13 +332,64 @@ export class DataGovernanceService {
             const where = table.model === 'designation' && protectedDesignationIds.length
               ? { ...baseWhere, id: { notIn: protectedDesignationIds } }
               : baseWhere;
+            if (deletionLedger.has(table.model)) {
+              const remaining = await delegate.count({ where });
+              if (remaining !== 0) {
+                throw new Error(`${table.label}: duplicate deletion step found ${remaining} eligible records still present.`);
+              }
+              continue;
+            }
             const expected = recount.counts[table.model] || 0;
+            if (table.model === 'taskHistory') {
+              const matchingRows = await tx.taskHistory.findMany({ where, select: { id: true, taskId: true } });
+              taskHistoryDiagnostic = {
+                expectedCount: expected,
+                matchingBeforeDelete: matchingRows.length,
+                parentTaskIds: [...new Set(matchingRows.map((row) => Number(row.taskId)).filter(Number.isInteger))],
+              };
+              this.logger.log(`Task history reset step ${JSON.stringify({
+                operationId,
+                tenantId,
+                selectedModules: moduleIds,
+                ...taskHistoryDiagnostic,
+                transactionStatus: 'IN_PROGRESS',
+              })}`);
+              if (taskHistoryDiagnostic.matchingBeforeDelete !== expected) {
+                taskHistoryDiagnostic.reason = 'The matching rows immediately before deletion differ from the transaction recount.';
+                this.logger.error(`Task history reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...taskHistoryDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+                throw new Error(`Task history: expected ${expected} rows immediately before deletion but found ${taskHistoryDiagnostic.matchingBeforeDelete}.`);
+              }
+            }
             const expectedToDelete = table.model === 'designation'
               ? Math.max(0, expected - protectedDesignationIds.length)
               : expected;
             const result = await delegate.deleteMany({ where });
             const deletedCount = Number(result?.count || 0);
+            if (table.model === 'taskHistory' && taskHistoryDiagnostic) {
+              taskHistoryDiagnostic.deletedCount = deletedCount;
+              if (deletedCount !== expectedToDelete) {
+                taskHistoryDiagnostic.reason = taskHistoryDiagnostic.matchingBeforeDelete !== expected
+                  ? 'The matching rows immediately before deletion differ from the transaction recount.'
+                  : 'The deleteMany affected-row count differs from the expected eligible count.';
+              }
+            }
             if (deletedCount !== expectedToDelete) {
+              if (table.model === 'taskHistory' && taskHistoryDiagnostic) {
+                taskHistoryDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
+                this.logger.error(`Task history reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...taskHistoryDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+              }
               throw new Error(
                 `${table.label}: expected to delete ${expectedToDelete} eligible records but deleted ${deletedCount}.`,
               );
@@ -338,6 +398,7 @@ export class DataGovernanceService {
             if (remaining !== 0) {
               throw new Error(`${table.label}: ${remaining} records remain after deletion.`);
             }
+            deletionLedger.add(table.model);
             deleted[table.model] = deletedCount;
           }
           if (protectedDesignationIds.length) {
@@ -349,6 +410,17 @@ export class DataGovernanceService {
             }
           }
         }, { timeout: 120000, maxWait: 10000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        resetTransactionCommitted = true;
+
+        if (taskHistoryDiagnostic) {
+          this.logger.log(`Task history reset committed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...taskHistoryDiagnostic,
+            transactionStatus: 'COMMITTED',
+          })}`);
+        }
 
         // Run a fresh query after PostgreSQL commits, so success reflects committed state.
         for (const table of tablesForModules(moduleIds)) {
@@ -384,6 +456,15 @@ export class DataGovernanceService {
         this.previews.delete(previewToken);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : 'Reset failed');
+        if (taskHistoryDiagnostic) {
+          this.logger.warn(`Task history reset rolled back or failed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...taskHistoryDiagnostic,
+            transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
+          })}`);
+        }
         await this.writeAudit(tenantId, userId, role, 'DATA_RESET', 'FAILED', {
           operationId,
           scope,

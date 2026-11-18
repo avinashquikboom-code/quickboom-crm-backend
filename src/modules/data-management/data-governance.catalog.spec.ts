@@ -58,6 +58,15 @@ describe('data governance catalog', () => {
     expect(eventIndex).toBeLessThan(requestIndex);
   });
 
+  it('deletes TaskHistory, TaskProof, and TaskReview before Tasks to avoid cascade count mismatches', () => {
+    const tables = tablesForModules(['visits-tasks']);
+    const index = (model: string) => tables.findIndex((table) => table.model === model);
+    for (const child of ['taskHistory', 'taskProof', 'taskReview']) {
+      expect(index(child)).toBeGreaterThanOrEqual(0);
+      expect(index(child)).toBeLessThan(index('task'));
+    }
+  });
+
   it('includes eligible employee dependency records in tenant reset modules', () => {
     const employeeOwned = new Set([
       'employeeLocation', 'locationTrackingSetting', 'remoteRequest', 'overtimeRequest',
