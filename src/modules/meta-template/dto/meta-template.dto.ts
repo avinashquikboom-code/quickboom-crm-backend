@@ -393,3 +393,16 @@ export class TestSendMetaTemplateDto {
   variables?: Record<string, string>;
 }
 
+
+export class DeleteMetaTemplateDto {
+  @ApiPropertyOptional({ description: 'Reason recorded in the audit log' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().slice(0, 500) : value))
+  reason?: string;
+
+  @ApiPropertyOptional({ description: 'Must be DELETE when supplied' })
+  @IsOptional()
+  @IsString()
+  confirmation?: string;
+}

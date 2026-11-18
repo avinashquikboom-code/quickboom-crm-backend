@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MetaTemplateController } from './meta-template.controller';
 import { MetaTemplateService } from './meta-template.service';
-import { ValidationPipe } from '@nestjs/common';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Reflector } from '@nestjs/core';
+import { ForbiddenException, ValidationPipe } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { QueryMetaTemplateDto, CreateMetaTemplateDto } from './dto/meta-template.dto';
@@ -192,6 +194,49 @@ describe('MetaTemplateController & DTO Validation', () => {
       expect(result.success).toBe(true);
       expect(result.total).toBe(0);
       expect(service.getStats).toHaveBeenCalledWith(101);
+    });
+  });
+
+  describe('Delete authorization', () => {
+    const guard = new RolesGuard(new Reflector() as any);
+    const handler = MetaTemplateController.prototype.remove;
+
+    const run = (user: any) => guard.canActivate({
+      getHandler: () => handler,
+      getClass: () => MetaTemplateController,
+      switchToHttp: () => ({ getRequest: () => ({ user }) }),
+    } as any);
+
+    it.each([
+      [{ role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] }],
+      [{ role: 'TENANT_ADMIN', roles: ['TENANT_ADMIN'] }],
+      [{ role: 'CUSTOMER_ADMIN', roles: ['CUSTOMER_ADMIN'] }],
+    ])('allows admin role %j', (user) => {
+      expect(run(user)).toBe(true);
+    });
+
+    it.each([
+      [{ role: 'EMPLOYEE', roles: ['EMPLOYEE'] }],
+      [{ role: 'SALES_EXECUTIVE', roles: ['SALES_EXECUTIVE'] }],
+      [{ role: 'CUSTOMER', roles: ['CUSTOMER'] }],
+      [{}],
+    ])('rejects non-admin role %j', (user) => {
+      expect(() => run(user)).toThrow(ForbiddenException);
+    });
+
+    it('passes the authenticated user and body to the service', async () => {
+      (service as any).remove = jest.fn().mockResolvedValue({ success: true });
+      const user = { id: 3, customerId: 1, role: 'SUPER_ADMIN', roles: ['SUPER_ADMIN'] };
+      await controller.remove(40, user, { reason: 'Cleanup' });
+      expect((service as any).remove).toHaveBeenCalledWith(40, user, { reason: 'Cleanup' });
+    });
+
+    it('exposes a non-destructive delete preview', async () => {
+      (service as any).previewDelete = jest.fn().mockResolvedValue({ id: 40, canDelete: true });
+      const user = { id: 3, customerId: 1 };
+      const result = await controller.deletePreview(40, user);
+      expect(result).toEqual({ id: 40, canDelete: true });
+      expect((service as any).previewDelete).toHaveBeenCalledWith(40, user);
     });
   });
 });

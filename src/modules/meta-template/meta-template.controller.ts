@@ -14,7 +14,10 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { RoleType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { MetaTemplateService } from './meta-template.service';
 import { WhatsAppCampaignService } from './whatsapp-campaign.service';
@@ -24,6 +27,7 @@ import {
   QueryMetaTemplateDto,
   PreviewMetaTemplateDto,
   TestSendMetaTemplateDto,
+  DeleteMetaTemplateDto,
 } from './dto/meta-template.dto';
 import { CreateWhatsAppCampaignDto, QueryWhatsAppCampaignDto } from './dto/whatsapp-campaign.dto';
 
@@ -157,9 +161,23 @@ export class MetaTemplateController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Soft delete a Meta template with stage-in-use protection' })
-  async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
-    return this.metaTemplateService.remove(id, user?.customerId);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleType.SUPER_ADMIN, RoleType.TENANT_ADMIN, RoleType.CUSTOMER_ADMIN)
+  @ApiOperation({ summary: 'Delete a Meta template from Meta and archive the local record (two-system workflow)' })
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+    @Body() dto: DeleteMetaTemplateDto,
+  ) {
+    return this.metaTemplateService.remove(id, user, dto);
+  }
+
+  @Post(':id/delete-preview')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleType.SUPER_ADMIN, RoleType.TENANT_ADMIN, RoleType.CUSTOMER_ADMIN)
+  @ApiOperation({ summary: 'Show lead-stage, campaign, and delivery references before deleting a Meta template' })
+  async deletePreview(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.metaTemplateService.previewDelete(id, user);
   }
 
   @Post(['sync', 'sync-meta'])

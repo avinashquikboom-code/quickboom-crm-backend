@@ -3812,6 +3812,12 @@ model MetaTemplate {
   syncStatus         String    @default("NOT_SYNCED") // SYNCED | NOT_SYNCED | SYNC_FAILED
   syncError          String?   @db.Text
   syncedWabaId       String?
+  deletionState      String    @default("NONE") // NONE | PENDING | META_DELETED | LOCAL_DELETED
+  deletionError      String?   @db.Text
+  deletionAttempts   Int       @default(0)
+  lastDeletionAt     DateTime?
+  deletedByUserId    Int?
+  deletedByName      String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
