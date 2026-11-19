@@ -475,37 +475,46 @@ export class DataCaptureService implements OnModuleInit {
    */
   private normalizeSocialUrl(platform: string, rawVal: any): string | undefined {
     if (!rawVal || typeof rawVal !== 'string') return undefined;
-    const val = rawVal.trim();
+    let val = rawVal.trim();
     if (!val || val === 'N/A' || val === 'null' || val === 'undefined') return undefined;
-    if (val.startsWith('http://') || val.startsWith('https://')) return val;
-
-    const handle = val.replace(/^@/, '').trim();
-    if (!handle) return undefined;
-
-    switch (platform.toLowerCase()) {
-      case 'instagram':
-        return `https://instagram.com/${handle}`;
-      case 'facebook':
-        return `https://facebook.com/${handle}`;
-      case 'youtube':
-        return `https://youtube.com/${handle}`;
-      case 'linkedin':
-        return `https://linkedin.com/${handle}`;
-      case 'twitter':
-      case 'x':
-        return `https://x.com/${handle}`;
-      case 'tiktok':
-        return `https://tiktok.com/@${handle}`;
-      case 'pinterest':
-        return `https://pinterest.com/${handle}`;
-      case 'whatsapp': {
-        if (/^https?:\/\//i.test(val)) return val;
-        const digits = handle.replace(/\D/g, '');
-        return digits.length >= 8 ? `https://wa.me/${digits}` : undefined;
-      }
-      default:
-        return undefined;
+    const key = platform.toLowerCase();
+    const handle = val.replace(/^@/, '');
+    const handleProfiles: Record<string, { pattern: RegExp; prefix: string }> = {
+      instagram: { pattern: /^[a-z0-9._]{2,30}$/i, prefix: 'https://www.instagram.com/' },
+      facebook: { pattern: /^[a-z0-9.]{5,50}$/i, prefix: 'https://www.facebook.com/' },
+      youtube: { pattern: /^[a-z0-9_-]{3,30}$/i, prefix: 'https://www.youtube.com/@' },
+      twitter: { pattern: /^[a-z0-9_]{1,15}$/i, prefix: 'https://x.com/' },
+      x: { pattern: /^[a-z0-9_]{1,15}$/i, prefix: 'https://x.com/' },
+      tiktok: { pattern: /^[a-z0-9._-]{2,24}$/i, prefix: 'https://www.tiktok.com/@' },
+      pinterest: { pattern: /^[a-z0-9._-]{3,30}$/i, prefix: 'https://www.pinterest.com/' },
+    };
+    if (!/^https?:\/\//i.test(val) && !val.includes('.')) {
+      const profile = handleProfiles[key];
+      if (profile && profile.pattern.test(handle)) val = `${profile.prefix}${encodeURIComponent(handle)}`;
+      else if (key === 'whatsapp' && /^\+?[0-9]{8,15}$/.test(handle)) val = `https://wa.me/${handle.replace(/\D/g, '')}`;
+      else return undefined;
     }
+    if (!/^https?:\/\//i.test(val)) {
+      if (!/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#].*)?$/i.test(val)) return undefined;
+      val = `https://${val}`;
+    }
+
+    let parsed: URL;
+    try { parsed = new URL(val); } catch { return undefined; }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return undefined;
+    const hostname = parsed.hostname.toLowerCase();
+    const allowedHosts: Record<string, string[]> = {
+      instagram: ['instagram.com'], facebook: ['facebook.com', 'fb.com'],
+      linkedin: ['linkedin.com'], youtube: ['youtube.com', 'youtu.be'],
+      twitter: ['x.com', 'twitter.com'], x: ['x.com', 'twitter.com'],
+      tiktok: ['tiktok.com'], pinterest: ['pinterest.com'],
+      whatsapp: ['wa.me', 'whatsapp.com'], other: [],
+    };
+    const hosts = allowedHosts[key];
+    if (!hosts || (hosts.length > 0 && !hosts.some((host) => hostname === host || hostname.endsWith(`.${host}`)))) {
+      return undefined;
+    }
+    return parsed.toString();
   }
 
   /**
@@ -520,6 +529,16 @@ export class DataCaptureService implements OnModuleInit {
       sm = raw.socialMedia || raw.social_media || raw.social;
     }
     const result: SocialMediaHandles = {};
+    const seenUrls = new Set<string>();
+    const addProfile = (platform: string, rawUrl: any) => {
+      const normalized = this.normalizeSocialUrl(platform, rawUrl);
+      if (!normalized || seenUrls.has(normalized.toLowerCase())) return;
+      seenUrls.add(normalized.toLowerCase());
+      const key = platform.toLowerCase() === 'x' ? 'twitter' : platform.toLowerCase();
+      if (['instagram', 'facebook', 'youtube', 'linkedin', 'twitter', 'tiktok', 'pinterest', 'whatsapp', 'other'].includes(key)) {
+        (result as any)[key] = normalized;
+      }
+    };
 
     if (sm) {
       if (Array.isArray(sm)) {
@@ -528,40 +547,21 @@ export class DataCaptureService implements OnModuleInit {
           const plat = String(item.platform || item.name || '').toLowerCase();
           const url = String(item.url || item.handle || '').trim();
           if (plat && url && plat !== 'website') {
-            const normalized = this.normalizeSocialUrl(plat, url);
-            if (normalized) {
-              if (plat.includes('instagram')) result.instagram = normalized;
-              else if (plat.includes('facebook')) result.facebook = normalized;
-              else if (plat.includes('youtube')) result.youtube = normalized;
-              else if (plat.includes('linkedin')) result.linkedin = normalized;
-              else if (plat.includes('twitter') || plat === 'x') result.twitter = normalized;
-              else if (plat.includes('tiktok')) result.tiktok = normalized;
-              else if (plat.includes('pinterest')) result.pinterest = normalized;
-              else if (plat.includes('whatsapp')) result.whatsapp = normalized;
-            }
+            const normalizedPlatform = ['instagram', 'facebook', 'youtube', 'linkedin', 'twitter', 'x', 'tiktok', 'pinterest', 'whatsapp'].find((key) => plat.includes(key)) || 'other';
+            addProfile(normalizedPlatform, url);
           }
         }
       } else if (typeof sm === 'object') {
-        if (sm.facebook) result.facebook = this.normalizeSocialUrl('facebook', sm.facebook);
-        if (sm.instagram) result.instagram = this.normalizeSocialUrl('instagram', sm.instagram);
-        if (sm.linkedin) result.linkedin = this.normalizeSocialUrl('linkedin', sm.linkedin);
-        if (sm.twitter) result.twitter = this.normalizeSocialUrl('twitter', sm.twitter);
-        if (sm.x && !result.twitter) result.twitter = this.normalizeSocialUrl('twitter', sm.x);
-        if (sm.youtube) result.youtube = this.normalizeSocialUrl('youtube', sm.youtube);
-        if (sm.tiktok) result.tiktok = this.normalizeSocialUrl('tiktok', sm.tiktok);
-        if (sm.pinterest) result.pinterest = this.normalizeSocialUrl('pinterest', sm.pinterest);
-        if (sm.whatsapp) result.whatsapp = this.normalizeSocialUrl('whatsapp', sm.whatsapp);
+        for (const platform of ['instagram', 'facebook', 'linkedin', 'twitter', 'youtube', 'tiktok', 'pinterest', 'whatsapp', 'other']) {
+          if (sm[platform]) addProfile(platform, sm[platform]);
+        }
+        if (sm.x && !result.twitter) addProfile('twitter', sm.x);
       }
     }
 
-    if ((place as any).facebook && !result.facebook) result.facebook = this.normalizeSocialUrl('facebook', (place as any).facebook);
-    if ((place as any).instagram && !result.instagram) result.instagram = this.normalizeSocialUrl('instagram', (place as any).instagram);
-    if ((place as any).linkedin && !result.linkedin) result.linkedin = this.normalizeSocialUrl('linkedin', (place as any).linkedin);
-    if ((place as any).twitter && !result.twitter) result.twitter = this.normalizeSocialUrl('twitter', (place as any).twitter);
-    if ((place as any).youtube && !result.youtube) result.youtube = this.normalizeSocialUrl('youtube', (place as any).youtube);
-    if ((place as any).tiktok && !result.tiktok) result.tiktok = this.normalizeSocialUrl('tiktok', (place as any).tiktok);
-    if ((place as any).pinterest && !result.pinterest) result.pinterest = this.normalizeSocialUrl('pinterest', (place as any).pinterest);
-    if ((place as any).whatsapp && !result.whatsapp) result.whatsapp = this.normalizeSocialUrl('whatsapp', (place as any).whatsapp);
+    for (const platform of ['facebook', 'instagram', 'linkedin', 'twitter', 'youtube', 'tiktok', 'pinterest', 'whatsapp']) {
+      if ((place as any)[platform] && !(result as any)[platform]) addProfile(platform, (place as any)[platform]);
+    }
 
     return Object.keys(result).length > 0 ? result : undefined;
   }
@@ -930,7 +930,7 @@ export class DataCaptureService implements OnModuleInit {
             const normalizedPhone = ContactExtractor.normalizePhoneNumber(
               p.internationalPhoneNumber || p.nationalPhoneNumber,
             );
-            const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(p.websiteUri);
+            const normalizedWebsite = this.providerWebsiteUrl(p.websiteUri);
             const normalizedName = ContactExtractor.normalizeCompanyName(p.displayName.text);
 
             const resolvedGooglePhotos = apiKey ? this.resolveGooglePhotos(p, apiKey) : [];
@@ -1311,15 +1311,59 @@ export class DataCaptureService implements OnModuleInit {
   }
 
   private isGoogleReference(place: any): boolean {
-    return Boolean(place?.googlePlaceId) || /GOOGLE/i.test(String(place?.source || ''));
+    const normalizedPlaceId = this.normalizedGooglePlaceId(place?.googlePlaceId);
+    const source = String(place?.source || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    // Legacy Google Places records without a valid ID must remain protected as
+    // provider records. Synthetic MANUAL_* IDs are not Google Place IDs.
+    const sourceIsGooglePlaces = source.includes('GOOGLE');
+    return Boolean(normalizedPlaceId) || sourceIsGooglePlaces;
   }
 
   private normalizedGooglePlaceId(value: any): string | null {
     const placeId = String(value || '').trim().replace(/^places\//, '');
-    if (!placeId || placeId.startsWith('custom_') || ['N/A', 'NULL', 'UNDEFINED', 'UNKNOWN'].includes(placeId.toUpperCase())) {
+    if (!placeId || /^(?:custom_|manual_)/i.test(placeId) || ['N/A', 'NULL', 'UNDEFINED', 'UNKNOWN'].includes(placeId.toUpperCase())) {
       return null;
     }
     return placeId;
+  }
+
+  private hasUserProvidedField(place: any, field: string): boolean {
+    const raw = place?.rawData;
+    const fields = raw && typeof raw === 'object' && Array.isArray(raw.userProvidedFields)
+      ? raw.userProvidedFields.map((value: unknown) => String(value))
+      : [];
+    return fields.includes(field);
+  }
+
+  /**
+   * Validate a business website without removing query parameters or otherwise
+   * changing its destination. Provider previews can catch this validation and
+   * omit unusable URLs; persisted user/source-provided values fail clearly.
+   */
+  private normalizeWebsiteUrl(value: unknown): string | undefined {
+    if (value == null || value === '') return undefined;
+    if (typeof value !== 'string' || value.length > 2048) {
+      throw new BadRequestException('Website must be a valid http or https URL.');
+    }
+    const raw = value.trim();
+    if (!raw || ['N/A', 'NA', 'NONE', 'NULL', 'UNDEFINED'].includes(raw.toUpperCase())) return undefined;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^https?:\/\//i.test(raw)) {
+      throw new BadRequestException('Website must be a valid http or https URL.');
+    }
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const parsed = new URL(candidate);
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || !parsed.hostname.includes('.') || parsed.username || parsed.password) {
+        throw new Error('Invalid website URL');
+      }
+      return parsed.toString();
+    } catch {
+      throw new BadRequestException('Website must be a valid http or https URL.');
+    }
+  }
+
+  private providerWebsiteUrl(value: unknown): string | undefined {
+    try { return this.normalizeWebsiteUrl(value); } catch { return undefined; }
   }
 
   private async refreshReferencePlaces(records: any[]) {
@@ -1355,7 +1399,7 @@ export class DataCaptureService implements OnModuleInit {
             category: live.primaryTypeDisplayName?.text || live.primaryType || undefined,
             address: live.formattedAddress || undefined,
             phone: ContactExtractor.normalizePhoneNumber(live.internationalPhoneNumber || live.nationalPhoneNumber) || undefined,
-            website: ContactExtractor.normalizeWebsiteUrl(live.websiteUri) || undefined,
+            website: this.providerWebsiteUrl(live.websiteUri),
             rating: live.rating ?? undefined,
             reviewCount: live.userRatingCount ?? undefined,
             latitude: live.location?.latitude ?? undefined,
@@ -1511,12 +1555,12 @@ export class DataCaptureService implements OnModuleInit {
           id: p.id,
           provider: p.source || 'GOOGLE_PLACES',
           googlePlaceId: p.googlePlaceId || undefined,
-          businessName: this.isGoogleReference(p) ? (preview.businessName || '') : p.businessName,
-          category: this.isGoogleReference(p) ? preview.category : (p.category || undefined),
-          address: this.isGoogleReference(p) ? preview.address : (p.address || undefined),
-          phone: this.isGoogleReference(p) ? preview.phone : (p.phone || undefined),
-          email: p.email || undefined,
-          website: this.isGoogleReference(p) ? preview.website : (p.website || undefined),
+          businessName: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'businessName') ? (preview.businessName || '') : p.businessName,
+          category: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'category') ? preview.category : (p.category || undefined),
+          address: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'address') ? preview.address : (p.address || undefined),
+          phone: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'phone') ? preview.phone : (p.phone || undefined),
+          email: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'email') ? undefined : (p.email || undefined),
+          website: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'website') ? preview.website : (p.website || undefined),
           rating: this.isGoogleReference(p) ? preview.rating : (p.rating || undefined),
           reviewCount: this.isGoogleReference(p) ? preview.reviewCount : (p.reviewCount || undefined),
           latitude: this.isGoogleReference(p) ? preview.latitude : (p.latitude || undefined),
@@ -1536,7 +1580,7 @@ export class DataCaptureService implements OnModuleInit {
           extractionJobId: p.jobId || undefined,
           googlePhotos: normGP.length > 0 ? normGP : (preview.googlePhotos || []),
           photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
-          socialMedia: this.isGoogleReference(p) ? undefined : this.extractSocialMediaFromPlace(p),
+          socialMedia: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'socialMedia') ? undefined : this.extractSocialMediaFromPlace(p),
         };
       });
 
@@ -1621,12 +1665,12 @@ export class DataCaptureService implements OnModuleInit {
       id: place.id,
       provider: place.source || 'GOOGLE_PLACES',
       googlePlaceId: place.googlePlaceId || undefined,
-      businessName: this.isGoogleReference(place) ? (preview.businessName || '') : place.businessName,
-      category: this.isGoogleReference(place) ? preview.category : (place.category || undefined),
-      address: this.isGoogleReference(place) ? preview.address : (place.address || undefined),
-      phone: this.isGoogleReference(place) ? preview.phone : (place.phone || undefined),
-      email: place.email || undefined,
-      website: this.isGoogleReference(place) ? preview.website : (place.website || undefined),
+      businessName: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'businessName') ? (preview.businessName || '') : place.businessName,
+      category: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'category') ? preview.category : (place.category || undefined),
+      address: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'address') ? preview.address : (place.address || undefined),
+      phone: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'phone') ? preview.phone : (place.phone || undefined),
+      email: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'email') ? undefined : (place.email || undefined),
+      website: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'website') ? preview.website : (place.website || undefined),
       rating: this.isGoogleReference(place) ? preview.rating : (place.rating || undefined),
       reviewCount: this.isGoogleReference(place) ? preview.reviewCount : (place.reviewCount || undefined),
       latitude: this.isGoogleReference(place) ? preview.latitude : (place.latitude || undefined),
@@ -1647,7 +1691,7 @@ export class DataCaptureService implements OnModuleInit {
       duplicateMatches,
       googlePhotos: placeGP.length > 0 ? placeGP : (preview.googlePhotos || []),
       photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
-      socialMedia: this.extractSocialMediaFromPlace(place),
+      socialMedia: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'socialMedia') ? undefined : this.extractSocialMediaFromPlace(place),
     };
   }
 
@@ -1724,8 +1768,8 @@ export class DataCaptureService implements OnModuleInit {
         address: dto.address?.trim(),
         phone: resolvedPhone,
         email: resolvedEmail,
-        website: dto.website?.trim(),
-        googlePlaceId: dto.googlePlaceId?.trim() || `MANUAL_${randomUUID().slice(0, 12)}`,
+        website: this.normalizeWebsiteUrl(dto.website),
+        googlePlaceId: dto.googlePlaceId?.trim() || undefined,
         rating: dto.rating,
         reviewCount: dto.reviewCount,
         latitude: dto.latitude,
@@ -1738,7 +1782,7 @@ export class DataCaptureService implements OnModuleInit {
         notes: dto.notes,
         rawData: Object.keys(mergedRawData).length > 0 ? mergedRawData : dto.rawData,
         photos: (placeGP.length > 0 ? placeGP : (placePhotoUrls.length > 0 ? placePhotoUrls : undefined)) as any,
-        socialMedia: (dto.socialMedia || undefined) as any,
+        socialMedia: (dto.socialMedia !== undefined ? this.validateUserSocialProfiles(dto.socialMedia) : undefined) as any,
       },
     });
 
@@ -1815,14 +1859,25 @@ export class DataCaptureService implements OnModuleInit {
     }
 
     const existingRaw = existing.rawData && typeof existing.rawData === 'object' ? { ...(existing.rawData as object) } : {};
+    const userEditableFields = ['businessName', 'category', 'address', 'phone', 'email', 'website', 'socialMedia'];
+    const explicitlyUpdatedFields = userEditableFields.filter((field) => (dto as any)[field] !== undefined);
+    const priorUserProvidedFields = Array.isArray((existingRaw as any).userProvidedFields)
+      ? (existingRaw as any).userProvidedFields.map((value: unknown) => String(value))
+      : [];
+    const userProvidedFields = [...new Set([...priorUserProvidedFields, ...explicitlyUpdatedFields])];
     let rawDataPatch: any = undefined;
-    if (dto.rawData !== undefined || updatedPhotosField !== undefined) {
+    if (dto.rawData !== undefined || updatedPhotosField !== undefined || explicitlyUpdatedFields.length > 0) {
       const preservedCaptureAt = (existingRaw as { capturedAt?: string }).capturedAt
         || this.captureTimestamp(existing)?.toISOString()
         || new Date().toISOString();
+      const incomingRawData = dto.rawData && typeof dto.rawData === 'object' ? { ...(dto.rawData as any) } : {};
+      // Provenance is derived from explicit editable fields in this request;
+      // never trust a client-supplied rawData.userProvidedFields marker.
+      delete incomingRawData.userProvidedFields;
       rawDataPatch = {
         ...existingRaw,
-        ...(dto.rawData && typeof dto.rawData === 'object' ? dto.rawData : {}),
+        ...incomingRawData,
+        ...(userProvidedFields.length ? { userProvidedFields } : {}),
         capturedAt: typeof (dto.rawData as any)?.capturedAt === 'string'
           ? (dto.rawData as any).capturedAt
           : preservedCaptureAt,
@@ -1838,7 +1893,7 @@ export class DataCaptureService implements OnModuleInit {
         address: dto.address !== undefined ? dto.address?.trim() : undefined,
         phone: dto.phone !== undefined ? dto.phone?.trim() : undefined,
         email: dto.email !== undefined ? dto.email?.trim() : undefined,
-        website: dto.website !== undefined ? dto.website?.trim() : undefined,
+        website: dto.website !== undefined ? this.normalizeWebsiteUrl(dto.website) : undefined,
         googlePlaceId: dto.googlePlaceId !== undefined ? dto.googlePlaceId?.trim() : undefined,
         rating: dto.rating !== undefined ? dto.rating : undefined,
         reviewCount: dto.reviewCount !== undefined ? dto.reviewCount : undefined,
@@ -1852,7 +1907,7 @@ export class DataCaptureService implements OnModuleInit {
         isImported: dto.isImported !== undefined ? dto.isImported : undefined,
         rawData: rawDataPatch,
         photos: updatedPhotosField as any,
-        socialMedia: (dto.socialMedia !== undefined ? dto.socialMedia : undefined) as any,
+        socialMedia: (dto.socialMedia !== undefined ? this.validateUserSocialProfiles(dto.socialMedia) : undefined) as any,
       },
     });
 
@@ -2307,37 +2362,24 @@ export class DataCaptureService implements OnModuleInit {
     if (!fields.businessName) throw new BadRequestException('Business name is missing. Place details could not be retrieved.');
     if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) throw new BadRequestException('Invalid email.');
     if (fields.phone && (!/^\+?[\d\s().-]{8,25}$/.test(fields.phone) || fields.phone.replace(/\D/g, '').length < 8 || fields.phone.replace(/\D/g, '').length > 15)) throw new BadRequestException('Invalid phone.');
-    if (fields.website) {
-      try { if (!['http:', 'https:'].includes(new URL(fields.website).protocol)) throw new Error(); }
-      catch { throw new BadRequestException('Website must be an http or https URL.'); }
-    }
+    if (fields.website) fields.website = this.normalizeWebsiteUrl(fields.website) || '';
     return fields;
   }
 
   private validateUserSocialProfiles(input: any): Record<string, string> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
-    const platforms: Record<string, string[]> = {
-      instagram: ['instagram.com'],
-      facebook: ['facebook.com', 'fb.com'],
-      linkedin: ['linkedin.com'],
-      youtube: ['youtube.com', 'youtu.be'],
-      twitter: ['x.com', 'twitter.com'],
-      tiktok: ['tiktok.com'],
-      pinterest: ['pinterest.com'],
-      whatsapp: ['wa.me', 'whatsapp.com'],
-      other: [],
-    };
     const profiles: Record<string, string> = {};
-    for (const [platform, hosts] of Object.entries(platforms)) {
+    const seen = new Set<string>();
+    for (const platform of ['instagram', 'facebook', 'linkedin', 'youtube', 'twitter', 'x', 'tiktok', 'pinterest', 'whatsapp', 'other']) {
       const value = input[platform];
       if (value == null || value === '') continue;
       if (typeof value !== 'string' || value.length > 2048) throw new BadRequestException(`Invalid ${platform} profile URL.`);
-      let parsed: URL;
-      try { parsed = new URL(value.trim()); } catch { throw new BadRequestException(`${platform} profile must be an https URL.`); }
-      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || (hosts.length && !hosts.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`)))) {
-        throw new BadRequestException(`Invalid ${platform} profile URL.`);
-      }
-      profiles[platform] = parsed.toString();
+      const normalized = this.normalizeSocialUrl(platform, value);
+      if (!normalized) throw new BadRequestException(`Invalid ${platform} profile URL.`);
+      const profileKey = platform === 'x' ? 'twitter' : platform;
+      if (seen.has(normalized.toLowerCase())) continue;
+      seen.add(normalized.toLowerCase());
+      profiles[profileKey] = normalized;
     }
     return profiles;
   }
@@ -2552,37 +2594,31 @@ export class DataCaptureService implements OnModuleInit {
           businessName: isValidCapturedName(dbPlace.businessName)
             ? dbPlace.businessName
             : (isValidCapturedName(googlePreviewName) ? googlePreviewName : undefined),
-          phone: dbPlace.phone,
-          email: dbPlace.email,
-          website: dbPlace.website,
-          address: dbPlace.address,
-          category: dbPlace.category,
-          city: location.city,
-          state: location.state,
-          country: location.country,
-          pincode: location.pincode,
+          phone: !googleReference || this.hasUserProvidedField(dbPlace, 'phone') ? dbPlace.phone : undefined,
+          email: !googleReference || this.hasUserProvidedField(dbPlace, 'email') ? dbPlace.email : undefined,
+          website: !googleReference || this.hasUserProvidedField(dbPlace, 'website') ? dbPlace.website : undefined,
+          address: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? dbPlace.address : undefined,
+          category: !googleReference || this.hasUserProvidedField(dbPlace, 'category') ? dbPlace.category : undefined,
+          city: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.city : undefined,
+          state: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.state : undefined,
+          country: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.country : undefined,
+          pincode: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.pincode : undefined,
         };
         const suppliedFields = candidate.independentFields &&
           typeof candidate.independentFields === 'object' &&
           !Array.isArray(candidate.independentFields)
           ? candidate.independentFields
           : {};
-        // The saved business name belongs to this tenant's Data Capture row
-        // and is the canonical Lead title fallback for Google references.
-        // Do not copy other Google/provider fields into CRM Lead contact data;
-        // those still require independently supplied values. Explicit
-        // independentFields.businessName may override the saved name.
-        const trustedStoredFields = googleReference
-          ? { ...storedFields, phone: undefined, email: undefined, website: undefined,
-            address: undefined, category: undefined, city: undefined, state: undefined, country: undefined, pincode: undefined }
-          : storedFields;
+        // A saved name is the canonical Lead title fallback. For Google
+        // references, other saved fields are eligible only when the tenant
+        // explicitly supplied them through the editable capture workflow.
         if (googleReference && !isValidCapturedName(storedFields.businessName)) {
           const savedPlaceId = this.normalizedGooglePlaceId(dbPlace.googlePlaceId);
           throw new BadRequestException(savedPlaceId
             ? 'Business name is missing: Google Places details could not be retrieved for the saved Place ID.'
             : 'Business name is missing: the saved record has no valid Google Place ID for lookup.');
         }
-        fields = this.validateIndependentLeadFields({ ...trustedStoredFields, ...suppliedFields });
+        fields = this.validateIndependentLeadFields({ ...storedFields, ...suppliedFields });
         userSocialMedia = this.validateUserSocialProfiles(suppliedFields.socialMedia);
       } catch (error: any) {
         await this.prisma.dataCapturePlace.update({ where: { id: dbPlace.id }, data: { status: 'IMPORT_FAILED' } });
@@ -2591,7 +2627,7 @@ export class DataCaptureService implements OnModuleInit {
         continue;
       }
       const businessName = fields.businessName;
-      const googlePlaceId = (dbPlace.googlePlaceId && !dbPlace.googlePlaceId.startsWith('custom_') && dbPlace.googlePlaceId !== 'N/A') ? dbPlace.googlePlaceId : null;
+      const googlePlaceId = this.normalizedGooglePlaceId(dbPlace.googlePlaceId);
       const sourceRecordId = dbPlace.sourceRecordId || googlePlaceId || String(dbPlace.id);
       const placeCaptureRequestId = dto.captureRequestId || candidate.captureRequestId || `${activeJobId || 'job'}_${googlePlaceId || dbPlace.id}`;
 
@@ -2602,8 +2638,7 @@ export class DataCaptureService implements OnModuleInit {
       const resolvedEmail = fields.email;
       const normalizedEmail = ContactExtractor.normalizeEmail(resolvedEmail);
 
-      const resolvedWebsite = fields.website;
-      const normalizedWebsite = ContactExtractor.normalizeWebsiteUrl(resolvedWebsite);
+      const normalizedWebsite = fields.website || null;
 
       const resolvedAddress = fields.address || null;
       const resolvedCategory = fields.category || null;
@@ -2615,7 +2650,9 @@ export class DataCaptureService implements OnModuleInit {
       const genuineFirstName = '';
       const genuineLastName = '';
       const placeSocialMedia = googleReference
-        ? (Object.keys(userSocialMedia).length ? userSocialMedia : null)
+        ? (Object.keys(userSocialMedia).length
+            ? userSocialMedia
+            : (this.hasUserProvidedField(dbPlace, 'socialMedia') ? this.extractSocialMediaFromPlace(dbPlace) || null : null))
         : (this.extractSocialMediaFromPlace(dbPlace) || (Object.keys(userSocialMedia).length ? userSocialMedia : null));
 
       // 3. Duplicate Detection against CRM Leads (Section 13)
