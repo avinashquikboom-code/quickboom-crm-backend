@@ -30,7 +30,7 @@ export class OvertimeNoticeService {
     if (!request?.employee) return;
     const detail = `${request.employee.firstName} ${request.employee.lastName} requested ${Math.round(request.totalMinutes / 60 * 100) / 100} h on ${request.overtimeDate.toISOString().slice(0, 10)} (${request.startTime}-${request.endTime}). Approved ${request.approvedMinutes ? Math.round(request.approvedMinutes / 60 * 100) / 100 : 0} h. Reason: ${request.reason}. ${request.rejectionReason ? `Rejection: ${request.rejectionReason}.` : ''} Approver: ${request.approvedByName || request.rejectedByName || 'Pending'}.`;
     const employeeUser = request.employee.userId ? await this.prisma.user.findFirst({ where: { id: request.employee.userId } }) : null;
-    const managers = await this.managers(customerId, request.employeeId, request.employee.managerId);
+    const managers = await this.managers(customerId, request.employeeId);
     const targets = eventType === 'SUBMITTED'
       ? [{ event: 'SUBMITTED', person: request.employee, userId: employeeUser?.id }, ...managers.map((person) => ({ event: 'RECEIVED', person, userId: person.userId }))]
       : eventType === 'APPROVED' || eventType === 'REJECTED'
@@ -61,14 +61,11 @@ export class OvertimeNoticeService {
     return { success: true, message: `${event.channel} retry completed. Other channels were not changed.` };
   }
 
-  private async managers(customerId: number, employeeId: number, managerId?: number | null) {
+  private async managers(customerId: number, employeeId: number) {
     const rows = await this.prisma.employee.findMany({
       where: {
         customerId,
-        OR: [
-          ...(managerId ? [{ id: managerId }] : []),
-          { ledTeams: { some: { members: { some: { employeeId } } } } },
-        ],
+        ledTeams: { some: { members: { some: { employeeId } } } },
       },
     });
     return rows.filter((row) => row.id !== employeeId);

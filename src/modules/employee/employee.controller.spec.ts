@@ -1,6 +1,6 @@
 import { EmployeeController } from './employee.controller';
 
-describe('EmployeeController reporting-manager tenant context', () => {
+describe('EmployeeController tenant context', () => {
   let controller: EmployeeController;
   let employeeService: {
     findAll: jest.Mock;
@@ -17,33 +17,7 @@ describe('EmployeeController reporting-manager tenant context', () => {
     controller = new EmployeeController(employeeService as any, {} as any);
   });
 
-  it('scopes global Super Admin manager options to the same default tenant as create', async () => {
-    await controller.findAll(
-      { role: 'SUPER_ADMIN', customerId: null },
-      undefined,
-      undefined,
-      undefined,
-      'ACTIVE',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      '1',
-      '100',
-      undefined,
-      undefined,
-      'true',
-    );
-
-    expect(employeeService.resolveDefaultCustomerId).toHaveBeenCalledTimes(1);
-    expect(employeeService.findAll).toHaveBeenCalledWith(expect.objectContaining({
-      customerId: 7,
-      isSuperAdmin: true,
-      status: 'ACTIVE',
-    }));
-  });
-
-  it('keeps the global Super Admin directory unscoped unless manager options are requested', async () => {
+  it('keeps the global Super Admin employee directory unscoped', async () => {
     await controller.findAll({ role: 'SUPER_ADMIN', customerId: null }, undefined);
 
     expect(employeeService.resolveDefaultCustomerId).not.toHaveBeenCalled();
@@ -53,42 +27,22 @@ describe('EmployeeController reporting-manager tenant context', () => {
     }));
   });
 
-  it('uses the authenticated tenant context for regular tenant manager options', async () => {
-    await controller.findAll(
-      { role: 'CUSTOMER_ADMIN', customerId: 8 },
-      8,
-      '999',
-      undefined,
-      'ACTIVE',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      '1',
-      '100',
-      undefined,
-      undefined,
-      'true',
-    );
+  it('uses the authenticated tenant context for regular tenant employee lists', async () => {
+    await controller.findAll({ role: 'CUSTOMER_ADMIN', customerId: 8 }, 8);
 
-    expect(employeeService.resolveDefaultCustomerId).not.toHaveBeenCalled();
     expect(employeeService.findAll).toHaveBeenCalledWith(expect.objectContaining({
       customerId: 8,
       isSuperAdmin: false,
     }));
   });
 
-  it('uses the same default tenant for a global Super Admin create', async () => {
-    await controller.create(
-      { managerId: 22 } as any,
-      { role: 'SUPER_ADMIN', customerId: null },
-      undefined,
-    );
+  it('uses the default tenant for a global Super Admin employee create', async () => {
+    await controller.create({} as any, { role: 'SUPER_ADMIN', customerId: null }, undefined);
 
     expect(employeeService.resolveDefaultCustomerId).toHaveBeenCalledTimes(1);
     expect(employeeService.create).toHaveBeenCalledWith(expect.objectContaining({
       customerId: 7,
-      dto: { managerId: 22 },
+      dto: {},
     }));
   });
 });

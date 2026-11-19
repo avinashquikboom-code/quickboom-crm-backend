@@ -560,8 +560,6 @@ export class OvertimeService {
     if (!this.isEmployee(user)) return;
     const reviewerId = await this.ownEmployeeId(user, customerId);
     if (reviewerId === employeeId) throw new ForbiddenException('You cannot review your own overtime request.');
-    const target = await this.prisma.employee.findFirst({ where: { id: employeeId, customerId }, select: { managerId: true } });
-    if (target?.managerId === reviewerId) return;
     const leading = await this.prisma.team.findFirst({ where: { customerId, leaderId: reviewerId, members: { some: { employeeId } } }, select: { id: true } });
     if (!leading) throw new ForbiddenException('You can review overtime only for your team.');
   }
@@ -583,7 +581,7 @@ export class OvertimeService {
       const reviewerId = await this.ownEmployeeId(user, customerId);
       if (query.scope === 'team') {
         const team = await this.prisma.employee.findMany({
-          where: { customerId, OR: [{ managerId: reviewerId }, { teamMembers: { some: { team: { leaderId: reviewerId } } } }] },
+          where: { customerId, teamMembers: { some: { team: { leaderId: reviewerId } } } },
           select: { id: true },
         });
         where.employeeId = { in: team.map((row) => row.id) };

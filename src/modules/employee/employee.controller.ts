@@ -59,7 +59,6 @@ export class EmployeeController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
   @ApiQuery({ name: 'bpoOnly', required: false, description: 'Filter only BPO eligible employees' })
-  @ApiQuery({ name: 'managerOptions', required: false, description: 'Scope manager choices to the employee creation tenant' })
   async findAll(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
@@ -74,20 +73,11 @@ export class EmployeeController {
     @Query('limit') limit?: string,
     @Query('excludeAdmins') excludeAdmins?: string,
     @Query('bpoOnly') bpoOnly?: string,
-    @Query('managerOptions') managerOptions?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
-    let targetCustomerId = isSuperAdmin
+    const targetCustomerId = isSuperAdmin
       ? (customerIdQuery || customerId || user?.customerId)
       : (customerId ?? user?.customerId);
-
-    // The global employee directory may remain unscoped for Super Admins, but
-    // manager choices must use the same tenant fallback as employee creation.
-    // Otherwise a manager from any tenant can be selected while POST /employees
-    // creates under resolveDefaultCustomerId(), causing a misleading org error.
-    if (isSuperAdmin && managerOptions === 'true' && !targetCustomerId) {
-      targetCustomerId = await this.employeeService.resolveDefaultCustomerId();
-    }
 
     if (!isSuperAdmin && !targetCustomerId) {
       throw new ForbiddenException('User does not belong to any customer');

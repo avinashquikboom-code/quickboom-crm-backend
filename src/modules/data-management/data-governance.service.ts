@@ -1587,7 +1587,6 @@ export class DataGovernanceService {
       if (employeeIds.length) {
         checks.push({ parent: 'employees', model: 'taskProof', label: 'Task proof uploader references', where: { employeeId: { in: employeeIds }, ...(customerId == null ? {} : { task: { customerId } }) }, ...(customerId == null ? {} : { crossTenantWhere: { employeeId: { in: employeeIds }, task: { customerId: { not: customerId } } } }), policy: 'set-null' });
         checks.push({ parent: 'employees', model: 'locationTrackingSetting', label: 'Location tracking settings', where: { employeeId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { employeeId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'employees', model: 'employee', label: 'Reporting manager references', where: { managerId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { managerId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'cascade', allowSameModelSelection: true });
         checks.push({ parent: 'employees', model: 'department', label: 'Department head references', where: { headId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { headId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'set-null' });
         const shareRows = await (client as Prisma.TransactionClient).$queryRaw<Array<{ records: number | bigint }>>(Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" IN (${Prisma.join(employeeIds)})`);
         const shareCount = Number(shareRows[0]?.records || 0);
@@ -1598,7 +1597,7 @@ export class DataGovernanceService {
       checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references', where: { OR: [
         { assignedEmployeeRel: customerId == null ? {} : { customerId } },
         { createdByEmployeeRel: customerId == null ? {} : { customerId } },
-      ] }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, OR: [
+      ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
         { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
       ] } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
