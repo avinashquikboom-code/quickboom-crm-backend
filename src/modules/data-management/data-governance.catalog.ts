@@ -10,7 +10,8 @@ export type WhereKind =
   | 'generation'
   | 'invoice'
   | 'template'
-  | 'teamMember';
+  | 'teamMember'
+  | 'commission';
 
 export type TableRule = {
   model: string;
@@ -279,8 +280,8 @@ export const RESET_MODULES: ResetModule[] = [
     description: 'Tenant commission transactions and withdrawal requests. Cross-tenant employee references remain protected.',
     available: true,
     tables: [
-      row('commission', 'commissions', 'Commissions', 'customer'),
-      row('commissionWithdrawal', 'commission_withdrawals', 'Commission withdrawals', 'customer'),
+      row('commission', 'commissions', 'Commissions', 'commission'),
+      row('commissionWithdrawal', 'commission_withdrawals', 'Commission withdrawals', 'commission'),
     ],
   },
   {
@@ -404,6 +405,18 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
       return { invoice: { customerId } };
     case 'teamMember':
       return { team: { customerId } };
+    case 'commission':
+      return {
+        OR: [
+          { customerId },
+          { employee: { customerId } },
+          { customer: { originLead: { customerId } } },
+          { customer: { assignedEmployeeRel: { customerId } } },
+          { customer: { createdByEmployeeRel: { customerId } } },
+          { customer: { assignedTeam: { customerId } } },
+          { lead: { customerId } },
+        ],
+      };
     default:
       return { customerId };
   }

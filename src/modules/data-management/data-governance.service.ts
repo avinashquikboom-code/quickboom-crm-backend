@@ -1256,28 +1256,59 @@ export class DataGovernanceService {
         ];
     const references: Prisma.CustomerWhereInput = { OR: employeeReferences };
 
-    const sameTenantOwnership: Prisma.CustomerWhereInput[] = customerId == null
-      ? []
-      : [
-          { id: customerId },
-          { originLead: { customerId } },
-        ];
+    if (customerId == null) {
+      return {
+        references,
+        tenantRoot: {},
+        sameTenantTarget: {},
+      };
+    }
+
+    // A customer belongs to this tenant if:
+    // 1. Root tenant record itself (id === customerId)
+    // 2. Converted from a lead owned by this tenant (originLead.customerId === customerId)
+    // 3. Assigned to a team belonging to this tenant (assignedTeam.customerId === customerId)
+    // 4. Directly created or assigned customer referencing this tenant's employees
+    //    and NOT owned by another tenant (no foreign originLead, foreign team, or foreign employees).
+    const sameTenantOwnership: Prisma.CustomerWhereInput[] = [
+      { id: customerId },
+      { originLead: { customerId } },
+      { assignedTeam: { customerId } },
+      {
+        AND: [
+          references,
+          {
+            NOT: [
+              { originLead: { customerId: { not: customerId } } },
+              { assignedTeam: { customerId: { not: customerId } } },
+              { employees: { some: { customerId: { not: customerId } } } },
+            ],
+          },
+        ],
+      },
+    ];
+
+    // Genuine cross-tenant customer: A record that references this tenant's employee,
+    // but belongs to another tenant (foreign originLead, foreign assigned team, or foreign root tenant organization).
+    const crossTenant: Prisma.CustomerWhereInput = {
+      id: { not: customerId },
+      OR: [
+        { originLead: { customerId: { not: customerId } } },
+        { assignedTeam: { customerId: { not: customerId } } },
+        { employees: { some: { customerId: { not: customerId } } } },
+      ],
+      AND: [references],
+    };
 
     return {
       references,
-      tenantRoot: customerId == null ? {} : { id: customerId },
-      sameTenantTarget: customerId == null ? {} : { OR: sameTenantOwnership },
-      ...(customerId == null ? {} : {
-        sameTenant: {
-          OR: sameTenantOwnership,
-          AND: [references],
-        },
-        crossTenant: {
-          id: { not: customerId },
-          NOT: { originLead: { customerId } },
-          OR: employeeReferences,
-        },
-      }),
+      tenantRoot: { id: customerId },
+      sameTenantTarget: { OR: sameTenantOwnership },
+      sameTenant: {
+        OR: sameTenantOwnership,
+        AND: [references],
+      },
+      crossTenant,
     };
   }
 
@@ -1652,11 +1683,26 @@ export class DataGovernanceService {
         const ownerRelation = model === 'teamMember'
           ? { employee: customerId == null ? {} : { customerId } }
           : employeeRelation;
+        const crossTenantWhere = customerId == null
+          ? undefined
+          : model === 'teamMember'
+            ? { team: { customerId: { not: customerId } }, employee: { customerId } }
+            : model === 'commission'
+              ? {
+                  customerId: { not: customerId },
+                  employee: { customerId },
+                  NOT: [
+                    { customer: { originLead: { customerId } } },
+                    { customer: { assignedEmployeeRel: { customerId } } },
+                    { customer: { createdByEmployeeRel: { customerId } } },
+                    { customer: { assignedTeam: { customerId } } },
+                    { lead: { customerId } },
+                  ],
+                }
+              : { customerId: { not: customerId }, ...ownerRelation };
         checks.push({
           parent: 'employees', model, label, where: ownerRelation,
-          ...(customerId == null ? {} : { crossTenantWhere: model === 'teamMember'
-            ? { team: { customerId: { not: customerId } }, employee: { customerId } }
-            : { customerId: { not: customerId }, ...ownerRelation } }),
+          ...(crossTenantWhere ? { crossTenantWhere } : {}),
           policy: 'cascade',
         });
       }
@@ -1765,9 +1811,34 @@ export class DataGovernanceService {
       const resolutionModule = !included && policy === 'cascade'
         ? RESET_MODULES.find((item) => item.tables.some((table) => table.model === check.model))
         : undefined;
+      const moduleName = resolutionModule?.name || check.parent;
+      const isProtected = policy === 'protected';
+      const reason = blocking
+        ? crossTenantRecords > 0
+          ? `${crossTenantRecords.toLocaleString()} cross-tenant reference${crossTenantRecords === 1 ? '' : 's'} belong to other tenant-owned records.`
+          : isProtected
+            ? 'Protected record; excluded from deletion.'
+            : policy === 'cascade' && !included
+              ? `Select ${moduleName} to include ${sameTenantRecords.toLocaleString()} dependent record${sameTenantRecords === 1 ? '' : 's'}.`
+              : 'Unresolved dependency must be resolved before reset.'
+        : 'Resolved for this reset.';
+      const recommendedAction = blocking
+        ? crossTenantRecords > 0
+          ? 'The administrator of each owning tenant must reassign or remove the employee reference; this reset will leave those records unchanged.'
+          : isProtected
+            ? 'Leave the protected module out of this reset or manage references through authorized administrative tools.'
+            : policy === 'cascade' && !included
+              ? `Select ${moduleName} in the reset module selection to include and clean up dependent records.`
+              : 'Resolve all dependent references before executing reset.'
+        : null;
+
       warnings.push({
-        module: check.parent, model: check.model, label: check.label, records,
+        module: check.parent,
+        model: check.model,
+        label: check.label,
+        records,
         crossTenantRecords,
+        sameTenantRecords,
         blocking,
         resolvedRecords,
         unresolvedRecords,
@@ -1775,6 +1846,9 @@ export class DataGovernanceService {
         ...(resolutionModule ? { resolutionModule: { id: resolutionModule.id, name: resolutionModule.name } } : {}),
         willSetNull: policy === 'set-null' && sameTenantRecords > 0,
         includedInSelectedModule: included,
+        reason,
+        recommendedAction,
+        owningTenantInfo: crossTenantRecords > 0 ? 'Other Tenant Accounts' : null,
       });
     }
     if (designationState?.roles.length) {
