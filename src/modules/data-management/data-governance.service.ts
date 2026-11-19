@@ -128,7 +128,7 @@ export class DataGovernanceService {
 
   async previewReset(
     customerId: number | string | null | undefined,
-    body: { modules?: string[]; scope?: string },
+    body: { modules?: string[] | string; scope?: string } = {},
   ) {
     const scope = body.scope === 'global' ? 'global' : body.scope === 'application' ? 'application' : 'selected';
     const tenantId = scope === 'global' ? null : this.requireTenant(customerId);
