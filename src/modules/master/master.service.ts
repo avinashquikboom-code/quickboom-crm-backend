@@ -118,7 +118,41 @@ export class MasterService {
     return { success: true, message: 'Master record deleted successfully' };
   }
 
+  private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
+    try {
+      const resetAudit = await this.prisma.auditLog.findFirst({
+        where: {
+          customerId,
+          action: 'DATA_RESET',
+          status: 'SUCCESS',
+        },
+        orderBy: { id: 'desc' },
+        select: { details: true },
+      });
+      if (!resetAudit?.details) return false;
+      const details = resetAudit.details as any;
+      if (details.scope === 'application' || details.scope === 'global') return true;
+      if (Array.isArray(details.modules) && details.modules.includes(moduleId)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   private async ensureSeedData(type: string, customerId: number, defaults: any[]) {
+    const moduleIdMap: Record<string, string> = {
+      EXPENSE_CATEGORY: 'expense-categories',
+      TASK_STATUS: 'task-status',
+      EMPLOYEE_TYPE: 'employee-types',
+      WORK_TYPE: 'work-types',
+      PAYMENT_METHOD: 'payment-methods',
+      LOAN_TYPE: 'loan-types',
+    };
+    const moduleId = moduleIdMap[type];
+    if (moduleId && await this.isModuleResetByTenant(customerId, moduleId)) {
+      return;
+    }
+
     const count = await this.prisma.masterItem.count({
       where: { type, customerId },
     });
