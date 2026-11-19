@@ -1172,7 +1172,33 @@ export class EmployeeService {
       select: { employeeCode: true },
     });
 
-    // Query audit logs using this.prisma outside of tx to avoid connection multiplexing or transaction aborts
+    // A complete Employee Data Reset keeps audit history intact. Its marker
+    // defines the point from which historic employee codes remain relevant.
+    // Include a global marker so a verified Super Admin reset also applies to
+    // every tenant whose employees were removed by that reset.
+    let resetMarkerId: number | null = null;
+    if (this.prisma?.auditLog?.findMany) {
+      try {
+        const markers = await this.prisma.auditLog.findMany({
+          where: {
+            action: 'EMPLOYEE_ID_SEQUENCE_RESET',
+            module: 'DATA_MANAGEMENT',
+            status: 'SUCCESS',
+            OR: [{ customerId: numCustomerId }, { customerId: null }],
+          },
+          select: { id: true },
+          take: 1,
+          orderBy: { id: 'desc' },
+        });
+        resetMarkerId = Number(markers?.[0]?.id) || null;
+      } catch {
+        resetMarkerId = null;
+      }
+    }
+
+    // Query audit logs using this.prisma outside of tx to avoid connection multiplexing or transaction aborts.
+    // Logs before the last complete reset are retained for audit but no longer
+    // participate in the current employee-code sequence.
     let auditLogs: any[] = [];
     if (this.prisma?.auditLog) {
       try {
@@ -1180,6 +1206,7 @@ export class EmployeeService {
           where: {
             customerId: numCustomerId,
             module: 'EMPLOYEE',
+            ...(resetMarkerId ? { id: { gt: resetMarkerId } } : {}),
           },
           select: { details: true },
           take: 500,

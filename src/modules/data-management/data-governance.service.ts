@@ -876,6 +876,23 @@ export class DataGovernanceService {
             if (remainingCustomerReferences !== 0) {
               throw new Error(`Customer employee references: ${remainingCustomerReferences} records remain after reset cleanup.`);
             }
+            // Preserve employee audit history, but record the boundary after a
+            // verified full employee reset so generated employee codes can
+            // restart without considering codes from before this reset.
+            const remainingEmployees = await tx.employee.count({
+              where: tenantId == null ? {} : { customerId: tenantId },
+            });
+            if (remainingEmployees === 0) {
+              await tx.auditLog.create({
+                data: this.auditData(tenantId, userId, role, 'EMPLOYEE_ID_SEQUENCE_RESET', 'SUCCESS', {
+                  operationId,
+                  scope: 'EMPLOYEE_ID_SEQUENCE_RESET',
+                  modules: moduleIds,
+                  remainingEmployees: 0,
+                  verified: true,
+                }),
+              });
+            }
           }
           if (protectedDesignationIds.length) {
             const remainingProtectedDesignations = await tx.designation.count({

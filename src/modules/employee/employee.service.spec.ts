@@ -21,6 +21,10 @@ describe('EmployeeService — Customer Data Isolation', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         delete: jest.fn(),
       },
+      auditLog: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockResolvedValue({ id: 1 }),
+      },
       department: {
         count: jest.fn().mockResolvedValue(0),
         findFirst: jest.fn(),
@@ -351,6 +355,20 @@ describe('EmployeeService — Customer Data Isolation', () => {
   });
 
   describe('create (Ownership Enforcement)', () => {
+    it('restarts the employee code at EMP-001 after a verified full employee reset', async () => {
+      prisma.employee.findMany.mockResolvedValue([]);
+      prisma.auditLog.findMany
+        .mockResolvedValueOnce([{ id: 500 }])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.getNextEmployeeCode(1);
+
+      expect(result.nextEmployeeId).toBe('EMP-001');
+      expect(prisma.auditLog.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        where: expect.objectContaining({ id: { gt: 500 }, customerId: 1, module: 'EMPLOYEE' }),
+      }));
+    });
+
     it('Customer A creating employee always receives a system-generated employeeCode', async () => {
       // Backend generates the code inside the transaction; mock the resolved value
       // findMany is called by getNextEmployeeCode to find existing EMP-prefixed codes
