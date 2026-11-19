@@ -1,4 +1,5 @@
 import { IsString, IsNotEmpty, IsOptional, IsArray, IsIn } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class ModuleResetDto {
   @IsString()
@@ -69,13 +70,21 @@ export class EmployeeResetAllDto {
 
 export class ResetPreviewDto {
   @IsOptional()
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
+    if (typeof value === 'string') {
+      return value.split(',').map((v) => v.trim()).filter(Boolean);
+    }
+    return value;
+  })
   @IsArray()
   @IsString({ each: true })
   modules?: string[];
 
   @IsOptional()
-  @IsIn(['selected', 'application', 'global'])
-  scope?: 'selected' | 'application' | 'global';
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsIn(['selected', 'application', 'global', 'tenant'])
+  scope?: 'selected' | 'application' | 'global' | 'tenant';
 }
 
 export class ExecuteResetDto extends ResetPreviewDto {
