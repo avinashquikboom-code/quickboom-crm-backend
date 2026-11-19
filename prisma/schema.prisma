@@ -1270,7 +1270,6 @@ model Employee {
   joiningDate              DateTime                 @default(now())
   departmentId             Int?
   designationId            Int?
-  managerId                Int?
   employmentType           String                   @default("FULL_TIME")
   employeeType             EmployeeType             @default(COMPANY)
   city                     String?

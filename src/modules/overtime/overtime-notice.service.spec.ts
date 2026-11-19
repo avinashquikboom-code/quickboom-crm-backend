@@ -13,7 +13,7 @@ describe('OvertimeNoticeService', () => {
     rejectionReason: null,
     approvedByName: 'HR',
     rejectedByName: null,
-    employee: { id: 4, firstName: 'Asha', lastName: 'Patil', email: 'asha@example.com', phone: '9000000000', userId: 11, managerId: 7, whatsappReportsOptIn: false },
+    employee: { id: 4, firstName: 'Asha', lastName: 'Patil', email: 'asha@example.com', phone: '9000000000', userId: 11, whatsappReportsOptIn: false },
   };
   const created: any[] = [];
   const prisma: any = {

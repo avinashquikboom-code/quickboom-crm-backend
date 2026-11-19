@@ -662,7 +662,7 @@ export class HrmReportsService implements OnModuleInit, OnModuleDestroy {
     if (!manager) throw new ForbiddenException('Employee record not found for this account');
     const teamMemberIds = manager.ledTeams.flatMap((team) => team.members.map((member) => member.employeeId));
     return this.prisma.leaveRequest.findMany({
-      where: { customerId, OR: [{ employee: { managerId: manager.id } }, { employeeId: { in: teamMemberIds } }] },
+      where: { customerId, employeeId: { in: teamMemberIds } },
       include: { employee: true, leaveType: true },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -752,7 +752,7 @@ export class HrmReportsService implements OnModuleInit, OnModuleDestroy {
     const members = await this.prisma.employee.findMany({
       where: {
         customerId,
-        OR: [{ managerId: manager.id }, { id: { in: teamMemberIds } }],
+        id: { in: teamMemberIds },
         status: 'ACTIVE',
       },
       select: {

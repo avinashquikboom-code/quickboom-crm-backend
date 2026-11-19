@@ -586,7 +586,7 @@ describe('AttendanceService (Punch In / Punch Out & Geofencing)', () => {
 
 describe('late punch-in notification', () => {
   const evaluation = { applicable: true, isLate: true, lateMinutes: 15, deduction: 30, currency: 'INR', ratePerMinute: 2, gracePeriodMinutes: 0, rawLateMinutes: 15 };
-  const employee = { id: 10, userId: 5, customerId: 1, managerId: 8, firstName: 'Asha', lastName: 'Patil' };
+  const employee = { id: 10, userId: 5, customerId: 1, firstName: 'Asha', lastName: 'Patil' };
 
   function serviceWith(send: jest.Mock, notifications: any[]) {
     const prisma: any = {
@@ -599,7 +599,7 @@ describe('late punch-in notification', () => {
     return new AttendanceService(prisma, { sendPushNotification: send } as any);
   }
 
-  it('notifies the employee, manager and HR once for the same attendance', async () => {
+  it('notifies the employee and HR once for the same attendance', async () => {
     const sent: any[] = [];
     const send = jest.fn().mockImplementation(async (payload) => {
       sent.push(payload);
@@ -610,8 +610,8 @@ describe('late punch-in notification', () => {
     await (service as any).notifyLatePunchIn(employee, 44, evaluation);
     notifications.push(...sent.map((payload) => ({ data: payload.data })));
     await (service as any).notifyLatePunchIn(employee, 44, evaluation);
-    expect(send).toHaveBeenCalledTimes(3);
-    expect(sent.map((item) => item.userId).sort()).toEqual([5, 80, 90]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(sent.map((item) => item.userId).sort()).toEqual([5, 90]);
     expect(sent[0].title).toBe('Late Punch-In Detected');
     expect(sent.find((item) => item.userId === 5).body).toContain('15 minutes late');
     expect(sent.find((item) => item.userId === 5).body).toContain('₹30');

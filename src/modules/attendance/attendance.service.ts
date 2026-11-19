@@ -1572,13 +1572,6 @@ result: SUCCESS`);
     const recipients = new Set<number>();
     if (employee.userId) recipients.add(Number(employee.userId));
     try {
-      if (employee.managerId && this.prisma.employee?.findUnique) {
-        const manager = await this.prisma.employee.findUnique({
-          where: { id: employee.managerId },
-          select: { userId: true },
-        });
-        if (manager?.userId) recipients.add(manager.userId);
-      }
       if ((this.prisma as any).user?.findMany) {
         const admins = await (this.prisma as any).user.findMany({
           where: {

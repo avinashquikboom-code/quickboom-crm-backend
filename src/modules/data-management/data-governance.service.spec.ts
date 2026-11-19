@@ -6,6 +6,7 @@ function matchesCustomerEmployeeReference(
   where: Record<string, any>,
   employeeTenants: Map<number, number>,
 ) {
+  if ('customerId' in where) throw new Error('Customer filters must use Customer.id, not customerId');
   if (typeof where.id === 'number' && row.id !== where.id) return false;
   if (where.id?.not !== undefined && row.id === where.id.not) return false;
   const alternatives = Array.isArray(where.OR) ? where.OR : [];
@@ -346,10 +347,12 @@ describe('DataGovernanceService employee reset dependencies', () => {
       { assignedEmployeeRel: { customerId: 12 } },
       { createdByEmployeeRel: { customerId: 12 } },
     ] } });
-    expect(customer.count).toHaveBeenCalledWith({ where: { customerId: { not: 12 }, OR: [
+    expect(customer.count).toHaveBeenCalledWith({ where: { id: { not: 12 }, OR: [
       { assignedEmployeeRel: { customerId: 12 } },
       { createdByEmployeeRel: { customerId: 12 } },
     ] } });
+    const customerCountFilters = customer.count.mock.calls.map(([args]) => args.where);
+    expect(customerCountFilters.every((where) => !('customerId' in where))).toBe(true);
     expect(assignment).toMatchObject({
       records: 1,
       crossTenantRecords: 0,
@@ -358,6 +361,40 @@ describe('DataGovernanceService employee reset dependencies', () => {
       willSetNull: true,
       blocking: false,
     });
+  });
+
+  it('uses Customer.id for cross-tenant assignment ownership and counts assignment and creator refs independently', async () => {
+    const employeeTenants = new Map([[501, 12], [502, 12]]);
+    const customerRows = [
+      { id: 12, assignedEmployeeId: null, createdByEmployeeId: null },
+      { id: 20, assignedEmployeeId: 501, createdByEmployeeId: null },
+      { id: 21, assignedEmployeeId: null, createdByEmployeeId: 502 },
+      { id: 22, assignedEmployeeId: 501, createdByEmployeeId: 502 },
+    ];
+    const customer = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => customerRows.filter((row) =>
+        matchesCustomerEmployeeReference(row, where, employeeTenants),
+      ).length),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ customer }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+
+    const warnings = await (service as any).dependencyWarnings(['employees'], 12, client);
+    const assignment = warnings.find((item: any) => item.model === 'customer');
+
+    expect(customer.count).toHaveBeenCalledWith({ where: { id: { not: 12 }, OR: [
+      { assignedEmployeeRel: { customerId: 12 } },
+      { createdByEmployeeRel: { customerId: 12 } },
+    ] } });
+    expect(assignment).toMatchObject({ records: 3, crossTenantRecords: 3 });
   });
 
   it('keeps genuinely cross-tenant customer employee references blocked', async () => {

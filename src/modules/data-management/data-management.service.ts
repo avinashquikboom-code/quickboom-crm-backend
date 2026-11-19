@@ -1196,8 +1196,12 @@ export class DataManagementService {
       }
       if (tx.customer?.updateMany) {
         await tx.customer.updateMany({
-          where: { assignedEmployeeId: numEmployeeId },
+          where: { id: numCustomerId, assignedEmployeeId: numEmployeeId },
           data: { assignedEmployeeId: null },
+        });
+        await tx.customer.updateMany({
+          where: { id: numCustomerId, createdByEmployeeId: numEmployeeId },
+          data: { createdByEmployeeId: null },
         });
       }
 
@@ -2185,7 +2189,8 @@ export class DataManagementService {
     await tx.teamMember?.deleteMany?.({ where: { employeeId: numId } });
     await tx.team?.updateMany?.({ where: { leaderId: numId }, data: { leaderId: null } });
     await tx.department?.updateMany?.({ where: { headId: numId }, data: { headId: null } });
-    await tx.customer?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
+    await tx.customer?.updateMany?.({ where: { id: empCustomerId, assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });
+    await tx.customer?.updateMany?.({ where: { id: empCustomerId, createdByEmployeeId: numId }, data: { createdByEmployeeId: null } });
     await tx.lead?.updateMany?.({ where: { employeeId: numId }, data: { employeeId: null } });
     await tx.visit?.deleteMany?.({ where: { employeeId: numId } });
     await tx.monthlySchedule?.updateMany?.({ where: { assignedEmployeeId: numId }, data: { assignedEmployeeId: null } });

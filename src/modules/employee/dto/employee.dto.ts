@@ -112,10 +112,6 @@ export class CreateEmployeeDto {
   @IsOptional()
   emergencyContact?: any;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  managerId?: number;
-
   @ApiPropertyOptional({ example: true, description: 'Allow employee mobile application login' })
   @IsOptional()
   mobileLoginEnabled?: boolean;
@@ -278,10 +274,6 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   emergencyContact?: any;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  managerId?: number;
 
   @ApiPropertyOptional({ enum: ['COMPANY', 'FREELANCER'], example: 'COMPANY' })
   @IsOptional()
