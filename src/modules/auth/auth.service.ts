@@ -568,6 +568,22 @@ export class AuthService {
     };
   }
 
+  /**
+   * Returns normalized email lookup variants to transparently support
+   * domain aliases between @quikboom.com and @quickboom.com.
+   */
+  getEmailLookupVariants(email: string): string[] {
+    const raw = (email || '').trim().toLowerCase();
+    if (!raw) return [];
+    const variants = new Set<string>([raw]);
+    if (raw.endsWith('@quikboom.com')) {
+      variants.add(raw.replace('@quikboom.com', '@quickboom.com'));
+    } else if (raw.endsWith('@quickboom.com')) {
+      variants.add(raw.replace('@quickboom.com', '@quikboom.com'));
+    }
+    return Array.from(variants);
+  }
+
   async login(
     emailOrDto: string | LoginDto,
     passwordOrApp?: string,
@@ -593,6 +609,14 @@ export class AuthService {
 
     const rawInput = (email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
+    const emailLookupVariants = this.getEmailLookupVariants(normalizedEmail);
+    const emailConditions = emailLookupVariants.map((e) => ({
+      email: { equals: e, mode: 'insensitive' as const },
+    }));
+    const empEmailConditions = emailLookupVariants.map((e) => ({
+      employee: { email: { equals: e, mode: 'insensitive' as const } },
+    }));
+
     const phoneDigits = rawInput.replace(/\D/g, '');
 
     const phoneConditions: any[] = [
@@ -601,7 +625,7 @@ export class AuthService {
     ];
     const empWhere: any[] = [
       { employeeCode: { equals: rawInput, mode: 'insensitive' } },
-      { email: { equals: normalizedEmail, mode: 'insensitive' } },
+      ...emailLookupVariants.map((e) => ({ email: { equals: e, mode: 'insensitive' } })),
       { phone: rawInput },
     ];
 
@@ -640,9 +664,9 @@ export class AuthService {
         where: {
           employee: { isNot: null },
           OR: [
-            { email: { equals: normalizedEmail, mode: 'insensitive' } },
+            ...emailConditions,
             { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
-            { employee: { email: { equals: normalizedEmail, mode: 'insensitive' } } },
+            ...empEmailConditions,
             ...phoneConditions,
           ],
         },
@@ -770,9 +794,9 @@ export class AuthService {
       user = await this.prisma.user.findFirst({
         where: {
           OR: [
-            { email: { equals: normalizedEmail, mode: 'insensitive' } },
+            ...emailConditions,
             { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
-            { employee: { email: { equals: normalizedEmail, mode: 'insensitive' } } },
+            ...empEmailConditions,
             ...phoneConditions,
           ],
         },
@@ -968,12 +992,66 @@ export class AuthService {
       }
     }
 
-    // 1. Role identification based dynamically on database Role/UserRole attributes (role.type & role.name)
-    const isSuperAdminRole = user.userRoles.some((ur) => {
+    // Auto-heal Super Admin role for System Admin account (User ID 1 or admin@quikboom.com / admin@quickboom.com)
+    const isSystemAdminEmail =
+      emailLookupVariants.some((v) => v === 'admin@quikboom.com' || v === 'admin@quickboom.com') ||
+      (user.email && (user.email.toLowerCase() === 'admin@quikboom.com' || user.email.toLowerCase() === 'admin@quickboom.com'));
+    const isRootAdminUser = user.id === 1 || Boolean(isSystemAdminEmail);
+
+    let isSuperAdminRole = (user.userRoles || []).some((ur: any) => {
       const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';
       const name = ur.role?.name ? String(ur.role.name).toUpperCase().replace(/[\s_]+/g, '') : '';
       return type === RoleType.SUPER_ADMIN || name === 'SUPERADMIN' || name === 'SUPERADMINISTRATOR';
     });
+
+    if (isRootAdminUser && !isSuperAdminRole) {
+      let superAdminRole = await this.prisma.role.findFirst({
+        where: {
+          OR: [
+            { type: RoleType.SUPER_ADMIN },
+            { name: 'SUPER_ADMIN' },
+            { name: 'Super Administrator' },
+          ],
+        },
+      });
+      if (!superAdminRole) {
+        superAdminRole = await this.prisma.role.create({
+          data: {
+            name: 'Super Administrator',
+            type: RoleType.SUPER_ADMIN,
+            description: 'Platform Super Administrator with full system control',
+          },
+        });
+      }
+      await this.prisma.userRole.upsert({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: superAdminRole.id,
+          },
+        },
+        create: {
+          userId: user.id,
+          roleId: superAdminRole.id,
+        },
+        update: {},
+      }).catch(() => null);
+
+      if (!user.userRoles) {
+        user.userRoles = [];
+      }
+      user.userRoles.push({
+        id: -1,
+        userId: user.id,
+        roleId: superAdminRole.id,
+        role: superAdminRole,
+        assignedAt: new Date(),
+      } as any);
+
+      isSuperAdminRole = true;
+    }
+
+    // 1. Role identification based dynamically on database Role/UserRole attributes (role.type & role.name)
 
     const isCustomerAdminRole =
       !isSuperAdminRole &&
@@ -2054,8 +2132,12 @@ export class AuthService {
       throw new BadRequestException('Invalid email address format');
     }
 
+    const emailLookupVariants = this.getEmailLookupVariants(rawEmail);
     const user = await this.prisma.user.findFirst({
-      where: { email: rawEmail, deletedAt: null },
+      where: {
+        OR: emailLookupVariants.map((e) => ({ email: { equals: e, mode: 'insensitive' as const } })),
+        deletedAt: null,
+      },
       include: { customer: true },
     });
 
@@ -2150,8 +2232,12 @@ export class AuthService {
       throw new BadRequestException('Email address and OTP code are required');
     }
 
+    const emailLookupVariants = this.getEmailLookupVariants(rawEmail);
     const user = await this.prisma.user.findFirst({
-      where: { email: rawEmail, deletedAt: null },
+      where: {
+        OR: emailLookupVariants.map((e) => ({ email: { equals: e, mode: 'insensitive' as const } })),
+        deletedAt: null,
+      },
       include: {
         customer: true,
         employee: {
@@ -3856,6 +3942,126 @@ export class AuthService {
       accessToken,
       refreshToken,
       expiresIn: 604800,
+    };
+  }
+
+  /**
+   * Secure Super Admin Password Recovery and Session Revocation Utility.
+   * Updates only the intended root administrator account, hashes password using bcrypt (10 rounds),
+   * assigns/preserves SUPER_ADMIN role, revokes stale refresh tokens & active sessions, and logs an AuditLog event.
+   */
+  async recoverSuperAdminPassword(newPassword: string, targetEmailOrId?: string | number) {
+    if (!newPassword || newPassword.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters long.');
+    }
+
+    const emailVariants = targetEmailOrId && typeof targetEmailOrId === 'string'
+      ? this.getEmailLookupVariants(targetEmailOrId)
+      : ['admin@quikboom.com', 'admin@quickboom.com'];
+
+    let user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: typeof targetEmailOrId === 'number' ? targetEmailOrId : 1 },
+          ...emailVariants.map((e) => ({ email: { equals: e, mode: 'insensitive' as const } })),
+        ],
+      },
+      include: {
+        userRoles: { include: { role: true } },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Super Admin user account not found.');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    // 1. Update user password and ensure active status
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        isActive: true,
+        isVerified: true,
+        deletedAt: null,
+      },
+    });
+
+    // 2. Ensure SUPER_ADMIN role is attached
+    let superAdminRole = await this.prisma.role.findFirst({
+      where: {
+        OR: [
+          { type: RoleType.SUPER_ADMIN },
+          { name: 'SUPER_ADMIN' },
+          { name: 'Super Administrator' },
+        ],
+      },
+    });
+    if (!superAdminRole) {
+      superAdminRole = await this.prisma.role.create({
+        data: {
+          name: 'Super Administrator',
+          type: RoleType.SUPER_ADMIN,
+          description: 'Platform Super Administrator with full system control',
+        },
+      });
+    }
+
+    await this.prisma.userRole.upsert({
+      where: {
+        userId_roleId: {
+          userId: updatedUser.id,
+          roleId: superAdminRole.id,
+        },
+      },
+      create: {
+        userId: updatedUser.id,
+        roleId: superAdminRole.id,
+      },
+      update: {},
+    });
+
+    // 3. Revoke all stale refresh tokens
+    const revokedTokens = await this.prisma.refreshToken.updateMany({
+      where: { userId: updatedUser.id, isRevoked: false },
+      data: { isRevoked: true },
+    });
+
+    // 4. Terminate active sessions
+    const deletedSessions = await this.prisma.session.deleteMany({
+      where: { userId: updatedUser.id },
+    });
+
+    // 5. Create audit log entry
+    await this.prisma.auditLog.create({
+      data: {
+        userId: updatedUser.id,
+        userName: `${updatedUser.firstName} ${updatedUser.lastName}`.trim(),
+        userRole: 'SUPER_ADMIN',
+        source: 'ADMIN_RECOVERY',
+        action: 'PASSWORD_RESET',
+        module: 'Security',
+        description: 'Super Admin password recovered and sessions revoked securely via recovery utility.',
+        status: 'SUCCESS',
+        details: {
+          targetUserId: updatedUser.id,
+          targetEmail: updatedUser.email,
+          revokedTokensCount: revokedTokens.count,
+          deletedSessionsCount: deletedSessions.count,
+          timestamp: new Date().toISOString(),
+        },
+      },
+    });
+
+    return {
+      success: true,
+      userId: updatedUser.id,
+      email: updatedUser.email,
+      role: 'SUPER_ADMIN',
+      revokedTokensCount: revokedTokens.count,
+      deletedSessionsCount: deletedSessions.count,
+      message: 'Super Admin password successfully updated, sessions revoked, and audit log recorded.',
     };
   }
 }

@@ -53,8 +53,8 @@ async function seedDefaultLeadStages(customerId: number | null) {
 }
 
 async function main() {
-  const email = 'admin@quickboom.com';
-  const legacyEmail = 'admin@quikboom.com';
+  const email = 'admin@quikboom.com';
+  const aliasEmail = 'admin@quickboom.com';
   const password = '123456';
   const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -124,7 +124,7 @@ async function main() {
   if (!user) {
     user = await prisma.user.findFirst({
       where: {
-        OR: [{ email }, { email: legacyEmail }],
+        OR: [{ email }, { email: aliasEmail }],
       },
     });
   }
