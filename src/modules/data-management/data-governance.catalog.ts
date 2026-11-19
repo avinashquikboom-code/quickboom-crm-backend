@@ -11,7 +11,8 @@ export type WhereKind =
   | 'invoice'
   | 'template'
   | 'teamMember'
-  | 'commission';
+  | 'commission'
+  | 'commissionWithdrawal';
 
 export type TableRule = {
   model: string;
@@ -281,7 +282,7 @@ export const RESET_MODULES: ResetModule[] = [
     available: true,
     tables: [
       row('commission', 'commissions', 'Commissions', 'commission'),
-      row('commissionWithdrawal', 'commission_withdrawals', 'Commission withdrawals', 'commission'),
+      row('commissionWithdrawal', 'commission_withdrawals', 'Commission withdrawals', 'commissionWithdrawal'),
     ],
   },
   {
@@ -415,6 +416,13 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
           { customer: { createdByEmployeeRel: { customerId } } },
           { customer: { assignedTeam: { customerId } } },
           { lead: { customerId } },
+        ],
+      };
+    case 'commissionWithdrawal':
+      return {
+        OR: [
+          { customerId },
+          { employee: { customerId } },
         ],
       };
     default:
