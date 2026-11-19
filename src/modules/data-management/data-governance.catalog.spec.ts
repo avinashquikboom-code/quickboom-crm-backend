@@ -96,6 +96,13 @@ describe('data governance catalog', () => {
     expect(order.indexOf('team')).toBeLessThan(order.indexOf('task'));
   });
 
+  it('deletes salary slips and payroll items before payroll runs to prevent cascade count mismatches', () => {
+    const order = tablesForModules(['payroll']).map((table) => table.model);
+    expect(order.indexOf('salarySlip')).toBeLessThan(order.indexOf('payrollItem'));
+    expect(order.indexOf('payrollItem')).toBeLessThan(order.indexOf('payroll'));
+    expect(order.indexOf('employeeDeduction')).toBeLessThan(order.indexOf('payroll'));
+  });
+
   it('deletes employee and department children before parent rows', () => {
     const tables = tablesForModules(['hrm', 'payroll', 'expenses', 'visits-tasks', 'employees', 'designations', 'departments']);
     const index = (model: string) => tables.findIndex((table) => table.model === model);

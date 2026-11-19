@@ -3,7 +3,7 @@ import { moduleById, tablesForModules } from './data-governance.catalog';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const requestedModules = [
-  'employees', 'departments', 'designations', 'attendance', 'leave', 'salary-structures', 'payroll-policies', 'visits-tasks', 'commission-configurations',
+  'employees', 'departments', 'designations', 'attendance', 'leave', 'salary-structures', 'payroll-policies', 'payroll', 'visits-tasks', 'commission-configurations',
 ];
 
 describe('Data Governance HR module physical deletes', () => {
@@ -18,6 +18,13 @@ describe('Data Governance HR module physical deletes', () => {
       // VisitPhoto.visit uses ON DELETE CASCADE. Deleting visits first would
       // make the later VisitPhoto.deleteMany report zero despite preview=2.
       if (model === 'visit') counts.set('visitPhoto', 0);
+      if (model === 'payroll') {
+        counts.set('payrollItem', 0);
+        counts.set('salarySlip', 0);
+      }
+      if (model === 'payrollItem') {
+        counts.set('salarySlip', 0);
+      }
       return { count };
     });
     const delegateFor = (model: string) => ({
@@ -31,7 +38,9 @@ describe('Data Governance HR module physical deletes', () => {
           ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, visitId: index + 10 }))
           : model === 'teamMember'
             ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, teamId: 1, employeeId: index + 1 }))
-            : []),
+            : model === 'salarySlip'
+              ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, payrollItemId: 1, employeeId: index + 1 }))
+              : []),
       findFirst: jest.fn(async () => null),
       deleteMany: jest.fn((args: unknown) => deleteMany(model)),
       create: jest.fn(async () => ({})),
@@ -67,6 +76,13 @@ describe('Data Governance HR module physical deletes', () => {
       expect(delegates.get('teamMember')!.deleteMany).toHaveBeenCalledWith({ where: { team: { customerId: 42 } } });
       expect(deleteOrder.indexOf('visitPhoto')).toBeLessThan(deleteOrder.indexOf('visit'));
       expect(delegates.get('visitPhoto')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
+    }
+    if (moduleId === 'payroll') {
+      expect(deleteOrder.indexOf('salarySlip')).toBeLessThan(deleteOrder.indexOf('payrollItem'));
+      expect(deleteOrder.indexOf('payrollItem')).toBeLessThan(deleteOrder.indexOf('payroll'));
+      expect(delegates.get('salarySlip')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
+      expect(delegates.get('payrollItem')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
+      expect(delegates.get('payroll')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });
     }
     if (moduleId === 'commission-configurations') {
       expect(delegates.get('commissionConfig')!.deleteMany).toHaveBeenCalledWith({ where: { customerId: 42 } });

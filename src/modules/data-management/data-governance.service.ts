@@ -371,6 +371,16 @@ export class DataGovernanceService {
         deletionFilter: Record<string, unknown>;
         reason?: string;
       } | null = null;
+      let salarySlipDiagnostic: {
+        expectedCount: number;
+        matchingBeforeDelete: number;
+        deletedCount?: number;
+        salarySlipIds: number[];
+        payrollItemIds: number[];
+        employeeIds: number[];
+        deletionFilter: Record<string, unknown>;
+        reason?: string;
+      } | null = null;
       let currentResetModel: string | null = null;
       try {
         if (!previewRecord || this.previews.get(previewToken) !== previewRecord) {
@@ -597,6 +607,39 @@ export class DataGovernanceService {
                 throw new Error(`Team memberships: expected ${expected} rows immediately before deletion but found ${teamMemberDiagnostic.matchingBeforeDelete}.`);
               }
             }
+            if (table.model === 'salarySlip') {
+              const matchingBeforeDelete = await tx.salarySlip.count({ where });
+              const matchingRows = await tx.salarySlip.findMany({
+                where,
+                select: { id: true, payrollItemId: true, employeeId: true },
+              });
+              salarySlipDiagnostic = {
+                expectedCount: expected,
+                matchingBeforeDelete,
+                salarySlipIds: matchingRows.map((row) => Number(row.id)).filter(Number.isInteger),
+                payrollItemIds: [...new Set(matchingRows.map((row) => Number(row.payrollItemId)).filter(Number.isInteger))],
+                employeeIds: [...new Set(matchingRows.map((row) => Number(row.employeeId)).filter(Number.isInteger))],
+                deletionFilter: where as Record<string, unknown>,
+              };
+              this.logger.log(`Salary slip reset step ${JSON.stringify({
+                operationId,
+                tenantId,
+                selectedModules: moduleIds,
+                ...salarySlipDiagnostic,
+                transactionStatus: 'IN_PROGRESS',
+              })}`);
+              if (matchingBeforeDelete !== expected) {
+                salarySlipDiagnostic.reason = 'The matching rows immediately before deletion differ from the transaction recount.';
+                this.logger.error(`Salary slip reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...salarySlipDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+                throw new Error(`Salary slips: expected ${expected} rows immediately before deletion but found ${matchingBeforeDelete}.`);
+              }
+            }
             const expectedToDelete = table.model === 'designation'
               ? Math.max(0, expected - protectedDesignationIds.length)
               : table.model === 'metaTemplate'
@@ -661,12 +704,38 @@ export class DataGovernanceService {
                 })}`);
               }
             }
+            if (table.model === 'salarySlip' && salarySlipDiagnostic) {
+              salarySlipDiagnostic.deletedCount = deletedCount;
+              if (deletedCount !== expectedToDelete) {
+                salarySlipDiagnostic.reason = salarySlipDiagnostic.matchingBeforeDelete !== expected
+                  ? 'The matching rows immediately before deletion differ from the transaction recount.'
+                  : 'The deleteMany affected-row count differs from the expected eligible count.';
+                this.logger.error(`Salary slip reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...salarySlipDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+              } else {
+                this.logger.log(`Salary slip reset deleted ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...salarySlipDiagnostic,
+                  transactionStatus: 'IN_PROGRESS',
+                })}`);
+              }
+            }
             if (deletedCount !== expectedToDelete) {
               if (table.model === 'employee' && employeeDiagnostic) {
                 employeeDiagnostic.reason = 'The deleteMany affected-row count differs from the expected eligible count.';
               }
               if (table.model === 'teamMember' && teamMemberDiagnostic) {
                 teamMemberDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
+              }
+              if (table.model === 'salarySlip' && salarySlipDiagnostic) {
+                salarySlipDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
               }
               if (table.model === 'taskHistory' && taskHistoryDiagnostic) {
                 taskHistoryDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
@@ -731,6 +800,15 @@ export class DataGovernanceService {
             tenantId,
             selectedModules: moduleIds,
             ...teamMemberDiagnostic,
+            transactionStatus: 'COMMITTED',
+          })}`);
+        }
+        if (salarySlipDiagnostic) {
+          this.logger.log(`Salary slip reset committed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...salarySlipDiagnostic,
             transactionStatus: 'COMMITTED',
           })}`);
         }
@@ -852,6 +930,16 @@ export class DataGovernanceService {
             error: failures[0],
           })}`);
         }
+        if (salarySlipDiagnostic) {
+          this.logger.warn(`Salary slip reset rolled back or failed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...salarySlipDiagnostic,
+            transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
+            error: failures[0],
+          })}`);
+        }
         if (employeeDiagnostic) {
           this.logger.warn(`Employee reset rolled back or failed ${JSON.stringify({
             operationId,
@@ -868,6 +956,7 @@ export class DataGovernanceService {
           selectedModules: moduleIds,
           failedAtModel: currentResetModel,
           teamMemberDeleteReached: teamMemberDiagnostic !== null,
+          salarySlipDeleteReached: salarySlipDiagnostic !== null,
           employeeDeleteReached: employeeDiagnostic !== null,
           transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
           error: failures[0],
