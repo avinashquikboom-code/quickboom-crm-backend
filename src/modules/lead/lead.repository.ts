@@ -1134,6 +1134,7 @@ export class LeadRepository {
 
     if (Array.isArray(data) && data.length > 0) {
       await this.resolveMissingLeadBusinessNames(data);
+      await this.hydrateLeadContactLinksFromCaptures(data);
       await this.attachPlacePhotos(data, false);
       await this.resolveMissingLeadVisitedAndWonEmployees(data);
       if (options.followUps) await this.attachFollowUpContext(data);
@@ -1774,7 +1775,7 @@ export class LeadRepository {
     const resolvedLastName = isFakeContact(lead.lastName) ? '' : lead.lastName;
 
     // Map social media / profiles strictly separating website (Part 11, 12, 18)
-    const mappedSocial: any = (lead.socialMedia && typeof lead.socialMedia === 'object') ? { ...lead.socialMedia } : {};
+    const mappedSocial: any = this.socialMediaRecord(lead.socialMedia);
     if (Array.isArray(lead.socialProfiles) && lead.socialProfiles.length > 0) {
       for (const sp of lead.socialProfiles) {
         const plat = String(sp.platform || '').toLowerCase();
@@ -1787,7 +1788,13 @@ export class LeadRepository {
         else if (plat.includes('pinterest')) mappedSocial.pinterest = sp.url;
         else if (plat.includes('whatsapp')) mappedSocial.whatsapp = sp.url;
         else if (plat === 'other') mappedSocial.other = sp.url;
+        else if (plat.includes('website') && !safeHttpUrl(lead.website)) {
+          lead.website = safeHttpUrl(sp.url) || null;
+        }
       }
+    }
+    if (!safeHttpUrl(lead.website)) {
+      lead.website = safeHttpUrl(mappedSocial.website || mappedSocial.web || mappedSocial.site) || null;
     }
     Object.keys(mappedSocial).forEach((key) => {
       if (key === 'website') return;
@@ -1796,6 +1803,8 @@ export class LeadRepository {
       else mappedSocial[key] = normalized;
     });
     delete mappedSocial.website;
+    delete mappedSocial.web;
+    delete mappedSocial.site;
     const finalSocialMedia = Object.keys(mappedSocial).length > 0 ? mappedSocial : null;
 
     const latestVisit = Array.isArray(lead.visits) ? lead.visits[0] : null;
@@ -1890,6 +1899,128 @@ export class LeadRepository {
     };
   }
 
+  private socialMediaRecord(value: any): Record<string, any> {
+    let parsed = value;
+    if (typeof parsed === 'string') {
+      const text = parsed.trim();
+      if (!text.startsWith('{') && !text.startsWith('[')) return {};
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return {};
+      }
+    }
+    if (Array.isArray(parsed)) {
+      const result: Record<string, any> = {};
+      for (const item of parsed) {
+        if (!item || typeof item !== 'object') continue;
+        const platform = String(item.platform || item.name || item.type || '').trim().toLowerCase();
+        const url = item.url || item.handle || item.link;
+        if (platform && url != null && String(url).trim()) result[platform] = url;
+      }
+      return result;
+    }
+    if (parsed && typeof parsed === 'object') {
+      return Object.fromEntries(
+        Object.entries(parsed).map(([key, entry]) => [key.trim().toLowerCase(), entry]),
+      );
+    }
+    return {};
+  }
+
+  /**
+   * Older imports may have kept website/social links on the tenant-owned
+   * DataCapturePlace row while the Lead scalar fields were empty. Hydrate only
+   * the API response, using the same tenant plus an exact importedLeadId,
+   * googlePlaceId, or sourceRecordId match. Existing Lead values win.
+   */
+  private async hydrateLeadContactLinksFromCaptures(leads: any[]): Promise<void> {
+    const validLeads = (Array.isArray(leads) ? leads : []).filter(
+      (lead) => Number(lead?.id) > 0 && Number(lead?.customerId) > 0,
+    );
+    if (!validLeads.length || typeof this.prisma.dataCapturePlace?.findMany !== 'function') return;
+
+    const leadIds = [...new Set(validLeads.map((lead) => Number(lead.id)))];
+    const customerIds = [...new Set(validLeads.map((lead) => Number(lead.customerId)))];
+    const googlePlaceIds = [...new Set(validLeads.map((lead) => String(lead.googlePlaceId || '').trim()).filter(Boolean))];
+    const sourceRecordIds = [...new Set(validLeads.map((lead) => String(lead.sourceRecordId || '').trim()).filter(Boolean))];
+    const identityFilters: any[] = [
+      { importedLeadId: { in: leadIds } },
+      ...(googlePlaceIds.length ? [{ googlePlaceId: { in: googlePlaceIds } }] : []),
+      ...(sourceRecordIds.length ? [{ sourceRecordId: { in: sourceRecordIds } }] : []),
+    ];
+
+    try {
+      const captures = await this.prisma.dataCapturePlace.findMany({
+        where: {
+          customerId: { in: customerIds },
+          deletedAt: null,
+          OR: identityFilters,
+        },
+        select: {
+          id: true,
+          customerId: true,
+          importedLeadId: true,
+          googlePlaceId: true,
+          sourceRecordId: true,
+          website: true,
+          socialMedia: true,
+          rawData: true,
+          updatedAt: true,
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      });
+      if (!Array.isArray(captures) || !captures.length) return;
+
+      for (const lead of validLeads) {
+        const tenantId = Number(lead.customerId);
+        const leadId = Number(lead.id);
+        const matching = captures
+          .filter((capture: any) => {
+            if (Number(capture.customerId) !== tenantId) return false;
+            return Number(capture.importedLeadId) === leadId ||
+              (lead.googlePlaceId && capture.googlePlaceId === lead.googlePlaceId) ||
+              (lead.sourceRecordId && capture.sourceRecordId === lead.sourceRecordId);
+          })
+          .sort((a: any, b: any) => {
+            const score = (capture: any) =>
+              (Number(capture.importedLeadId) === leadId ? 4 : 0) +
+              (lead.googlePlaceId && capture.googlePlaceId === lead.googlePlaceId ? 2 : 0) +
+              (lead.sourceRecordId && capture.sourceRecordId === lead.sourceRecordId ? 1 : 0);
+            return score(b) - score(a);
+          });
+        if (!matching.length) continue;
+
+        let captureWebsite: string | null = null;
+        const captureSocial: Record<string, any> = {};
+        for (const capture of matching) {
+          const rawData = capture.rawData && typeof capture.rawData === 'object' && !Array.isArray(capture.rawData)
+            ? capture.rawData
+            : {};
+          const social = {
+            ...this.socialMediaRecord(rawData.socialMedia),
+            ...this.socialMediaRecord(capture.socialMedia),
+          };
+          for (const [key, value] of Object.entries(social)) {
+            if (captureSocial[key] == null) captureSocial[key] = value;
+          }
+          if (!captureWebsite) {
+            captureWebsite = safeHttpUrl(
+              capture.website || rawData.website || social.website || social.web || social.site,
+            ) || null;
+          }
+        }
+
+        if (!safeHttpUrl(lead.website) && captureWebsite) lead.website = captureWebsite;
+        const existingSocial = this.socialMediaRecord(lead.socialMedia);
+        const mergedSocial = { ...captureSocial, ...existingSocial };
+        if (Object.keys(mergedSocial).length) lead.socialMedia = mergedSocial;
+      }
+    } catch (error: any) {
+      this.logger.warn(`[LEAD_CAPTURE_LINK_HYDRATION] Unable to hydrate missing lead links: ${error?.message || error}`);
+    }
+  }
+
   async findOne(customerId: number | string | undefined, id: number | string) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
@@ -1944,6 +2075,7 @@ export class LeadRepository {
       });
       if (result) {
         await this.resolveMissingLeadBusinessNames([result]);
+        await this.hydrateLeadContactLinksFromCaptures([result]);
         await this.attachPlacePhotos([result]);
         await this.resolveMissingLeadVisitedAndWonEmployees([result]);
         await this.attachPlanProposals(result);
