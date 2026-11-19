@@ -2251,10 +2251,13 @@ export class DataGovernanceService {
       const rows = await (client as Prisma.TransactionClient).department.findMany({ where: scoped, select: { id: true } });
       const ids = rows.map((item) => Number(item.id)).filter(Number.isInteger);
       if (ids.length) {
-        checks.push({ parent: 'departments', model: 'employee', label: 'Employees assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'departments', model: 'designation', label: 'Designations assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'departments', model: 'task', label: 'Tasks assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'departments', model: 'announcement', label: 'Department announcements', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'cascade' });
+        // These optional foreign keys use ON DELETE SET NULL in PostgreSQL.
+        // Same-tenant references are therefore safe to preserve while deleting
+        // a department; references owned by another tenant still block reset.
+        checks.push({ parent: 'departments', model: 'employee', label: 'Employees assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'set-null' });
+        checks.push({ parent: 'departments', model: 'designation', label: 'Designations assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'set-null' });
+        checks.push({ parent: 'departments', model: 'task', label: 'Tasks assigned to departments', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'set-null' });
+        checks.push({ parent: 'departments', model: 'announcement', label: 'Department announcements', where: { departmentId: { in: ids } }, ...(customerId == null ? {} : { crossTenantWhere: { departmentId: { in: ids }, customerId: { not: customerId } } }), policy: 'set-null' });
       }
     }
     if (moduleIds.includes('designations')) {
@@ -2262,9 +2265,30 @@ export class DataGovernanceService {
       const ids = rows.map((item) => Number(item.id)).filter(Number.isInteger);
       const eligibleIds = ids.filter((id) => !protectedDesignationSet.has(id));
       if (eligibleIds.length) {
-        checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { designationId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: eligibleIds }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { designationId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: eligibleIds }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references (protected)', where: { mobileRoleId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, NOT: { originLead: { customerId } }, mobileRoleId: { in: eligibleIds } } }), policy: 'protected' });
+        // Employee and Task designation references also use ON DELETE SET NULL.
+        checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { designationId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: eligibleIds }, customerId: { not: customerId } } }), policy: 'set-null' });
+        checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { designationId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: eligibleIds }, customerId: { not: customerId } } }), policy: 'set-null' });
+        // Customer.mobileRoleId also uses ON DELETE SET NULL. Detach current-
+        // tenant references, while conservatively blocking references whose
+        // Customer ownership is outside or cannot be verified for this tenant.
+        checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references outside or not verified for this tenant', where: { mobileRoleId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: {
+          id: { not: customerId },
+          mobileRoleId: { in: eligibleIds },
+          OR: [
+            { originLead: { customerId: { not: customerId } } },
+            { assignedTeam: { customerId: { not: customerId } } },
+            { assignedEmployeeRel: { customerId: { not: customerId } } },
+            { createdByEmployeeRel: { customerId: { not: customerId } } },
+            { employees: { some: { customerId: { not: customerId } } } },
+            { NOT: { OR: [
+              { originLead: { customerId } },
+              { assignedTeam: { customerId } },
+              { assignedEmployeeRel: { customerId } },
+              { createdByEmployeeRel: { customerId } },
+              { employees: { some: { customerId } } },
+            ] } },
+          ],
+        } }), policy: 'set-null' });
       }
     }
     if (moduleIds.includes('commission-configurations')) {

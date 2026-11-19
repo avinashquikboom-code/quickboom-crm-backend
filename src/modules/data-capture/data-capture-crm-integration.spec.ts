@@ -53,7 +53,7 @@ describe('Data Capture CRM reference imports', () => {
       independentFields: { businessName: 'Customer-supplied name', city: 'Pune', country: 'India', category: 'Supplier', id: 999, customerId: 99 } }] });
     expect(result.imported).toBe(1);
     expect(leads[0]).toMatchObject({ customerId: 7, createdById: 9, title: 'Customer-supplied name',
-      phone: null, city: 'Pune', country: 'India', category: 'Supplier', source: 'Google Maps', status: 'NEW', priority: 'MEDIUM', assignedToId: null });
+      phone: '+919999999999', city: 'Pune', country: 'India', category: 'Supplier', source: 'Google Maps', status: 'NEW', priority: 'MEDIUM', assignedToId: null });
     expect(captures[0]).toMatchObject({ importedLeadId: leads[0].id, status: 'LEAD_CREATED' });
   });
 
@@ -220,7 +220,7 @@ describe('Data Capture CRM reference imports', () => {
     });
     expect(lookup).toHaveBeenCalledWith([captures[0]]);
     expect(result.imported).toBe(1);
-    expect(leads[0]).toMatchObject({ title: 'Resolved from Google Places', phone: null, address: null });
+    expect(leads[0]).toMatchObject({ title: 'Resolved from Google Places', phone: '+919999999999', address: null });
   });
 
   it('uses a saved non-Google business name without requiring Google Place details', async () => {
@@ -283,7 +283,7 @@ describe('Data Capture CRM reference imports', () => {
     expect(prisma.lead.create).not.toHaveBeenCalled();
   });
 
-  it('does not auto-copy Google Places fields from a reviewed capture to a lead', async () => {
+  it('copies contact fields from a reviewed capture to a lead', async () => {
     captures[0].status = 'VALIDATED';
     const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
       places: [{ id: 1, independentFields: { businessName: 'Verified from our records' } }],
@@ -291,7 +291,7 @@ describe('Data Capture CRM reference imports', () => {
     expect(result.imported).toBe(1);
     expect(leads[0]).toMatchObject({
       title: 'Verified from our records',
-      phone: null,
+      phone: '+919999999999',
       address: null,
       category: null,
       latitude: null,

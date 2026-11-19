@@ -1144,3 +1144,148 @@ describe('DataGovernanceService employee reset dependencies', () => {
     expect(employee.deleteMany).toHaveBeenCalled();
   });
 });
+
+describe('DataGovernanceService department and designation reset dependencies', () => {
+  function makeClient(crossTenantReferences = 0) {
+    const delegate = (model: string) => ({
+      count: jest.fn(async ({ where = {} }: { where?: Record<string, any> } = {}) => {
+        if (where.customerId?.not !== undefined) return crossTenantReferences;
+        if (model === 'employee' && where.departmentId) return 2;
+        if (model === 'employee' && where.designationId) return 1;
+        if (model === 'designation' && where.departmentId) return 2;
+        if (model === 'task' && where.departmentId) return 3;
+        if (model === 'task' && where.designationId) return 1;
+        if (model === 'announcement' && where.departmentId) return 1;
+        return 0;
+      }),
+      findMany: jest.fn(async () => model === 'department' ? [{ id: 11 }] : model === 'designation' ? [{ id: 21 }, { id: 22 }] : []),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    });
+    const client = new Proxy({} as Record<string, unknown>, {
+      get: (_target, key: string | symbol) => {
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return delegate(String(key));
+      },
+    }) as unknown as PrismaService;
+    return client;
+  }
+
+  it('treats same-tenant Department and Designation references as safe SET NULL dependencies', async () => {
+    const client = makeClient();
+    const service = new DataGovernanceService(client);
+    const warnings = await (service as any).dependencyWarnings(['departments', 'designations'], 42, client);
+    const selectedReferences = warnings.filter((item: any) =>
+      (item.module === 'departments' && ['employee', 'designation', 'task', 'announcement'].includes(item.model))
+      || (item.module === 'designations' && ['employee', 'task'].includes(item.model)),
+    );
+
+    expect(selectedReferences).toHaveLength(6);
+    expect(selectedReferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ policy: 'set-null', resolvedRecords: 2, blocking: false }),
+      expect.objectContaining({ policy: 'set-null', resolvedRecords: 3, blocking: false }),
+      expect.objectContaining({ policy: 'set-null', resolvedRecords: 1, blocking: false }),
+    ]));
+    expect(selectedReferences.every((item: any) => item.blocking === false)).toBe(true);
+  });
+
+  it('continues to block references owned by another tenant', async () => {
+    const client = makeClient(1);
+    const service = new DataGovernanceService(client);
+    const warnings = await (service as any).dependencyWarnings(['departments', 'designations'], 42, client);
+    const externalDepartmentEmployee = warnings.find((item: any) => item.module === 'departments' && item.model === 'employee');
+    const externalDesignationTask = warnings.find((item: any) => item.module === 'designations' && item.model === 'task');
+
+    expect(externalDepartmentEmployee).toMatchObject({ crossTenantRecords: 1, blocking: true, policy: 'set-null' });
+    expect(externalDesignationTask).toMatchObject({ crossTenantRecords: 1, blocking: true, policy: 'set-null' });
+  });
+
+  it('treats same-tenant Customer mobile-role SET NULL as safe but blocks unverified ownership', async () => {
+    const runDependencyCheck = async (externalReferences: number) => {
+      const customer = {
+        count: jest.fn(async ({ where = {} }: { where?: Record<string, any> } = {}) => {
+          if (where.id?.not !== undefined) return externalReferences;
+          return where.mobileRoleId ? 2 : 0;
+        }),
+        findMany: jest.fn().mockResolvedValue([]),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      };
+      const client = new Proxy({ customer }, {
+        get: (target, key: string | symbol) => {
+          if (key in target) return target[key as keyof typeof target];
+          if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+          if (key === 'designation') return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([{ id: 21 }]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+          if (key === 'role') return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+          return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+        },
+      }) as unknown as PrismaService;
+      const service = new DataGovernanceService(client);
+      const warnings = await (service as any).dependencyWarnings(['designations'], 42, client);
+      return warnings.find((item: any) => item.model === 'customer');
+    };
+
+    expect(await runDependencyCheck(0)).toMatchObject({ records: 2, resolvedRecords: 2, blocking: false, policy: 'set-null' });
+    expect(await runDependencyCheck(1)).toMatchObject({ records: 2, crossTenantRecords: 1, blocking: true, policy: 'set-null' });
+  });
+
+  it('deletes both selected tenant modules and verifies the actual affected counts', async () => {
+    const remaining = { department: 5, designation: 10 };
+    const deleteOrder: string[] = [];
+    const makeDelegate = (model: string) => ({
+      count: jest.fn(async ({ where = {} }: { where?: Record<string, any> } = {}) => {
+        if (where.customerId?.not !== undefined) return 0;
+        if (model === 'designation' && where.departmentId) return 0;
+        if (model in remaining) return remaining[model as keyof typeof remaining];
+        if (model === 'employee' && (where.departmentId || where.designationId)) return 2;
+        if (model === 'task' && (where.departmentId || where.designationId)) return 1;
+        if (model === 'announcement' && where.departmentId) return 1;
+        return 0;
+      }),
+      findMany: jest.fn(async () => model === 'department'
+        ? Array.from({ length: 5 }, (_, index) => ({ id: index + 1 }))
+        : model === 'designation'
+          ? Array.from({ length: 10 }, (_, index) => ({ id: index + 1 }))
+          : []),
+      deleteMany: jest.fn(async () => {
+        deleteOrder.push(model);
+        if (model in remaining) {
+          const count = remaining[model as keyof typeof remaining];
+          remaining[model as keyof typeof remaining] = 0;
+          return { count };
+        }
+        return { count: 0 };
+      }),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+      create: jest.fn(async () => ({})),
+    });
+    const auditLog = { ...makeDelegate('auditLog'), findFirst: jest.fn().mockResolvedValue(null) };
+    let prisma: PrismaService;
+    prisma = new Proxy({ auditLog }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$transaction') return (work: (tx: unknown) => Promise<unknown>) => work(prisma);
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        return makeDelegate(String(key));
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(42, { modules: ['departments', 'designations'] });
+    const result = await service.executeReset(42, 7, 'SUPER_ADMIN', {
+      modules: ['departments', 'designations'],
+      previewToken: preview.previewToken,
+      confirmation: 'RESET',
+      idempotencyKey: 'department-designation-reset',
+    });
+
+    expect(preview.tables).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: 'department', records: 5 }),
+      expect.objectContaining({ model: 'designation', records: 10, eligibleRecords: 10 }),
+    ]));
+    expect(preview.dependencyWarnings.every((item) => !item.blocking)).toBe(true);
+    expect(deleteOrder).toEqual(['designation', 'department']);
+    expect(result).toMatchObject({ recordsDeleted: 15, countsBefore: { designation: 10, department: 5 }, countsAfter: { designation: 0, department: 0 }, verified: true });
+  });
+});
