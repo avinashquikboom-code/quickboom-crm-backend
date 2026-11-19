@@ -80,7 +80,7 @@ describe('Data Capture Import to Employee Mobile Lead Pipeline End-to-End', () =
         }),
       },
       user: {
-        findFirst: jest.fn().mockResolvedValue({ id: 103 }),
+        findFirst: jest.fn().mockResolvedValue({ id: 103, customerId: 1 }),
         findUnique: jest.fn(),
       },
       customer: {
@@ -90,6 +90,8 @@ describe('Data Capture Import to Employee Mobile Lead Pipeline End-to-End', () =
         findFirst: jest.fn().mockResolvedValue(mockNewStage),
         findMany: jest.fn().mockResolvedValue([mockNewStage]),
       },
+      leadStageWhatsAppDelivery: { upsert: jest.fn().mockResolvedValue({ id: 1 }) },
+      leadStageEmailDelivery: { upsert: jest.fn().mockResolvedValue({ id: 1 }) },
       lead: {
         findFirst: jest.fn(),
         findMany: jest.fn(),
@@ -102,11 +104,14 @@ describe('Data Capture Import to Employee Mobile Lead Pipeline End-to-End', () =
       },
       leadSocialProfile: {
         create: jest.fn().mockResolvedValue({ id: 1 }),
+        upsert: jest.fn().mockResolvedValue({ id: 1 }),
       },
       leadActivityTimeline: {
         create: jest.fn().mockResolvedValue({ id: 1 }),
       },
       $transaction: jest.fn().mockImplementation((cb) => cb(prisma)),
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -127,6 +132,36 @@ describe('Data Capture Import to Employee Mobile Lead Pipeline End-to-End', () =
   });
 
   describe('Step 1-6: Data Capture Import & Authoritative Lead Persistence', () => {
+    it('revalidates and assigns CSV rows through the existing Lead import service', async () => {
+      prisma.dataCapturePlace.create.mockResolvedValue({ id: 901 });
+      const importSpy = jest.spyOn(dataCaptureService, 'importToLeads').mockResolvedValue({
+        imported: 1,
+        skippedDuplicates: 0,
+        failed: 0,
+        records: [{ captureId: 901, imported: true }],
+      } as any);
+      const file = {
+        originalname: 'new-leads.csv',
+        buffer: Buffer.from('Lead Name,Company Name,Mobile Number,Email Address\nAri Patel,Patel Foods,+919876543210,ari@example.com'),
+      } as any;
+      const result = await dataCaptureService.importCsvLeads(
+        1,
+        mockAdminUser,
+        file,
+        { title: 'Lead Name', businessName: 'Company Name', phone: 'Mobile Number', email: 'Email Address' },
+        mockEmployeeA.id,
+      );
+
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ id: mockEmployeeA.id, customerId: 1, status: 'ACTIVE', userId: { not: null } }),
+      }));
+      expect(importSpy).toHaveBeenCalledWith(1, mockAdminUser, expect.objectContaining({
+        assignedToId: mockEmployeeA.employeeCode,
+        places: [{ id: 901, independentFields: { title: 'Ari Patel', companyName: 'Patel Foods' } }],
+      }), undefined);
+      expect(result).toMatchObject({ imported: 1, totalRows: 1, assignedEmployee: { id: 13, userId: 103 } });
+    });
+
     it('creates a Lead in DB with correct employee assignment when imported by Employee A', async () => {
       const mockPlace = {
         id: 1909,
@@ -190,13 +225,13 @@ describe('Data Capture Import to Employee Mobile Lead Pipeline End-to-End', () =
             companyName: 'Bachat Bazaar 365',
             phone: '+919662090593',
             email: 'info@bachatbazaar365.com',
-            source: 'GOOGLE_PLACES',
+            source: 'Google Maps',
             status: 'NEW',
             stageId: 16,
             assignedToId: 103,
             employeeId: 13,
             createdById: 103,
-            sourceRecordId: '1909',
+            sourceRecordId: 'ChIJ_BACHAT_BAZAAR_1909',
           }),
         }),
       );

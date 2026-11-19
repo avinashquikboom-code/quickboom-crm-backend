@@ -3,10 +3,10 @@ import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundEx
 import PDFDocument = require('pdfkit');
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import axios from 'axios';
 import { googlePhotoResource, isPlaceholderPhoto } from './google-photo';
 import { PhotoLookupCache } from './photo-lookup-cache';
@@ -27,6 +27,7 @@ import {
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { GoogleMapsUsageService } from '../google-maps-usage/google-maps-usage.service';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
+import { CSV_IMPORT_MAX_BYTES, CSV_LEAD_FIELDS, CsvLeadField, mapCsvRow, parseCsvBuffer, validateCsvLeadRow } from './csv-import.util';
 import {
   CapturedPlace,
   ExtractionJob,
@@ -163,6 +164,179 @@ export class DataCaptureService implements OnModuleInit {
     } catch (_) {
       return null;
     }
+  }
+
+  private assertCsvImportAdmin(user: any, customerId: number) {
+    if (!isUserAdmin(user)) {
+      throw new ForbiddenException('Only an authorized admin can import and assign CSV leads.');
+    }
+    if (!isUserSuperAdmin(user) && Number(user.customerId) !== customerId) {
+      throw new ForbiddenException('The importing user does not belong to this tenant.');
+    }
+  }
+
+  private validateCsvMapping(headers: string[], mapping: Record<string, string>) {
+    if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) throw new BadRequestException('Column mapping is required.');
+    const normalized: Record<string, string> = {};
+    for (const field of CSV_LEAD_FIELDS) {
+      const header = mapping[field];
+      if (header == null || header === '') continue;
+      if (typeof header !== 'string' || !headers.includes(header)) throw new BadRequestException(`Invalid CSV column mapping for ${field}.`);
+      normalized[field] = header;
+    }
+    if (!normalized.businessName && !normalized.title) throw new BadRequestException('Map a CSV column to Lead Name or Company Name.');
+    return normalized;
+  }
+
+  async previewCsvFile(customerId: string | number, user: any, file: Express.Multer.File) {
+    const tenantId = this.requireTenant(customerId);
+    this.assertCsvImportAdmin(user, tenantId);
+    const parsed = parseCsvBuffer(file?.buffer);
+    return {
+      fileName: String(file.originalname || 'import.csv').split(/[\\/]/).pop()?.slice(0, 180) || 'import.csv',
+      headers: parsed.headers,
+      totalRows: parsed.rows.length,
+      previewRows: parsed.rows.slice(0, 20).map((row) => ({ rowNumber: row.rowNumber, values: row.values, error: row.error })),
+    };
+  }
+
+  private async inspectCsvImport(buffer: Buffer, mappingInput: Record<string, string>, customerId: number) {
+    if (!Buffer.isBuffer(buffer) || buffer.length > CSV_IMPORT_MAX_BYTES) throw new BadRequestException('CSV files must be 5 MB or smaller.');
+    const { headers, rows } = parseCsvBuffer(buffer);
+    const mapping = this.validateCsvMapping(headers, mappingInput);
+    const seen = new Set<string>();
+    const outcomes = [] as Array<{ rowNumber: number; fields: Partial<Record<CsvLeadField, string>>; valid: boolean; duplicate: boolean; errors: string[]; identity: string }>;
+    for (const row of rows) {
+      const fields = mapCsvRow(headers, row.values, mapping);
+      const errors = row.error ? [row.error] : validateCsvLeadRow(fields);
+      if (!row.values.some((value) => value.trim())) errors.push('Row is empty.');
+      const phoneDigits = String(fields.phone || '').replace(/\D/g, '');
+      const email = String(fields.email || '').trim().toLowerCase();
+      const identity = phoneDigits.length >= 8 ? `phone:${phoneDigits.slice(-10)}` : email ? `email:${email}` : `name:${String(fields.businessName || fields.title || '').trim().toLowerCase()}|address:${String(fields.address || '').trim().toLowerCase()}`;
+      let duplicate = false;
+      if (!errors.length) {
+        if (seen.has(identity)) duplicate = true;
+        else seen.add(identity);
+        const sourceRecordId = `csv-import:${createHash('sha256').update(identity).digest('hex')}`;
+        if (!duplicate) {
+          const leadWhere: any[] = [{ sourceRecordId }];
+          if (email) leadWhere.push({ email: { equals: email, mode: 'insensitive' } });
+          if (phoneDigits.length >= 8) leadWhere.push({ phone: { contains: phoneDigits.slice(-10) } });
+          duplicate = Boolean(await this.prisma.lead.findFirst({
+            where: { customerId, deletedAt: null, OR: leadWhere },
+            select: { id: true },
+          }));
+        }
+      }
+      outcomes.push({ rowNumber: row.rowNumber, fields, valid: !errors.length && !duplicate, duplicate, errors: duplicate ? ['Duplicate lead; skipped.'] : errors, identity });
+    }
+    return { headers, rows: outcomes, mapping };
+  }
+
+  async previewCsvLeadImport(customerId: string | number, user: any, file: Express.Multer.File, mapping: Record<string, string>) {
+    const tenantId = this.requireTenant(customerId);
+    this.assertCsvImportAdmin(user, tenantId);
+    const inspected = await this.inspectCsvImport(file?.buffer, mapping, tenantId);
+    const invalidRows = inspected.rows.filter((row) => !row.valid && !row.duplicate).length;
+    const duplicateRows = inspected.rows.filter((row) => row.duplicate).length;
+    const validRows = inspected.rows.filter((row) => row.valid).length;
+    return {
+      fileName: String(file.originalname || 'import.csv').split(/[\\/]/).pop()?.slice(0, 180) || 'import.csv',
+      headers: inspected.headers,
+      previewRows: inspected.rows.slice(0, 20).map((row) => ({ rowNumber: row.rowNumber, values: row.fields })),
+      rowErrors: inspected.rows.filter((row) => row.errors.length).map((row) => ({ rowNumber: row.rowNumber, duplicate: row.duplicate, errors: row.errors })),
+      totalRows: inspected.rows.length,
+      validRows,
+      invalidRows,
+      duplicateRows,
+      readyToImport: validRows,
+    };
+  }
+
+  async importCsvLeads(customerId: string | number, user: any, file: Express.Multer.File, mapping: Record<string, string>, employeeId: number | string, req?: any) {
+    const tenantId = this.requireTenant(customerId);
+    this.assertCsvImportAdmin(user, tenantId);
+    const selectedEmployeeId = Number(employeeId);
+    if (!Number.isInteger(selectedEmployeeId) || selectedEmployeeId <= 0) throw new BadRequestException('Select an active employee for assignment.');
+    const employee = await this.prisma.employee.findFirst({
+      where: {
+        id: selectedEmployeeId,
+        customerId: tenantId,
+        status: 'ACTIVE',
+        userId: { not: null },
+        user: { is: { isActive: true, deletedAt: null } },
+      },
+      select: { id: true, userId: true, employeeCode: true },
+    });
+    if (!employee?.userId) throw new BadRequestException('Selected employee is not active or eligible for lead assignment.');
+    const inspected = await this.inspectCsvImport(file?.buffer, mapping, tenantId);
+    const batchId = randomUUID();
+    const fileName = String(file.originalname || 'import.csv').split(/[\\/]/).pop()?.slice(0, 180) || 'import.csv';
+    const accepted = inspected.rows.filter((row) => row.valid);
+    const storedRows: Array<{ captureId: number; rowNumber: number }> = [];
+    for (const row of accepted) {
+      const fields = row.fields;
+      const sourceRecordId = `csv-import:${createHash('sha256').update(row.identity).digest('hex')}`;
+      const place = await this.prisma.dataCapturePlace.create({
+        data: {
+          customerId: tenantId,
+          businessName: fields.businessName || fields.title!,
+          phone: fields.phone || null,
+          email: fields.email || null,
+          website: fields.website || null,
+          address: fields.address || null,
+          category: fields.category || null,
+          source: fields.source || 'CSV_IMPORT',
+          sourceRecordId,
+          status: 'CAPTURED',
+          rawData: {
+            city: fields.city || null,
+            state: fields.state || null,
+            country: fields.country || null,
+            csvLeadTitle: fields.title || null,
+            import: { type: 'CSV', batchId, fileName, rowNumber: row.rowNumber },
+          },
+          createdFrom: resolveCreatedFrom(req, user, RecordCreatedFrom.ADMIN_PANEL),
+        },
+        select: { id: true },
+      });
+      storedRows.push({ captureId: place.id, rowNumber: row.rowNumber });
+    }
+
+    const rowResults = inspected.rows.filter((row) => !row.valid).map((row) => ({ rowNumber: row.rowNumber, status: row.duplicate ? 'DUPLICATE' : 'INVALID', errors: row.errors }));
+    let imported = 0;
+    let importDuplicates = 0;
+    let failed = 0;
+    if (storedRows.length) {
+      const result = await this.importToLeads(tenantId, user, {
+        assignedToId: employee.employeeCode,
+        places: storedRows.map(({ captureId, rowNumber }) => {
+          const row = accepted.find((candidate) => candidate.rowNumber === rowNumber);
+          return { id: captureId, independentFields: { title: row?.fields.title, companyName: row?.fields.businessName } };
+        }),
+      }, req);
+      imported = result.imported;
+      importDuplicates = result.skippedDuplicates;
+      failed = result.failed;
+      const byCapture = new Map(storedRows.map((entry) => [entry.captureId, entry.rowNumber]));
+      (result.records || []).forEach((record: any) => {
+        if (record.failed) rowResults.push({ rowNumber: byCapture.get(Number(record.captureId)) || 0, status: 'FAILED', errors: [record.error || 'Import failed.'] });
+        else if (record.duplicate) rowResults.push({ rowNumber: byCapture.get(Number(record.captureId)) || 0, status: 'DUPLICATE', errors: ['Duplicate lead; skipped.'] });
+      });
+    }
+    return {
+      batchId,
+      fileName,
+      assignedEmployee: { id: employee.id, userId: employee.userId, employeeCode: employee.employeeCode },
+      totalRows: inspected.rows.length,
+      validRows: accepted.length,
+      imported,
+      duplicateRows: inspected.rows.filter((row) => row.duplicate).length + importDuplicates,
+      invalidRows: inspected.rows.filter((row) => !row.valid && !row.duplicate).length,
+      failed,
+      rowResults,
+      message: `${imported} lead(s) imported and assigned. ${importDuplicates + inspected.rows.filter((row) => row.duplicate).length} duplicate(s) skipped; ${failed + inspected.rows.filter((row) => !row.valid && !row.duplicate).length} row(s) failed validation or import.`,
+    };
   }
 
   /**
@@ -2436,7 +2610,7 @@ export class DataCaptureService implements OnModuleInit {
   private validateIndependentLeadFields(input: any) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BadRequestException('CRM fields must be an object.');
     const fields: Record<string, string> = {};
-    for (const key of ['businessName', 'phone', 'email', 'website', 'address', 'city', 'state', 'country', 'pincode', 'category']) {
+    for (const key of ['businessName', 'title', 'companyName', 'phone', 'email', 'website', 'address', 'city', 'state', 'country', 'pincode', 'category']) {
       const value = input[key];
       if (value == null || value === '') continue;
       if (typeof value !== 'string' || value.length > (key === 'address' ? 2000 : 500)) throw new BadRequestException(`Invalid ${key}.`);
@@ -2444,7 +2618,8 @@ export class DataCaptureService implements OnModuleInit {
       if (!normalized || ['N/A', 'NOT AVAILABLE', 'UNKNOWN'].includes(normalized.toUpperCase())) continue;
       fields[key] = normalized;
     }
-    if (!fields.businessName) throw new BadRequestException('Business name is missing. Place details could not be retrieved.');
+    if (!fields.businessName && !fields.title && !fields.companyName) throw new BadRequestException('Business name is missing. Place details could not be retrieved.');
+    fields.businessName = fields.businessName || fields.companyName || fields.title;
     if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) {
       const normalized = ContactExtractor.normalizeEmail(fields.email);
       if (normalized) {
@@ -2706,7 +2881,7 @@ export class DataCaptureService implements OnModuleInit {
           pincode: location.pincode || undefined,
         };
         const candidateDirectFields: Record<string, any> = {};
-        for (const k of ['businessName', 'phone', 'email', 'website', 'address', 'city', 'state', 'country', 'pincode', 'category']) {
+        for (const k of ['businessName', 'title', 'companyName', 'phone', 'email', 'website', 'address', 'city', 'state', 'country', 'pincode', 'category']) {
           if (typeof candidate[k] === 'string' && candidate[k].trim().length > 0) {
             candidateDirectFields[k] = candidate[k].trim();
           }
@@ -2903,8 +3078,8 @@ export class DataCaptureService implements OnModuleInit {
               created = await tx.lead.create({
                 data: {
                   customerId: numCustomerId,
-                  title: businessName,
-                  companyName: businessName,
+                  title: fields.title || businessName,
+                  companyName: fields.companyName || businessName,
                   firstName: genuineFirstName,
                   lastName: genuineLastName,
                   phone: normalizedPhone || null,

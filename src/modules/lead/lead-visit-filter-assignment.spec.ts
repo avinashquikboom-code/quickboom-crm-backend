@@ -135,6 +135,27 @@ describe('pipeline stage and Visitor assignment contract', () => {
     f.visits.push({id:1,leadId:5,employeeId:99,customerId:7,status:'SCHEDULED'});
     await expect(f.service.getLeadById(7,5,visitor)).rejects.toThrow(ForbiddenException);
   });
+  it('restricts CSV-imported lead detail access to the assigned employee', async () => {
+    const f = fixture();
+    const imported = { ...f.leads[0], id: 700, sourceRecordId: 'csv-import:abc', employeeId: 31, assignedToId: 21, visits: [] };
+    jest.spyOn(f.repository, 'findOne').mockResolvedValue(imported as any);
+    const assignedEmployee = { id: 21, role: 'EMPLOYEE', customerId: 7, employee: { id: 31 } };
+    const otherEmployee = { id: 22, role: 'EMPLOYEE', customerId: 7, employee: { id: 32 } };
+    await expect(f.service.getLeadById(7, 700, assignedEmployee)).resolves.toMatchObject({ id: 700 });
+    await expect(f.service.getLeadById(7, 700, otherEmployee)).rejects.toThrow(ForbiddenException);
+    await expect(f.service.getLeadById(7, 700, admin)).resolves.toMatchObject({ id: 700 });
+  });
+  it('adds an owner-only CSV source predicate to employee lead queries', async () => {
+    const f = fixture();
+    await f.repository.findAll(7, { search: 'Imported' }, { id: 21, role: 'EMPLOYEE', customerId: 7, employee: { id: 31 } });
+    const where = f.prisma.lead.findMany.mock.calls[0][0].where;
+    const csvScope = where.AND.find((condition: any) => condition.OR?.some((clause: any) => clause.sourceRecordId === null));
+    expect(csvScope).toBeDefined();
+    expect(csvScope.OR).toContainEqual({ AND: [
+      { sourceRecordId: { startsWith: 'csv-import:' } },
+      { OR: [{ employeeId: 31 }, { assignedToId: 21 }] },
+    ] });
+  });
   it('Visitor cannot reassign, edit general lead fields, convert or complete a New-stage lead',async()=>{
     const f=fixture();
     await expect(f.service.updateLead(7,1,{employeeId:99} as any,21,visitor)).rejects.toThrow(ForbiddenException);

@@ -28,6 +28,50 @@ export class DepartmentService {
     return cleaned.substring(0, 6) || 'DEPT';
   }
 
+  private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
+    try {
+      const resetAudit = await this.prisma.auditLog.findFirst({
+        where: {
+          action: 'DATA_RESET',
+          status: 'SUCCESS',
+          OR: [
+            { customerId },
+            { customerId: null, details: { path: ['scope'], equals: 'global' } },
+          ],
+        },
+        orderBy: { id: 'desc' },
+        select: { details: true },
+      });
+      if (!resetAudit?.details) return false;
+      const details = resetAudit.details as any;
+      if (details.scope === 'application' || details.scope === 'global') return true;
+      if (Array.isArray(details.modules) && details.modules.includes(moduleId)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  private async hasDepartmentDeletion(customerId: number): Promise<boolean> {
+    try {
+      const deletion = await this.prisma.auditLog.findFirst({
+        where: {
+          customerId,
+          action: 'DELETE',
+          OR: [
+            { module: 'DEPARTMENTS' },
+            { entityType: 'Department' },
+            { description: { contains: 'Department' } },
+          ],
+        },
+        select: { id: true },
+      });
+      return Boolean(deletion);
+    } catch {
+      return false;
+    }
+  }
+
   async findAll(
     customerId: number | string,
     options: {
@@ -87,8 +131,17 @@ export class DepartmentService {
       }),
     ]);
 
-    // Auto-seed standard departments if customer has 0 departments
-    if (total === 0 && !search) {
+    // Count total departments for this customer across the entire workspace (unfiltered)
+    const totalCustomerDepts = await this.prisma.department.count({
+      where: { customerId: numCustomerId },
+    });
+
+    const isReset = await this.isModuleResetByTenant(numCustomerId, 'departments');
+    const hasDeleted = await this.hasDepartmentDeletion(numCustomerId);
+
+    // Auto-seed standard departments ONLY for brand new workspaces that have 0 departments
+    // and have NEVER reset or deleted any departments
+    if (totalCustomerDepts === 0 && !isReset && !hasDeleted && !search) {
       const defaultDepts = [
         { name: 'Engineering & IT', code: 'ENG', description: 'Software and infrastructure operations' },
         { name: 'Sales & Marketing', code: 'SALES', description: 'Business development and client growth' },
@@ -378,6 +431,26 @@ export class DepartmentService {
     }
 
     await this.prisma.department.delete({ where: { id } });
+
+    // Record audit log for deletion so auto-seed never resurrects deleted departments
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          action: 'DELETE',
+          module: 'DEPARTMENTS',
+          description: `Deleted Department #${id} (${department.name})`,
+          status: 'SUCCESS',
+          source: 'ADMIN_PANEL',
+          entityType: 'Department',
+          entityId: String(id),
+          details: { departmentId: id, name: department.name, code: department.code },
+        },
+      });
+    } catch {
+      // ignore
+    }
+
     return {
       message: `Department #${id} deleted successfully.`,
       deleted: true,

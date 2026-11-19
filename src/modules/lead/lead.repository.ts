@@ -460,8 +460,34 @@ export class LeadRepository {
     return lead;
   }
 
-  async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto) {
+  private async csvLeadVisibilityWhere(customerId: number, user?: any) {
+    if (!user || isUserAdmin(user)) return null;
+    let employeeId = user.employee?.id ?? user.employeeId;
+    if (!employeeId && user.id) {
+      const employee = await this.prisma.employee.findFirst({
+        where: { userId: Number(user.id), customerId },
+        select: { id: true },
+      });
+      employeeId = employee?.id;
+    }
+    return {
+      OR: [
+        { sourceRecordId: null },
+        { sourceRecordId: { not: { startsWith: 'csv-import:' } } },
+        { AND: [
+          { sourceRecordId: { startsWith: 'csv-import:' } },
+          { OR: [
+            ...(employeeId ? [{ employeeId: Number(employeeId) }] : []),
+            ...(user.id ? [{ assignedToId: Number(user.id) }] : []),
+          ] },
+        ] },
+      ],
+    };
+  }
+
+  async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto, user?: any) {
     const numCustomerId = Number(customerId);
+    const csvVisibility = await this.csvLeadVisibilityWhere(numCustomerId, user);
     const placeId = (dto.googlePlaceId || '').trim();
     const normPhone = (dto.phone || '').replace(/\D/g, '');
     const cleanCompany = (dto.companyName || '').toLowerCase().trim();
@@ -470,7 +496,7 @@ export class LeadRepository {
 
     if (placeId) {
       const placeMatch = await this.prisma.lead.findFirst({
-        where: { customerId: numCustomerId, googlePlaceId: placeId, deletedAt: null },
+        where: { customerId: numCustomerId, googlePlaceId: placeId, deletedAt: null, ...(csvVisibility ? { AND: [csvVisibility] } : {}) },
         select: {
           id: true,
           title: true,
@@ -520,6 +546,7 @@ export class LeadRepository {
         customerId: numCustomerId,
         deletedAt: null,
         OR: orClauses,
+        ...(csvVisibility ? { AND: [csvVisibility] } : {}),
       },
       take: 20,
       select: {
@@ -605,7 +632,14 @@ export class LeadRepository {
 
     // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     if (user && !isAdmin) {
-      const empId = user.employee?.id ?? user.employeeId;
+      let empId = user.employee?.id ?? user.employeeId;
+      if (!empId && user.id && this.prisma?.employee?.findFirst) {
+        const employee = await this.prisma.employee.findFirst({
+          where: { userId: Number(user.id), customerId: numCustomerId },
+          select: { id: true },
+        });
+        empId = employee?.id;
+      }
       if (empId) {
         // Strict: only leads where employeeId = this employee's record ID
         baseWhere.employeeId = Number(empId);
@@ -888,6 +922,32 @@ export class LeadRepository {
     }
 
     const andConditions: any[] = [];
+
+    // CSV imports are owner-only for employees, regardless of legacy access
+    // paths such as record creator or visit history.
+    if (user && !isAdmin) {
+      let csvEmployeeId = user.employee?.id ?? user.employeeId;
+      if (!csvEmployeeId && user.id && this.prisma) {
+        const employee = await this.prisma.employee.findFirst({
+          where: { userId: Number(user.id), customerId: numCustomerId },
+          select: { id: true },
+        });
+        csvEmployeeId = employee?.id;
+      }
+      andConditions.push({
+        OR: [
+          { sourceRecordId: null },
+          { sourceRecordId: { not: { startsWith: 'csv-import:' } } },
+          { AND: [
+            { sourceRecordId: { startsWith: 'csv-import:' } },
+            { OR: [
+              ...(csvEmployeeId ? [{ employeeId: Number(csvEmployeeId) }] : []),
+              ...(user.id ? [{ assignedToId: Number(user.id) }] : []),
+            ] },
+          ] },
+        ],
+      });
+    }
 
     // Employee RBAC Isolation: Non-admin employees only see leads strictly assigned to them via employeeId
     const isVisitor = await this.isVisitorUser(user);

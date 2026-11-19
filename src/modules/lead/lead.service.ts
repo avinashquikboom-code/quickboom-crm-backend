@@ -1233,8 +1233,8 @@ export class LeadService {
     return createdLead ?? lead;
   }
 
-  async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto) {
-    return this.leadRepository.checkDuplicate(customerId, dto);
+  async checkDuplicate(customerId: number | string, dto: CheckDuplicateDto, user?: any) {
+    return this.leadRepository.checkDuplicate(customerId, dto, user);
   }
 
   private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
@@ -1503,6 +1503,22 @@ export class LeadService {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }
 
+    // CSV-imported leads are visible only to their assigned employee. Apply
+    // this check before visit/creator exceptions used by legacy CRM leads.
+    if (user && !isUserAdmin(user) && String((lead as any).sourceRecordId || '').startsWith('csv-import:')) {
+      let employeeId = user.employee?.id ?? user.employeeId;
+      if (!employeeId && user.id) {
+        const employee = await this.prisma.employee.findFirst({
+          where: { userId: Number(user.id), customerId: lead.customerId },
+          select: { id: true },
+        });
+        employeeId = employee?.id;
+      }
+      const assigned = (employeeId && Number((lead as any).employeeId) === Number(employeeId)) ||
+        (user.id && Number(lead.assignedToId) === Number(user.id));
+      if (!assigned) throw new ForbiddenException('You do not have permission to access this lead.');
+    }
+
     if (await this.leadRepository.isVisitorUser(user)) {
       const visitor = await this.leadRepository.findAuthenticatedVisitor(lead.customerId, user);
       const visit = await this.prisma.visit.findFirst({
@@ -1561,8 +1577,8 @@ export class LeadService {
     return lead;
   }
 
-  async getLeadStatus(customerId: number | string, id: number | string) {
-    const lead = await this.getLeadById(customerId, id);
+  async getLeadStatus(customerId: number | string, id: number | string, user?: any) {
+    const lead = await this.getLeadById(customerId, id, user);
     let stage = lead.stage;
     if (!stage && lead.stageId) {
       stage = await this.leadRepository.findStageById(lead.stageId);
@@ -1589,7 +1605,7 @@ export class LeadService {
 
   async updateLead(customerId: number | string, id: number | string, dto: UpdateLeadDto, userId?: number | string, user?: any) {
     if (await this.leadRepository.isVisitorUser(user)) throw new ForbiddenException('Visitors may only mark their scheduled visit as Visit Done.');
-    const lead = await this.getLeadById(customerId, id);
+    const lead = await this.getLeadById(customerId, id, user);
 
     // Employee ownership: non-admin employees can only update their assigned leads
     if (user && !isUserAdmin(user)) {
@@ -1643,6 +1659,10 @@ export class LeadService {
         : (dto as any).employeeId !== undefined
         ? (dto as any).employeeId
         : undefined;
+
+    if (user && !isUserAdmin(user) && String((lead as any).sourceRecordId || '').startsWith('csv-import:') && rawAssignmentTarget !== undefined) {
+      throw new ForbiddenException('Only an authorized admin can reassign a CSV-imported lead.');
+    }
 
     const assignment = await this.validateEmployeeAssignment(
       customerId,
@@ -3609,7 +3629,7 @@ export class LeadService {
     this.logger.log(
       `[SINGLE_LEAD_DELETE] service deleting leadId=${numId} customerId=${customerId} userId=${user?.id}`,
     );
-    const lead = await this.getLeadById(customerId, numId);
+    const lead = await this.getLeadById(customerId, numId, user);
     if (!lead) {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }
@@ -3836,8 +3856,8 @@ export class LeadService {
     return formatted;
   }
 
-  async addNote(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateLeadNoteDto) {
-    await this.getLeadById(customerId, leadId);
+  async addNote(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateLeadNoteDto, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     const note = await this.leadRepository.addNote(leadId, userId, dto.content);
     await this.leadRepository.logTimeline(
       leadId,
@@ -4002,23 +4022,23 @@ export class LeadService {
     return updated;
   }
 
-  async createProposal(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateProposalDto) {
-    await this.getLeadById(customerId, leadId);
+  async createProposal(customerId: number | string, leadId: number | string, userId: number | string, dto: CreateProposalDto, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     return this.leadRepository.createProposal(customerId, leadId, userId, dto);
   }
 
-  async recordFinalCall(customerId: number | string, leadId: number | string, userId: number | string, dto: FinalCallDto) {
-    await this.getLeadById(customerId, leadId);
+  async recordFinalCall(customerId: number | string, leadId: number | string, userId: number | string, dto: FinalCallDto, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     return this.leadRepository.recordFinalCall(customerId, leadId, userId, dto);
   }
 
-  async recordPayment(customerId: number | string, leadId: number | string, userId: number | string, dto: RecordPaymentDto) {
-    await this.getLeadById(customerId, leadId);
+  async recordPayment(customerId: number | string, leadId: number | string, userId: number | string, dto: RecordPaymentDto, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     return this.leadRepository.recordPayment(customerId, leadId, userId, dto);
   }
 
-  async startWork(customerId: number | string, leadId: number | string, userId: number | string, dto: StartWorkDto) {
-    await this.getLeadById(customerId, leadId);
+  async startWork(customerId: number | string, leadId: number | string, userId: number | string, dto: StartWorkDto, user?: any) {
+    await this.getLeadById(customerId, leadId, user);
     return this.leadRepository.startWork(customerId, leadId, userId, dto);
   }
 
@@ -4033,6 +4053,8 @@ export class LeadService {
     }
 
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
+
+    await this.getLeadById(parsedCustomerId, id, user);
 
     const lead = await this.prisma.lead.findFirst({
       where: {
@@ -4294,6 +4316,8 @@ Sent by ${senderOrgName} via CRM.
     if (isNaN(id)) throw new BadRequestException('Invalid lead ID');
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
 
+    await this.getLeadById(parsedCustomerId, id, user);
+
     const lead = await this.prisma.lead.findFirst({
       where: {
         id,
@@ -4417,13 +4441,14 @@ Sent by ${senderOrgName} via CRM.
   /**
    * Unified communication history for a lead (EmailLogs + WhatsApp / Email timelines)
    */
-  async getLeadCommunications(customerId: number | string | undefined, leadId: number | string) {
+  async getLeadCommunications(customerId: number | string | undefined, leadId: number | string, user?: any) {
     const id = Number(leadId);
     if (isNaN(id)) {
       throw new BadRequestException('Invalid lead ID');
     }
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
 
+    await this.getLeadById(parsedCustomerId, id, user);
     const lead = await this.prisma.lead.findFirst({
       where: {
         id,
@@ -4693,8 +4718,9 @@ Sent by ${senderOrgName} via CRM.
       whatsappTemplateId?: number;
     },
     leadSnapshot?: any,
+    user?: any,
   ) {
-    const lead = leadSnapshot || await this.getLeadById(customerId, id);
+    const lead = leadSnapshot || await this.getLeadById(customerId, id, user);
     if (!lead) {
       throw new NotFoundException(`Lead #${id} not found`);
     }
@@ -5558,8 +5584,9 @@ Sent by ${senderOrgName} via CRM.
     leadId: number | string,
     file?: Express.Multer.File,
     dto?: AddLeadImageDto,
+    user?: any,
   ) {
-    const lead = await this.getLeadById(customerId, leadId);
+    const lead = await this.getLeadById(customerId, leadId, user);
     let imageUrl = dto?.url ? String(dto.url).trim() : undefined;
     let imageKey = dto?.key ? String(dto.key).trim() : undefined;
     const caption = dto?.caption ? String(dto.caption).trim() : undefined;
