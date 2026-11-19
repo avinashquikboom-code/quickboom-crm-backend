@@ -580,6 +580,20 @@ export class DataGovernanceService {
             });
           }
 
+          if (moduleIds.includes('stage-management')) {
+            const stageRows = await tx.leadStage.findMany({
+              where: whereFor('leadStage', tenantId),
+              select: { id: true },
+            });
+            const stageIds = stageRows.map((r) => r.id);
+            if (stageIds.length) {
+              await tx.lead.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), stageId: { in: stageIds } },
+                data: { stageId: null },
+              });
+            }
+          }
+
           for (const table of tablesForModules(moduleIds)) {
             currentResetModel = table.model;
             const delegate = this.delegate(tx, table.model);
@@ -1953,6 +1967,9 @@ export class DataGovernanceService {
     if (moduleIds.includes('employees')) await lock('Employee');
     if (moduleIds.includes('designations')) await lock('Designation');
     if (moduleIds.includes('departments')) await lock('Department');
+    if (moduleIds.includes('leave-types')) await lock('LeaveType');
+    if (moduleIds.includes('leave-policies')) await lock('LeavePolicy');
+    if (moduleIds.includes('stage-management')) await lock('Pipeline');
     if (moduleIds.includes('customers')) {
       await lock('Company');
       await lock('Contact');
@@ -1960,7 +1977,8 @@ export class DataGovernanceService {
   }
 
   private delegate(client: object, model: string) {
-    const target = (client as Record<string, { count?: Function; deleteMany?: Function; findMany?: Function; create?: Function }>)[model];
+    const resolvedModel = model.startsWith('masterItem') ? 'masterItem' : model;
+    const target = (client as Record<string, { count?: Function; deleteMany?: Function; findMany?: Function; create?: Function }>)[resolvedModel];
     if (!target?.count || !target?.deleteMany || !target?.findMany) {
       throw new BadRequestException(`The ${model} table is not available in this database client.`);
     }
@@ -2248,6 +2266,15 @@ export class DataGovernanceService {
     if (moduleIds.includes('employees')) {
       notes.push('Employee dependency counts are checked before deletion. Selected eligible dependent modules are deleted first; protected or unselected references block employee deletion.');
     }
+    if (moduleIds.includes('leave-types')) {
+      notes.push('Referenced leave types are reported and block deletion unless dependent leave requests and balances are selected.');
+    }
+    if (moduleIds.includes('stage-management')) {
+      notes.push('Lead stages and deal pipelines are included. Deals referencing pipeline stages block deletion unless Sales & CRM is selected.');
+    }
+    if (moduleIds.includes('subscription-plans')) {
+      notes.push('Tenant custom plan orders, customer subscriptions, and proposal configurations are included. Global system plans stay protected.');
+    }
     return notes;
   }
 
@@ -2462,6 +2489,106 @@ export class DataGovernanceService {
         label: 'Cross-tenant visits linked to customer companies or contacts',
         where: { customerId, OR: [{ company: { customerId: { not: customerId } } }, { contact: { customerId: { not: customerId } } }] },
         crossTenantWhere: { customerId: { not: customerId }, OR: [{ company: scoped }, { contact: scoped }] },
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('leave-types')) {
+      checks.push({
+        parent: 'leave-types',
+        model: 'leaveRequest',
+        label: 'Leave requests referencing leave types',
+        where: scoped,
+        policy: 'cascade',
+      });
+      checks.push({
+        parent: 'leave-types',
+        model: 'employeeLeaveBalance',
+        label: 'Employee leave balances referencing leave types',
+        where: scoped,
+        policy: 'cascade',
+      });
+      checks.push({
+        parent: 'leave-types',
+        model: 'leaveAdjustmentHistory',
+        label: 'Leave adjustments referencing leave types',
+        where: scoped,
+        policy: 'cascade',
+      });
+      checks.push({
+        parent: 'leave-types',
+        model: 'hrmLeaveMonthlySnapshot',
+        label: 'HRM monthly leave snapshots referencing leave types',
+        where: scoped,
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('stage-management')) {
+      checks.push({
+        parent: 'stage-management',
+        model: 'deal',
+        label: 'Deals referencing pipeline stages',
+        where: scoped,
+        policy: 'cascade',
+      });
+      checks.push({
+        parent: 'stage-management',
+        model: 'lead',
+        label: 'Leads assigned to lead stages',
+        where: { ...scoped, stageId: { not: null } },
+        policy: 'set-null',
+      });
+    }
+    if (moduleIds.includes('expense-categories')) {
+      checks.push({
+        parent: 'expense-categories',
+        model: 'employeeClaim',
+        label: 'Employee claims referencing expense categories',
+        where: scoped,
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('loan-types')) {
+      checks.push({
+        parent: 'loan-types',
+        model: 'employeeLoan',
+        label: 'Employee loans referencing loan types',
+        where: scoped,
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('task-status')) {
+      checks.push({
+        parent: 'task-status',
+        model: 'task',
+        label: 'Tasks referencing task statuses',
+        where: scoped,
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('work-types')) {
+      checks.push({
+        parent: 'work-types',
+        model: 'work',
+        label: 'Work items referencing work types',
+        where: scoped,
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('employee-types')) {
+      checks.push({
+        parent: 'employee-types',
+        model: 'employee',
+        label: 'Employees referencing employee types',
+        where: scoped,
+        policy: 'cascade',
+      });
+    }
+    if (moduleIds.includes('payment-methods')) {
+      checks.push({
+        parent: 'payment-methods',
+        model: 'paymentHistory',
+        label: 'Payment transactions referencing payment methods',
+        where: scoped,
         policy: 'cascade',
       });
     }
@@ -2699,6 +2826,7 @@ export class DataGovernanceService {
     const isVisitsTasksSelected = moduleIds.includes('visits-tasks');
     const isBillingSelected = moduleIds.includes('billing');
     const isLeadsDealsSelected = moduleIds.includes('leads-deals');
+    const isSubscriptionPlansSelected = moduleIds.includes('subscription-plans');
 
     const sumCounts = (models: string[]) => models.reduce((acc, m) => acc + (counts[m] || 0), 0);
 
@@ -2709,7 +2837,7 @@ export class DataGovernanceService {
 
     // 2. Subscriptions: customerSubscription, subscriptionInstallment, customPlanOrder
     const subscriptionModels = ['customerSubscription', 'subscriptionInstallment', 'customPlanOrder'];
-    const subscriptionsEligible = isCustomersSelected
+    const subscriptionsEligible = isCustomersSelected || isSubscriptionPlansSelected
       ? sumCounts(subscriptionModels)
       : isBillingSelected
         ? sumCounts(['subscriptionInstallment', 'customPlanOrder'])
