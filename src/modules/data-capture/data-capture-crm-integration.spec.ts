@@ -25,6 +25,15 @@ describe('Data Capture CRM reference imports', () => {
           (clause.googlePlaceId && clause.googlePlaceId === row.googlePlaceId) || (clause.sourceRecordId && clause.sourceRecordId === row.sourceRecordId)))),
         create: jest.fn(async ({ data }) => { const row = { id: leads.length + 100, ...data }; leads.push(row); return row; }),
         update: jest.fn(),
+        updateMany: jest.fn(async ({ where, data }) => {
+          const field = Object.keys(data)[0];
+          const row = leads.find((candidate) => candidate.id === where.id &&
+            candidate.customerId === where.customerId && candidate.deletedAt === null &&
+            (candidate[field] == null || candidate[field] === ''));
+          if (!row) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        }),
       },
       leadSocialProfile: { create: jest.fn() },
       leadStage: { findFirst: jest.fn().mockResolvedValue({ id: 12 }) },
@@ -119,6 +128,85 @@ describe('Data Capture CRM reference imports', () => {
     expect(result.imported).toBe(1);
     expect(leads[0]).toMatchObject({ title: 'Saved database name', phone: null });
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('imports saved tenant-owned contact fields into Lead without changing their meaning', async () => {
+    captures[0] = {
+      ...captures[0],
+      source: 'MANUAL',
+      googlePlaceId: null,
+      sourceRecordId: 'capture-1',
+      phone: '+91 98765 43210',
+      email: 'Contact@Example.com',
+      website: 'https://example.com/contact',
+    };
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1 }],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({
+      customerId: 7,
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com/contact',
+    });
+  });
+
+  it('imports Google-linked contact fields only when their saved provenance is user-provided', async () => {
+    captures[0] = {
+      ...captures[0],
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com',
+      rawData: { userProvidedFields: ['phone', 'email', 'website'] },
+    };
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1 }],
+    });
+
+    expect(result.imported).toBe(1);
+    expect(leads[0]).toMatchObject({
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com/',
+    });
+  });
+
+  it('backfills only empty contact fields on a same-tenant duplicate Lead', async () => {
+    captures[0] = {
+      ...captures[0],
+      source: 'MANUAL',
+      googlePlaceId: null,
+      sourceRecordId: 'capture-1',
+      importedLeadId: 101,
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com',
+    };
+    leads.push({
+      id: 101,
+      customerId: 7,
+      deletedAt: null,
+      sourceRecordId: 'legacy-source-id',
+      phone: null,
+      email: '',
+      website: 'https://manual.example.org',
+    });
+
+    const result = await service.importToLeads(7, { id: 9, customerId: 7 }, {
+      places: [{ id: 1 }],
+    });
+
+    expect(result.skippedDuplicates).toBe(1);
+    expect(leads[0]).toMatchObject({
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://manual.example.org',
+    });
+    expect(prisma.lead.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 101, customerId: 7, deletedAt: null }),
+    }));
   });
 
   it('uses Google Places business name when the saved record has only a valid Place ID', async () => {

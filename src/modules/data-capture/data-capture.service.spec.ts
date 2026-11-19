@@ -139,6 +139,79 @@ describe('DataCaptureService', () => {
     expect(mockPrisma.$transaction).toHaveBeenCalled();
   });
 
+  it('backfills only explicitly edited contact fields to the linked same-tenant Lead', async () => {
+    const record = {
+      id: 56,
+      customerId: 1,
+      businessName: 'Storefront',
+      googlePlaceId: 'ChIJtest',
+      source: 'GOOGLE_PLACES',
+      importedLeadId: 92,
+      phone: null,
+      email: null,
+      website: null,
+      rawData: {},
+    };
+    const leadUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    mockPrisma.dataCapturePlace.findFirst.mockResolvedValueOnce(record);
+    mockPrisma.dataCapturePlace.update.mockImplementationOnce(async ({ data }) => ({
+      ...record,
+      ...data,
+    }));
+    mockPrisma.$transaction.mockImplementationOnce(async (callback: any) => callback({
+      lead: { updateMany: leadUpdateMany },
+      leadImage: { findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+    }));
+
+    await service.updatePlace(1, 56, {
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com',
+    });
+
+    expect(leadUpdateMany).toHaveBeenCalledTimes(3);
+    expect(leadUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 92,
+        customerId: 1,
+        deletedAt: null,
+      }),
+    }));
+    expect(leadUpdateMany.mock.calls.map(([call]) => call.data)).toEqual([
+      { phone: '+919876543210' },
+      { email: 'contact@example.com' },
+      { website: 'https://example.com/' },
+    ]);
+  });
+
+  it('does not trust a client-supplied userProvidedFields marker on capture creation', async () => {
+    mockPrisma.dataCapturePlace.create.mockResolvedValueOnce({
+      id: 57,
+      customerId: 1,
+      businessName: 'Google reference',
+      source: 'GOOGLE_PLACES',
+      googlePlaceId: 'ChIJtest',
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com/',
+      rawData: { capturedAt: '2026-11-12T10:00:00.000Z' },
+    });
+
+    await service.createPlace(1, 7, {
+      businessName: 'Google reference',
+      source: 'GOOGLE_PLACES',
+      googlePlaceId: 'ChIJtest',
+      phone: '+919876543210',
+      email: 'contact@example.com',
+      website: 'https://example.com',
+      rawData: { userProvidedFields: ['phone', 'email', 'website'] },
+    } as any);
+
+    const createCalls = mockPrisma.dataCapturePlace.create.mock.calls;
+    const createPayload = createCalls[createCalls.length - 1][0].data;
+    expect(createPayload.rawData.userProvidedFields).toBeUndefined();
+  });
+
   it('returns saved upload URLs after update, list refresh and reopening a Google-linked capture', async () => {
     const url = 'https://cdn.example.test/uploads/storefront.webp';
     const record = {
