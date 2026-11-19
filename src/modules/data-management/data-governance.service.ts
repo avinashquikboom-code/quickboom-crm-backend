@@ -45,6 +45,7 @@ type PreviewRecord = {
   dependencySnapshot: string;
   protectedDesignationIds: number[];
   protectedRoleIds: number[];
+  roleIdsToDetach: number[];
   blockedTemplateIds: number[];
   protectedCampaignIds: number[];
   expiresAt: number;
@@ -63,7 +64,9 @@ type MetaTemplatePreservation = {
 };
 
 type DesignationPreservation = {
+  /** Designations that cannot be deleted because a system/other-tenant Role references them. */
   designationIds: number[];
+  roleIdsToDetach: number[];
   roles: Array<{ id: number; designationId: number; customerId: number | null; type: string; name: string }>;
   roleOwnership: { system: number; tenant: number; otherTenant: number };
   roleTypes: Record<string, number>;
@@ -158,7 +161,7 @@ export class DataGovernanceService {
     }
     const designationPreservation = modules.some((item) => item.id === 'designations')
       ? await this.designationPreservation(this.prisma, tenantId)
-      : { designationIds: [], roles: [], roleOwnership: { system: 0, tenant: 0, otherTenant: 0 }, roleTypes: {} };
+      : { designationIds: [], roleIdsToDetach: [], roles: [], roleOwnership: { system: 0, tenant: 0, otherTenant: 0 }, roleTypes: {} };
     const preservedDesignationIds = designationPreservation.designationIds;
     const preservedDesignationCount = preservedDesignationIds.length;
 
@@ -175,7 +178,7 @@ export class DataGovernanceService {
         table.preservedRecords = preservedDesignationCount;
         table.eligibleRecords = Math.max(0, table.records - preservedDesignationCount);
         table.preservationReason = preservedDesignationCount
-          ? 'Linked designations remain so protected Role records are not cascade-deleted.'
+          ? 'Designations linked to system or other-tenant Roles remain protected. Current-scope tenant Role links are cleared while Role and permission records stay intact.'
           : null;
       } else if (table.model === 'metaTemplate') {
         table.preservedRecords = blockedTemplateCount;
@@ -200,17 +203,17 @@ export class DataGovernanceService {
         ? [
             {
               model: 'role', label: 'Roles', records: designationPreservation.roles.length,
-              reason: 'Roles are protected. Their linked designation records are preserved to prevent ON DELETE CASCADE from deleting the roles.',
+              reason: `${designationPreservation.roleIdsToDetach.length} current-scope tenant Role-to-Designation links will be cleared. Role and permission records stay intact; ${preservedDesignationCount} designations still linked to system or other-tenant Roles remain protected.`,
               roleOwnership: designationPreservation.roleOwnership,
               roleTypes: designationPreservation.roleTypes,
               roles: designationPreservation.roles.map(({ id, name, type, customerId: roleCustomerId }) => ({
                 id, name, type, owner: roleCustomerId == null ? 'system' : roleCustomerId === tenantId ? 'current tenant' : 'other tenant',
               })),
             },
-            {
+            ...(preservedDesignationCount ? [{
               model: 'designation', label: 'Linked designations', records: preservedDesignationCount,
-              reason: 'These designations are referenced by protected roles and are excluded from deletion.',
-            },
+              reason: 'These designations are still referenced by system or other-tenant Roles and are excluded from deletion.',
+            }] : []),
           ]
         : []),
       ...(blockedTemplateCount
@@ -242,6 +245,7 @@ export class DataGovernanceService {
     ];
     const previewToken = randomUUID();
     const protectedCounts = await this.countProtectedRecords(tenantId);
+    const customerBreakdown = await this.calculateCustomerBreakdown(tenantId, modules.map((item) => item.id), counts);
     this.previews.set(previewToken, {
       customerId: tenantId,
       scope: scope === 'global' ? 'global' : 'tenant',
@@ -252,6 +256,7 @@ export class DataGovernanceService {
       dependencySnapshot,
       protectedDesignationIds: preservedDesignationIds,
       protectedRoleIds: designationPreservation.roles.map((role) => role.id).sort((a, b) => a - b),
+      roleIdsToDetach: designationPreservation.roleIdsToDetach,
       blockedTemplateIds,
       protectedCampaignIds,
       expiresAt: Date.now() + PREVIEW_TTL_MS,
@@ -287,6 +292,7 @@ export class DataGovernanceService {
         eligibleTemplates: metaTemplatePreservation.eligibleTemplateIds.length,
         blockedTemplates: blockedTemplateCount,
       },
+      customerBreakdown,
       protected: PROTECTED_RECORDS,
     };
   }
@@ -338,6 +344,7 @@ export class DataGovernanceService {
       const deleted: Record<string, number> = {};
       const countsBefore: Record<string, number> = {};
       const countsAfter: Record<string, number> = {};
+      let designationRoleLinksCleared = 0;
       const failures: string[] = [];
       let resetTransactionCommitted = false;
       let taskHistoryDiagnostic: {
@@ -388,6 +395,7 @@ export class DataGovernanceService {
         }
         const transactionDeleted = await this.prisma.$transaction(async (tx) => {
           const pendingDeleted: Record<string, number> = {};
+          let pendingDesignationRoleLinksCleared = 0;
           await this.acquireResetAdvisoryLock(tx, tenantId);
           await this.lockResetRoots(tx, moduleIds, tenantId);
           const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId, tx);
@@ -419,11 +427,12 @@ export class DataGovernanceService {
           }
           const currentDesignationPreservation = moduleIds.includes('designations')
             ? await this.designationPreservation(tx, tenantId)
-            : { designationIds: [], roles: [], roleOwnership: { system: 0, tenant: 0, otherTenant: 0 }, roleTypes: {} };
+            : { designationIds: [], roleIdsToDetach: [], roles: [], roleOwnership: { system: 0, tenant: 0, otherTenant: 0 }, roleTypes: {} };
           const protectedDesignationIds = currentDesignationPreservation.designationIds;
           const protectedRoleIds = currentDesignationPreservation.roles.map((item) => item.id).sort((a, b) => a - b);
           if (protectedDesignationIds.join(',') !== [...previewRecord.protectedDesignationIds].sort((a, b) => a - b).join(',')
-            || protectedRoleIds.join(',') !== [...previewRecord.protectedRoleIds].sort((a, b) => a - b).join(',')) {
+            || protectedRoleIds.join(',') !== [...previewRecord.protectedRoleIds].sort((a, b) => a - b).join(',')
+            || currentDesignationPreservation.roleIdsToDetach.join(',') !== [...previewRecord.roleIdsToDetach].sort((a, b) => a - b).join(',')) {
             throw new BadRequestException('Protected role/designation links changed after the preview. Run the preview again.');
           }
 
@@ -480,6 +489,95 @@ export class DataGovernanceService {
                 });
               }
             }
+          }
+
+          if (moduleIds.includes('departments')) {
+            const departmentRows = await tx.department.findMany({
+              where: tenantId == null ? {} : { customerId: tenantId },
+              select: { id: true },
+            });
+            const deptIds = departmentRows.map((item) => item.id);
+            if (deptIds.length) {
+              await tx.employee.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), departmentId: { in: deptIds } },
+                data: { departmentId: null },
+              });
+              await tx.designation.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), departmentId: { in: deptIds } },
+                data: { departmentId: null },
+              });
+              await tx.task.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), departmentId: { in: deptIds } },
+                data: { departmentId: null },
+              });
+              await tx.announcement.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), departmentId: { in: deptIds } },
+                data: { departmentId: null },
+              });
+            }
+          }
+
+          if (moduleIds.includes('designations')) {
+            const designationRows = await tx.designation.findMany({
+              where: tenantId == null ? {} : { customerId: tenantId },
+              select: { id: true },
+            });
+            const resetDesignationIds = designationRows.map((item) => item.id);
+            const eligibleDesigIds = resetDesignationIds.filter((id) => !protectedDesignationIds.includes(id));
+            if (currentDesignationPreservation.roleIdsToDetach.length) {
+              const detached = await tx.role.updateMany({
+                where: {
+                  id: { in: currentDesignationPreservation.roleIdsToDetach },
+                  designationId: { in: resetDesignationIds },
+                  ...(tenantId == null ? { customerId: { not: null } } : { customerId: tenantId }),
+                },
+                data: { designationId: null },
+              });
+              pendingDesignationRoleLinksCleared = Number(detached.count || 0);
+              if (pendingDesignationRoleLinksCleared !== currentDesignationPreservation.roleIdsToDetach.length) {
+                throw new Error(`Designation reset: expected to clear ${currentDesignationPreservation.roleIdsToDetach.length} tenant Role links but cleared ${pendingDesignationRoleLinksCleared}.`);
+              }
+              this.logger.log(`Designation Role links reset ${JSON.stringify({
+                operationId,
+                tenantId,
+                selectedModules: moduleIds,
+                expectedCount: currentDesignationPreservation.roleIdsToDetach.length,
+                clearedCount: pendingDesignationRoleLinksCleared,
+                transactionStatus: 'IN_PROGRESS',
+              })}`);
+            }
+            if (eligibleDesigIds.length) {
+              await tx.employee.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), designationId: { in: eligibleDesigIds } },
+                data: { designationId: null },
+              });
+              await tx.task.updateMany({
+                where: { ...(tenantId == null ? {} : { customerId: tenantId }), designationId: { in: eligibleDesigIds } },
+                data: { designationId: null },
+              });
+              await tx.customer.updateMany({
+                where: { ...(tenantId == null ? {} : { id: tenantId }), mobileRoleId: { in: eligibleDesigIds } },
+                data: { mobileRoleId: null },
+              });
+            }
+          }
+
+          if (moduleIds.includes('customers')) {
+            await tx.lead.updateMany({
+              where: {
+                ...(tenantId == null ? {} : { customerId: tenantId }),
+                OR: [
+                  { convertedToCompanyId: { not: null } },
+                  { convertedToContactId: { not: null } },
+                  { convertedToDealId: { not: null } },
+                ],
+              },
+              data: {
+                convertedToCompanyId: null,
+                convertedToContactId: null,
+                convertedToDealId: null,
+              },
+            });
           }
 
           for (const table of tablesForModules(moduleIds)) {
@@ -789,9 +887,10 @@ export class DataGovernanceService {
               throw new Error('Protected WhatsApp campaigns did not remain intact after reset.');
             }
           }
-          return pendingDeleted;
+          return { deleted: pendingDeleted, designationRoleLinksCleared: pendingDesignationRoleLinksCleared };
         }, { timeout: 120000, maxWait: 10000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-        Object.assign(deleted, transactionDeleted);
+        Object.assign(deleted, transactionDeleted.deleted);
+        designationRoleLinksCleared = transactionDeleted.designationRoleLinksCleared;
         resetTransactionCommitted = true;
 
         if (teamMemberDiagnostic) {
@@ -893,6 +992,7 @@ export class DataGovernanceService {
           countsAfter,
           preservedCounts,
           recordsPreserved,
+          designationRoleLinksCleared,
           idempotencyKey: key,
           reason: body.reason || 'Admin data reset',
           verified: true,
@@ -976,6 +1076,7 @@ export class DataGovernanceService {
             ...(previewRecord.protectedCampaignIds?.length ? { whatsAppCampaign: previewRecord.protectedCampaignIds.length } : {}),
           },
           recordsPreserved: previewRecord.protectedRoleIds.length + previewRecord.protectedDesignationIds.length + (previewRecord.blockedTemplateIds?.length || 0) + (previewRecord.protectedCampaignIds?.length || 0),
+          designationRoleLinksCleared,
           idempotencyKey: key,
           verified: false,
           partial: Object.values(deleted).some((count) => count > 0),
@@ -1004,6 +1105,7 @@ export class DataGovernanceService {
         recordsDeleted,
         recordsPreserved,
         preservedCounts,
+        designationRoleLinksCleared,
         eligibleRecords: preview.totalEligibleRecords,
         tables: deleted,
         countsBefore,
@@ -1517,13 +1619,22 @@ export class DataGovernanceService {
     }) as Array<{ id: number }>;
     const designationIds = designationRows.map((row) => Number(row.id)).filter(Number.isInteger);
     if (!designationIds.length) {
-      return { designationIds: [], roles: [], roleOwnership: { system: 0, tenant: 0, otherTenant: 0 }, roleTypes: {} };
+      return { designationIds: [], roleIdsToDetach: [], roles: [], roleOwnership: { system: 0, tenant: 0, otherTenant: 0 }, roleTypes: {} };
     }
     const roleRows = await this.delegate(client, 'role').findMany({
       where: { designationId: { in: designationIds } },
       select: { id: true, designationId: true, customerId: true, type: true, name: true },
     }) as Array<{ id: number; designationId: number; customerId: number | null; type: string; name: string }>;
-    const protectedDesignationIds = [...new Set(roleRows.map((role) => Number(role.designationId)).filter(Number.isInteger))].sort((a, b) => a - b);
+    const roleIdsToDetach = roleRows
+      .filter((role) => role.customerId != null && (customerId == null || Number(role.customerId) === customerId))
+      .map((role) => Number(role.id))
+      .filter(Number.isInteger)
+      .sort((a, b) => a - b);
+    const detachableRoleIdSet = new Set(roleIdsToDetach);
+    const protectedDesignationIds = [...new Set(roleRows
+      .filter((role) => !detachableRoleIdSet.has(Number(role.id)))
+      .map((role) => Number(role.designationId))
+      .filter(Number.isInteger))].sort((a, b) => a - b);
     const roleOwnership = {
       system: roleRows.filter((role) => role.customerId == null).length,
       tenant: customerId == null ? 0 : roleRows.filter((role) => Number(role.customerId) === customerId).length,
@@ -1536,6 +1647,7 @@ export class DataGovernanceService {
     }, {});
     return {
       designationIds: protectedDesignationIds,
+      roleIdsToDetach,
       roles: roleRows.map((role) => ({ ...role, id: Number(role.id), designationId: Number(role.designationId), type: String(role.type || 'UNKNOWN') })),
       roleOwnership,
       roleTypes,
@@ -1841,6 +1953,10 @@ export class DataGovernanceService {
     if (moduleIds.includes('employees')) await lock('Employee');
     if (moduleIds.includes('designations')) await lock('Designation');
     if (moduleIds.includes('departments')) await lock('Department');
+    if (moduleIds.includes('customers')) {
+      await lock('Company');
+      await lock('Contact');
+    }
   }
 
   private delegate(client: object, model: string) {
@@ -2323,6 +2439,32 @@ export class DataGovernanceService {
         policy: 'cascade',
       });
     }
+    if (moduleIds.includes('customers') && customerId != null) {
+      checks.push({
+        parent: 'customers',
+        model: 'deal',
+        label: 'Cross-tenant deals linked to customer companies or contacts',
+        where: { customerId, OR: [{ company: { customerId: { not: customerId } } }, { contact: { customerId: { not: customerId } } }] },
+        crossTenantWhere: { customerId: { not: customerId }, OR: [{ company: scoped }, { contact: scoped }] },
+        policy: 'cascade',
+      });
+      checks.push({
+        parent: 'customers',
+        model: 'quotation',
+        label: 'Cross-tenant quotations linked to customer contacts',
+        where: { customerId, contact: { customerId: { not: customerId } } },
+        crossTenantWhere: { customerId: { not: customerId }, contact: scoped },
+        policy: 'cascade',
+      });
+      checks.push({
+        parent: 'customers',
+        model: 'visit',
+        label: 'Cross-tenant visits linked to customer companies or contacts',
+        where: { customerId, OR: [{ company: { customerId: { not: customerId } } }, { contact: { customerId: { not: customerId } } }] },
+        crossTenantWhere: { customerId: { not: customerId }, OR: [{ company: scoped }, { contact: scoped }] },
+        policy: 'cascade',
+      });
+    }
     const warnings: Array<Record<string, unknown>> = [];
     for (const check of checks) {
       if (check.model === 'commission_shares') {
@@ -2397,15 +2539,15 @@ export class DataGovernanceService {
       warnings.push({
         module: 'designations',
         model: 'role',
-        label: 'Roles linked to designations (protected; designation preserved)',
+        label: 'Role records protected; current-tenant designation links cleared',
         records: designationState.roles.length,
-        resolvedRecords: 0,
+        resolvedRecords: designationState.roleIdsToDetach.length,
         unresolvedRecords: 0,
         preservedRecords: designationState.roles.length,
         preserved: true,
         blocking: false,
         policy: 'protected',
-        reason: 'Role.designationId uses ON DELETE CASCADE. The linked designations are excluded from deletion to preserve these roles.',
+        reason: `${designationState.roleIdsToDetach.length} current-scope tenant Role.designationId links can be cleared safely. Role and permission rows remain intact; only designations still linked to system or other-tenant Roles are preserved.`,
         roleOwnership: designationState.roleOwnership,
           roleTypes: designationState.roleTypes,
           roles: designationState.roles.map(({ id, name, type, customerId: roleCustomerId }) => ({
@@ -2544,6 +2686,183 @@ export class DataGovernanceService {
     details: Record<string, unknown>,
   ) {
     await this.prisma.auditLog.create({ data: this.auditData(customerId, userId, role, action, status, details) });
+  }
+
+  private async calculateCustomerBreakdown(
+    customerId: number | null,
+    moduleIds: string[],
+    counts: Record<string, number>,
+    client: object = this.prisma,
+  ) {
+    const isCustomersSelected = moduleIds.includes('customers');
+    const isSalesCrmSelected = moduleIds.includes('sales-crm');
+    const isVisitsTasksSelected = moduleIds.includes('visits-tasks');
+    const isBillingSelected = moduleIds.includes('billing');
+    const isLeadsDealsSelected = moduleIds.includes('leads-deals');
+
+    const sumCounts = (models: string[]) => models.reduce((acc, m) => acc + (counts[m] || 0), 0);
+
+    // 1. Customers master: company, contact, communicationHistory
+    const customerModels = ['company', 'contact', 'communicationHistory'];
+    const customersEligible = isCustomersSelected || isSalesCrmSelected ? sumCounts(customerModels) : 0;
+    const customersPreserved = 0;
+
+    // 2. Subscriptions: customerSubscription, subscriptionInstallment, customPlanOrder
+    const subscriptionModels = ['customerSubscription', 'subscriptionInstallment', 'customPlanOrder'];
+    const subscriptionsEligible = isCustomersSelected
+      ? sumCounts(subscriptionModels)
+      : isBillingSelected
+        ? sumCounts(['subscriptionInstallment', 'customPlanOrder'])
+        : 0;
+    let sharedPlansCount = 0;
+    try {
+      sharedPlansCount = Number(await (client as any).plan?.count() || 0);
+    } catch {
+      sharedPlansCount = 0;
+    }
+
+    // 3. Calendar & schedules: monthlySchedule
+    const calendarEligible = isCustomersSelected || isVisitsTasksSelected ? (counts['monthlySchedule'] || 0) : 0;
+    let employeeSchedulesCount = 0;
+    if (customerId != null) {
+      try {
+        employeeSchedulesCount = Number(
+          await (client as any).monthlySchedule?.count({
+            where: { customerId, subscriptionId: null },
+          }) || 0,
+        );
+      } catch {
+        employeeSchedulesCount = 0;
+      }
+    }
+
+    // 4. Appointments & visits: visit, visitPhoto
+    const appointmentModels = ['visit', 'visitPhoto'];
+    const appointmentsEligible = isCustomersSelected || isVisitsTasksSelected ? sumCounts(appointmentModels) : 0;
+
+    // 5. Reminders: leadReminder
+    let remindersTotal = 0;
+    if (customerId != null) {
+      try {
+        remindersTotal = Number(
+          await (client as any).leadReminder?.count({
+            where: { lead: { customerId } },
+          }) || 0,
+        );
+      } catch {
+        remindersTotal = 0;
+      }
+    }
+    const remindersEligible = isSalesCrmSelected || isLeadsDealsSelected ? (counts['leadReminder'] || remindersTotal) : 0;
+    const remindersPreserved = Math.max(0, remindersTotal - remindersEligible);
+
+    // 6. Tasks: task, taskProof, taskReview, taskHistory
+    const taskModels = ['task', 'taskProof', 'taskReview', 'taskHistory'];
+    let tasksTotal = 0;
+    if (customerId != null) {
+      try {
+        tasksTotal = Number(await (client as any).task?.count({ where: { customerId } }) || 0);
+      } catch {
+        tasksTotal = 0;
+      }
+    }
+    const tasksEligible = isVisitsTasksSelected ? sumCounts(taskModels) : 0;
+    const tasksPreserved = Math.max(0, tasksTotal - (counts['task'] || 0));
+
+    // 7. Documents: sendDetailsDocument, sendDetailsDelivery
+    const docModels = ['sendDetailsDocument', 'sendDetailsDelivery'];
+    const documentsEligible = isCustomersSelected ? sumCounts(docModels) : 0;
+
+    // 8. Other records: deal, quotation, quotationItem, invoice, invoiceItem
+    const otherModels = ['deal', 'quotation', 'quotationItem', 'invoice', 'invoiceItem'];
+    const otherEligible = isCustomersSelected || isSalesCrmSelected
+      ? sumCounts(otherModels)
+      : isBillingSelected
+        ? sumCounts(['invoice', 'invoiceItem'])
+        : 0;
+
+    return {
+      customers: {
+        category: 'customers',
+        label: 'Customer master and contact data',
+        description: 'CRM companies, contacts, and communication history',
+        models: customerModels,
+        total: customersEligible + customersPreserved,
+        eligible: customersEligible,
+        preserved: customersPreserved,
+        details: 'Tenant organization root account remains protected.',
+      },
+      subscriptions: {
+        category: 'subscriptions',
+        label: 'Customer subscriptions',
+        description: 'Customer-specific subscriptions, installments, and custom plan orders',
+        models: subscriptionModels,
+        total: subscriptionsEligible + sharedPlansCount,
+        eligible: subscriptionsEligible,
+        preserved: sharedPlansCount,
+        details: `${sharedPlansCount} shared system subscription plans remain protected.`,
+      },
+      calendar: {
+        category: 'calendar',
+        label: 'Calendar and schedules',
+        description: 'Customer subscription monthly schedules',
+        models: ['monthlySchedule'],
+        total: calendarEligible + employeeSchedulesCount,
+        eligible: calendarEligible,
+        preserved: employeeSchedulesCount,
+        details: `${employeeSchedulesCount} employee-level schedules and general business events remain preserved.`,
+      },
+      appointments: {
+        category: 'appointments',
+        label: 'Customer appointments and visits',
+        description: 'Field visits and visit photos associated with customers',
+        models: appointmentModels,
+        total: appointmentsEligible,
+        eligible: appointmentsEligible,
+        preserved: 0,
+        details: 'All customer appointments and photo evidence eligible for reset.',
+      },
+      reminders: {
+        category: 'reminders',
+        label: 'Customer reminders',
+        description: 'Reminders and follow-up alerts',
+        models: ['leadReminder'],
+        total: remindersTotal,
+        eligible: remindersEligible,
+        preserved: remindersPreserved,
+        details: remindersPreserved > 0 ? 'Lead reminders preserved (require Leads & Deals module for reset).' : 'All eligible reminders included.',
+      },
+      tasks: {
+        category: 'tasks',
+        label: 'Customer tasks',
+        description: 'Task assignments, proofs, reviews, and history',
+        models: taskModels,
+        total: tasksTotal,
+        eligible: tasksEligible,
+        preserved: tasksPreserved,
+        details: tasksPreserved > 0 ? 'Employee tasks preserved (require Visits & Tasks module for reset).' : 'All eligible tasks included.',
+      },
+      documents: {
+        category: 'documents',
+        label: 'Customer documents and attachments',
+        description: 'Send details documents and delivery records',
+        models: docModels,
+        total: documentsEligible,
+        eligible: documentsEligible,
+        preserved: 0,
+        details: 'Tenant-owned document attachments and deliveries eligible for reset.',
+      },
+      other: {
+        category: 'other',
+        label: 'Financial and deal records',
+        description: 'Quotations, quotation items, invoices, invoice items, and deals',
+        models: otherModels,
+        total: otherEligible,
+        eligible: otherEligible,
+        preserved: 0,
+        details: 'Financial quotations, invoices, and sales deals associated with customers.',
+      },
+    };
   }
 }
 
