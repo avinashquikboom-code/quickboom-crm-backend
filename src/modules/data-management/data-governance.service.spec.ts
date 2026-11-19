@@ -346,7 +346,7 @@ describe('DataGovernanceService employee reset dependencies', () => {
       { assignedEmployeeRel: { customerId: 12 } },
       { createdByEmployeeRel: { customerId: 12 } },
     ] } });
-    expect(customer.count).toHaveBeenCalledWith({ where: { customerId: { not: 12 }, OR: [
+    expect(customer.count).toHaveBeenCalledWith({ where: { id: { not: 12 }, OR: [
       { assignedEmployeeRel: { customerId: 12 } },
       { createdByEmployeeRel: { customerId: 12 } },
     ] } });
