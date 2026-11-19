@@ -1503,21 +1503,9 @@ export class LeadService {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }
 
-    // CSV-imported leads are visible only to their assigned employee. Apply
-    // this check before visit/creator exceptions used by legacy CRM leads.
-    if (user && !isUserAdmin(user) && String((lead as any).sourceRecordId || '').startsWith('csv-import:')) {
-      let employeeId = user.employee?.id ?? user.employeeId;
-      if (!employeeId && user.id) {
-        const employee = await this.prisma.employee.findFirst({
-          where: { userId: Number(user.id), customerId: lead.customerId },
-          select: { id: true },
-        });
-        employeeId = employee?.id;
-      }
-      const assigned = (employeeId && Number((lead as any).employeeId) === Number(employeeId)) ||
-        (user.id && Number(lead.assignedToId) === Number(user.id));
-      if (!assigned) throw new ForbiddenException('You do not have permission to access this lead.');
-    }
+    // CSV-imported leads are visible only to their assigned employee before
+    // legacy creator/visit exceptions are evaluated.
+    await this.assertCsvLeadAssignment(lead, user);
 
     if (await this.leadRepository.isVisitorUser(user)) {
       const visitor = await this.leadRepository.findAuthenticatedVisitor(lead.customerId, user);
@@ -1575,6 +1563,21 @@ export class LeadService {
     }
 
     return lead;
+  }
+
+  private async assertCsvLeadAssignment(lead: any, user?: any) {
+    if (!lead || !user || isUserAdmin(user) || !String(lead.sourceRecordId || '').startsWith('csv-import:')) return;
+    let employeeId = user.employee?.id ?? user.employeeId;
+    if (!employeeId && user.id) {
+      const employee = await this.prisma.employee.findFirst({
+        where: { userId: Number(user.id), customerId: lead.customerId },
+        select: { id: true },
+      });
+      employeeId = employee?.id;
+    }
+    const assigned = (employeeId && Number(lead.employeeId) === Number(employeeId)) ||
+      (user.id && Number(lead.assignedToId) === Number(user.id));
+    if (!assigned) throw new ForbiddenException('You do not have permission to access this lead.');
   }
 
   async getLeadStatus(customerId: number | string, id: number | string, user?: any) {
@@ -4054,8 +4057,6 @@ export class LeadService {
 
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
 
-    await this.getLeadById(parsedCustomerId, id, user);
-
     const lead = await this.prisma.lead.findFirst({
       where: {
         id,
@@ -4076,6 +4077,7 @@ export class LeadService {
     if (!lead) {
       throw new NotFoundException(`Lead record #${leadId} not found`);
     }
+    await this.assertCsvLeadAssignment(lead, user);
 
     const recipient = (lead.email || '').trim();
     if (!recipient) {
@@ -4316,8 +4318,6 @@ Sent by ${senderOrgName} via CRM.
     if (isNaN(id)) throw new BadRequestException('Invalid lead ID');
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
 
-    await this.getLeadById(parsedCustomerId, id, user);
-
     const lead = await this.prisma.lead.findFirst({
       where: {
         id,
@@ -4336,6 +4336,7 @@ Sent by ${senderOrgName} via CRM.
     });
 
     if (!lead) throw new NotFoundException(`Lead record #${leadId} not found`);
+    await this.assertCsvLeadAssignment(lead, user);
 
     // If no custom message and no subject supplied, send current stage Email template
     if (!dto?.message && !dto?.subject) {
@@ -4448,7 +4449,6 @@ Sent by ${senderOrgName} via CRM.
     }
     const parsedCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : undefined;
 
-    await this.getLeadById(parsedCustomerId, id, user);
     const lead = await this.prisma.lead.findFirst({
       where: {
         id,
@@ -4459,6 +4459,8 @@ Sent by ${senderOrgName} via CRM.
         id: true,
         customerId: true,
         assignedToId: true,
+        employeeId: true,
+        sourceRecordId: true,
         firstName: true,
         lastName: true,
         companyName: true,
@@ -4471,6 +4473,7 @@ Sent by ${senderOrgName} via CRM.
     if (!lead) {
       throw new NotFoundException(`Lead #${leadId} not found`);
     }
+    await this.assertCsvLeadAssignment(lead, user);
 
     // 1. Fetch email logs
     const emailLogs = await this.prisma.emailLog.findMany({
