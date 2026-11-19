@@ -30,6 +30,8 @@ const PREVIEW_TTL_MS = 15 * 60 * 1000;
 const SENSITIVE_KEY = /password|secret|token|apiKey|credential/i;
 const matchesConfirmation = (provided: string | undefined, expected: string) =>
   String(provided || '').trim().toUpperCase() === expected;
+const isProtectedWhatsAppCampaign = (status: string) =>
+  ['RUNNING', 'SCHEDULED', 'PROTECTED'].includes(String(status || '').toUpperCase());
 
 const scopedCustomer = (customerId: number | null) => customerId == null ? {} : { customerId };
 
@@ -57,7 +59,7 @@ type MetaTemplatePreservation = {
   crossTenantCampaigns: number;
   protectedCampaigns: number;
   protectedCampaignIds: number[];
-  campaignRows: Array<{ id: number; name: string; customerId: number; metaTemplateId: number; status: string }>;
+  campaignRows: Array<{ id: number; customerId: number; metaTemplateId: number; status: string }>;
 };
 
 type DesignationPreservation = {
@@ -160,7 +162,7 @@ export class DataGovernanceService {
     const preservedDesignationIds = designationPreservation.designationIds;
     const preservedDesignationCount = preservedDesignationIds.length;
 
-    const metaTemplatePreservation = modules.some((item) => item.id === 'templates')
+    const metaTemplatePreservation = modules.some((item) => item.id === 'templates' || item.id === 'whatsapp-campaigns')
       ? await this.metaTemplatePreservation(this.prisma, tenantId, modules.map((item) => item.id))
       : { candidateTemplateIds: [], blockedTemplateIds: [], eligibleTemplateIds: [], totalCampaigns: 0, sameTenantCampaigns: 0, crossTenantCampaigns: 0, protectedCampaigns: 0, protectedCampaignIds: [], campaignRows: [] };
     const blockedTemplateIds = metaTemplatePreservation.blockedTemplateIds;
@@ -353,14 +355,41 @@ export class DataGovernanceService {
         deletionFilter: Record<string, unknown>;
         reason?: string;
       } | null = null;
+      let employeeDiagnostic: {
+        expectedCount: number;
+        matchingBeforeDelete?: number;
+        deletedCount?: number;
+        reason?: string;
+      } | null = null;
+      let currentResetModel: string | null = null;
       try {
         if (!previewRecord || this.previews.get(previewToken) !== previewRecord) {
           throw new BadRequestException('The reset preview is no longer available. Run it again.');
         }
-        await this.prisma.$transaction(async (tx) => {
+        const transactionDeleted = await this.prisma.$transaction(async (tx) => {
+          const pendingDeleted: Record<string, number> = {};
           await this.acquireResetAdvisoryLock(tx, tenantId);
           await this.lockResetRoots(tx, moduleIds, tenantId);
           const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId, tx);
+          if (moduleIds.includes('employees')) {
+            const employeeDependencies = dependencyWarnings
+              .filter((item) => item.module === 'employees')
+              .map((item) => ({
+                model: item.model,
+                records: Number(item.records || 0),
+                sameTenantRecords: Number(item.sameTenantRecords || 0),
+                crossTenantRecords: Number(item.crossTenantRecords || 0),
+                blocking: Boolean(item.blocking),
+                policy: item.policy,
+              }));
+            this.logger.log(`Employee reset dependency validation ${JSON.stringify({
+              operationId,
+              tenantId,
+              selectedModules: moduleIds,
+              dependencies: employeeDependencies,
+              transactionStatus: 'IN_PROGRESS',
+            })}`);
+          }
           if (this.dependencySnapshot(dependencyWarnings) !== previewRecord.dependencySnapshot) {
             throw new BadRequestException('Dependencies changed after the preview. Run a fresh preview before deleting.');
           }
@@ -378,13 +407,16 @@ export class DataGovernanceService {
             throw new BadRequestException('Protected role/designation links changed after the preview. Run the preview again.');
           }
 
-          const currentMetaTemplatePreservation = moduleIds.includes('templates')
+          const currentMetaTemplatePreservation = moduleIds.includes('templates') || moduleIds.includes('whatsapp-campaigns')
             ? await this.metaTemplatePreservation(tx, tenantId, moduleIds)
             : { candidateTemplateIds: [], blockedTemplateIds: [], eligibleTemplateIds: [], totalCampaigns: 0, sameTenantCampaigns: 0, crossTenantCampaigns: 0, protectedCampaigns: 0, protectedCampaignIds: [], campaignRows: [] };
           const blockedTemplateIds = currentMetaTemplatePreservation.blockedTemplateIds;
           const protectedCampaignIds = currentMetaTemplatePreservation.protectedCampaignIds;
           if (blockedTemplateIds.join(',') !== [...(previewRecord.blockedTemplateIds || [])].sort((a, b) => a - b).join(',')) {
             throw new BadRequestException('Template campaign dependencies changed after the preview. Run the preview again.');
+          }
+          if (protectedCampaignIds.join(',') !== [...(previewRecord.protectedCampaignIds || [])].sort((a, b) => a - b).join(',')) {
+            throw new BadRequestException('Protected WhatsApp campaign status changed after the preview. Run the preview again.');
           }
           const recount = await this.countTables(tablesForModules(moduleIds), tenantId, tx);
           const changedTables = Object.entries(recount.counts)
@@ -431,6 +463,7 @@ export class DataGovernanceService {
           }
 
           for (const table of tablesForModules(moduleIds)) {
+            currentResetModel = table.model;
             const delegate = this.delegate(tx, table.model);
             const baseWhere = whereFor(table.where, tenantId);
             const where = table.model === 'designation' && protectedDesignationIds.length
@@ -450,6 +483,21 @@ export class DataGovernanceService {
               continue;
             }
             const expected = recount.counts[table.model] || 0;
+            if (table.model === 'employee') {
+              const matchingBeforeDelete = await tx.employee.count({ where });
+              employeeDiagnostic = { expectedCount: expected, matchingBeforeDelete };
+              this.logger.log(`Employee reset step ${JSON.stringify({
+                operationId,
+                tenantId,
+                selectedModules: moduleIds,
+                ...employeeDiagnostic,
+                transactionStatus: 'IN_PROGRESS',
+              })}`);
+              if (matchingBeforeDelete !== expected) {
+                employeeDiagnostic.reason = 'The matching rows immediately before deletion differ from the transaction recount.';
+                throw new Error(`Employees: expected ${expected} rows immediately before deletion but found ${matchingBeforeDelete}.`);
+              }
+            }
             if (table.model === 'visitPhoto') {
               const matchingRows = await tx.visitPhoto.findMany({
                 where,
@@ -515,6 +563,9 @@ export class DataGovernanceService {
                   : expected;
             const result = await delegate.deleteMany({ where });
             const deletedCount = Number(result?.count || 0);
+            if (table.model === 'employee' && employeeDiagnostic) {
+              employeeDiagnostic.deletedCount = deletedCount;
+            }
             if (table.model === 'visitPhoto' && visitPhotoDiagnostic) {
               visitPhotoDiagnostic.deletedCount = deletedCount;
               if (deletedCount !== expectedToDelete) {
@@ -545,6 +596,9 @@ export class DataGovernanceService {
               }
             }
             if (deletedCount !== expectedToDelete) {
+              if (table.model === 'employee' && employeeDiagnostic) {
+                employeeDiagnostic.reason = 'The deleteMany affected-row count differs from the expected eligible count.';
+              }
               if (table.model === 'taskHistory' && taskHistoryDiagnostic) {
                 taskHistoryDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
                 this.logger.error(`Task history reset mismatch ${JSON.stringify({
@@ -564,7 +618,7 @@ export class DataGovernanceService {
               throw new Error(`${table.label}: ${remaining} records remain after deletion.`);
             }
             deletionLedger.add(table.model);
-            deleted[table.model] = deletedCount;
+            pendingDeleted[table.model] = deletedCount;
           }
           if (moduleIds.includes('employees')) {
             const { references } = this.customerEmployeeReferenceFilters(tenantId);
@@ -597,8 +651,20 @@ export class DataGovernanceService {
               throw new Error('Protected WhatsApp campaigns did not remain intact after reset.');
             }
           }
+          return pendingDeleted;
         }, { timeout: 120000, maxWait: 10000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        Object.assign(deleted, transactionDeleted);
         resetTransactionCommitted = true;
+
+        if (employeeDiagnostic) {
+          this.logger.log(`Employee reset committed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...employeeDiagnostic,
+            transactionStatus: 'COMMITTED',
+          })}`);
+        }
 
         if (taskHistoryDiagnostic) {
           this.logger.log(`Task history reset committed ${JSON.stringify({
@@ -698,10 +764,22 @@ export class DataGovernanceService {
             error: failures[0],
           })}`);
         }
+        if (employeeDiagnostic) {
+          this.logger.warn(`Employee reset rolled back or failed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...employeeDiagnostic,
+            transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
+            error: failures[0],
+          })}`);
+        }
         this.logger.error(`Data reset operation failed ${JSON.stringify({
           operationId,
           tenantId,
           selectedModules: moduleIds,
+          failedAtModel: currentResetModel,
+          employeeDeleteReached: employeeDiagnostic !== null,
           transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
           error: failures[0],
         })}`);
@@ -1291,7 +1369,9 @@ export class DataGovernanceService {
     customerId: number | null,
     selectedModuleIds: string[],
   ): Promise<MetaTemplatePreservation> {
-    if (!selectedModuleIds.includes('templates')) {
+    const templatesSelected = selectedModuleIds.includes('templates');
+    const campaignsSelected = selectedModuleIds.includes('whatsapp-campaigns');
+    if (!templatesSelected && !campaignsSelected) {
       return {
         candidateTemplateIds: [],
         blockedTemplateIds: [],
@@ -1305,69 +1385,51 @@ export class DataGovernanceService {
       };
     }
 
-    const templateWhere = whereFor('template', customerId);
-    let templateRows: Array<{ id: number; name: string; templateName: string; customerId: number | null }> = [];
-    try {
-      templateRows = await this.delegate(client, 'metaTemplate').findMany({
-        where: templateWhere,
-        select: { id: true, name: true, templateName: true, customerId: true },
-      }) as Array<{ id: number; name: string; templateName: string; customerId: number | null }>;
-    } catch {
-      return {
-        candidateTemplateIds: [],
-        blockedTemplateIds: [],
-        eligibleTemplateIds: [],
-        totalCampaigns: 0,
-        sameTenantCampaigns: 0,
-        crossTenantCampaigns: 0,
-        protectedCampaigns: 0,
-        protectedCampaignIds: [],
-        campaignRows: [],
-      };
-    }
-
+    const templateRows = templatesSelected
+      ? await this.delegate(client, 'metaTemplate').findMany({
+          where: whereFor('template', customerId),
+          select: { id: true, customerId: true },
+        }) as Array<{ id: number; customerId: number | null }>
+      : [];
     const candidateTemplateIds = templateRows.map((r) => Number(r.id)).filter(Number.isInteger);
-    if (!candidateTemplateIds.length) {
-      return {
-        candidateTemplateIds: [],
-        blockedTemplateIds: [],
-        eligibleTemplateIds: [],
-        totalCampaigns: 0,
-        sameTenantCampaigns: 0,
-        crossTenantCampaigns: 0,
-        protectedCampaigns: 0,
-        protectedCampaignIds: [],
-        campaignRows: [],
-      };
-    }
-
-    let campaignRows: Array<{ id: number; name: string; customerId: number; metaTemplateId: number; status: string }> = [];
-    try {
-      campaignRows = await this.delegate(client, 'whatsAppCampaign').findMany({
+    const campaignRowsById = new Map<number, { id: number; customerId: number; metaTemplateId: number; status: string }>();
+    const campaignSelect = { id: true, customerId: true, metaTemplateId: true, status: true };
+    let referencingCampaigns: Array<{ id: number; customerId: number; metaTemplateId: number; status: string }> = [];
+    let selectedTenantCampaigns: Array<{ id: number; customerId: number; metaTemplateId: number; status: string }> = [];
+    if (templatesSelected && candidateTemplateIds.length) {
+      referencingCampaigns = await this.delegate(client, 'whatsAppCampaign').findMany({
         where: { metaTemplateId: { in: candidateTemplateIds } },
-        select: { id: true, name: true, customerId: true, metaTemplateId: true, status: true },
-      }) as Array<{ id: number; name: string; customerId: number; metaTemplateId: number; status: string }>;
-    } catch {
-      campaignRows = [];
+        select: campaignSelect,
+      }) as Array<{ id: number; customerId: number; metaTemplateId: number; status: string }>;
+      referencingCampaigns.forEach((campaign) => campaignRowsById.set(Number(campaign.id), campaign));
     }
+    if (campaignsSelected) {
+      selectedTenantCampaigns = await this.delegate(client, 'whatsAppCampaign').findMany({
+        where: customerId == null ? {} : { customerId },
+        select: campaignSelect,
+      }) as Array<{ id: number; customerId: number; metaTemplateId: number; status: string }>;
+      selectedTenantCampaigns.forEach((campaign) => campaignRowsById.set(Number(campaign.id), campaign));
+    }
+    const campaignRows = [...campaignRowsById.values()];
 
-    const isCampaignsSelected = selectedModuleIds.includes('whatsapp-campaigns');
-
-    const totalCampaigns = campaignRows.length;
+    const analysisCampaignRows = templatesSelected ? referencingCampaigns : selectedTenantCampaigns;
+    const totalCampaigns = analysisCampaignRows.length;
     let sameTenantCampaigns = 0;
     let crossTenantCampaigns = 0;
     let protectedCampaigns = 0;
-    const protectedCampaignIds: number[] = [];
+    const protectedCampaignIds = selectedTenantCampaigns
+      .filter((campaign) => isProtectedWhatsAppCampaign(campaign.status))
+      .map((campaign) => Number(campaign.id))
+      .filter(Number.isInteger);
 
     const templateCampaignMap = new Map<number, Array<{ id: number; customerId: number; status: string }>>();
     for (const id of candidateTemplateIds) {
       templateCampaignMap.set(id, []);
     }
 
-    for (const c of campaignRows) {
+    for (const c of analysisCampaignRows) {
       const isCrossTenant = customerId != null && Number(c.customerId) !== customerId;
-      const statusUpper = String(c.status || '').toUpperCase();
-      const isProtected = statusUpper === 'RUNNING' || statusUpper === 'PROTECTED';
+      const isProtected = isProtectedWhatsAppCampaign(c.status);
 
       if (isCrossTenant) {
         crossTenantCampaigns++;
@@ -1376,10 +1438,11 @@ export class DataGovernanceService {
       }
 
       if (isProtected) {
-        protectedCampaigns++;
-        protectedCampaignIds.push(Number(c.id));
+        if (!isCrossTenant) protectedCampaigns++;
       }
+    }
 
+    for (const c of referencingCampaigns) {
       const list = templateCampaignMap.get(Number(c.metaTemplateId));
       if (list) {
         list.push({ id: Number(c.id), customerId: Number(c.customerId), status: String(c.status || '') });
@@ -1389,20 +1452,19 @@ export class DataGovernanceService {
     const blockedTemplateIds: number[] = [];
     const eligibleTemplateIds: number[] = [];
 
-    for (const templateId of candidateTemplateIds) {
+    for (const templateId of templatesSelected ? candidateTemplateIds : []) {
       const referencing = templateCampaignMap.get(templateId) || [];
       if (!referencing.length) {
         eligibleTemplateIds.push(templateId);
         continue;
       }
 
-      if (!isCampaignsSelected) {
+      if (!campaignsSelected) {
         blockedTemplateIds.push(templateId);
       } else {
         const hasUndeletableCampaign = referencing.some((c) => {
           const isCrossTenant = customerId != null && Number(c.customerId) !== customerId;
-          const statusUpper = String(c.status || '').toUpperCase();
-          const isProtected = statusUpper === 'RUNNING' || statusUpper === 'PROTECTED';
+          const isProtected = isProtectedWhatsAppCampaign(c.status);
           return isCrossTenant || isProtected;
         });
 
@@ -2152,7 +2214,7 @@ export class DataGovernanceService {
           })),
       });
     }
-    if (moduleIds.includes('templates')) {
+    if (moduleIds.includes('templates') || moduleIds.includes('whatsapp-campaigns')) {
       const templatePreservation = await this.metaTemplatePreservation(client, customerId, moduleIds);
       const isCampaignsSelected = moduleIds.includes('whatsapp-campaigns');
 
@@ -2216,9 +2278,9 @@ export class DataGovernanceService {
 
         if (templatePreservation.protectedCampaigns > 0) {
           warnings.push({
-            module: 'templates',
+            module: isCampaignsSelected ? 'whatsapp-campaigns' : 'templates',
             model: 'whatsAppCampaign',
-            label: 'Protected WhatsApp campaigns referencing templates',
+            label: isCampaignsSelected ? 'Protected WhatsApp campaigns' : 'Protected WhatsApp campaigns referencing templates',
             records: templatePreservation.protectedCampaigns,
             crossTenantRecords: 0,
             sameTenantRecords: templatePreservation.protectedCampaigns,
@@ -2230,8 +2292,12 @@ export class DataGovernanceService {
             policy: 'protected',
             willSetNull: false,
             includedInSelectedModule: isCampaignsSelected,
-            reason: `${templatePreservation.protectedCampaigns.toLocaleString()} active/protected WhatsApp campaign${templatePreservation.protectedCampaigns === 1 ? '' : 's'} cannot be deleted; referenced templates are preserved.`,
-            recommendedAction: 'Wait for active campaigns to complete or cancel them before resetting templates.',
+            reason: isCampaignsSelected
+              ? `${templatePreservation.protectedCampaigns.toLocaleString()} active/protected WhatsApp campaign${templatePreservation.protectedCampaigns === 1 ? '' : 's'} are excluded from this reset.`
+              : `${templatePreservation.protectedCampaigns.toLocaleString()} active/protected WhatsApp campaign${templatePreservation.protectedCampaigns === 1 ? '' : 's'} cannot be deleted; referenced templates are preserved.`,
+            recommendedAction: isCampaignsSelected
+              ? 'Wait for active campaigns to complete or cancel them before selecting WhatsApp Campaigns for reset.'
+              : 'Wait for active campaigns to complete or cancel them before resetting templates.',
             owningTenantInfo: null,
             totalCampaignsReferencing: templatePreservation.totalCampaigns,
             sameTenantEligibleCampaigns: templatePreservation.sameTenantCampaigns,

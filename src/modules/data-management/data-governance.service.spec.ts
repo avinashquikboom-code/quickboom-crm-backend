@@ -237,6 +237,123 @@ describe('DataGovernanceService executeReset', () => {
   });
 });
 
+describe('DataGovernanceService reset failure accounting', () => {
+  it('does not report rolled-back table deletes as committed deletion counts', async () => {
+    const remaining = { attendanceBreak: 3, attendance: 1 };
+    const makeDelegate = (model: keyof typeof remaining, shouldFail = false) => ({
+      count: jest.fn(async () => remaining[model]),
+      findMany: jest.fn(),
+      deleteMany: jest.fn(async () => {
+        if (shouldFail) throw new Error('simulated later delete failure');
+        const count = remaining[model];
+        remaining[model] = 0;
+        return { count };
+      }),
+    });
+    const attendanceBreak = makeDelegate('attendanceBreak');
+    const attendance = makeDelegate('attendance', true);
+    const tx = { attendanceBreak, attendance, $queryRaw: jest.fn().mockResolvedValue([]), $executeRaw: jest.fn().mockResolvedValue(0) };
+    const failedAudit = jest.fn().mockResolvedValue({});
+    const auditLog = { findFirst: jest.fn().mockResolvedValue(null), create: failedAudit };
+    const prisma = {
+      attendanceBreak,
+      attendance,
+      auditLog,
+      $transaction: jest.fn(async (work: (transaction: unknown) => Promise<unknown>) => {
+        const before = { ...remaining };
+        try {
+          return await work(tx);
+        } catch (error) {
+          Object.assign(remaining, before);
+          throw error;
+        }
+      }),
+    } as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+    const preview = await service.previewReset(12, { modules: ['attendance'] });
+
+    await expect(service.executeReset(12, 7, 'SUPER_ADMIN', {
+      modules: ['attendance'],
+      previewToken: preview.previewToken,
+      confirmation: 'RESET',
+      idempotencyKey: 'reset-rollback-counts',
+    })).rejects.toThrow('simulated later delete failure');
+
+    expect(remaining).toEqual({ attendanceBreak: 3, attendance: 1 });
+    expect(failedAudit).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: 'FAILED',
+        details: expect.objectContaining({ recordsDeleted: 0, tables: {}, partial: false }),
+      }),
+    }));
+  });
+});
+
+describe('DataGovernanceService WhatsApp campaign preservation', () => {
+  it('fails closed when campaign dependency inspection fails', async () => {
+    const prisma = {
+      metaTemplate: {
+        count: jest.fn(), deleteMany: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([{ id: 53, customerId: 12 }]),
+      },
+      whatsAppCampaign: { count: jest.fn(), deleteMany: jest.fn(), findMany: jest.fn().mockRejectedValue(new Error('campaign dependency query failed')) },
+    } as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+
+    await expect((service as any).metaTemplatePreservation(prisma, 12, ['templates']))
+      .rejects.toThrow('campaign dependency query failed');
+  });
+
+  it('preserves scheduled campaigns when only the campaign module is selected', async () => {
+    const whatsAppCampaign = {
+      count: jest.fn(),
+      deleteMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([
+        { id: 10, customerId: 12, metaTemplateId: 100, status: 'SCHEDULED' },
+        { id: 11, customerId: 12, metaTemplateId: 101, status: 'DRAFT' },
+      ]),
+    };
+    const prisma = { whatsAppCampaign } as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+
+    const result = await (service as any).metaTemplatePreservation(prisma, 12, ['whatsapp-campaigns']);
+
+    expect(whatsAppCampaign.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { customerId: 12 } }));
+    expect(result).toMatchObject({ totalCampaigns: 2, protectedCampaigns: 1, protectedCampaignIds: [10] });
+  });
+
+  it('does not include cross-tenant campaign IDs in the selected tenant preservation set', async () => {
+    const whatsAppCampaign = {
+      count: jest.fn(),
+      deleteMany: jest.fn(),
+      findMany: jest.fn()
+        .mockResolvedValueOnce([
+          { id: 50, customerId: 20, metaTemplateId: 53, status: 'RUNNING' },
+          { id: 51, customerId: 12, metaTemplateId: 54, status: 'RUNNING' },
+        ])
+        .mockResolvedValueOnce([{ id: 51, customerId: 12, metaTemplateId: 54, status: 'RUNNING' }]),
+    };
+    const prisma = {
+      metaTemplate: {
+        count: jest.fn(), deleteMany: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          { id: 53, customerId: 12 },
+          { id: 54, customerId: 12 },
+        ]),
+      },
+      whatsAppCampaign,
+    } as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+
+    const result = await (service as any).metaTemplatePreservation(prisma, 12, ['templates', 'whatsapp-campaigns']);
+
+    expect(result.blockedTemplateIds).toEqual([53, 54]);
+    expect(result.protectedCampaignIds).toEqual([51]);
+    expect(result.crossTenantCampaigns).toBe(1);
+  });
+});
+
 describe('DataGovernanceService reset preview', () => {
   it('returns a usable reset preview without querying backup metadata', async () => {
     const client = new Proxy({}, {
