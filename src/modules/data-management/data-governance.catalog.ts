@@ -12,7 +12,8 @@ export type WhereKind =
   | 'template'
   | 'teamMember'
   | 'commission'
-  | 'commissionWithdrawal';
+  | 'commissionWithdrawal'
+  | 'whatsappCampaignRecipient';
 
 export type TableRule = {
   model: string;
@@ -247,6 +248,16 @@ export const RESET_MODULES: ResetModule[] = [
     ],
   },
   {
+    id: 'whatsapp-campaigns',
+    name: 'WhatsApp Campaigns',
+    description: 'WhatsApp broadcast campaigns and recipient delivery logs for this tenant.',
+    available: true,
+    tables: [
+      row('whatsAppCampaignRecipient', 'whatsapp_campaign_recipients', 'Campaign recipients', 'whatsappCampaignRecipient'),
+      row('whatsAppCampaign', 'whatsapp_campaigns', 'WhatsApp campaigns', 'customer'),
+    ],
+  },
+  {
     id: 'notifications',
     name: 'Notifications',
     description: 'Tenant notifications. Shared campaign definitions are not tenant-owned and stay.',
@@ -339,6 +350,9 @@ const MODULE_ALIASES: Record<string, string> = {
   works: 'visits-tasks',
   location: 'hrm',
   remote: 'hrm',
+  campaigns: 'whatsapp-campaigns',
+  'whatsapp-campaign': 'whatsapp-campaigns',
+  'whatsappcampaigns': 'whatsapp-campaigns',
 };
 
 export function resolveModuleId(id: string): string {
@@ -366,12 +380,14 @@ export function tablesForModules(ids: string[]): TableRule[] {
     });
   });
   const deleteOrder: Record<string, number> = {
+    whatsAppCampaignRecipient: 3, whatsAppCampaign: 4,
     attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7, taskHistory: 8, taskProof: 9, taskReview: 10,
     visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmEmployeeMonthlyReport: 14,
     employeeModuleOverride: 15, employeeLeadLimit: 16, commissionSlab: 17, commissionConfig: 18, salaryTargetPolicy: 19, salaryTargetReview: 20,
     employeeDeduction: 21, commissionWithdrawal: 22, commission: 23, employeeClaim: 24, employeeLoan: 25, salarySlip: 26, payrollItem: 27,
     overtimeRequest: 28, attendance: 29, leaveRequest: 30, employeeLeaveBalance: 31, leaveAdjustmentHistory: 32,
-    employeeLocation: 29, remoteRequest: 30, visit: 78, task: 79, employee: 80, designation: 90, department: 100,
+    employeeLocation: 29, remoteRequest: 30, invoiceItem: 33, invoice: 34, metaTemplate: 35,
+    visit: 78, task: 79, employee: 80, contact: 85, designation: 90, department: 100,
   };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
 }
@@ -425,6 +441,8 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
           { employee: { customerId } },
         ],
       };
+    case 'whatsappCampaignRecipient':
+      return customerId == null ? {} : { campaign: { customerId } };
     default:
       return { customerId };
   }
