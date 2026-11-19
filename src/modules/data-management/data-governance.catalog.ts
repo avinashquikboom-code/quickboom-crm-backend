@@ -14,7 +14,15 @@ export type WhereKind =
   | 'commission'
   | 'commissionWithdrawal'
   | 'whatsappCampaignRecipient'
-  | 'customerSchedule';
+  | 'customerSchedule'
+  | 'masterExpenseCategory'
+  | 'masterTaskStatus'
+  | 'masterEmployeeType'
+  | 'masterWorkType'
+  | 'masterPaymentMethod'
+  | 'masterLoanType'
+  | 'leadStage'
+  | 'pipelineStage';
 
 export type TableRule = {
   model: string;
@@ -61,7 +69,10 @@ export const RESET_MODULES: ResetModule[] = [
     tables: [row('employee', 'Employee', 'Employees', 'customer')],
   },
   {
-    id: 'departments', name: 'Departments', description: 'Departments. Referenced departments are reported and block deletion.', available: true,
+    id: 'departments',
+    name: 'Department Types & Departments',
+    description: 'Company departments and organizational structure divisions. Referenced departments are reported and block deletion.',
+    available: true,
     tables: [row('department', 'Department', 'Departments', 'customer')],
   },
   {
@@ -354,6 +365,87 @@ export const RESET_MODULES: ResetModule[] = [
       row('customPlanOrder', 'custom_plan_orders', 'Custom plan orders', 'customer'),
     ],
   },
+  {
+    id: 'expense-categories',
+    name: 'Expense Categories',
+    description: 'Master expense reimbursement categories for employee claims.',
+    available: true,
+    tables: [row('masterItemExpenseCategory', 'master_items', 'Expense categories', 'masterExpenseCategory')],
+  },
+  {
+    id: 'task-status',
+    name: 'Task Status',
+    description: 'Master workflow statuses for tasks and creative work items.',
+    available: true,
+    tables: [row('masterItemTaskStatus', 'master_items', 'Task statuses', 'masterTaskStatus')],
+  },
+  {
+    id: 'stage-management',
+    name: 'Stage Management',
+    description: 'Lead stages, deal pipeline stages, and stage delivery history.',
+    available: true,
+    tables: [
+      row('leadStageWhatsAppDelivery', 'lead_stage_whatsapp_deliveries', 'Stage WhatsApp deliveries', 'customer'),
+      row('leadStageEmailDelivery', 'lead_stage_email_deliveries', 'Stage email deliveries', 'customer'),
+      row('pipelineStage', 'PipelineStage', 'Deal pipeline stages', 'pipelineStage'),
+      row('pipeline', 'Pipeline', 'Deal pipelines', 'customer'),
+      row('leadStage', 'lead_stages', 'Lead stages', 'leadStage'),
+    ],
+  },
+  {
+    id: 'employee-types',
+    name: 'Employee Types',
+    description: 'Master employment classifications (Full-Time, Freelancer, Contractor).',
+    available: true,
+    tables: [row('masterItemEmployeeType', 'master_items', 'Employee types', 'masterEmployeeType')],
+  },
+  {
+    id: 'leave-types',
+    name: 'Leave Types',
+    description: 'Master leave categories (Sick, Casual, Paid leave). Dependent records block reset unless selected.',
+    available: true,
+    tables: [row('leaveType', 'LeaveType', 'Leave types', 'customer')],
+  },
+  {
+    id: 'leave-policies',
+    name: 'Leave Policies',
+    description: 'Company leave rules, notice periods, and approval workflows.',
+    available: true,
+    tables: [row('leavePolicy', 'LeavePolicy', 'Leave policies', 'customer')],
+  },
+  {
+    id: 'work-types',
+    name: 'Work Types',
+    description: 'Master production work types (Shoots, Editing, Graphic Design).',
+    available: true,
+    tables: [row('masterItemWorkType', 'master_items', 'Work types', 'masterWorkType')],
+  },
+  {
+    id: 'subscription-plans',
+    name: 'Subscription Plans',
+    description: 'Tenant custom plan orders, customer subscriptions, and proposal configurations. Global plans remain protected.',
+    available: true,
+    tables: [
+      row('leadPlanProposal', 'lead_plan_proposals', 'Lead plan proposals', 'customer'),
+      row('subscriptionInstallment', 'subscription_installments', 'Subscription installments', 'customer'),
+      row('customPlanOrder', 'custom_plan_orders', 'Custom plan orders', 'customer'),
+      row('customerSubscription', 'customer_subscriptions', 'Customer subscriptions', 'customer'),
+    ],
+  },
+  {
+    id: 'payment-methods',
+    name: 'Payment Methods',
+    description: 'Master payment methods and gateway configurations.',
+    available: true,
+    tables: [row('masterItemPaymentMethod', 'master_items', 'Payment methods', 'masterPaymentMethod')],
+  },
+  {
+    id: 'loan-types',
+    name: 'Loan Types',
+    description: 'Master employee loan types (Salary advance, emergency, equipment loans).',
+    available: true,
+    tables: [row('masterItemLoanType', 'master_items', 'Loan types', 'masterLoanType')],
+  },
 ];
 
 const MODULE_ALIASES: Record<string, string> = {
@@ -366,6 +458,46 @@ const MODULE_ALIASES: Record<string, string> = {
   campaigns: 'whatsapp-campaigns',
   'whatsapp-campaign': 'whatsapp-campaigns',
   'whatsappcampaigns': 'whatsapp-campaigns',
+  'expense-category': 'expense-categories',
+  'expense_category': 'expense-categories',
+  'expensecategories': 'expense-categories',
+  'task-statuses': 'task-status',
+  'task_status': 'task-status',
+  'taskstatus': 'task-status',
+  'department-type': 'departments',
+  'department-types': 'departments',
+  'department_type': 'departments',
+  'department_types': 'departments',
+  'department': 'departments',
+  'lead-stages': 'stage-management',
+  'lead-stage': 'stage-management',
+  'deal-stages': 'stage-management',
+  'deal-stage': 'stage-management',
+  'stages': 'stage-management',
+  'stagemanagement': 'stage-management',
+  'employee-type': 'employee-types',
+  'employee_type': 'employee-types',
+  'employeetypes': 'employee-types',
+  'leave-type': 'leave-types',
+  'leave_type': 'leave-types',
+  'leavetypes': 'leave-types',
+  'leave-policy': 'leave-policies',
+  'leave_policy': 'leave-policies',
+  'leavepolicies': 'leave-policies',
+  'work-type': 'work-types',
+  'work_type': 'work-types',
+  'worktypes': 'work-types',
+  'subscription-plan': 'subscription-plans',
+  'subscription_plan': 'subscription-plans',
+  'subscriptionplans': 'subscription-plans',
+  'plans': 'subscription-plans',
+  'plan': 'subscription-plans',
+  'payment-method': 'payment-methods',
+  'payment_method': 'payment-methods',
+  'paymentmethods': 'payment-methods',
+  'loan-type': 'loan-types',
+  'loan_type': 'loan-types',
+  'loantypes': 'loan-types',
 };
 
 export function resolveModuleId(id: string): string {
@@ -397,6 +529,7 @@ export function tablesForModules(ids: string[]): TableRule[] {
     attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7,
     taskHistory: 8, leadActivityTimeline: 8, leadNote: 8, leadReminder: 8, leadStatusHistory: 8, leadImage: 8, leadSocialProfile: 8,
     taskProof: 9, communicationHistory: 9, quotationItem: 9, sendDetailsDelivery: 9,
+    leadStageWhatsAppDelivery: 9, leadStageEmailDelivery: 9, leadPlanProposal: 10,
     taskReview: 10, workTask: 10, ticketComment: 10,
     visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmNotificationOutbox: 13, hrmEmployeeMonthlyReport: 14,
     employeeModuleOverride: 15, employeeLeadLimit: 16, commissionSlab: 17, commissionConfig: 18, salaryTargetPolicy: 19, salaryTargetReview: 20,
@@ -414,10 +547,20 @@ export function tablesForModules(ids: string[]): TableRule[] {
     hrmLeaveMonthlySnapshot: 57, hrmCommissionMonthlySnapshot: 58,
     hrmMonthlyReportRun: 59, hrmMonthlyCycle: 60,
     salaryStructure: 61, payrollPolicy: 62, locationTrackingSetting: 63, notification: 64,
+    leavePolicy: 64,
+    leaveType: 65,
     sendDetailsDocument: 65,
     payroll: 68,
     workAccessRequest: 71, announcement: 73, quotation: 74, supportTicket: 75, work: 76, team: 77,
-    visit: 78, task: 79, employee: 80, deal: 81, lead: 82, contact: 85, company: 86, designation: 90, department: 100,
+    visit: 78, task: 79, employee: 80, deal: 81, lead: 82, pipelineStage: 83, pipeline: 84, leadStage: 84,
+    contact: 85, company: 86,
+    masterItemExpenseCategory: 87,
+    masterItemTaskStatus: 87,
+    masterItemEmployeeType: 87,
+    masterItemWorkType: 87,
+    masterItemPaymentMethod: 87,
+    masterItemLoanType: 87,
+    designation: 90, department: 100,
   };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
 }
@@ -425,6 +568,14 @@ export function tablesForModules(ids: string[]): TableRule[] {
 export function whereFor(kind: WhereKind, customerId: number | null): Record<string, unknown> {
   if (customerId == null) {
     if (kind === 'template') return { isSystem: false };
+    if (kind === 'masterExpenseCategory') return { customerId: { not: null }, type: 'EXPENSE_CATEGORY' };
+    if (kind === 'masterTaskStatus') return { customerId: { not: null }, type: 'TASK_STATUS' };
+    if (kind === 'masterEmployeeType') return { customerId: { not: null }, type: 'EMPLOYEE_TYPE' };
+    if (kind === 'masterWorkType') return { customerId: { not: null }, type: 'WORK_TYPE' };
+    if (kind === 'masterPaymentMethod') return { customerId: { not: null }, type: 'PAYMENT_METHOD' };
+    if (kind === 'masterLoanType') return { customerId: { not: null }, type: 'LOAN_TYPE' };
+    if (kind === 'leadStage') return { customerId: { not: null } };
+    if (kind === 'pipelineStage') return {};
     return {};
   }
   switch (kind) {
@@ -432,6 +583,22 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
       return { customerId };
     case 'template':
       return { customerId, isSystem: false };
+    case 'masterExpenseCategory':
+      return { customerId, type: 'EXPENSE_CATEGORY' };
+    case 'masterTaskStatus':
+      return { customerId, type: 'TASK_STATUS' };
+    case 'masterEmployeeType':
+      return { customerId, type: 'EMPLOYEE_TYPE' };
+    case 'masterWorkType':
+      return { customerId, type: 'WORK_TYPE' };
+    case 'masterPaymentMethod':
+      return { customerId, type: 'PAYMENT_METHOD' };
+    case 'masterLoanType':
+      return { customerId, type: 'LOAN_TYPE' };
+    case 'leadStage':
+      return { customerId };
+    case 'pipelineStage':
+      return { pipeline: { customerId } };
     case 'attendance':
       return { attendance: { customerId } };
     case 'lead':
