@@ -15,6 +15,7 @@ import {
   ValidationPipe,
   UsePipes,
   ForbiddenException,
+  BadRequestException,
   Res,
   Req,
 } from '@nestjs/common';
@@ -41,6 +42,7 @@ import {
   CreateLeadFromPlaceDto,
   CaptureSessionQueryDto,
 } from './dto/data-capture.dto';
+import { CSV_IMPORT_MAX_BYTES } from './csv-import.util';
 
 @ApiTags('Data Capture (Google Places & Leads Extraction)')
 @ApiBearerAuth()
@@ -134,6 +136,72 @@ export class DataCaptureController {
     @Req() req: any,
   ) {
     return this.dataCaptureService.importToLeads(customerId, user, dto, req);
+  }
+
+  @Post('csv/preview')
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: CSV_IMPORT_MAX_BYTES, files: 1 },
+    fileFilter: (_req, file, callback) => callback(null, /\.csv$/i.test(file.originalname) && ['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain', 'application/octet-stream'].includes(file.mimetype)),
+  }))
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Read CSV headers and preview records before column mapping' })
+  async previewCsvFile(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('Choose a valid CSV file of 5 MB or smaller.');
+    return this.dataCaptureService.previewCsvFile(customerId, user, file);
+  }
+
+  @Post('csv/validate')
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: CSV_IMPORT_MAX_BYTES, files: 1 },
+    fileFilter: (_req, file, callback) => callback(null, /\.csv$/i.test(file.originalname) && ['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain', 'application/octet-stream'].includes(file.mimetype)),
+  }))
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Validate a CSV file against tenant leads before import' })
+  async validateCsvImport(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('mapping') mappingInput: string,
+  ) {
+    if (!file) throw new BadRequestException('Choose a valid CSV file of 5 MB or smaller.');
+    return this.dataCaptureService.previewCsvLeadImport(customerId, user, file, this.parseCsvMapping(mappingInput));
+  }
+
+  @Post('csv/import')
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: CSV_IMPORT_MAX_BYTES, files: 1 },
+    fileFilter: (_req, file, callback) => callback(null, /\.csv$/i.test(file.originalname) && ['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain', 'application/octet-stream'].includes(file.mimetype)),
+  }))
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'CREATE' })
+  @ApiOperation({ summary: 'Import validated CSV rows as assigned CRM leads' })
+  async importCsvLeads(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('mapping') mappingInput: string,
+    @Body('employeeId') employeeId: string,
+    @Req() req: any,
+  ) {
+    if (!file) throw new BadRequestException('Choose a valid CSV file of 5 MB or smaller.');
+    return this.dataCaptureService.importCsvLeads(customerId, user, file, this.parseCsvMapping(mappingInput), employeeId, req);
+  }
+
+  private parseCsvMapping(value?: string): Record<string, string> {
+    if (!value) throw new BadRequestException('CSV column mapping is required.');
+    try {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+      return parsed;
+    } catch {
+      throw new BadRequestException('CSV column mapping must be valid JSON.');
+    }
   }
 
   /**

@@ -86,8 +86,9 @@ export class LeadController {
   async checkDuplicate(
     @CurrentCustomer() customerId: string,
     @Body() dto: CheckDuplicateDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.checkDuplicate(customerId, dto);
+    return this.leadService.checkDuplicate(customerId, dto, user);
   }
 
   @Get('metrics')
@@ -378,15 +379,15 @@ export class LeadController {
   @Get(':id/status')
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get lead status and stage details by ID' })
-  async getStatus(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.leadService.getLeadStatus(customerId, id);
+  async getStatus(@CurrentCustomer() customerId: string, @Param('id') id: string, @CurrentUser() user: any) {
+    return this.leadService.getLeadStatus(customerId, id, user);
   }
 
   @Get(':id/communications')
   @RequirePermissions({ module: 'LEADS', action: 'VIEW' })
   @ApiOperation({ summary: 'Get unified Email and WhatsApp communication history and delivery tracking' })
-  async getCommunications(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.leadService.getLeadCommunications(customerId, id);
+  async getCommunications(@CurrentCustomer() customerId: string, @Param('id') id: string, @CurrentUser() user: any) {
+    return this.leadService.getLeadCommunications(customerId, id, user);
   }
 
   @Get(':id')
@@ -474,13 +475,14 @@ export class LeadController {
     @CurrentCustomer() customerId: string,
     @Param('id') id: string,
     @UploadedFile() file?: Express.Multer.File,
+    @CurrentUser() user?: any,
   ) {
     const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     if (!file) throw new BadRequestException('Choose a JPG, PNG, or WebP image.');
     if (!allowed.includes(String(file.mimetype || '').toLowerCase())) {
       throw new BadRequestException('Use a JPG, JPEG, PNG, or WebP image.');
     }
-    return this.leadService.addImage(customerId, id, file, { isPrimary: true });
+    return this.leadService.addImage(customerId, id, file, { isPrimary: true }, user);
   }
 
   @Get(':id/stage-whatsapp/history')
@@ -540,8 +542,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateLeadNoteDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.addNote(customerId, id, userId, dto);
+    return this.leadService.addNote(customerId, id, userId, dto, user);
   }
 
   @Post(':id/follow-ups')
@@ -578,8 +581,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: CreateProposalDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.createProposal(customerId, id, userId, dto);
+    return this.leadService.createProposal(customerId, id, userId, dto, user);
   }
 
   @Post(':id/final-call')
@@ -590,8 +594,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: FinalCallDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.recordFinalCall(customerId, id, userId, dto);
+    return this.leadService.recordFinalCall(customerId, id, userId, dto, user);
   }
 
   @Post(':id/payments')
@@ -602,8 +607,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: RecordPaymentDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.recordPayment(customerId, id, userId, dto);
+    return this.leadService.recordPayment(customerId, id, userId, dto, user);
   }
 
   @Post(':id/start-work')
@@ -614,8 +620,9 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: StartWorkDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.startWork(customerId, id, userId, dto);
+    return this.leadService.startWork(customerId, id, userId, dto, user);
   }
 
   @Get(':id/plan-proposals/plans')
@@ -769,7 +776,8 @@ export class LeadController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() dto: SendLeadWhatsAppDto,
+    @CurrentUser() user: any,
   ) {
-    return this.leadService.sendLeadWhatsApp(customerId, id, userId, dto);
+    return this.leadService.sendLeadWhatsApp(customerId, id, userId, dto, undefined, user);
   }
 }

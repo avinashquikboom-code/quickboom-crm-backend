@@ -133,6 +133,22 @@ export class MobileVisitController {
                   { completedById: employee.id },
                 ],
               },
+              // Assigned visits must not provide a side door to another
+              // employee's CSV-imported lead record.
+              {
+                OR: [
+                  { leadId: null },
+                  { lead: { sourceRecordId: null } },
+                  { lead: { sourceRecordId: { not: { startsWith: 'csv-import:' } } } },
+                  { lead: { AND: [
+                    { sourceRecordId: { startsWith: 'csv-import:' } },
+                    { OR: [
+                      { employeeId: employee.id },
+                      { assignedToId: user.id },
+                    ] },
+                  ] } },
+                ],
+              },
             ],
           }
         : { AND: [] }),
@@ -217,6 +233,8 @@ export class MobileVisitController {
             category: true,
             status: true,
             employeeId: true,
+            assignedToId: true,
+            sourceRecordId: true,
             stage: { select: { key: true, name: true } },
           },
         },
@@ -325,6 +343,8 @@ export class MobileVisitController {
                 category: true,
                 status: true,
                 employeeId: true,
+                assignedToId: true,
+                sourceRecordId: true,
                 stage: { select: { key: true, name: true } },
               },
             },
@@ -381,6 +401,8 @@ export class MobileVisitController {
                   category: true,
                   status: true,
                   employeeId: true,
+                  assignedToId: true,
+                  sourceRecordId: true,
                   stage: { select: { key: true, name: true } },
                 },
               },
@@ -396,7 +418,7 @@ export class MobileVisitController {
         }
 
         if (visit && (visit.status === VisitStatus.SCHEDULED || !visit.status)) {
-          visits.push(visit);
+          visits.push(visit as any);
         }
       }
     }
@@ -507,6 +529,8 @@ export class MobileVisitController {
             latitude: true,
             longitude: true,
             employeeId: true,
+            assignedToId: true,
+            sourceRecordId: true,
             stage: { select: { key: true, name: true } },
             images: { select: { id: true, url: true, caption: true, isPrimary: true }, orderBy: { createdAt: 'desc' } },
           },
@@ -544,6 +568,11 @@ export class MobileVisitController {
       visit.lead?.employeeId === employee?.id ||
       (visit.lead as any)?.assignedToId === user?.id ||
       visit.completedById === employee?.id;
+    const isAssignedCsvLead = !String((visit.lead as any)?.sourceRecordId || '').startsWith('csv-import:') ||
+      (visit.lead?.employeeId === employee?.id && (visit.lead as any)?.assignedToId === user?.id);
+    if (!isAdmin && visit.lead && !isAssignedCsvLead) {
+      throw new ForbiddenException('You do not have permission to view another employee\'s lead.');
+    }
     if (!isAdmin && employee && !isAssigned) {
       throw new ForbiddenException('You do not have permission to view another employee\'s visit.');
     }
