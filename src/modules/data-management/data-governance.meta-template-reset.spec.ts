@@ -1,49 +1,65 @@
 import { DataGovernanceService } from './data-governance.service';
 import { tablesForModules } from './data-governance.catalog';
-import { PrismaService } from '../../prisma/prisma.service';
 import { PrismaClient } from '@prisma/client';
 
-describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreSQL Integration', () => {
-  let prisma: PrismaService;
+const resetTestDatabaseUrl = process.env.DATA_MANAGEMENT_RESET_TEST_DATABASE_URL;
+let parsedResetTestDatabaseUrl: URL | null = null;
+if (resetTestDatabaseUrl) {
+  parsedResetTestDatabaseUrl = new URL(resetTestDatabaseUrl);
+  const databaseName = decodeURIComponent(parsedResetTestDatabaseUrl.pathname.slice(1));
+  const localHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+  if (!['postgres:', 'postgresql:'].includes(parsedResetTestDatabaseUrl.protocol)
+    || !localHosts.has(parsedResetTestDatabaseUrl.hostname)
+    || !databaseName.startsWith('qb_data_management_reset_test')) {
+    throw new Error('DATA_MANAGEMENT_RESET_TEST_DATABASE_URL must target a local disposable PostgreSQL database whose name starts with qb_data_management_reset_test.');
+  }
+}
+const describePostgresIntegration = parsedResetTestDatabaseUrl ? describe : describe.skip;
+
+describePostgresIntegration('Data Management Reset – MetaTemplate & Employee PostgreSQL Integration', () => {
+  let prisma: PrismaClient;
   let service: DataGovernanceService;
   let tenantAId: number;
   let tenantBId: number;
 
   beforeAll(async () => {
-    prisma = new PrismaService();
-    service = new DataGovernanceService(prisma);
+    prisma = new PrismaClient({
+      datasources: { db: { url: resetTestDatabaseUrl! } },
+    });
+    await prisma.$connect();
+    service = new DataGovernanceService(prisma as any);
 
-    // Ensure we have two distinct test tenants
-    const existing = await prisma.customer.findMany({ take: 2 });
-    if (existing.length >= 2) {
-      tenantAId = existing[0].id;
-      tenantBId = existing[1].id;
-    } else {
-      const createdA = await prisma.customer.create({
-        data: { name: 'Integration Test Tenant A ' + Date.now() },
-      });
-      const createdB = await prisma.customer.create({
-        data: { name: 'Integration Test Tenant B ' + Date.now() },
-      });
-      tenantAId = createdA.id;
-      tenantBId = createdB.id;
-    }
+    // Never borrow tenants from a shared database; every reset test owns its fixtures.
+    const unique = Date.now();
+    const createdA = await prisma.customer.create({ data: { name: `Reset Integration Tenant A ${unique}` } });
+    const createdB = await prisma.customer.create({ data: { name: `Reset Integration Tenant B ${unique}` } });
+    tenantAId = createdA.id;
+    tenantBId = createdB.id;
   });
 
   afterAll(async () => {
+    if (prisma && tenantAId && tenantBId) {
+      const tenantIds = [tenantAId, tenantBId];
+      const campaigns = await prisma.whatsAppCampaign.findMany({ where: { customerId: { in: tenantIds } }, select: { id: true } });
+      if (campaigns.length) {
+        await prisma.whatsAppCampaignRecipient.deleteMany({ where: { campaignId: { in: campaigns.map((row) => row.id) } } });
+        await prisma.whatsAppCampaign.deleteMany({ where: { id: { in: campaigns.map((row) => row.id) } } });
+      }
+      await prisma.customer.deleteMany({ where: { id: { in: tenantIds } } });
+    }
     await prisma.$disconnect();
   });
 
   // Helper to clean up any remaining test data for a given prefix
   async function cleanupPrefix(prefix: string) {
     const templates = await prisma.metaTemplate.findMany({
-      where: { templateName: { startsWith: prefix } },
+      where: { customerId: { in: [tenantAId, tenantBId] }, templateName: { startsWith: prefix } },
       select: { id: true },
     });
     const templateIds = templates.map((t) => t.id);
     if (templateIds.length) {
       const campaigns = await prisma.whatsAppCampaign.findMany({
-        where: { metaTemplateId: { in: templateIds } },
+        where: { customerId: { in: [tenantAId, tenantBId] }, metaTemplateId: { in: templateIds } },
         select: { id: true },
       });
       const campaignIds = campaigns.map((c) => c.id);
@@ -59,6 +75,18 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
         where: { id: { in: templateIds } },
       });
     }
+  }
+
+  async function createEmployee(customerId: number, suffix: string) {
+    return prisma.employee.create({
+      data: {
+        customerId,
+        employeeCode: `RESET-IT-${suffix}-${Date.now()}`,
+        firstName: 'Reset',
+        lastName: 'Fixture',
+        email: `reset-it-${suffix}-${Date.now()}@example.test`,
+      },
+    });
   }
 
   describe('1. Delete campaigns and templates together', () => {
@@ -111,7 +139,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       expect(preview.metaTemplateAnalysis.blockedTemplates).toBe(0);
       expect(preview.metaTemplateAnalysis.eligibleTemplates).toBeGreaterThanOrEqual(1);
 
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates', 'whatsapp-campaigns'],
         previewToken: preview.previewToken,
         confirmation: 'RESET',
@@ -176,7 +204,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       const metaTemplateTable = preview.tables.find((t) => t.model === 'metaTemplate');
       expect(metaTemplateTable?.preservedRecords).toBeGreaterThanOrEqual(1);
 
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates'],
         previewToken: preview.previewToken,
         confirmation: 'RESET',
@@ -229,7 +257,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       expect(preview.metaTemplateAnalysis.protectedCampaigns).toBeGreaterThanOrEqual(1);
       expect(preview.metaTemplateAnalysis.blockedTemplates).toBeGreaterThanOrEqual(1);
 
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates', 'whatsapp-campaigns'],
         previewToken: preview.previewToken,
         confirmation: 'RESET',
@@ -281,7 +309,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       expect(previewA.metaTemplateAnalysis.crossTenantCampaigns).toBeGreaterThanOrEqual(1);
       expect(previewA.metaTemplateAnalysis.blockedTemplates).toBeGreaterThanOrEqual(1);
 
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates', 'whatsapp-campaigns'],
         previewToken: previewA.previewToken,
         confirmation: 'RESET',
@@ -330,7 +358,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       const previewBoth = await service.previewReset(tenantAId, { modules: ['templates', 'whatsapp-campaigns'] });
       expect(previewBoth.metaTemplateAnalysis.blockedTemplates).toBe(0);
 
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates', 'whatsapp-campaigns'],
         previewToken: previewBoth.previewToken,
         confirmation: 'RESET',
@@ -374,7 +402,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       const preview = await service.previewReset(tenantAId, { modules: ['templates'] });
       expect(preview.metaTemplateAnalysis.blockedTemplates).toBeGreaterThanOrEqual(2);
 
-      await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates'],
         previewToken: preview.previewToken,
         confirmation: 'RESET',
@@ -431,7 +459,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
 
       try {
         await expect(
-          service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+          service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
             modules: ['templates', 'whatsapp-campaigns'],
             previewToken: preview.previewToken,
             confirmation: 'RESET',
@@ -472,7 +500,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       expect(tTable?.preservedRecords).toBe(1); // t1 is blocked
       const expectedEligible = tTable?.eligibleRecords;
 
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates'],
         previewToken: preview.previewToken,
         confirmation: 'RESET',
@@ -502,7 +530,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
 
       // First attempt with invalid confirmation fails
       await expect(
-        service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+        service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
           modules: ['templates'],
           previewToken: preview1.previewToken,
           confirmation: 'WRONG_CONFIRMATION',
@@ -512,7 +540,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
 
       // Second attempt (retry) with fresh preview and valid confirmation succeeds
       const preview2 = await service.previewReset(tenantAId, { modules: ['templates'] });
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['templates'],
         previewToken: preview2.previewToken,
         confirmation: 'RESET',
@@ -563,7 +591,7 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
 
       // When both billing and customers selected: invoice deleted first, contact deleted afterward
       const previewBoth = await service.previewReset(tenantAId, { modules: ['billing', 'customers'] });
-      const result = await service.executeReset(tenantAId, 1, 'SUPER_ADMIN', {
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
         modules: ['billing', 'customers'],
         previewToken: previewBoth.previewToken,
         confirmation: 'RESET',
@@ -573,6 +601,127 @@ describe('Data Management Reset – MetaTemplate & RESTRICT Foreign Key PostgreS
       expect(result.status).toBe('SUCCESS');
       expect(await prisma.invoice.findUnique({ where: { id: invoice.id } })).toBeNull();
       expect(await prisma.contact.findUnique({ where: { id: contact.id } })).toBeNull();
+    });
+  });
+
+  describe('11. Employee deletion safety and transaction rollback', () => {
+    it('deletes an Employee profile when no dependent rows exist', async () => {
+      const employee = await createEmployee(tenantAId, 'no-deps');
+      const preview = await service.previewReset(tenantAId, { modules: ['employees'] });
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
+        modules: ['employees'],
+        previewToken: preview.previewToken,
+        confirmation: 'RESET',
+        idempotencyKey: `employee-no-deps-${Date.now()}`,
+      });
+
+      expect(result.status).toBe('SUCCESS');
+      expect(result.tables.employee).toBe(1);
+      expect(await prisma.employee.findUnique({ where: { id: employee.id } })).toBeNull();
+    });
+
+    it('deletes same-tenant Employee dependencies before the Employee when both modules are selected', async () => {
+      const employee = await createEmployee(tenantAId, 'attendance');
+      const attendance = await prisma.attendance.create({
+        data: { customerId: tenantAId, employeeId: employee.id },
+      });
+      const tables = tablesForModules(['employees', 'hrm']);
+      expect(tables.findIndex((table) => table.model === 'attendance')).toBeLessThan(tables.findIndex((table) => table.model === 'employee'));
+
+      const preview = await service.previewReset(tenantAId, { modules: ['employees', 'hrm'] });
+      const result = await service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
+        modules: ['employees', 'hrm'],
+        previewToken: preview.previewToken,
+        confirmation: 'RESET',
+        idempotencyKey: `employee-hrm-${Date.now()}`,
+      });
+
+      expect(result.status).toBe('SUCCESS');
+      expect(await prisma.attendance.findUnique({ where: { id: attendance.id } })).toBeNull();
+      expect(await prisma.employee.findUnique({ where: { id: employee.id } })).toBeNull();
+    });
+
+    it('blocks an Employee deletion when a different tenant owns a Work assignment', async () => {
+      const employee = await createEmployee(tenantAId, 'cross-work');
+      const work = await prisma.work.create({
+        data: { customerId: tenantBId, assignedToId: employee.id, title: 'Cross-tenant assignment' },
+      });
+      const preview = await service.previewReset(tenantAId, { modules: ['employees'] });
+      const warning = preview.dependencyWarnings.find((item) => item.model === 'work');
+
+      expect(warning).toMatchObject({ blocking: true, crossTenantRecords: 1 });
+      await expect(service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
+        modules: ['employees'],
+        previewToken: preview.previewToken,
+        confirmation: 'RESET',
+        idempotencyKey: `employee-cross-work-${Date.now()}`,
+      })).rejects.toThrow('Work assignee references');
+      expect(await prisma.employee.findUnique({ where: { id: employee.id } })).not.toBeNull();
+      expect(await prisma.work.findUnique({ where: { id: work.id } })).not.toBeNull();
+
+      await prisma.work.delete({ where: { id: work.id } });
+      await prisma.employee.delete({ where: { id: employee.id } });
+    });
+
+    it('blocks an Employee deletion while a protected commission share references it', async () => {
+      const employee = await createEmployee(tenantAId, 'commission-share');
+      const commission = await prisma.commission.create({
+        data: { customerId: tenantAId, employeeId: employee.id, commissionType: 'FIXED' },
+      });
+      await prisma.$executeRaw`INSERT INTO "commission_shares" ("commissionId", "employeeId", "recipientRole", "effectiveRate", "amount") VALUES (${commission.id}, ${employee.id}, ${'EMPLOYEE'}, ${0.1}, ${100})`;
+
+      const preview = await service.previewReset(tenantAId, { modules: ['employees', 'commissions'] });
+      const protectedWarning = preview.dependencyWarnings.find((item) => item.model === 'commission_shares');
+      expect(protectedWarning).toMatchObject({ blocking: true, policy: 'protected' });
+      await expect(service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
+        modules: ['employees', 'commissions'],
+        previewToken: preview.previewToken,
+        confirmation: 'RESET',
+        idempotencyKey: `employee-protected-share-${Date.now()}`,
+      })).rejects.toThrow('protected financial records');
+      expect(await prisma.employee.findUnique({ where: { id: employee.id } })).not.toBeNull();
+
+      await prisma.$executeRaw`DELETE FROM "commission_shares" WHERE "employeeId" = ${employee.id}`;
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.employee.delete({ where: { id: employee.id } });
+    });
+
+    it('rolls back prior campaign deletions and does not reach Employee deletion when template deletion fails', async () => {
+      const prefix = `int_test_employee_rollback_${Date.now()}_`;
+      const employee = await createEmployee(tenantAId, 'rollback');
+      const template = await prisma.metaTemplate.create({
+        data: { customerId: tenantAId, name: 'Rollback template', templateName: `${prefix}template`, body: 'Body', isSystem: false },
+      });
+      const campaign = await prisma.whatsAppCampaign.create({
+        data: { customerId: tenantAId, name: 'Rollback campaign', metaTemplateId: template.id, status: 'DRAFT' },
+      });
+      const recipient = await prisma.whatsAppCampaignRecipient.create({
+        data: { campaignId: campaign.id, phone: '+10000000000', status: 'PENDING' },
+      });
+
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS qb_reset_test_reject_meta_template_delete_trigger ON "meta_templates"');
+      await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS qb_reset_test_reject_meta_template_delete()');
+      await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION qb_reset_test_reject_meta_template_delete() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced disposable integration failure'; END; $$ LANGUAGE plpgsql`);
+      await prisma.$executeRawUnsafe(`CREATE TRIGGER qb_reset_test_reject_meta_template_delete_trigger BEFORE DELETE ON "meta_templates" FOR EACH ROW EXECUTE FUNCTION qb_reset_test_reject_meta_template_delete()`);
+      try {
+        const preview = await service.previewReset(tenantAId, { modules: ['employees', 'templates', 'whatsapp-campaigns'] });
+        await expect(service.executeReset(tenantAId, 0, 'SUPER_ADMIN', {
+          modules: ['employees', 'templates', 'whatsapp-campaigns'],
+          previewToken: preview.previewToken,
+          confirmation: 'RESET',
+          idempotencyKey: `employee-meta-template-rollback-${Date.now()}`,
+        })).rejects.toThrow('forced disposable integration failure');
+
+        expect(await prisma.employee.findUnique({ where: { id: employee.id } })).not.toBeNull();
+        expect(await prisma.whatsAppCampaignRecipient.findUnique({ where: { id: recipient.id } })).not.toBeNull();
+        expect(await prisma.whatsAppCampaign.findUnique({ where: { id: campaign.id } })).not.toBeNull();
+        expect(await prisma.metaTemplate.findUnique({ where: { id: template.id } })).not.toBeNull();
+      } finally {
+        await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS qb_reset_test_reject_meta_template_delete_trigger ON "meta_templates"');
+        await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS qb_reset_test_reject_meta_template_delete()');
+        await cleanupPrefix(prefix);
+        await prisma.employee.deleteMany({ where: { id: employee.id } });
+      }
     });
   });
 });
