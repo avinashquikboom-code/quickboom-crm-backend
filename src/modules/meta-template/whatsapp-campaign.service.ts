@@ -30,15 +30,54 @@ export class WhatsAppCampaignService {
   async getStats(customerId?: number | string | null) {
     const cid = this.requireCustomerId(customerId);
     const base = { customerId: cid };
-    const [total, draft, scheduled, running, completed, failed] = await Promise.all([
+    const [total, draft, scheduled, running, completed, failed, sums, recipientAgg] = await Promise.all([
       this.prisma.whatsAppCampaign.count({ where: base }),
       this.prisma.whatsAppCampaign.count({ where: { ...base, status: 'DRAFT' } }),
       this.prisma.whatsAppCampaign.count({ where: { ...base, status: 'SCHEDULED' } }),
       this.prisma.whatsAppCampaign.count({ where: { ...base, status: 'RUNNING' } }),
       this.prisma.whatsAppCampaign.count({ where: { ...base, status: 'COMPLETED' } }),
       this.prisma.whatsAppCampaign.count({ where: { ...base, status: 'FAILED' } }),
+      this.prisma.whatsAppCampaign.aggregate({
+        where: base,
+        _sum: {
+          sentCount: true,
+          deliveredCount: true,
+          failedCount: true,
+          recipientCount: true,
+        },
+      }),
+      this.prisma.whatsAppCampaignRecipient.groupBy({
+        by: ['status'],
+        where: { campaign: base },
+        _count: { _all: true },
+      }).catch(() => []),
     ]);
-    return { total, draft, scheduled, running, completed, failed };
+
+    const recipientStatusCounts: Record<string, number> = {};
+    if (Array.isArray(recipientAgg)) {
+      for (const item of recipientAgg) {
+        recipientStatusCounts[item.status] = item._count?._all || 0;
+      }
+    }
+
+    const deliveredCount = Math.max(sums._sum?.deliveredCount || 0, recipientStatusCounts['DELIVERED'] || 0);
+    const sentCount = Math.max(sums._sum?.sentCount || 0, recipientStatusCounts['SENT'] || 0, deliveredCount);
+    const failedCount = Math.max(sums._sum?.failedCount || 0, recipientStatusCounts['FAILED'] || 0);
+    const recipientCount = Math.max(sums._sum?.recipientCount || 0, total);
+
+    return {
+      total,
+      draft,
+      scheduled,
+      running,
+      completed,
+      failed,
+      sentCount,
+      deliveredCount,
+      failedCount,
+      recipientCount,
+      readCount: 0,
+    };
   }
 
   async findAll(customerId: number | string | null | undefined, query: QueryWhatsAppCampaignDto) {

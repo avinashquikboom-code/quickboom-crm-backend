@@ -100,6 +100,38 @@ export class EmailService {
   }
 
   /**
+   * Retrieves aggregated email campaign and delivery statistics from EmailLog and EmailTemplate.
+   */
+  async getEmailStats(customerId?: number | string | null) {
+    const numCustomerId = Number(customerId);
+    const scope = !isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {};
+    const [totalTemplates, activeTemplates, totalSent, totalFailed] = await Promise.all([
+      this.prisma.emailTemplate ? this.prisma.emailTemplate.count({ where: { deletedAt: null, ...scope } }).catch(() => 0) : 0,
+      this.prisma.emailTemplate ? this.prisma.emailTemplate.count({ where: { deletedAt: null, isActive: true, ...scope } }).catch(() => 0) : 0,
+      this.prisma.emailLog ? this.prisma.emailLog.count({ where: { status: 'SENT', ...scope } }).catch(() => 0) : 0,
+      this.prisma.emailLog ? this.prisma.emailLog.count({ where: { status: 'FAILED', ...scope } }).catch(() => 0) : 0,
+    ]);
+
+    return {
+      totalTemplates,
+      activeTemplates,
+      totalSent,
+      totalDelivered: totalSent,
+      totalFailed,
+      totalOpened: null,
+      totalClicked: null,
+      trackingSupported: {
+        sent: true,
+        delivered: true,
+        failed: true,
+        opened: false,
+        clicked: false,
+      },
+      gapReason: 'SMTP relay tracks Sent, Delivered to relay, and Failed. Open/Click tracking requires tracking pixel/webhook infrastructure.',
+    };
+  }
+
+  /**
    * Main email sending method using dynamic SMTP configuration and template interpolation.
    */
   async sendEmail(dto: SendEmailDto, user?: any) {
