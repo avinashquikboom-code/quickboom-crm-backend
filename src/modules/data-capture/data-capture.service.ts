@@ -1328,11 +1328,64 @@ export class DataCaptureService implements OnModuleInit {
   }
 
   private hasUserProvidedField(place: any, field: string): boolean {
+    return this.userProvidedFieldNames(place).includes(field);
+  }
+
+  private userProvidedFieldNames(place: any): string[] {
     const raw = place?.rawData;
-    const fields = raw && typeof raw === 'object' && Array.isArray(raw.userProvidedFields)
-      ? raw.userProvidedFields.map((value: unknown) => String(value))
-      : [];
-    return fields.includes(field);
+    const allowedFields = new Set([
+      'businessName', 'category', 'address', 'phone', 'email', 'website', 'socialMedia',
+    ]);
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.userProvidedFields)) return [];
+    const fields = (raw.userProvidedFields as unknown[])
+      .map((value: unknown) => String(value))
+      .filter((value: string) => allowedFields.has(value));
+    return Array.from(new Set<string>(fields));
+  }
+
+  /**
+   * Fill contact fields only when the same-tenant Lead field is empty. Callers
+   * must pass fields that are already validated and authorized for CRM use.
+   */
+  private async backfillEmptyLeadContactFields(
+    tx: any,
+    customerId: number,
+    leadId: number,
+    contactInput: { phone?: unknown; email?: unknown; website?: unknown },
+  ): Promise<number> {
+    if (!tx?.lead?.updateMany || !Number.isSafeInteger(customerId) || customerId <= 0 ||
+        !Number.isSafeInteger(leadId) || leadId <= 0) return 0;
+
+    const validated = this.validateIndependentLeadFields({
+      businessName: 'Contact details',
+      phone: contactInput.phone,
+      email: contactInput.email,
+      website: contactInput.website,
+    });
+    const values: Record<string, string | undefined> = {
+      phone: validated.phone
+        ? (ContactExtractor.normalizePhoneNumber(validated.phone) || validated.phone)
+        : undefined,
+      email: validated.email ? (ContactExtractor.normalizeEmail(validated.email) || undefined) : undefined,
+      website: validated.website,
+    };
+
+    let affected = 0;
+    for (const field of ['phone', 'email', 'website']) {
+      const value = values[field];
+      if (!value) continue;
+      const result = await tx.lead.updateMany({
+        where: {
+          id: leadId,
+          customerId,
+          deletedAt: null,
+          OR: [{ [field]: null }, { [field]: '' }],
+        },
+        data: { [field]: value },
+      });
+      affected += Number(result?.count || 0);
+    }
+    return affected;
   }
 
   /**
@@ -1571,7 +1624,9 @@ export class DataCaptureService implements OnModuleInit {
           createdFrom: p.createdFrom || undefined,
           status: p.status || 'CAPTURED',
           notes: p.notes || undefined,
-          rawData: this.isGoogleReference(p) ? preview.rawData : (p.rawData || undefined),
+          rawData: this.isGoogleReference(p)
+            ? { ...(preview.rawData && typeof preview.rawData === 'object' ? preview.rawData : {}), userProvidedFields: this.userProvidedFieldNames(p) }
+            : (p.rawData || undefined),
           isImported: p.isImported,
           importedLeadId: p.importedLeadId || undefined,
           capturedAt: this.captureTimestamp(p),
@@ -1681,7 +1736,9 @@ export class DataCaptureService implements OnModuleInit {
       createdFrom: place.createdFrom || undefined,
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
-      rawData: this.isGoogleReference(place) ? preview.rawData : (place.rawData || undefined),
+      rawData: this.isGoogleReference(place)
+        ? { ...(preview.rawData && typeof preview.rawData === 'object' ? preview.rawData : {}), userProvidedFields: this.userProvidedFieldNames(place) }
+        : (place.rawData || undefined),
       isImported: place.isImported,
       importedLeadId: place.importedLeadId || undefined,
       capturedAt: this.captureTimestamp(place),
@@ -1747,8 +1804,12 @@ export class DataCaptureService implements OnModuleInit {
       dto.photos, dto.googlePhotos, dto.rawData?.photos, dto.rawData?.googlePhotos,
     );
 
+    const suppliedRawData = dto.rawData && typeof dto.rawData === 'object' ? { ...dto.rawData } : {};
+    // Provenance is created only by the editable update workflow. Never accept
+    // a client-provided marker that would make provider data importable.
+    delete (suppliedRawData as any).userProvidedFields;
     const mergedRawData = {
-      ...(dto.rawData && typeof dto.rawData === 'object' ? dto.rawData : {}),
+      ...suppliedRawData,
       capturedAt,
       ...(placePhotoUrls.length ? { photos: placePhotoUrls } : {}),
       ...(dto.firstName ? { firstName: dto.firstName.trim() } : {}),
@@ -1912,6 +1973,31 @@ export class DataCaptureService implements OnModuleInit {
     });
 
     if (updated.importedLeadId) {
+      const isGoogle = this.isGoogleReference(updated);
+      const authorizedContactFields = {
+        phone: !isGoogle || this.hasUserProvidedField(updated, 'phone') ? updated.phone : undefined,
+        email: !isGoogle || this.hasUserProvidedField(updated, 'email') ? updated.email : undefined,
+        website: !isGoogle || this.hasUserProvidedField(updated, 'website') ? updated.website : undefined,
+      };
+      if (Object.values(authorizedContactFields).some((value) => typeof value === 'string' && value.trim())) {
+        try {
+          await this.prisma.$transaction(async (tx: any) => {
+            const filled = await this.backfillEmptyLeadContactFields(
+              tx,
+              numCustomerId,
+              Number(updated.importedLeadId),
+              authorizedContactFields,
+            );
+            if (filled > 0) {
+              this.logger.log(`[DATA_CAPTURE_BACKFILL] captureId=${updated.id} leadId=${updated.importedLeadId} filledFields=${filled}`);
+            }
+          });
+        } catch (error: any) {
+          // Keep the capture edit saved if a linked Lead cannot be backfilled;
+          // retrying the record import performs the same guarded fill safely.
+          this.logger.warn(`[DATA_CAPTURE_BACKFILL] captureId=${updated.id} leadId=${updated.importedLeadId} failed: ${error?.message || error}`);
+        }
+      }
       try {
         await this.syncCapturePhotosToLead(updated.importedLeadId, updated);
       } catch (err: any) {
@@ -2686,9 +2772,28 @@ export class DataCaptureService implements OnModuleInit {
         async (tx: any) => {
           // Serialize imports for this tenant across processes; recheck only after the lock.
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(72341, ${numCustomerId}::integer)`;
-          if (!await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } })) throw new BadRequestException('Capture record was deleted before import.');
+          const currentPlace = await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } });
+          if (!currentPlace) throw new BadRequestException('Capture record was deleted before import.');
+          if (currentPlace.importedLeadId) {
+            matchedLead = await tx.lead.findFirst({
+              where: { id: currentPlace.importedLeadId, customerId: numCustomerId, deletedAt: null },
+              select: {
+                id: true,
+                title: true,
+                companyName: true,
+                phone: true,
+                email: true,
+                website: true,
+                googlePlaceId: true,
+                sourceRecordId: true,
+                assignedToId: true,
+                employeeId: true,
+              },
+            });
+            if (matchedLead) duplicateMatchReason = `Existing Data Capture Lead link (${currentPlace.importedLeadId})`;
+          }
       if (leadOrConditions.length > 0) {
-        const candidateLeads = await tx.lead.findMany({
+        const candidateLeads = matchedLead ? [] : await tx.lead.findMany({
           where: {
             customerId: numCustomerId,
             deletedAt: null,
@@ -2742,6 +2847,7 @@ export class DataCaptureService implements OnModuleInit {
 
 
           if (matchedLead) {
+            await this.backfillEmptyLeadContactFields(tx, numCustomerId, Number(matchedLead.id), fields);
             const currentPlace = await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId } });
             await tx.dataCapturePlace.update({ where: { id: dbPlace.id }, data: {
               isImported: true, importedLeadId: matchedLead.id,
