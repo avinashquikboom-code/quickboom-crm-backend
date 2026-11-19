@@ -701,10 +701,10 @@ describe('DataGovernanceService employee reset dependencies', () => {
     expect(warning).toMatchObject({ records: 2, crossTenantRecords: 1, blocking: true, includedInSelectedModule: true });
   });
 
-  it('previews protected roles and linked designations as preserved, not blockers', async () => {
+  it('previews tenant Role links as resolvable while preserving system and cross-tenant linked designations', async () => {
     const roleRows = Array.from({ length: 11 }, (_, index) => ({
-      id: index + 1, designationId: index + 1, customerId: index < 8 ? 12 : null,
-      type: index < 8 ? 'CUSTOM' : 'SUPER_ADMIN', name: `Role ${index + 1}`,
+      id: index + 1, designationId: index + 1, customerId: index < 8 ? 12 : index < 10 ? 20 : null,
+      type: index < 10 ? 'CUSTOM' : 'SUPER_ADMIN', name: `Role ${index + 1}`,
     }));
     const client = new Proxy({}, {
       get: (_target, key: string | symbol) => {
@@ -725,17 +725,17 @@ describe('DataGovernanceService employee reset dependencies', () => {
     const preview = await service.previewReset(12, { modules: ['designations'] });
     const roleWarning = preview.dependencyWarnings.find((item) => item.model === 'role');
 
-    expect(preview.totalEligibleRecords).toBe(2);
-    expect(preview.totalPreservedRecords).toBe(22);
+    expect(preview.totalEligibleRecords).toBe(10);
+    expect(preview.totalPreservedRecords).toBe(14);
     expect(preview.preservation).toEqual(expect.arrayContaining([
-      expect.objectContaining({ model: 'role', records: 11, roleOwnership: { system: 3, tenant: 8, otherTenant: 0 } }),
-      expect.objectContaining({ model: 'designation', records: 11 }),
+      expect.objectContaining({ model: 'role', records: 11, roleOwnership: { system: 1, tenant: 8, otherTenant: 2 } }),
+      expect.objectContaining({ model: 'designation', records: 3 }),
     ]));
-    expect(roleWarning).toMatchObject({ records: 11, blocking: false, preserved: true, preservedRecords: 11 });
+    expect(roleWarning).toMatchObject({ records: 11, resolvedRecords: 8, blocking: false, preserved: true, preservedRecords: 11 });
     expect(preview.preservation[0].roles).toHaveLength(11);
   });
 
-  it('partially deletes unreferenced designations and verifies all protected role links remain', async () => {
+  it('clears tenant Role links and deletes every eligible Designation without deleting Role rows', async () => {
     let designationCount = 13;
     const roles = Array.from({ length: 11 }, (_, index) => ({
       id: index + 1, designationId: index + 1, customerId: 12, type: 'CUSTOM', name: `Tenant Role ${index + 1}`,
@@ -749,20 +749,26 @@ describe('DataGovernanceService employee reset dependencies', () => {
     });
     const designation = makeDelegate();
     designation.count.mockImplementation(async ({ where }: { where?: Record<string, any> } = {}) => {
-        if (where?.id?.notIn) return 0;
-        if (where?.id?.in) return 11;
+        if (where?.id?.in) return 0;
         return designationCount;
     });
     designation.findMany.mockImplementation(async () => Array.from({ length: 13 }, (_, index) => ({ id: index + 1 })));
     designation.deleteMany.mockImplementation(async (...args: any[]) => {
       const { where } = args[0] as { where: Record<string, any> };
-      expect(where).toEqual({ customerId: 12, id: { notIn: Array.from({ length: 11 }, (_, index) => index + 1) } });
-      designationCount = 11;
-      return { count: 2 };
+      expect(where).toEqual({ customerId: 12 });
+      designationCount = 0;
+      return { count: 13 };
     });
     const role = makeDelegate();
     role.findMany.mockImplementation(async () => roles);
     role.count.mockImplementation(async () => 11);
+    (role.updateMany as jest.Mock).mockImplementation(async ({ where, data }: { where: Record<string, any>; data: Record<string, any> }) => {
+      expect(where.id.in).toEqual(Array.from({ length: 11 }, (_, index) => index + 1));
+      expect(where.customerId).toBe(12);
+      expect(data).toEqual({ designationId: null });
+      roles.forEach((item) => { item.designationId = null as any; });
+      return { count: 11 };
+    });
     const auditLog = { ...makeDelegate(), findFirst: jest.fn().mockResolvedValue(null) };
     let prisma: PrismaService;
     const proxy = new Proxy({ designation, role, auditLog }, {
@@ -784,10 +790,75 @@ describe('DataGovernanceService employee reset dependencies', () => {
     });
 
     expect(result).toMatchObject({
-      recordsDeleted: 2,
-      recordsPreserved: 22,
-      preservedCounts: { role: 11, designation: 11 },
-      countsAfter: { designation: 11 },
+      recordsDeleted: 13,
+      recordsPreserved: 11,
+      preservedCounts: { role: 11, designation: 0 },
+      designationRoleLinksCleared: 11,
+      countsAfter: { designation: 0 },
+      verified: true,
+    });
+    expect(role.deleteMany).not.toHaveBeenCalled();
+    expect(role.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves designations still linked to system or other-tenant Roles during execution', async () => {
+    let designationCount = 13;
+    const roles = [
+      { id: 101, designationId: 1, customerId: 12, type: 'CUSTOM', name: 'Tenant Role' },
+      { id: 201, designationId: 2, customerId: 20, type: 'CUSTOM', name: 'Other Tenant Role' },
+      { id: 301, designationId: 3, customerId: null, type: 'SUPER_ADMIN', name: 'System Role' },
+    ];
+    const makeDelegate = () => ({
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn(async () => []),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+      create: jest.fn(async () => ({})),
+    });
+    const designation = makeDelegate();
+    (designation.count as jest.Mock).mockImplementation(async ({ where }: { where?: Record<string, any> } = {}) => {
+        if (where?.id?.in) return where.id.in.filter((id: number) => id === 2 || id === 3).length;
+        if (where?.id?.notIn) return 0;
+        return designationCount;
+    });
+    designation.findMany.mockResolvedValue(Array.from({ length: 13 }, (_, index) => ({ id: index + 1 })) as any);
+    (designation.deleteMany as jest.Mock).mockImplementation(async ({ where }: { where: Record<string, any> }) => {
+      expect(where).toEqual({ customerId: 12, id: { notIn: [2, 3] } });
+      designationCount = 2;
+      return { count: 11 };
+    });
+    const role = makeDelegate();
+    role.findMany.mockResolvedValue(roles as any);
+    (role.updateMany as jest.Mock).mockImplementation(async ({ where, data }: { where: Record<string, any>; data: Record<string, any> }) => {
+      expect(where).toMatchObject({ id: { in: [101] }, customerId: 12 });
+      expect(data).toEqual({ designationId: null });
+      return { count: 1 };
+    });
+    const auditLog = { ...makeDelegate(), findFirst: jest.fn().mockResolvedValue(null) };
+    let prisma: PrismaService;
+    const proxy = new Proxy({ designation, role, auditLog }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$transaction') return (work: (tx: unknown) => Promise<unknown>) => work(prisma);
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        return makeDelegate();
+      },
+    });
+    prisma = proxy as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const preview = await service.previewReset(12, { modules: ['designations'] });
+    const result = await service.executeReset(12, 7, 'SUPER_ADMIN', {
+      modules: ['designations'], previewToken: preview.previewToken, confirmation: 'RESET', idempotencyKey: 'cross-tenant-role-designation-reset',
+    });
+
+    expect(result).toMatchObject({
+      recordsDeleted: 11,
+      preservedCounts: { role: 3, designation: 2 },
+      designationRoleLinksCleared: 1,
+      countsAfter: { designation: 2 },
       verified: true,
     });
     expect(role.deleteMany).not.toHaveBeenCalled();

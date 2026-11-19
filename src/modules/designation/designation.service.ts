@@ -40,6 +40,32 @@ export class DesignationService {
     return firstCustomer?.id || 1;
   }
 
+  private async hasSuccessfulDesignationReset(customerId: number): Promise<boolean> {
+    try {
+      const reset = await this.prisma.auditLog.findFirst({
+        where: {
+          action: 'DATA_RESET',
+          status: 'SUCCESS',
+          AND: [
+            { details: { path: ['modules'], array_contains: ['designations'] } },
+            {
+              OR: [
+                { customerId },
+                { customerId: null, details: { path: ['scope'], equals: 'global' } },
+              ],
+            },
+          ],
+        },
+        select: { id: true },
+      });
+      return Boolean(reset);
+    } catch (error) {
+      // Avoid recreating data after an explicit reset if the audit lookup is unavailable.
+      this.logger.warn(`Unable to check Designation reset history for tenant #${customerId}; automatic seeding is skipped: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return true;
+    }
+  }
+
   private generateCode(name: string): string {
     const cleaned = name.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     return cleaned.substring(0, 6) || 'DESIG';
@@ -647,8 +673,10 @@ export class DesignationService {
 
   async getDesignationRoles(customerId: number | string) {
     const numCustomerId = await this.resolveCustomerId(customerId);
-    await this.seedInitialDesignationsIfEmpty(numCustomerId);
-    await this.ensureCustomerAppDesignation(numCustomerId);
+    if (!(await this.hasSuccessfulDesignationReset(numCustomerId))) {
+      await this.seedInitialDesignationsIfEmpty(numCustomerId);
+      await this.ensureCustomerAppDesignation(numCustomerId);
+    }
 
     let designations: any[];
     try {

@@ -13,7 +13,8 @@ export type WhereKind =
   | 'teamMember'
   | 'commission'
   | 'commissionWithdrawal'
-  | 'whatsappCampaignRecipient';
+  | 'whatsappCampaignRecipient'
+  | 'customerSchedule';
 
 export type TableRule = {
   model: string;
@@ -32,7 +33,7 @@ export type ResetModule = {
 };
 
 export const PROTECTED_RECORDS = [
-  'SYSTEM-CRITICAL — Admin/user accounts, sessions, refresh tokens, roles, permissions, tenant configuration, subscriptions, integration/payment credentials, audit logs, system templates, and Prisma migration history are excluded from reset.',
+  'SYSTEM-CRITICAL — Admin/user accounts, sessions, refresh tokens, roles, permissions, tenant configuration, integration/payment credentials, audit logs, system templates, and Prisma migration history are excluded from reset.',
   'EMPLOYEE LOGIN ACCOUNTS remain protected. Employee profiles, departments, designations, attendance, leave, salary structures, and payroll policies are selectable business data. Employee deletion is blocked while any dependent history remains outside the same selected reset.',
   'SHARED SYSTEM DATA — Global plans, permissions, and singleton integration/payment configuration are not tenant-owned reset data and are excluded.',
 ];
@@ -45,7 +46,6 @@ export const FORBIDDEN_MODELS = [
   'rolePermission',
   'customer',
   'plan',
-  'customerSubscription',
   'integrationSetting',
   'paymentSetting',
   'auditLog',
@@ -131,9 +131,22 @@ export const RESET_MODULES: ResetModule[] = [
   {
     id: 'customers',
     name: 'Customers',
-    description: 'CRM companies and contacts only. The tenant organization record is protected.',
+    description: 'CRM companies, contacts, subscriptions, customer schedules, visits, documents, quotations, invoices, and deals. Tenant organization and shared plans stay.',
     available: true,
     tables: [
+      row('sendDetailsDelivery', 'send_details_deliveries', 'Document deliveries', 'customer'),
+      row('sendDetailsDocument', 'send_details_documents', 'Customer documents', 'customer'),
+      row('monthlySchedule', 'monthly_schedules', 'Customer schedules', 'customerSchedule'),
+      row('visitPhoto', 'visit_photos', 'Visit photos', 'customer'),
+      row('visit', 'Visit', 'Visits & appointments', 'customer'),
+      row('subscriptionInstallment', 'subscription_installments', 'Subscription installments', 'customer'),
+      row('customPlanOrder', 'custom_plan_orders', 'Custom plan orders', 'customer'),
+      row('customerSubscription', 'customer_subscriptions', 'Customer subscriptions', 'customer'),
+      row('quotationItem', 'QuotationItem', 'Quotation items', 'quotation'),
+      row('quotation', 'Quotation', 'Quotations', 'customer'),
+      row('invoiceItem', 'InvoiceItem', 'Invoice items', 'invoice'),
+      row('invoice', 'Invoice', 'Invoices', 'customer'),
+      row('deal', 'Deal', 'Deals', 'customer'),
       row('communicationHistory', 'CommunicationHistory', 'Contact communication', 'contact'),
       row('contact', 'Contact', 'Contacts', 'customer'),
       row('company', 'Company', 'CRM companies', 'customer'),
@@ -383,7 +396,7 @@ export function tablesForModules(ids: string[]): TableRule[] {
     whatsAppCampaignRecipient: 3, whatsAppCampaign: 4,
     attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7,
     taskHistory: 8, leadActivityTimeline: 8, leadNote: 8, leadReminder: 8, leadStatusHistory: 8, leadImage: 8, leadSocialProfile: 8,
-    taskProof: 9, communicationHistory: 9, quotationItem: 9,
+    taskProof: 9, communicationHistory: 9, quotationItem: 9, sendDetailsDelivery: 9,
     taskReview: 10, workTask: 10, ticketComment: 10,
     visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmNotificationOutbox: 13, hrmEmployeeMonthlyReport: 14,
     employeeModuleOverride: 15, employeeLeadLimit: 16, commissionSlab: 17, commissionConfig: 18, salaryTargetPolicy: 19, salaryTargetReview: 20,
@@ -397,12 +410,13 @@ export function tablesForModules(ids: string[]): TableRule[] {
     customerMarketingVideoView: 44, marketingVideo: 45, marketingBanner: 46, trendingContent: 47,
     socialPublish: 48, socialAccount: 49, socialMediaHandler: 50,
     dataCapturePlace: 51, dataCaptureSearch: 52, dataCaptureJob: 53,
-    subscriptionInstallment: 54, paymentHistory: 55, customPlanOrder: 56,
+    monthlySchedule: 53, subscriptionInstallment: 54, customerSubscription: 55, paymentHistory: 55, customPlanOrder: 56,
     hrmLeaveMonthlySnapshot: 57, hrmCommissionMonthlySnapshot: 58,
     hrmMonthlyReportRun: 59, hrmMonthlyCycle: 60,
     salaryStructure: 61, payrollPolicy: 62, locationTrackingSetting: 63, notification: 64,
+    sendDetailsDocument: 65,
     payroll: 68,
-    workAccessRequest: 71, monthlySchedule: 72, announcement: 73, quotation: 74, supportTicket: 75, work: 76, team: 77,
+    workAccessRequest: 71, announcement: 73, quotation: 74, supportTicket: 75, work: 76, team: 77,
     visit: 78, task: 79, employee: 80, deal: 81, lead: 82, contact: 85, company: 86, designation: 90, department: 100,
   };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
@@ -459,6 +473,10 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
       };
     case 'whatsappCampaignRecipient':
       return customerId == null ? {} : { campaign: { customerId } };
+    case 'customerSchedule':
+      return customerId == null
+        ? { subscriptionId: { not: null } }
+        : { customerId, subscriptionId: { not: null } };
     default:
       return { customerId };
   }
