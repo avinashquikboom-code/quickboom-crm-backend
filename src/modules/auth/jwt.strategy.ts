@@ -11,6 +11,44 @@ import {
   resolveCustomerAppPermissionItems,
 } from '../../common/utils/customer-app-permissions.util';
 
+// Project the current Employee schema explicitly. A broad relation include
+// selects every scalar field and can make an older generated client request a
+// column (such as managerId) after it has been removed by a rolling migration.
+const EMPLOYEE_JWT_SELECT = {
+  id: true,
+  customerId: true,
+  userId: true,
+  employeeCode: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+  gender: true,
+  dob: true,
+  joiningDate: true,
+  departmentId: true,
+  designationId: true,
+  employmentType: true,
+  employeeType: true,
+  city: true,
+  branch: true,
+  address: true,
+  emergencyContact: true,
+  bankDetails: true,
+  documents: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  mobileLoginEnabled: true,
+  permissionsUpdatedAt: true,
+  officeId: true,
+  shiftId: true,
+  whatsappReportsOptIn: true,
+  employeeModuleOverrides: true,
+  designation: true,
+  department: { select: { id: true, name: true, code: true } },
+} as const;
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   private readonly logger = new Logger(JwtStrategy.name);
@@ -100,11 +138,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       where: { id: userId },
       include: {
         employee: {
-          include: {
-            employeeModuleOverrides: true,
-            designation: true,
-            department: { select: { id: true, name: true, code: true } },
-          },
+          select: EMPLOYEE_JWT_SELECT,
         },
         customer: true,
         userRoles: {
