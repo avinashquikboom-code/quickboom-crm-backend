@@ -90,6 +90,10 @@ describe('data governance catalog', () => {
   it('deletes visit photos before visits so the visit cascade cannot consume the expected photo rows', () => {
     const order = tablesForModules(['visits-tasks']).map((table) => table.model);
     expect(order.indexOf('visitPhoto')).toBeLessThan(order.indexOf('visit'));
+    expect(order.indexOf('teamMember')).toBeLessThan(order.indexOf('team'));
+    expect(order.indexOf('workTask')).toBeLessThan(order.indexOf('work'));
+    expect(order.indexOf('ticketComment')).toBeLessThan(order.indexOf('supportTicket'));
+    expect(order.indexOf('team')).toBeLessThan(order.indexOf('task'));
   });
 
   it('deletes employee and department children before parent rows', () => {
