@@ -1237,13 +1237,36 @@ export class LeadService {
     return this.leadRepository.checkDuplicate(customerId, dto);
   }
 
+  private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
+    try {
+      const resetAudit = await this.prisma.auditLog.findFirst({
+        where: {
+          customerId,
+          action: 'DATA_RESET',
+          status: 'SUCCESS',
+        },
+        orderBy: { id: 'desc' },
+        select: { details: true },
+      });
+      if (!resetAudit?.details) return false;
+      const details = resetAudit.details as any;
+      if (details.scope === 'application' || details.scope === 'global') return true;
+      if (Array.isArray(details.modules) && details.modules.includes(moduleId)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   async getStages(customerId?: number | string, includeInactive = true, user?: any) {
     // Stage Management is the SINGLE SOURCE OF TRUTH.
     // Auto-seed default stages for a new workspace on first call.
     const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
     try {
-      await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
-      await this.leadRepository.ensureNewLeadStage(numCustomerId);
+      if (numCustomerId && !(await this.isModuleResetByTenant(numCustomerId, 'stage-management'))) {
+        await this.leadRepository.ensureDefaultStagesForCustomer(numCustomerId);
+        await this.leadRepository.ensureNewLeadStage(numCustomerId);
+      }
     } catch (err) {
       console.warn('[LeadService] ensureDefaultStagesForCustomer failed (non-fatal):', err);
     }

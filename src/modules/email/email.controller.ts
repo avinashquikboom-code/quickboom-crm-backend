@@ -26,4 +26,10 @@ export class EmailController {
   async getStatus() {
     return this.emailService.getSmtpStatus();
   }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get aggregated email delivery and campaign statistics' })
+  async getStats(@CurrentUser() user: any) {
+    return this.emailService.getEmailStats(user?.customerId);
+  }
 }

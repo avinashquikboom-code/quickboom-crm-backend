@@ -27,13 +27,34 @@ export class DealService {
     await this.ensureDefaultPipeline(customerId);
   }
 
+  private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
+    try {
+      const resetAudit = await this.prisma.auditLog.findFirst({
+        where: {
+          customerId,
+          action: 'DATA_RESET',
+          status: 'SUCCESS',
+        },
+        orderBy: { id: 'desc' },
+        select: { details: true },
+      });
+      if (!resetAudit?.details) return false;
+      const details = resetAudit.details as any;
+      if (details.scope === 'application' || details.scope === 'global') return true;
+      if (Array.isArray(details.modules) && details.modules.includes(moduleId)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   private async ensureDefaultPipeline(customerId: number) {
     const key = String(customerId);
     let pipeline = await this.prisma.pipeline.findFirst({
       where: { customerId, deletedAt: null },
       include: { stages: { orderBy: { order: 'asc' } } },
     });
-    if (!pipeline) {
+    if (!pipeline && !(await this.isModuleResetByTenant(customerId, 'stage-management'))) {
       pipeline = await this.prisma.pipeline.create({
         data: {
           customerId,
@@ -483,6 +504,12 @@ export class DealService {
   async listStages(customerId: number | string, activeOnly = false) {
     const tenantId = this.requireCustomer(customerId);
     const pipeline = await this.pipelineFor(tenantId);
+    if (!pipeline) {
+      return {
+        pipelineId: null,
+        stages: [],
+      };
+    }
     const stages = await this.prisma.pipelineStage.findMany({
       where: { pipelineId: pipeline.id, name: { not: REMOVED_DEAL_STAGE }, ...(activeOnly ? { isActive: true } : {}) },
       orderBy: [{ order: 'asc' }, { id: 'asc' }],
@@ -496,11 +523,21 @@ export class DealService {
 
   async createStage(customerId: number | string, dto: { name: string; order?: number; probability?: number; description?: string; color?: string; isActive?: boolean }) {
     const tenantId = this.requireCustomer(customerId);
-    const pipeline = await this.pipelineFor(tenantId);
+    let pipeline = await this.pipelineFor(tenantId);
+    if (!pipeline) {
+      pipeline = await this.prisma.pipeline.create({
+        data: {
+          customerId: tenantId,
+          name: 'Sales Pipeline',
+          isDefault: true,
+        },
+        include: { stages: { orderBy: { order: 'asc' } } },
+      });
+    }
     const name = String(dto.name || '').trim();
     if (!name) throw new BadRequestException('Stage name is required');
     await this.assertUniqueStageName(pipeline.id, name);
-    const maxOrder = pipeline.stages.reduce((max, stage) => Math.max(max, stage.order), 0);
+    const maxOrder = (pipeline.stages || []).reduce((max, stage) => Math.max(max, stage.order), 0);
     const order = Number.isInteger(Number(dto.order)) ? Number(dto.order) : maxOrder + 1;
     await this.shiftOrders(pipeline.id, order);
     return this.prisma.pipelineStage.create({

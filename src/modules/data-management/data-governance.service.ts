@@ -2505,21 +2505,21 @@ export class DataGovernanceService {
         model: 'employeeLeaveBalance',
         label: 'Employee leave balances referencing leave types',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
       checks.push({
         parent: 'leave-types',
         model: 'leaveAdjustmentHistory',
         label: 'Leave adjustments referencing leave types',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
       checks.push({
         parent: 'leave-types',
         model: 'hrmLeaveMonthlySnapshot',
         label: 'HRM monthly leave snapshots referencing leave types',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     if (moduleIds.includes('stage-management')) {
@@ -2544,7 +2544,7 @@ export class DataGovernanceService {
         model: 'employeeClaim',
         label: 'Employee claims referencing expense categories',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     if (moduleIds.includes('loan-types')) {
@@ -2553,7 +2553,7 @@ export class DataGovernanceService {
         model: 'employeeLoan',
         label: 'Employee loans referencing loan types',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     if (moduleIds.includes('task-status')) {
@@ -2562,7 +2562,7 @@ export class DataGovernanceService {
         model: 'task',
         label: 'Tasks referencing task statuses',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     if (moduleIds.includes('work-types')) {
@@ -2571,7 +2571,7 @@ export class DataGovernanceService {
         model: 'work',
         label: 'Work items referencing work types',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     if (moduleIds.includes('employee-types')) {
@@ -2580,7 +2580,7 @@ export class DataGovernanceService {
         model: 'employee',
         label: 'Employees referencing employee types',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     if (moduleIds.includes('payment-methods')) {
@@ -2589,7 +2589,7 @@ export class DataGovernanceService {
         model: 'paymentHistory',
         label: 'Payment transactions referencing payment methods',
         where: scoped,
-        policy: 'cascade',
+        policy: 'set-null',
       });
     }
     const warnings: Array<Record<string, unknown>> = [];

@@ -214,6 +214,27 @@ export class LeaveService {
     };
   }
 
+  private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
+    try {
+      const resetAudit = await this.prisma.auditLog.findFirst({
+        where: {
+          customerId,
+          action: 'DATA_RESET',
+          status: 'SUCCESS',
+        },
+        orderBy: { id: 'desc' },
+        select: { details: true },
+      });
+      if (!resetAudit?.details) return false;
+      const details = resetAudit.details as any;
+      if (details.scope === 'application' || details.scope === 'global') return true;
+      if (Array.isArray(details.modules) && details.modules.includes(moduleId)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   // ==========================================
   // 0. LEAVE TYPES
   // ==========================================
@@ -224,7 +245,7 @@ export class LeaveService {
       orderBy: { id: 'asc' },
     });
 
-    if (leaveTypes.length === 0) {
+    if (leaveTypes.length === 0 && !(await this.isModuleResetByTenant(numCustomerId, 'leave-types'))) {
       const defaultTypes = [
         { name: 'Casual Leave', code: 'CL', daysAllowedPerYear: 12 },
         { name: 'Sick Leave', code: 'SL', daysAllowedPerYear: 8 },
