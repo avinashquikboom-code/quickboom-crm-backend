@@ -1,5 +1,6 @@
 import { createStageOutbox } from './lead-stage-outbox';
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import { PhotoLookupCache } from '../data-capture/photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
@@ -1963,6 +1964,8 @@ export class LeadRepository {
           importedLeadId: true,
           googlePlaceId: true,
           sourceRecordId: true,
+          phone: true,
+          email: true,
           website: true,
           socialMedia: true,
           rawData: true,
@@ -1991,6 +1994,8 @@ export class LeadRepository {
           });
         if (!matching.length) continue;
 
+        let capturePhone: string | null = null;
+        let captureEmail: string | null = null;
         let captureWebsite: string | null = null;
         const captureSocial: Record<string, any> = {};
         for (const capture of matching) {
@@ -2004,6 +2009,12 @@ export class LeadRepository {
           for (const [key, value] of Object.entries(social)) {
             if (captureSocial[key] == null) captureSocial[key] = value;
           }
+          if (!capturePhone && capture.phone) {
+            capturePhone = ContactExtractor.normalizePhoneNumber(capture.phone) || capture.phone;
+          }
+          if (!captureEmail && capture.email) {
+            captureEmail = ContactExtractor.normalizeEmail(capture.email) || capture.email;
+          }
           if (!captureWebsite) {
             captureWebsite = safeHttpUrl(
               capture.website || rawData.website || social.website || social.web || social.site,
@@ -2011,6 +2022,8 @@ export class LeadRepository {
           }
         }
 
+        if ((!lead.phone || !lead.phone.trim()) && capturePhone) lead.phone = capturePhone;
+        if ((!lead.email || !lead.email.trim()) && captureEmail) lead.email = captureEmail;
         if (!safeHttpUrl(lead.website) && captureWebsite) lead.website = captureWebsite;
         const existingSocial = this.socialMediaRecord(lead.socialMedia);
         const mergedSocial = { ...captureSocial, ...existingSocial };

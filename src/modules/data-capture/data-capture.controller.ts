@@ -137,6 +137,22 @@ export class DataCaptureController {
   }
 
   /**
+   * POST /api/v1/data-capture/backfill-imported-leads
+   * Backfill missing contact fields on previously imported leads
+   */
+  @Post('backfill-imported-leads')
+  @RequirePermissions({ module: 'DATA_CAPTURE', action: 'EDIT' }, { module: 'LEADS', action: 'EDIT' })
+  @ApiOperation({ summary: 'Backfill missing contact fields (phone, email, website) on previously imported CRM leads' })
+  async backfillImportedLeads(
+    @CurrentCustomer() customerId: string,
+    @Body() dto?: { dryRun?: boolean },
+    @Query('dryRun') dryRunQuery?: string,
+  ) {
+    const isDryRun = dto?.dryRun !== undefined ? Boolean(dto.dryRun) : dryRunQuery === 'false' ? false : true;
+    return this.dataCaptureService.backfillImportedLeads(customerId, isDryRun);
+  }
+
+  /**
    * GET /api/v1/data-capture/jobs & /api/v1/data-capture/history
    * Retrieves past extraction jobs for the customer
    */

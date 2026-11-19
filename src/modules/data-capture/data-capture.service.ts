@@ -1611,9 +1611,9 @@ export class DataCaptureService implements OnModuleInit {
           businessName: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'businessName') ? (preview.businessName || '') : p.businessName,
           category: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'category') ? preview.category : (p.category || undefined),
           address: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'address') ? preview.address : (p.address || undefined),
-          phone: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'phone') ? preview.phone : (p.phone || undefined),
-          email: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'email') ? undefined : (p.email || undefined),
-          website: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'website') ? preview.website : (p.website || undefined),
+          phone: p.phone || preview.phone || undefined,
+          email: p.email || preview.email || undefined,
+          website: p.website || preview.website || undefined,
           rating: this.isGoogleReference(p) ? preview.rating : (p.rating || undefined),
           reviewCount: this.isGoogleReference(p) ? preview.reviewCount : (p.reviewCount || undefined),
           latitude: this.isGoogleReference(p) ? preview.latitude : (p.latitude || undefined),
@@ -1635,7 +1635,7 @@ export class DataCaptureService implements OnModuleInit {
           extractionJobId: p.jobId || undefined,
           googlePhotos: normGP.length > 0 ? normGP : (preview.googlePhotos || []),
           photos: normPhotoUrls.length > 0 ? normPhotoUrls : undefined,
-          socialMedia: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'socialMedia') ? undefined : this.extractSocialMediaFromPlace(p),
+          socialMedia: this.extractSocialMediaFromPlace(p) || undefined,
         };
       });
 
@@ -1723,9 +1723,9 @@ export class DataCaptureService implements OnModuleInit {
       businessName: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'businessName') ? (preview.businessName || '') : place.businessName,
       category: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'category') ? preview.category : (place.category || undefined),
       address: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'address') ? preview.address : (place.address || undefined),
-      phone: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'phone') ? preview.phone : (place.phone || undefined),
-      email: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'email') ? undefined : (place.email || undefined),
-      website: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'website') ? preview.website : (place.website || undefined),
+      phone: place.phone || preview.phone || undefined,
+      email: place.email || preview.email || undefined,
+      website: place.website || preview.website || undefined,
       rating: this.isGoogleReference(place) ? preview.rating : (place.rating || undefined),
       reviewCount: this.isGoogleReference(place) ? preview.reviewCount : (place.reviewCount || undefined),
       latitude: this.isGoogleReference(place) ? preview.latitude : (place.latitude || undefined),
@@ -1748,7 +1748,7 @@ export class DataCaptureService implements OnModuleInit {
       duplicateMatches,
       googlePhotos: placeGP.length > 0 ? placeGP : (preview.googlePhotos || []),
       photos: placePhotoUrls.length > 0 ? placePhotoUrls : undefined,
-      socialMedia: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'socialMedia') ? undefined : this.extractSocialMediaFromPlace(place),
+      socialMedia: this.extractSocialMediaFromPlace(place) || undefined,
     };
   }
 
@@ -1973,11 +1973,10 @@ export class DataCaptureService implements OnModuleInit {
     });
 
     if (updated.importedLeadId) {
-      const isGoogle = this.isGoogleReference(updated);
       const authorizedContactFields = {
-        phone: !isGoogle || this.hasUserProvidedField(updated, 'phone') ? updated.phone : undefined,
-        email: !isGoogle || this.hasUserProvidedField(updated, 'email') ? updated.email : undefined,
-        website: !isGoogle || this.hasUserProvidedField(updated, 'website') ? updated.website : undefined,
+        phone: updated.phone || undefined,
+        email: updated.email || undefined,
+        website: updated.website || undefined,
       };
       if (Object.values(authorizedContactFields).some((value) => typeof value === 'string' && value.trim())) {
         try {
@@ -2446,9 +2445,26 @@ export class DataCaptureService implements OnModuleInit {
       fields[key] = normalized;
     }
     if (!fields.businessName) throw new BadRequestException('Business name is missing. Place details could not be retrieved.');
-    if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) throw new BadRequestException('Invalid email.');
-    if (fields.phone && (!/^\+?[\d\s().-]{8,25}$/.test(fields.phone) || fields.phone.replace(/\D/g, '').length < 8 || fields.phone.replace(/\D/g, '').length > 15)) throw new BadRequestException('Invalid phone.');
-    if (fields.website) fields.website = this.normalizeWebsiteUrl(fields.website) || '';
+    if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) {
+      const normalized = ContactExtractor.normalizeEmail(fields.email);
+      if (normalized) {
+        fields.email = normalized;
+      } else {
+        throw new BadRequestException('Invalid email.');
+      }
+    }
+    if (fields.phone && (!/^\+?[\d\s().-]{8,25}$/.test(fields.phone) || fields.phone.replace(/\D/g, '').length < 8 || fields.phone.replace(/\D/g, '').length > 15)) {
+      const normalized = ContactExtractor.normalizePhoneNumber(fields.phone);
+      if (normalized) {
+        fields.phone = normalized;
+      } else {
+        throw new BadRequestException('Invalid phone.');
+      }
+    }
+    if (fields.website) {
+      fields.website = this.normalizeWebsiteUrl(fields.website) || '';
+      if (!fields.website) delete fields.website;
+    }
     return fields;
   }
 
@@ -2668,10 +2684,9 @@ export class DataCaptureService implements OnModuleInit {
       }
       const googleReference = googlePlaceReference;
 
-      // 2. Authoritative field mapping from candidate and dbPlace. A name
-      // retrieved from Google is only a transient reference preview, not an
-      // independently supplied CRM name. Existing tenant-owned non-Google
-      // capture data remains a valid fallback when no explicit field is sent.
+      // 2. Authoritative field mapping from candidate and dbPlace. All captured
+      // contact details (phone, email, website, address, category) are preserved
+      // and mapped to the CRM Lead, with candidate overrides taking precedence.
       let fields: any;
       let userSocialMedia: Record<string, string> = {};
       try {
@@ -2680,25 +2695,31 @@ export class DataCaptureService implements OnModuleInit {
           businessName: isValidCapturedName(dbPlace.businessName)
             ? dbPlace.businessName
             : (isValidCapturedName(googlePreviewName) ? googlePreviewName : undefined),
-          phone: !googleReference || this.hasUserProvidedField(dbPlace, 'phone') ? dbPlace.phone : undefined,
-          email: !googleReference || this.hasUserProvidedField(dbPlace, 'email') ? dbPlace.email : undefined,
-          website: !googleReference || this.hasUserProvidedField(dbPlace, 'website') ? dbPlace.website : undefined,
-          address: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? dbPlace.address : undefined,
-          category: !googleReference || this.hasUserProvidedField(dbPlace, 'category') ? dbPlace.category : undefined,
-          city: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.city : undefined,
-          state: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.state : undefined,
-          country: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.country : undefined,
-          pincode: !googleReference || this.hasUserProvidedField(dbPlace, 'address') ? location.pincode : undefined,
+          phone: dbPlace.phone || undefined,
+          email: dbPlace.email || undefined,
+          website: dbPlace.website || undefined,
+          address: dbPlace.address || undefined,
+          category: dbPlace.category || undefined,
+          city: location.city || undefined,
+          state: location.state || undefined,
+          country: location.country || undefined,
+          pincode: location.pincode || undefined,
         };
-        const suppliedFields = candidate.independentFields &&
+        const candidateDirectFields: Record<string, any> = {};
+        for (const k of ['businessName', 'phone', 'email', 'website', 'address', 'city', 'state', 'country', 'pincode', 'category']) {
+          if (typeof candidate[k] === 'string' && candidate[k].trim().length > 0) {
+            candidateDirectFields[k] = candidate[k].trim();
+          }
+        }
+        const suppliedFields = {
+          ...(candidate.independentFields &&
           typeof candidate.independentFields === 'object' &&
           !Array.isArray(candidate.independentFields)
-          ? candidate.independentFields
-          : {};
-        // A saved name is the canonical Lead title fallback. For Google
-        // references, other saved fields are eligible only when the tenant
-        // explicitly supplied them through the editable capture workflow.
-        if (googleReference && !isValidCapturedName(storedFields.businessName)) {
+            ? candidate.independentFields
+            : {}),
+          ...candidateDirectFields,
+        };
+        if (!isValidCapturedName(storedFields.businessName) && !isValidCapturedName(suppliedFields.businessName)) {
           const savedPlaceId = this.normalizedGooglePlaceId(dbPlace.googlePlaceId);
           throw new BadRequestException(savedPlaceId
             ? 'Business name is missing: Google Places details could not be retrieved for the saved Place ID.'
@@ -2722,7 +2743,7 @@ export class DataCaptureService implements OnModuleInit {
       const phoneDigits = resolvedPhone ? String(resolvedPhone).replace(/\D/g, '') : '';
 
       const resolvedEmail = fields.email;
-      const normalizedEmail = ContactExtractor.normalizeEmail(resolvedEmail);
+      const normalizedEmail = resolvedEmail ? (ContactExtractor.normalizeEmail(resolvedEmail) || resolvedEmail.trim().toLowerCase()) : null;
 
       const normalizedWebsite = fields.website || null;
 
@@ -3671,5 +3692,132 @@ export class DataCaptureService implements OnModuleInit {
       doc.end();
     });
     return { filename: 'capture-history.pdf', contentType: 'application/pdf', body: buffer };
+  }
+
+  /**
+   * Backfill missing contact fields (phone, email, website) on previously imported CRM leads
+   * from same-tenant Data Capture records.
+   */
+  async backfillImportedLeads(
+    customerId: string | number,
+    dryRun: boolean = true,
+  ): Promise<{
+    success: boolean;
+    dryRun: boolean;
+    scannedCaptureCount: number;
+    matchedLeadCount: number;
+    updatedLeadCount: number;
+    details: Array<{
+      leadId: number;
+      companyName: string;
+      captureId: number;
+      updatedFields: Record<string, string>;
+    }>;
+  }> {
+    const numCustomerId = this.requireTenant(customerId);
+    const capturedPlaces = await this.prisma.dataCapturePlace.findMany({
+      where: {
+        customerId: numCustomerId,
+        deletedAt: null,
+        OR: [
+          { isImported: true },
+          { importedLeadId: { not: null } },
+        ],
+      },
+      select: {
+        id: true,
+        customerId: true,
+        businessName: true,
+        phone: true,
+        email: true,
+        website: true,
+        importedLeadId: true,
+        googlePlaceId: true,
+        sourceRecordId: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    const scannedCaptureCount = capturedPlaces.length;
+    let matchedLeadCount = 0;
+    let updatedLeadCount = 0;
+    const details: Array<{
+      leadId: number;
+      companyName: string;
+      captureId: number;
+      updatedFields: Record<string, string>;
+    }> = [];
+
+    for (const place of capturedPlaces) {
+      if (!place.phone && !place.email && !place.website) continue;
+
+      let lead: any = null;
+      if (place.importedLeadId) {
+        lead = await this.prisma.lead.findFirst({
+          where: { id: place.importedLeadId, customerId: numCustomerId, deletedAt: null },
+        });
+      }
+      if (!lead && place.googlePlaceId) {
+        lead = await this.prisma.lead.findFirst({
+          where: { googlePlaceId: place.googlePlaceId, customerId: numCustomerId, deletedAt: null },
+        });
+      }
+      if (!lead && place.sourceRecordId) {
+        lead = await this.prisma.lead.findFirst({
+          where: { sourceRecordId: place.sourceRecordId, customerId: numCustomerId, deletedAt: null },
+        });
+      }
+
+      if (!lead) continue;
+      matchedLeadCount++;
+
+      const fieldsToUpdate: Record<string, string> = {};
+      if ((!lead.phone || !lead.phone.trim()) && place.phone && place.phone.trim()) {
+        const normPhone = ContactExtractor.normalizePhoneNumber(place.phone) || place.phone.trim();
+        if (normPhone) fieldsToUpdate.phone = normPhone;
+      }
+      if ((!lead.email || !lead.email.trim()) && place.email && place.email.trim()) {
+        const normEmail = ContactExtractor.normalizeEmail(place.email) || place.email.trim().toLowerCase();
+        if (normEmail) fieldsToUpdate.email = normEmail;
+      }
+      if ((!lead.website || !lead.website.trim()) && place.website && place.website.trim()) {
+        const normWeb = this.normalizeWebsiteUrl(place.website) || place.website.trim();
+        if (normWeb) fieldsToUpdate.website = normWeb;
+      }
+
+      if (Object.keys(fieldsToUpdate).length === 0) continue;
+
+      if (!dryRun) {
+        await this.prisma.lead.updateMany({
+          where: {
+            id: lead.id,
+            customerId: numCustomerId,
+            deletedAt: null,
+          },
+          data: fieldsToUpdate,
+        });
+      }
+
+      updatedLeadCount++;
+      details.push({
+        leadId: lead.id,
+        companyName: lead.companyName || lead.title || place.businessName,
+        captureId: place.id,
+        updatedFields: fieldsToUpdate,
+      });
+    }
+
+    this.logger.log(
+      `[DATA_CAPTURE_BACKFILL] customerId=${numCustomerId} dryRun=${dryRun} scanned=${scannedCaptureCount} matched=${matchedLeadCount} updated=${updatedLeadCount}`,
+    );
+
+    return {
+      success: true,
+      dryRun,
+      scannedCaptureCount,
+      matchedLeadCount,
+      updatedLeadCount,
+      details,
+    };
   }
 }
