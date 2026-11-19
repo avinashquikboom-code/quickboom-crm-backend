@@ -946,14 +946,109 @@ export class TaskService {
     });
   }
 
-  async delete(customerId: number | string, id: number | string) {
+  async delete(customerId: number | string, id: number | string, permanent = true) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    const task = await this.findOne(numCustomerId, numId);
+
+    if (permanent) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.taskHistory.deleteMany({ where: { taskId: numId } });
+        await tx.taskProof.deleteMany({ where: { taskId: numId } });
+        await tx.taskReview.deleteMany({ where: { taskId: numId } });
+        await tx.task.delete({ where: { id: numId } });
+      });
+
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'TASKS',
+            description: `Permanently deleted Task #${numId} (${task.title})`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            entityType: 'Task',
+            entityId: String(numId),
+            details: { taskId: numId, title: task.title },
+          },
+        });
+      } catch {
+        // ignore
+      }
+
+      return { success: true, deleted: true, message: `Task #${numId} permanently deleted.` };
+    }
 
     return this.prisma.task.update({
       where: { id: numId },
       data: { deletedAt: new Date() },
     });
+  }
+
+  async bulkDelete(customerId: number | string, ids: Array<number | string>, permanent = true) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Task IDs array must not be empty.');
+    }
+    const numCustomerId = Number(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid task IDs provided.');
+    }
+
+    const tasks = await this.prisma.task.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      select: { id: true, title: true },
+    });
+
+    const foundIds = tasks.map((t) => t.id);
+    const blocked: Array<{ id: number; reason: string }> = [];
+    const missingIds = uniqueIds.filter((id) => !foundIds.includes(id));
+    for (const mId of missingIds) {
+      blocked.push({ id: mId, reason: 'Task not found or belongs to another company.' });
+    }
+
+    if (foundIds.length > 0) {
+      if (permanent) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.taskHistory.deleteMany({ where: { taskId: { in: foundIds } } });
+          await tx.taskProof.deleteMany({ where: { taskId: { in: foundIds } } });
+          await tx.taskReview.deleteMany({ where: { taskId: { in: foundIds } } });
+          await tx.task.deleteMany({ where: { id: { in: foundIds }, customerId: numCustomerId } });
+        });
+      } else {
+        await this.prisma.task.updateMany({
+          where: { id: { in: foundIds }, customerId: numCustomerId },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'TASKS',
+            description: `Bulk deleted ${foundIds.length} tasks`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            details: { requested: uniqueIds.length, deletedCount: foundIds.length, deletedIds: foundIds },
+          },
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: foundIds.length,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: foundIds,
+      blockedDetails: blocked,
+      message: `Permanently deleted ${foundIds.length} tasks.` + (blocked.length ? ` (${blocked.length} skipped)` : ''),
+    };
   }
 }

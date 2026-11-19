@@ -118,4 +118,30 @@ export class DepartmentController {
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.departmentService.remove(targetCustomerId, id);
   }
+
+  @Post(['bulk-delete', 'bulk'])
+  @ApiOperation({ summary: 'Bulk delete or deactivate departments' })
+  async bulkRemove(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.departmentService.bulkRemove(targetCustomerId, dto?.ids || []);
+  }
+
+  @Delete('bulk')
+  @ApiOperation({ summary: 'Bulk delete departments (DELETE alias)' })
+  async bulkRemoveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.departmentService.bulkRemove(targetCustomerId, dto?.ids || []);
+  }
 }

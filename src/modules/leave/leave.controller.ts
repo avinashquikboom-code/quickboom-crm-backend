@@ -106,6 +106,32 @@ export class LeaveController {
     return this.leaveService.deleteLeaveType(Number(id), targetCustomerId);
   }
 
+  @Post(['types/bulk-delete', 'types/bulk'])
+  @ApiOperation({ summary: 'Bulk delete Leave Types with dependency safety check' })
+  async bulkDeleteLeaveTypes(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.bulkDeleteLeaveTypes(dto?.ids || [], targetCustomerId);
+  }
+
+  @Delete('types/bulk')
+  @ApiOperation({ summary: 'Bulk delete Leave Types (DELETE alias)' })
+  async bulkDeleteLeaveTypesAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.leaveService.bulkDeleteLeaveTypes(dto?.ids || [], targetCustomerId);
+  }
+
   // =========================================================
   // 1. TODAY'S WORKFORCE AVAILABILITY
   // =========================================================

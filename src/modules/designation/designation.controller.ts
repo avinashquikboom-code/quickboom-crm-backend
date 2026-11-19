@@ -184,4 +184,30 @@ export class DesignationController {
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
     return this.designationService.remove(targetCustomerId, id);
   }
+
+  @Post(['bulk-delete', 'bulk'])
+  @ApiOperation({ summary: 'Bulk delete or deactivate designations' })
+  async bulkRemove(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.designationService.bulkRemove(targetCustomerId, dto?.ids || []);
+  }
+
+  @Delete('bulk')
+  @ApiOperation({ summary: 'Bulk delete designations (DELETE alias)' })
+  async bulkRemoveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.designationService.bulkRemove(targetCustomerId, dto?.ids || []);
+  }
 }

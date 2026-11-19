@@ -369,6 +369,70 @@ export class LeaveService {
     });
   }
 
+  async bulkDeleteLeaveTypes(ids: number[], customerId?: number | string) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Leave type IDs array must not be empty.');
+    }
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid leave type IDs provided.');
+    }
+
+    const types = await this.prisma.leaveType.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      select: { id: true, name: true },
+    });
+
+    const deleted: number[] = [];
+    const blocked: Array<{ id: number; reason: string }> = [];
+
+    for (const type of types) {
+      const [requestCount, balanceCount] = await Promise.all([
+        this.prisma.leaveRequest.count({ where: { leaveTypeId: type.id } }),
+        this.prisma.employeeLeaveBalance.count({ where: { leaveTypeId: type.id } }),
+      ]);
+
+      if (requestCount > 0 || balanceCount > 0) {
+        blocked.push({
+          id: type.id,
+          reason: `Referenced by ${requestCount} leave application(s) and ${balanceCount} balance(s).`,
+        });
+        continue;
+      }
+
+      await this.prisma.leaveType.delete({ where: { id: type.id } });
+      deleted.push(type.id);
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          action: 'DELETE',
+          module: 'LEAVE_TYPES',
+          description: `Bulk deleted ${deleted.length} leave types`,
+          status: 'SUCCESS',
+          source: 'ADMIN_PANEL',
+          details: { requested: uniqueIds.length, deletedCount: deleted.length, deletedIds: deleted, blockedDetails: blocked },
+        },
+      });
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: deleted,
+      blockedDetails: blocked,
+      message: `Permanently deleted ${deleted.length} leave types.` + (blocked.length ? ` (${blocked.length} blocked by existing requests)` : ''),
+    };
+  }
+
   // ==========================================
   // 2. LEAVE REQUESTS MANAGEMENT
   // ==========================================

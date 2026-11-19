@@ -1172,7 +1172,33 @@ export class EmployeeService {
       select: { employeeCode: true },
     });
 
-    // Query audit logs using this.prisma outside of tx to avoid connection multiplexing or transaction aborts
+    // A complete Employee Data Reset keeps audit history intact. Its marker
+    // defines the point from which historic employee codes remain relevant.
+    // Include a global marker so a verified Super Admin reset also applies to
+    // every tenant whose employees were removed by that reset.
+    let resetMarkerId: number | null = null;
+    if (this.prisma?.auditLog?.findMany) {
+      try {
+        const markers = await this.prisma.auditLog.findMany({
+          where: {
+            action: 'EMPLOYEE_ID_SEQUENCE_RESET',
+            module: 'DATA_MANAGEMENT',
+            status: 'SUCCESS',
+            OR: [{ customerId: numCustomerId }, { customerId: null }],
+          },
+          select: { id: true },
+          take: 1,
+          orderBy: { id: 'desc' },
+        });
+        resetMarkerId = Number(markers?.[0]?.id) || null;
+      } catch {
+        resetMarkerId = null;
+      }
+    }
+
+    // Query audit logs using this.prisma outside of tx to avoid connection multiplexing or transaction aborts.
+    // Logs before the last complete reset are retained for audit but no longer
+    // participate in the current employee-code sequence.
     let auditLogs: any[] = [];
     if (this.prisma?.auditLog) {
       try {
@@ -1180,6 +1206,7 @@ export class EmployeeService {
           where: {
             customerId: numCustomerId,
             module: 'EMPLOYEE',
+            ...(resetMarkerId ? { id: { gt: resetMarkerId } } : {}),
           },
           select: { details: true },
           take: 500,
@@ -2710,6 +2737,47 @@ export class EmployeeService {
       action: 'DELETED',
       employeeId: numId,
       message: 'Employee deleted successfully.',
+    };
+  }
+
+  async bulkRemove(params: { ids: number[]; customerId?: number | string; isSuperAdmin?: boolean }) {
+    const { ids, customerId, isSuperAdmin = false } = params;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Employee IDs array must not be empty.');
+    }
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid employee IDs provided.');
+    }
+
+    const deleted: number[] = [];
+    const blocked: Array<{ id: number; reason: string }> = [];
+    const failed: Array<{ id: number; reason: string }> = [];
+
+    for (const empId of uniqueIds) {
+      try {
+        await this.remove({ id: empId, customerId, isSuperAdmin });
+        deleted.push(empId);
+      } catch (err: any) {
+        const msg = err?.message || 'Deletion blocked';
+        if (msg.includes('protected history') || msg.includes('dependent records') || msg.includes('cannot be permanently deleted')) {
+          blocked.push({ id: empId, reason: msg });
+        } else {
+          failed.push({ id: empId, reason: msg });
+        }
+      }
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      failed: failed.length,
+      deletedIds: deleted,
+      blockedDetails: blocked,
+      failedDetails: failed,
+      message: `Permanently deleted ${deleted.length} employees.` + (blocked.length ? ` (${blocked.length} blocked by protected history)` : '') + (failed.length ? ` (${failed.length} failed)` : ''),
     };
   }
 

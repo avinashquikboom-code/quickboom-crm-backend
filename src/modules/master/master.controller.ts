@@ -166,5 +166,29 @@ export class MasterController {
     const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
     return this.masterService.deleteMasterItem(id, targetCustomerId);
   }
+
+  @Post(['items/bulk-delete', 'items/bulk'])
+  @ApiOperation({ summary: 'Bulk permanently delete master item records' })
+  async bulkDeleteItems(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.masterService.bulkDeleteMasterItems(dto?.ids || [], targetCustomerId);
+  }
+
+  @Delete('items/bulk')
+  @ApiOperation({ summary: 'Bulk delete master item records (DELETE alias)' })
+  async bulkDeleteItemsAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.masterService.bulkDeleteMasterItems(dto?.ids || [], targetCustomerId);
+  }
 }
 

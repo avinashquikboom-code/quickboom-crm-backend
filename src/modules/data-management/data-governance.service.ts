@@ -876,6 +876,23 @@ export class DataGovernanceService {
             if (remainingCustomerReferences !== 0) {
               throw new Error(`Customer employee references: ${remainingCustomerReferences} records remain after reset cleanup.`);
             }
+            // Preserve employee audit history, but record the boundary after a
+            // verified full employee reset so generated employee codes can
+            // restart without considering codes from before this reset.
+            const remainingEmployees = await tx.employee.count({
+              where: tenantId == null ? {} : { customerId: tenantId },
+            });
+            if (remainingEmployees === 0) {
+              await tx.auditLog.create({
+                data: this.auditData(tenantId, userId, role, 'EMPLOYEE_ID_SEQUENCE_RESET', 'SUCCESS', {
+                  operationId,
+                  scope: 'EMPLOYEE_ID_SEQUENCE_RESET',
+                  modules: moduleIds,
+                  remainingEmployees: 0,
+                  verified: true,
+                }),
+              });
+            }
           }
           if (protectedDesignationIds.length) {
             const remainingProtectedDesignations = await tx.designation.count({
@@ -2307,7 +2324,8 @@ export class DataGovernanceService {
     const selected = new Set(tablesForModules(moduleIds).map((table) => table.model));
     const checks: Array<{
       parent: string; model: string; label: string; where: Record<string, unknown>;
-      crossTenantWhere?: Record<string, unknown>; policy?: 'cascade' | 'set-null' | 'protected'; allowSameModelSelection?: boolean;
+      crossTenantWhere?: Record<string, unknown>; crossTenantIsSeparate?: boolean;
+      policy?: 'cascade' | 'set-null' | 'protected'; allowSameModelSelection?: boolean;
     }> = [];
     const scoped = scopedCustomer(customerId);
     const employeeRelation = { employee: customerId == null ? {} : { customerId } };
@@ -2317,7 +2335,7 @@ export class DataGovernanceService {
     const protectedDesignationSet = new Set(designationState?.designationIds || []);
     if (moduleIds.includes('employees')) {
       for (const [model, label] of [
-        ['attendance', 'Attendance'], ['leaveRequest', 'Leave applications'], ['salaryStructure', 'Salary structures'],
+        ['attendance', 'Attendance'], ['leaveRequest', 'Leave applications'],
         ['salarySlip', 'Payslips'], ['payrollItem', 'Payroll transactions'], ['employeeLoan', 'Employee loans'],
         ['commission', 'Commissions'], ['commissionWithdrawal', 'Commission withdrawals'], ['employeeClaim', 'Employee claims'],
         ['employeeLocation', 'Location history'], ['remoteRequest', 'Remote work requests'], ['overtimeRequest', 'Overtime requests'], ['visit', 'Visits'],
@@ -2357,6 +2375,21 @@ export class DataGovernanceService {
           policy: 'cascade',
         });
       }
+      // SalaryStructure has both a tenant owner (customerId) and an Employee
+      // foreign key. Its module reset deletes by customerId, so dependency
+      // preview must use that exact eligibility rule. Rows owned by another
+      // tenant that reference this tenant's employee remain visible blockers.
+      checks.push({
+        parent: 'employees',
+        model: 'salaryStructure',
+        label: 'Salary structures',
+        where: { ...(customerId == null ? {} : { customerId }), ...employeeRelation },
+        ...(customerId == null ? {} : {
+          crossTenantWhere: { customerId: { not: customerId }, employee: { customerId } },
+          crossTenantIsSeparate: true,
+        }),
+        policy: 'cascade',
+      });
       checks.push({ parent: 'employees', model: 'overtimeApproval', label: 'Overtime approval history', where: { request: { employee: customerId == null ? {} : { customerId } } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, request: { employee: { customerId } } } }), policy: 'cascade' });
       checks.push({ parent: 'employees', model: 'workTask', label: 'Work task assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { work: { customerId: { not: customerId } }, assignedTo: { customerId } } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'lead', label: 'Lead assignment and conversion references', where: { ...scoped, OR: [{ employee: customerId == null ? { isNot: null } : { customerId } }, { convertedByEmployee: customerId == null ? { isNot: null } : { customerId } }] }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, OR: [{ employee: { customerId } }, { convertedByEmployee: { customerId } }] } }), policy: 'set-null' });
@@ -2605,12 +2638,16 @@ export class DataGovernanceService {
         : 0;
       // The primary predicate follows the referenced employee/designation and can include
       // rows owned by other tenants. Cross-tenant rows are a subset of that total.
-      const records = Math.max(scopedRecords, crossTenantRecords);
+      const records = check.crossTenantIsSeparate
+        ? scopedRecords + crossTenantRecords
+        : Math.max(scopedRecords, crossTenantRecords);
       if (!records) continue;
       const included = selected.has(check.model) && (check.parent !== check.model || check.allowSameModelSelection === true);
       const policy = check.policy || 'cascade';
       const blocking = policy === 'protected' || crossTenantRecords > 0 || (policy === 'cascade' && !included);
-      const sameTenantRecords = Math.max(0, scopedRecords - crossTenantRecords);
+      const sameTenantRecords = check.crossTenantIsSeparate
+        ? scopedRecords
+        : Math.max(0, scopedRecords - crossTenantRecords);
       const resolvedRecords = policy === 'protected'
         ? 0
         : policy === 'set-null'
@@ -2619,7 +2656,7 @@ export class DataGovernanceService {
             ? sameTenantRecords
             : 0;
       const unresolvedRecords = Math.max(0, records - resolvedRecords);
-      const resolutionModule = !included && policy === 'cascade'
+      const resolutionModule = policy === 'cascade'
         ? RESET_MODULES.find((item) => item.tables.some((table) => table.model === check.model))
         : undefined;
       const moduleName = resolutionModule?.name || check.parent;
@@ -2660,6 +2697,9 @@ export class DataGovernanceService {
         reason,
         recommendedAction,
         owningTenantInfo: crossTenantRecords > 0 ? 'Other Tenant Accounts' : null,
+        ...(check.model === 'salaryStructure' && check.parent === 'employees'
+          ? { diagnosticRecordIds: (await this.delegate(client, check.model).findMany({ where: check.where, select: { id: true }, orderBy: { id: 'asc' } })).map((row: { id: number }) => row.id) }
+          : {}),
       });
     }
     if (designationState?.roles.length) {

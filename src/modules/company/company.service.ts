@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCompanyDto, UpdateCompanyDto, CheckDuplicateCompanyDto } from './dto/company.dto';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -270,14 +270,107 @@ export class CompanyService {
     });
   }
 
-  async delete(customerId: number | string | undefined, id: number | string) {
+  async delete(customerId: number | string | undefined, id: number | string, permanent = true) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    const company = await this.findOne(numCustomerId, numId);
+
+    if (permanent) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.contact.updateMany({ where: { companyId: numId }, data: { companyId: null } });
+        await tx.deal.updateMany({ where: { companyId: numId }, data: { companyId: null } });
+        await tx.company.delete({ where: { id: numId } });
+      });
+
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'CRM_COMPANIES',
+            description: `Permanently deleted Company #${numId} (${company.name})`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            entityType: 'Company',
+            entityId: String(numId),
+            details: { companyId: numId, name: company.name },
+          },
+        });
+      } catch {
+        // ignore
+      }
+
+      return { success: true, deleted: true, message: `Company #${numId} permanently deleted.` };
+    }
 
     return this.prisma.company.update({
       where: { id: numId },
       data: { deletedAt: new Date() },
     });
+  }
+
+  async bulkDelete(customerId: number | string | undefined, ids: Array<number | string>, permanent = true) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Company IDs array must not be empty.');
+    }
+    const numCustomerId = Number(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid company IDs provided.');
+    }
+
+    const companies = await this.prisma.company.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      select: { id: true, name: true },
+    });
+
+    const foundIds = companies.map((c) => c.id);
+    const blocked: Array<{ id: number; reason: string }> = [];
+    const missingIds = uniqueIds.filter((id) => !foundIds.includes(id));
+    for (const mId of missingIds) {
+      blocked.push({ id: mId, reason: 'Company not found or belongs to another company.' });
+    }
+
+    if (foundIds.length > 0) {
+      if (permanent) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.contact.updateMany({ where: { companyId: { in: foundIds } }, data: { companyId: null } });
+          await tx.deal.updateMany({ where: { companyId: { in: foundIds } }, data: { companyId: null } });
+          await tx.company.deleteMany({ where: { id: { in: foundIds }, customerId: numCustomerId } });
+        });
+      } else {
+        await this.prisma.company.updateMany({
+          where: { id: { in: foundIds }, customerId: numCustomerId },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'CRM_COMPANIES',
+            description: `Bulk deleted ${foundIds.length} companies`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            details: { requested: uniqueIds.length, deletedCount: foundIds.length, deletedIds: foundIds },
+          },
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: foundIds.length,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: foundIds,
+      blockedDetails: blocked,
+      message: `Permanently deleted ${foundIds.length} companies.` + (blocked.length ? ` (${blocked.length} skipped)` : ''),
+    };
   }
 }

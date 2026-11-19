@@ -115,7 +115,83 @@ export class MasterService {
       where: { id: Number(id) },
     });
 
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          action: 'DELETE',
+          module: 'MASTER_DATA',
+          description: `Deleted Master Item #${id} (${existing.name})`,
+          status: 'SUCCESS',
+          source: 'ADMIN_PANEL',
+          entityType: 'MasterItem',
+          entityId: String(id),
+          details: { id: existing.id, name: existing.name, type: existing.type },
+        },
+      });
+    } catch {
+      // ignore
+    }
+
     return { success: true, message: 'Master record deleted successfully' };
+  }
+
+  async bulkDeleteMasterItems(ids: number[], customerId?: number | string) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Master item IDs array must not be empty.');
+    }
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid master item IDs provided.');
+    }
+
+    const existing = await this.prisma.masterItem.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      select: { id: true, name: true, type: true },
+    });
+
+    const foundIds = existing.map((r) => r.id);
+    const blocked: Array<{ id: number; reason: string }> = [];
+    const missingIds = uniqueIds.filter((id) => !foundIds.includes(id));
+    for (const mId of missingIds) {
+      blocked.push({ id: mId, reason: 'Record not found or does not belong to your company.' });
+    }
+
+    let deletedCount = 0;
+    if (foundIds.length > 0) {
+      const res = await this.prisma.masterItem.deleteMany({
+        where: { id: { in: foundIds }, customerId: numCustomerId },
+      });
+      deletedCount = res.count;
+
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'MASTER_DATA',
+            description: `Bulk deleted ${deletedCount} master items`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            details: { requested: ids.length, deletedCount, deletedIds: foundIds },
+          },
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: deletedCount,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: foundIds,
+      blockedDetails: blocked,
+      message: `Successfully permanently deleted ${deletedCount} master items.` + (blocked.length ? ` (${blocked.length} skipped)` : ''),
+    };
   }
 
   private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {

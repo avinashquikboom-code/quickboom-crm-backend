@@ -94,8 +94,30 @@ export class ContactController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Soft delete contact' })
-  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.contactService.delete(customerId, id);
+  @ApiOperation({ summary: 'Delete contact permanently' })
+  async remove(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Query('permanent') permanent?: string,
+  ) {
+    return this.contactService.delete(customerId, id, permanent !== 'false');
+  }
+
+  @Post(['bulk-delete', 'bulk'])
+  @ApiOperation({ summary: 'Bulk delete contacts' })
+  async bulkDelete(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { ids: Array<number | string>; permanent?: boolean },
+  ) {
+    return this.contactService.bulkDelete(customerId, dto?.ids || [], dto?.permanent !== false);
+  }
+
+  @Delete('bulk')
+  @ApiOperation({ summary: 'Bulk delete contacts (DELETE alias)' })
+  async bulkDeleteAlias(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { ids: Array<number | string>; permanent?: boolean },
+  ) {
+    return this.contactService.bulkDelete(customerId, dto?.ids || [], dto?.permanent !== false);
   }
 }

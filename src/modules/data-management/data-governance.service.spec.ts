@@ -129,6 +129,69 @@ describe('DataGovernanceService history', () => {
   });
 });
 describe('DataGovernanceService executeReset', () => {
+  it('deletes selected tenant SalaryStructures before Employees and verifies committed counts', async () => {
+    const employees = [{ id: 501, customerId: 12 }];
+    const structures = [
+      { id: 701, customerId: 12, employee: { customerId: 12 } },
+      { id: 702, customerId: 12, employee: { customerId: 12 } },
+    ];
+    const deletionOrder: string[] = [];
+    const employee = {
+      count: jest.fn(async () => employees.length),
+      findMany: jest.fn(async ({ select }: { select?: Record<string, boolean> } = {}) => select?.id ? employees.map(({ id }) => ({ id })) : employees),
+      deleteMany: jest.fn(async () => { deletionOrder.push('employee'); const count = employees.length; employees.splice(0); return { count }; }),
+    };
+    const salaryStructure = {
+      count: jest.fn(async ({ where }: { where?: Record<string, any> } = {}) => structures.filter((row) =>
+        (typeof where?.customerId !== 'number' || row.customerId === where.customerId)
+        && (where?.customerId?.not == null || row.customerId !== where.customerId.not)
+        && (where?.employee?.customerId == null || row.employee.customerId === where.employee.customerId),
+      ).length),
+      findMany: jest.fn(async ({ where }: { where?: Record<string, any> } = {}) => structures.filter((row) =>
+        (typeof where?.customerId !== 'number' || row.customerId === where.customerId)
+        && (where?.employee?.customerId == null || row.employee.customerId === where.employee.customerId),
+      ).map(({ id }) => ({ id }))),
+      deleteMany: jest.fn(async ({ where }: { where?: Record<string, any> } = {}) => {
+        deletionOrder.push('salaryStructure');
+        const before = structures.length;
+        for (let index = structures.length - 1; index >= 0; index -= 1) {
+          if (typeof where?.customerId !== 'number' || structures[index].customerId === where.customerId) structures.splice(index, 1);
+        }
+        return { count: before - structures.length };
+      }),
+    };
+    const auditLog = { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 999 }) };
+    let client: PrismaService;
+    client = new Proxy({ employee, salaryStructure, auditLog }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$transaction') return (work: (tx: unknown) => Promise<unknown>) => work(client);
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        if (key === '$executeRaw') return jest.fn().mockResolvedValue(0);
+        if (key === 'customer') return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }), updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }), updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+    const preview = await service.previewReset(12, { modules: ['employees', 'salary-structures'] });
+    const dependency = preview.dependencyWarnings.find((item: any) => item.model === 'salaryStructure');
+    expect(dependency).toMatchObject({ records: 2, resolvedRecords: 2, unresolvedRecords: 0, blocking: false });
+    expect(preview.tables.find((item: any) => item.model === 'salaryStructure')).toMatchObject({ records: 2 });
+
+    const result = await service.executeReset(12, 7, 'SUPER_ADMIN', {
+      modules: ['employees', 'salary-structures'],
+      previewToken: preview.previewToken,
+      confirmation: 'RESET',
+      idempotencyKey: 'employee-salary-structure-reset',
+    });
+
+    expect(deletionOrder).toEqual(['salaryStructure', 'employee']);
+    expect(salaryStructure.deleteMany).toHaveBeenCalledWith({ where: { customerId: 12 } });
+    expect(employee.deleteMany).toHaveBeenCalledWith({ where: { customerId: 12 } });
+    expect(result).toMatchObject({ success: true, status: 'SUCCESS', verified: true, countsAfter: { salaryStructure: 0, employee: 0 } });
+  });
+
   it('uses physical deletes, then verifies committed table counts before writing SUCCESS', async () => {
     const remaining = { attendanceBreak: 3, attendance: 5 };
     let committed = false;
@@ -471,6 +534,92 @@ describe('DataGovernanceService TeamMember tenant filters', () => {
 });
 
 describe('DataGovernanceService employee reset dependencies', () => {
+  const salaryStructureDependencyWarnings = async (modules: string[], structures: Array<{ id: number; customerId: number; employeeCustomerId: number }>) => {
+    const employee = { findMany: jest.fn().mockResolvedValue([{ id: 501 }]) };
+    const salaryStructure = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => structures.filter((row) => {
+        const employeeCustomerId = where.employee?.customerId;
+        if (employeeCustomerId != null && row.employeeCustomerId !== employeeCustomerId) return false;
+        if (typeof where.customerId === 'number' && row.customerId !== where.customerId) return false;
+        if (where.customerId?.not != null && row.customerId === where.customerId.not) return false;
+        return true;
+      }).length),
+      findMany: jest.fn(async ({ where }: { where: Record<string, any> }) => structures.filter((row) =>
+        (where.customerId == null || row.customerId === where.customerId)
+        && (where.employee?.customerId == null || row.employeeCustomerId === where.employee.customerId),
+      ).map(({ id }) => ({ id }))),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ employee, salaryStructure }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }), updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+    return (service as any).dependencyWarnings(modules, 12, client) as Promise<Array<Record<string, any>>>;
+  };
+
+  it('blocks employee reset until same-tenant salary structures are selected and reports their admin-only IDs', async () => {
+    const structures = [
+      { id: 701, customerId: 12, employeeCustomerId: 12 },
+      { id: 702, customerId: 12, employeeCustomerId: 12 },
+    ];
+    const warnings = await salaryStructureDependencyWarnings(['employees'], structures);
+    const salaryWarning = warnings.find((item) => item.model === 'salaryStructure');
+
+    expect(salaryWarning).toMatchObject({
+      records: 2,
+      sameTenantRecords: 2,
+      crossTenantRecords: 0,
+      resolvedRecords: 0,
+      unresolvedRecords: 2,
+      blocking: true,
+      diagnosticRecordIds: [701, 702],
+    });
+  });
+
+  it('resolves both same-tenant salary structures when both reset modules are selected', async () => {
+    const structures = [
+      { id: 701, customerId: 12, employeeCustomerId: 12 },
+      { id: 702, customerId: 12, employeeCustomerId: 12 },
+    ];
+    const warnings = await salaryStructureDependencyWarnings(['employees', 'salary-structures'], structures);
+    const salaryWarning = warnings.find((item) => item.model === 'salaryStructure');
+
+    expect(salaryWarning).toMatchObject({
+      records: 2,
+      sameTenantRecords: 2,
+      crossTenantRecords: 0,
+      resolvedRecords: 2,
+      unresolvedRecords: 0,
+      blocking: false,
+      includedInSelectedModule: true,
+      diagnosticRecordIds: [701, 702],
+    });
+  });
+
+  it('keeps other-tenant salary structures blocked and reports only same-tenant IDs', async () => {
+    const structures = [
+      { id: 701, customerId: 12, employeeCustomerId: 12 },
+      { id: 702, customerId: 12, employeeCustomerId: 12 },
+      { id: 899, customerId: 20, employeeCustomerId: 12 },
+    ];
+    const warnings = await salaryStructureDependencyWarnings(['employees', 'salary-structures'], structures);
+    const salaryWarning = warnings.find((item) => item.model === 'salaryStructure');
+
+    expect(salaryWarning).toMatchObject({
+      records: 3,
+      sameTenantRecords: 2,
+      crossTenantRecords: 1,
+      resolvedRecords: 2,
+      unresolvedRecords: 1,
+      blocking: true,
+      diagnosticRecordIds: [701, 702],
+    });
+  });
+
   it('separates safe same-tenant customer references from cross-tenant blockers', async () => {
     const employeeTenants = new Map([[501, 12], [502, 12], [503, 20]]);
     const customerRows = [
