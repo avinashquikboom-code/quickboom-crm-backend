@@ -39,6 +39,13 @@ describe('data governance catalog', () => {
   it('offers commissions as an explicitly selectable employee dependency module', () => {
     const module = moduleById('commissions');
     expect(module?.tables.map((table) => table.model)).toEqual(['commission', 'commissionWithdrawal']);
+    expect(module?.tables.find((table) => table.model === 'commissionWithdrawal')?.where).toBe('commissionWithdrawal');
+    expect(whereFor('commissionWithdrawal', 12)).toEqual({
+      OR: [
+        { customerId: 12 },
+        { employee: { customerId: 12 } },
+      ],
+    });
     expect(tablesForModules(['commissions']).map((table) => table.model)).toEqual(['commissionWithdrawal', 'commission']);
   });
 
