@@ -308,6 +308,7 @@ export class DataGovernanceService {
           const deletionLedger = new Set<string>();
 
           if (moduleIds.includes('employees')) {
+            const customerReferenceFilters = this.customerEmployeeReferenceFilters(tenantId);
             const employeeIds = await tx.employee.findMany({
               where: tenantId == null ? {} : { customerId: tenantId },
               select: { id: true },
@@ -318,11 +319,11 @@ export class DataGovernanceService {
               // optional employee links use ON DELETE SET NULL. Clear only
               // same-tenant links; dependencyWarnings rejects cross-tenant refs.
               await tx.customer.updateMany({
-                where: { ...(tenantId == null ? {} : { id: tenantId }), assignedEmployeeId: { in: ids } },
+                where: { ...customerReferenceFilters.tenantRoot, assignedEmployeeId: { in: ids } },
                 data: { assignedEmployeeId: null },
               });
               await tx.customer.updateMany({
-                where: { ...(tenantId == null ? {} : { id: tenantId }), createdByEmployeeId: { in: ids } },
+                where: { ...customerReferenceFilters.tenantRoot, createdByEmployeeId: { in: ids } },
                 data: { createdByEmployeeId: null },
               });
               if (!moduleIds.includes('departments')) {
@@ -466,6 +467,13 @@ export class DataGovernanceService {
             deletionLedger.add(table.model);
             deleted[table.model] = deletedCount;
           }
+          if (moduleIds.includes('employees')) {
+            const { references } = this.customerEmployeeReferenceFilters(tenantId);
+            const remainingCustomerReferences = await tx.customer.count({ where: references });
+            if (remainingCustomerReferences !== 0) {
+              throw new Error(`Customer employee references: ${remainingCustomerReferences} records remain after reset cleanup.`);
+            }
+          }
           if (protectedDesignationIds.length) {
             const remainingProtectedDesignations = await tx.designation.count({
               where: { ...(tenantId == null ? {} : { customerId: tenantId }), id: { in: protectedDesignationIds } },
@@ -505,6 +513,24 @@ export class DataGovernanceService {
           const expectedPreserved = table.model === 'designation' ? previewRecord.protectedDesignationIds.length : 0;
           if (remaining !== expectedPreserved) {
             throw new Error(`${table.label}: ${remaining} records remain after the committed deletion.`);
+          }
+        }
+        if (moduleIds.includes('employees')) {
+          const customerReferenceFilters = this.customerEmployeeReferenceFilters(tenantId);
+          const [remainingReferences, remainingSameTenantReferences, remainingCrossTenantReferences] = await Promise.all([
+            this.prisma.customer.count({ where: customerReferenceFilters.references }),
+            customerReferenceFilters.sameTenant
+              ? this.prisma.customer.count({ where: customerReferenceFilters.sameTenant })
+              : Promise.resolve(0),
+            customerReferenceFilters.crossTenant
+              ? this.prisma.customer.count({ where: customerReferenceFilters.crossTenant })
+              : Promise.resolve(0),
+          ]);
+          countsAfter.customerEmployeeReferences = remainingReferences;
+          countsAfter.customerSameTenantReferences = remainingSameTenantReferences;
+          countsAfter.customerCrossTenantReferences = remainingCrossTenantReferences;
+          if (remainingReferences !== 0 || remainingSameTenantReferences !== 0 || remainingCrossTenantReferences !== 0) {
+            throw new Error(`Customer employee references remain after the committed deletion (total ${remainingReferences}, same tenant ${remainingSameTenantReferences}, cross tenant ${remainingCrossTenantReferences}).`);
           }
         }
         const preservedCounts = {
@@ -1199,6 +1225,40 @@ export class DataGovernanceService {
     return this.delegate(client, table.model).count({ where: whereFor(table.where, customerId) });
   }
 
+  /**
+   * Customer is the tenant root in this schema: Employee.customerId is an FK
+   * to Customer.id. These filters deliberately distinguish ownership (the
+   * Customer primary key) from employee ownership (Employee.customerId).
+   * An OR across both optional employee relations counts a Customer once even
+   * when both references point at employees from the selected tenant.
+   */
+  private customerEmployeeReferenceFilters(customerId: number | null): {
+    references: Prisma.CustomerWhereInput;
+    tenantRoot: Prisma.CustomerWhereInput;
+    sameTenant?: Prisma.CustomerWhereInput;
+    crossTenant?: Prisma.CustomerWhereInput;
+  } {
+    const employeeReferences: Prisma.CustomerWhereInput[] = customerId == null
+      ? [
+          { assignedEmployeeRel: { isNot: null } },
+          { createdByEmployeeRel: { isNot: null } },
+        ]
+      : [
+          { assignedEmployeeRel: { customerId } },
+          { createdByEmployeeRel: { customerId } },
+        ];
+    const references: Prisma.CustomerWhereInput = { OR: employeeReferences };
+
+    return {
+      references,
+      tenantRoot: customerId == null ? {} : { id: customerId },
+      ...(customerId == null ? {} : {
+        sameTenant: { id: customerId, OR: employeeReferences },
+        crossTenant: { id: { not: customerId }, OR: employeeReferences },
+      }),
+    };
+  }
+
   private async acquireResetAdvisoryLock(tx: Prisma.TransactionClient, customerId: number | null) {
     const namespace = 1397771313;
     if (customerId == null) {
@@ -1593,13 +1653,17 @@ export class DataGovernanceService {
         if (shareCount) checks.push({ parent: 'employees', model: 'commission_shares', label: 'Commission shares (protected financial records)', where: {}, policy: 'protected' });
         if (shareCount) checks[checks.length - 1].where.records = shareCount;
       }
-      // Customer is the tenant root: Employee.customerId references Customer.id.
-      checks.push({ parent: 'employees', model: 'customer', label: 'Customer employee assignments and creator references', where: { OR: [
-        { assignedEmployeeRel: customerId == null ? {} : { customerId } },
-        { createdByEmployeeRel: customerId == null ? {} : { customerId } },
-      ] }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, OR: [
-        { assignedEmployeeRel: { customerId } }, { createdByEmployeeRel: { customerId } },
-      ] } }), policy: 'set-null' });
+      const customerReferenceFilters = this.customerEmployeeReferenceFilters(customerId);
+      checks.push({
+        parent: 'employees',
+        model: 'customer',
+        label: 'Customer employee assignments and creator references',
+        where: customerReferenceFilters.references,
+        ...(customerReferenceFilters.crossTenant
+          ? { crossTenantWhere: customerReferenceFilters.crossTenant }
+          : {}),
+        policy: 'set-null',
+      });
       checks.push({ parent: 'employees', model: 'work', label: 'Work assignee references', where: { assignedTo: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, assignedTo: { customerId } } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'work', label: 'Work editor references', where: { editor: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, editor: { customerId } } }), policy: 'set-null' });
       checks.push({ parent: 'employees', model: 'team', label: 'Team leader references', where: { leader: customerId == null ? {} : { customerId } }, ...(customerId == null ? {} : { crossTenantWhere: { customerId: { not: customerId }, leader: { customerId } } }), policy: 'set-null' });
