@@ -29,7 +29,9 @@ describe('Data Governance HR module physical deletes', () => {
         ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, taskId: 1 }))
         : model === 'visitPhoto'
           ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, visitId: index + 10 }))
-          : []),
+          : model === 'teamMember'
+            ? Array.from({ length: counts.get(model) || 0 }, (_, index) => ({ id: index + 1, teamId: 1, employeeId: index + 1 }))
+            : []),
       findFirst: jest.fn(async () => null),
       deleteMany: jest.fn((args: unknown) => deleteMany(model)),
       create: jest.fn(async () => ({})),

@@ -361,6 +361,16 @@ export class DataGovernanceService {
         deletedCount?: number;
         reason?: string;
       } | null = null;
+      let teamMemberDiagnostic: {
+        expectedCount: number;
+        matchingBeforeDelete: number;
+        deletedCount?: number;
+        teamMemberIds: number[];
+        teamIds: number[];
+        employeeIds: number[];
+        deletionFilter: Record<string, unknown>;
+        reason?: string;
+      } | null = null;
       let currentResetModel: string | null = null;
       try {
         if (!previewRecord || this.previews.get(previewToken) !== previewRecord) {
@@ -554,6 +564,39 @@ export class DataGovernanceService {
                 throw new Error(`Task history: expected ${expected} rows immediately before deletion but found ${taskHistoryDiagnostic.matchingBeforeDelete}.`);
               }
             }
+            if (table.model === 'teamMember') {
+              const matchingBeforeDelete = await tx.teamMember.count({ where });
+              const matchingRows = await tx.teamMember.findMany({
+                where,
+                select: { id: true, teamId: true, employeeId: true },
+              });
+              teamMemberDiagnostic = {
+                expectedCount: expected,
+                matchingBeforeDelete,
+                teamMemberIds: matchingRows.map((row) => Number(row.id)).filter(Number.isInteger),
+                teamIds: [...new Set(matchingRows.map((row) => Number(row.teamId)).filter(Number.isInteger))],
+                employeeIds: [...new Set(matchingRows.map((row) => Number(row.employeeId)).filter(Number.isInteger))],
+                deletionFilter: where as Record<string, unknown>,
+              };
+              this.logger.log(`Team member reset step ${JSON.stringify({
+                operationId,
+                tenantId,
+                selectedModules: moduleIds,
+                ...teamMemberDiagnostic,
+                transactionStatus: 'IN_PROGRESS',
+              })}`);
+              if (teamMemberDiagnostic.matchingBeforeDelete !== expected) {
+                teamMemberDiagnostic.reason = 'The matching rows immediately before deletion differ from the transaction recount.';
+                this.logger.error(`Team member reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...teamMemberDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+                throw new Error(`Team memberships: expected ${expected} rows immediately before deletion but found ${teamMemberDiagnostic.matchingBeforeDelete}.`);
+              }
+            }
             const expectedToDelete = table.model === 'designation'
               ? Math.max(0, expected - protectedDesignationIds.length)
               : table.model === 'metaTemplate'
@@ -595,9 +638,35 @@ export class DataGovernanceService {
                   : 'The deleteMany affected-row count differs from the expected eligible count.';
               }
             }
+            if (table.model === 'teamMember' && teamMemberDiagnostic) {
+              teamMemberDiagnostic.deletedCount = deletedCount;
+              if (deletedCount !== expectedToDelete) {
+                teamMemberDiagnostic.reason = teamMemberDiagnostic.matchingBeforeDelete !== expected
+                  ? 'The matching rows immediately before deletion differ from the transaction recount.'
+                  : 'The deleteMany affected-row count differs from the expected eligible count.';
+                this.logger.error(`Team member reset mismatch ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...teamMemberDiagnostic,
+                  transactionStatus: 'ROLLBACK_PENDING',
+                })}`);
+              } else {
+                this.logger.log(`Team member reset deleted ${JSON.stringify({
+                  operationId,
+                  tenantId,
+                  selectedModules: moduleIds,
+                  ...teamMemberDiagnostic,
+                  transactionStatus: 'IN_PROGRESS',
+                })}`);
+              }
+            }
             if (deletedCount !== expectedToDelete) {
               if (table.model === 'employee' && employeeDiagnostic) {
                 employeeDiagnostic.reason = 'The deleteMany affected-row count differs from the expected eligible count.';
+              }
+              if (table.model === 'teamMember' && teamMemberDiagnostic) {
+                teamMemberDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
               }
               if (table.model === 'taskHistory' && taskHistoryDiagnostic) {
                 taskHistoryDiagnostic.reason ||= 'The deleteMany affected-row count differs from the expected eligible count.';
@@ -656,6 +725,15 @@ export class DataGovernanceService {
         Object.assign(deleted, transactionDeleted);
         resetTransactionCommitted = true;
 
+        if (teamMemberDiagnostic) {
+          this.logger.log(`Team member reset committed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...teamMemberDiagnostic,
+            transactionStatus: 'COMMITTED',
+          })}`);
+        }
         if (employeeDiagnostic) {
           this.logger.log(`Employee reset committed ${JSON.stringify({
             operationId,
@@ -764,6 +842,16 @@ export class DataGovernanceService {
             error: failures[0],
           })}`);
         }
+        if (teamMemberDiagnostic) {
+          this.logger.warn(`Team member reset rolled back or failed ${JSON.stringify({
+            operationId,
+            tenantId,
+            selectedModules: moduleIds,
+            ...teamMemberDiagnostic,
+            transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
+            error: failures[0],
+          })}`);
+        }
         if (employeeDiagnostic) {
           this.logger.warn(`Employee reset rolled back or failed ${JSON.stringify({
             operationId,
@@ -779,6 +867,7 @@ export class DataGovernanceService {
           tenantId,
           selectedModules: moduleIds,
           failedAtModel: currentResetModel,
+          teamMemberDeleteReached: teamMemberDiagnostic !== null,
           employeeDeleteReached: employeeDiagnostic !== null,
           transactionStatus: resetTransactionCommitted ? 'COMMITTED_POST_COMMIT_FAILURE' : 'ROLLED_BACK',
           error: failures[0],

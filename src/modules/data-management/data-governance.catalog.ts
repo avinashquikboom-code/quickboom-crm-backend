@@ -381,13 +381,17 @@ export function tablesForModules(ids: string[]): TableRule[] {
   });
   const deleteOrder: Record<string, number> = {
     whatsAppCampaignRecipient: 3, whatsAppCampaign: 4,
-    attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7, taskHistory: 8, taskProof: 9, taskReview: 10,
+    attendanceBreak: 5, overtimeApproval: 6, overtimeNotificationEvent: 7,
+    taskHistory: 8, leadActivityTimeline: 8, leadNote: 8, leadReminder: 8, leadStatusHistory: 8, leadImage: 8, leadSocialProfile: 8,
+    taskProof: 9, communicationHistory: 9, quotationItem: 9,
+    taskReview: 10, workTask: 10, ticketComment: 10,
     visitPhoto: 11, teamMember: 12, hrmNotificationDelivery: 13, hrmEmployeeMonthlyReport: 14,
     employeeModuleOverride: 15, employeeLeadLimit: 16, commissionSlab: 17, commissionConfig: 18, salaryTargetPolicy: 19, salaryTargetReview: 20,
     employeeDeduction: 21, commissionWithdrawal: 22, commission: 23, employeeClaim: 24, employeeLoan: 25, salarySlip: 26, payrollItem: 27,
     overtimeRequest: 28, attendance: 29, leaveRequest: 30, employeeLeaveBalance: 31, leaveAdjustmentHistory: 32,
     employeeLocation: 29, remoteRequest: 30, invoiceItem: 33, invoice: 34, metaTemplate: 35,
-    visit: 78, task: 79, employee: 80, contact: 85, designation: 90, department: 100,
+    workAccessRequest: 71, monthlySchedule: 72, announcement: 73, quotation: 74, supportTicket: 75, work: 76, team: 77,
+    visit: 78, task: 79, employee: 80, deal: 81, lead: 82, contact: 85, company: 86, designation: 90, department: 100,
   };
   return tables.sort((left, right) => (deleteOrder[left.model] || 0) - (deleteOrder[right.model] || 0));
 }
@@ -421,7 +425,7 @@ export function whereFor(kind: WhereKind, customerId: number | null): Record<str
     case 'invoice':
       return { invoice: { customerId } };
     case 'teamMember':
-      return { team: { customerId } };
+      return customerId == null ? {} : { team: { customerId } };
     case 'commission':
       return {
         OR: [
