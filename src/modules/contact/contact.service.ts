@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateContactDto, UpdateContactDto, CheckDuplicateContactDto } from './dto/contact.dto';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
@@ -267,14 +267,97 @@ export class ContactService {
     });
   }
 
-  async delete(customerId: number | string | undefined, id: number | string) {
+  async delete(customerId: number | string | undefined, id: number | string, permanent = true) {
     const numCustomerId = Number(customerId);
     const numId = Number(id);
-    await this.findOne(numCustomerId, numId);
+    const contact = await this.findOne(numCustomerId, numId);
+
+    if (permanent) {
+      await this.prisma.contact.delete({ where: { id: numId } });
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'CRM_CONTACTS',
+            description: `Permanently deleted Contact #${numId} (${contact.firstName} ${contact.lastName || ''})`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            entityType: 'Contact',
+            entityId: String(numId),
+            details: { contactId: numId, name: `${contact.firstName} ${contact.lastName || ''}`.trim() },
+          },
+        });
+      } catch {
+        // ignore
+      }
+      return { success: true, deleted: true, message: `Contact #${numId} permanently deleted.` };
+    }
 
     return this.prisma.contact.update({
       where: { id: numId },
       data: { deletedAt: new Date() },
     });
+  }
+
+  async bulkDelete(customerId: number | string | undefined, ids: Array<number | string>, permanent = true) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Contact IDs array must not be empty.');
+    }
+    const numCustomerId = Number(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid contact IDs provided.');
+    }
+
+    const contacts = await this.prisma.contact.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      select: { id: true, firstName: true, lastName: true },
+    });
+
+    const foundIds = contacts.map((c) => c.id);
+    const blocked: Array<{ id: number; reason: string }> = [];
+    const missingIds = uniqueIds.filter((id) => !foundIds.includes(id));
+    for (const mId of missingIds) {
+      blocked.push({ id: mId, reason: 'Contact not found or belongs to another company.' });
+    }
+
+    if (foundIds.length > 0) {
+      if (permanent) {
+        await this.prisma.contact.deleteMany({ where: { id: { in: foundIds }, customerId: numCustomerId } });
+      } else {
+        await this.prisma.contact.updateMany({
+          where: { id: { in: foundIds }, customerId: numCustomerId },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            action: 'DELETE',
+            module: 'CRM_CONTACTS',
+            description: `Bulk deleted ${foundIds.length} contacts`,
+            status: 'SUCCESS',
+            source: 'ADMIN_PANEL',
+            details: { requested: uniqueIds.length, deletedCount: foundIds.length, deletedIds: foundIds },
+          },
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: foundIds.length,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: foundIds,
+      blockedDetails: blocked,
+      message: `Permanently deleted ${foundIds.length} contacts.` + (blocked.length ? ` (${blocked.length} skipped)` : ''),
+    };
   }
 }

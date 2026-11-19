@@ -421,6 +421,79 @@ export class DesignationService {
     };
   }
 
+  async bulkRemove(customerId: number | string, ids: number[]) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Designation IDs array must not be empty.');
+    }
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid designation IDs provided.');
+    }
+
+    const designations = await this.prisma.designation.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      include: {
+        _count: {
+          select: {
+            employees: true,
+          },
+        },
+      },
+    });
+
+    const byId = new Map(designations.map((d) => [d.id, d]));
+    const deleted: number[] = [];
+    const blocked: Array<{ id: number; reason: string }> = [];
+
+    for (const id of uniqueIds) {
+      const desig = byId.get(id);
+      if (!desig) {
+        blocked.push({ id, reason: 'Designation not found or belongs to another company.' });
+        continue;
+      }
+
+      if (desig._count.employees > 0) {
+        await this.prisma.designation.update({
+          where: { id },
+          data: { isActive: false },
+        });
+        blocked.push({ id, reason: `Designation has ${desig._count.employees} employees assigned. Deactivated instead of permanently deleting.` });
+        continue;
+      }
+
+      await this.prisma.designation.delete({ where: { id } });
+      deleted.push(id);
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          action: 'DELETE',
+          module: 'DESIGNATIONS',
+          description: `Bulk deleted ${deleted.length} designations`,
+          status: 'SUCCESS',
+          source: 'ADMIN_PANEL',
+          details: { requested: uniqueIds.length, deletedCount: deleted.length, deletedIds: deleted, blockedDetails: blocked },
+        },
+      });
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: deleted,
+      blockedDetails: blocked,
+      message: `Permanently deleted ${deleted.length} designations.` + (blocked.length ? ` (${blocked.length} blocked/deactivated)` : ''),
+    };
+  }
+
   /**
    * Seed standard designations if customer has 0 designations,
    * seamlessly linking existing DB roles (preserving permissions) and assigning demo employee.

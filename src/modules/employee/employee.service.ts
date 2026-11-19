@@ -2713,6 +2713,47 @@ export class EmployeeService {
     };
   }
 
+  async bulkRemove(params: { ids: number[]; customerId?: number | string; isSuperAdmin?: boolean }) {
+    const { ids, customerId, isSuperAdmin = false } = params;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Employee IDs array must not be empty.');
+    }
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid employee IDs provided.');
+    }
+
+    const deleted: number[] = [];
+    const blocked: Array<{ id: number; reason: string }> = [];
+    const failed: Array<{ id: number; reason: string }> = [];
+
+    for (const empId of uniqueIds) {
+      try {
+        await this.remove({ id: empId, customerId, isSuperAdmin });
+        deleted.push(empId);
+      } catch (err: any) {
+        const msg = err?.message || 'Deletion blocked';
+        if (msg.includes('protected history') || msg.includes('dependent records') || msg.includes('cannot be permanently deleted')) {
+          blocked.push({ id: empId, reason: msg });
+        } else {
+          failed.push({ id: empId, reason: msg });
+        }
+      }
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      failed: failed.length,
+      deletedIds: deleted,
+      blockedDetails: blocked,
+      failedDetails: failed,
+      message: `Permanently deleted ${deleted.length} employees.` + (blocked.length ? ` (${blocked.length} blocked by protected history)` : '') + (failed.length ? ` (${failed.length} failed)` : ''),
+    };
+  }
+
 
   async getLeaves(user?: any, customerId?: number | string, isSuperAdmin = false) {
     const where: any = {};

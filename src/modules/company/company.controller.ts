@@ -88,8 +88,30 @@ export class CompanyController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Soft delete company' })
-  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.companyService.delete(customerId, id);
+  @ApiOperation({ summary: 'Delete company permanently' })
+  async remove(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Query('permanent') permanent?: string,
+  ) {
+    return this.companyService.delete(customerId, id, permanent !== 'false');
+  }
+
+  @Post(['bulk-delete', 'bulk'])
+  @ApiOperation({ summary: 'Bulk delete companies' })
+  async bulkDelete(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { ids: Array<number | string>; permanent?: boolean },
+  ) {
+    return this.companyService.bulkDelete(customerId, dto?.ids || [], dto?.permanent !== false);
+  }
+
+  @Delete('bulk')
+  @ApiOperation({ summary: 'Bulk delete companies (DELETE alias)' })
+  async bulkDeleteAlias(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { ids: Array<number | string>; permanent?: boolean },
+  ) {
+    return this.companyService.bulkDelete(customerId, dto?.ids || [], dto?.permanent !== false);
   }
 }

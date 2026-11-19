@@ -381,6 +381,54 @@ export class EmployeeController {
     });
   }
 
+  @Post(['bulk-delete', 'bulk'])
+  @ApiOperation({ summary: 'Bulk delete employees' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async bulkRemove(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+    this.assertEmployeePermission(user, 'DELETE');
+
+    return this.employeeService.bulkRemove({
+      ids: dto?.ids || [],
+      customerId: targetCustomerId,
+      isSuperAdmin,
+    });
+  }
+
+  @Delete('bulk')
+  @ApiOperation({ summary: 'Bulk delete employees (DELETE alias)' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Optional customerId for SUPER_ADMIN only' })
+  async bulkRemoveAlias(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: { ids: number[] },
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+    this.assertEmployeePermission(user, 'DELETE');
+
+    return this.employeeService.bulkRemove({
+      ids: dto?.ids || [],
+      customerId: targetCustomerId,
+      isSuperAdmin,
+    });
+  }
+
   @Post(':id/deactivate')
   @Patch(':id/deactivate')
   @ApiOperation({ summary: 'Deactivate employee employment status to INACTIVE' })

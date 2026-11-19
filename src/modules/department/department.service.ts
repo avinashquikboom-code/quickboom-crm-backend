@@ -456,4 +456,85 @@ export class DepartmentService {
       deleted: true,
     };
   }
+
+  async bulkRemove(customerId: number | string, ids: number[]) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('Department IDs array must not be empty.');
+    }
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((n) => !isNaN(n) && n > 0)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('No valid department IDs provided.');
+    }
+
+    const departments = await this.prisma.department.findMany({
+      where: { id: { in: uniqueIds }, customerId: numCustomerId },
+      include: {
+        _count: {
+          select: {
+            employees: true,
+            designations: true,
+          },
+        },
+      },
+    });
+
+    const byId = new Map(departments.map((d) => [d.id, d]));
+    const deleted: number[] = [];
+    const blocked: Array<{ id: number; reason: string }> = [];
+
+    for (const id of uniqueIds) {
+      const dept = byId.get(id);
+      if (!dept) {
+        blocked.push({ id, reason: 'Department not found or belongs to another company.' });
+        continue;
+      }
+
+      if (dept._count.employees > 0) {
+        await this.prisma.department.update({
+          where: { id },
+          data: { isActive: false },
+        });
+        blocked.push({ id, reason: `Department contains ${dept._count.employees} employees. Deactivated instead of permanently deleting.` });
+        continue;
+      }
+
+      if (dept._count.designations > 0) {
+        await this.prisma.designation.updateMany({
+          where: { departmentId: id },
+          data: { departmentId: null },
+        });
+      }
+
+      await this.prisma.department.delete({ where: { id } });
+      deleted.push(id);
+    }
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          action: 'DELETE',
+          module: 'DEPARTMENTS',
+          description: `Bulk deleted ${deleted.length} departments`,
+          status: 'SUCCESS',
+          source: 'ADMIN_PANEL',
+          details: { requested: uniqueIds.length, deletedCount: deleted.length, deletedIds: deleted, blockedDetails: blocked },
+        },
+      });
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      requested: uniqueIds.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      failed: 0,
+      deletedIds: deleted,
+      blockedDetails: blocked,
+      message: `Permanently deleted ${deleted.length} departments.` + (blocked.length ? ` (${blocked.length} blocked/deactivated)` : ''),
+    };
+  }
 }

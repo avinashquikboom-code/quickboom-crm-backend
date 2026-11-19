@@ -173,8 +173,32 @@ export class TaskController {
 
   @Delete(':id')
   @RequirePermissions({ module: 'TASKS', action: 'DELETE' })
-  @ApiOperation({ summary: 'Soft delete task' })
-  async remove(@CurrentCustomer() customerId: string, @Param('id') id: string) {
-    return this.taskService.delete(customerId, id);
+  @ApiOperation({ summary: 'Delete task permanently' })
+  async remove(
+    @CurrentCustomer() customerId: string,
+    @Param('id') id: string,
+    @Query('permanent') permanent?: string,
+  ) {
+    return this.taskService.delete(customerId, id, permanent !== 'false');
+  }
+
+  @Post(['bulk-delete', 'bulk'])
+  @RequirePermissions({ module: 'TASKS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk delete tasks' })
+  async bulkDelete(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { ids: Array<number | string>; permanent?: boolean },
+  ) {
+    return this.taskService.bulkDelete(customerId, dto?.ids || [], dto?.permanent !== false);
+  }
+
+  @Delete('bulk')
+  @RequirePermissions({ module: 'TASKS', action: 'DELETE' })
+  @ApiOperation({ summary: 'Bulk delete tasks (DELETE alias)' })
+  async bulkDeleteAlias(
+    @CurrentCustomer() customerId: string,
+    @Body() dto: { ids: Array<number | string>; permanent?: boolean },
+  ) {
+    return this.taskService.bulkDelete(customerId, dto?.ids || [], dto?.permanent !== false);
   }
 }
