@@ -1460,6 +1460,7 @@ export class DataManagementService {
     const skip = (page - 1) * limit;
 
     const where: Prisma.EmployeeWhereInput = {
+      status: { not: 'DELETED' },
       NOT: [
         // Exclude employees with user role SUPER_ADMIN, CUSTOMER_ADMIN, TENANT_ADMIN or ADMIN
         {

@@ -128,7 +128,7 @@ export class DataGovernanceService {
 
   async previewReset(
     customerId: number | string | null | undefined,
-    body: { modules?: string[]; scope?: string },
+    body: { modules?: string[] | string; scope?: string } = {},
   ) {
     const scope = body.scope === 'global' ? 'global' : body.scope === 'application' ? 'application' : 'selected';
     const tenantId = scope === 'global' ? null : this.requireTenant(customerId);
@@ -319,11 +319,11 @@ export class DataGovernanceService {
               // optional employee links use ON DELETE SET NULL. Clear only
               // same-tenant links; dependencyWarnings rejects cross-tenant refs.
               await tx.customer.updateMany({
-                where: { ...customerReferenceFilters.tenantRoot, assignedEmployeeId: { in: ids } },
+                where: { ...customerReferenceFilters.sameTenantTarget, assignedEmployeeId: { in: ids } },
                 data: { assignedEmployeeId: null },
               });
               await tx.customer.updateMany({
-                where: { ...customerReferenceFilters.tenantRoot, createdByEmployeeId: { in: ids } },
+                where: { ...customerReferenceFilters.sameTenantTarget, createdByEmployeeId: { in: ids } },
                 data: { createdByEmployeeId: null },
               });
               if (!moduleIds.includes('departments')) {
@@ -1094,9 +1094,14 @@ export class DataGovernanceService {
     return this.jobs.get(jobId) || null;
   }
 
-  private selectedModules(ids: string[] | undefined, all: boolean) {
+  private selectedModules(ids: string[] | string | undefined, all: boolean) {
     if (all) return availableModules();
-    const modules = [...new Set((ids || []).map(resolveModuleId))].map((id) => moduleById(id)).filter(Boolean);
+    const rawIds = Array.isArray(ids)
+      ? ids
+      : typeof ids === 'string'
+        ? ids.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+    const modules = [...new Set(rawIds.map(resolveModuleId))].map((id) => moduleById(id)).filter(Boolean);
     if (!modules.length) throw new BadRequestException('Select at least one module.');
     const blocked = modules.filter((item) => !item.available);
     if (blocked.length) throw new BadRequestException(blocked.map((item) => `${item.name}: ${item.reason}`).join(' '));
@@ -1227,14 +1232,16 @@ export class DataGovernanceService {
 
   /**
    * Customer is the tenant root in this schema: Employee.customerId is an FK
-   * to Customer.id. These filters deliberately distinguish ownership (the
-   * Customer primary key) from employee ownership (Employee.customerId).
+   * to Customer.id. Converted customer records carry their owning tenant via
+   * originLead.customerId. These filters distinguish tenant ownership from
+   * employee ownership (Employee.customerId).
    * An OR across both optional employee relations counts a Customer once even
    * when both references point at employees from the selected tenant.
    */
   private customerEmployeeReferenceFilters(customerId: number | null): {
     references: Prisma.CustomerWhereInput;
     tenantRoot: Prisma.CustomerWhereInput;
+    sameTenantTarget: Prisma.CustomerWhereInput;
     sameTenant?: Prisma.CustomerWhereInput;
     crossTenant?: Prisma.CustomerWhereInput;
   } {
@@ -1249,12 +1256,27 @@ export class DataGovernanceService {
         ];
     const references: Prisma.CustomerWhereInput = { OR: employeeReferences };
 
+    const sameTenantOwnership: Prisma.CustomerWhereInput[] = customerId == null
+      ? []
+      : [
+          { id: customerId },
+          { originLead: { customerId } },
+        ];
+
     return {
       references,
       tenantRoot: customerId == null ? {} : { id: customerId },
+      sameTenantTarget: customerId == null ? {} : { OR: sameTenantOwnership },
       ...(customerId == null ? {} : {
-        sameTenant: { id: customerId, OR: employeeReferences },
-        crossTenant: { id: { not: customerId }, OR: employeeReferences },
+        sameTenant: {
+          OR: sameTenantOwnership,
+          AND: [references],
+        },
+        crossTenant: {
+          id: { not: customerId },
+          NOT: { originLead: { customerId } },
+          OR: employeeReferences,
+        },
       }),
     };
   }
@@ -1688,7 +1710,7 @@ export class DataGovernanceService {
       if (eligibleIds.length) {
         checks.push({ parent: 'designations', model: 'employee', label: 'Employees assigned to designations', where: { designationId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: eligibleIds }, customerId: { not: customerId } } }), policy: 'cascade' });
         checks.push({ parent: 'designations', model: 'task', label: 'Tasks assigned to designations', where: { designationId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { designationId: { in: eligibleIds }, customerId: { not: customerId } } }), policy: 'cascade' });
-        checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references (protected)', where: { mobileRoleId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, mobileRoleId: { in: eligibleIds } } }), policy: 'protected' });
+        checks.push({ parent: 'designations', model: 'customer', label: 'Customer mobile-role references (protected)', where: { mobileRoleId: { in: eligibleIds } }, ...(customerId == null ? {} : { crossTenantWhere: { id: { not: customerId }, NOT: { originLead: { customerId } }, mobileRoleId: { in: eligibleIds } } }), policy: 'protected' });
       }
     }
     if (moduleIds.includes('commission-configurations')) {

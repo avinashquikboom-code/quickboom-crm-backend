@@ -62,6 +62,14 @@ export class DataManagementController {
     return this.governance.listModules();
   }
 
+  @Get('reset/preview')
+  @ApiOperation({ summary: 'Preview a tenant data reset without deleting records (query parameters)' })
+  @ApiQuery({ name: 'modules', required: false, description: 'Module IDs (comma-separated string or array)' })
+  @ApiQuery({ name: 'scope', required: false, enum: ['selected', 'application', 'global', 'tenant'] })
+  previewResetGet(@CurrentCustomer() customerId: string, @Query() dto: ResetPreviewDto) {
+    return this.governance.previewReset(customerId, dto);
+  }
+
   @Post('reset/preview')
   @ApiOperation({ summary: 'Preview a tenant data reset without deleting records' })
   previewReset(@CurrentCustomer() customerId: string, @Body() dto: ResetPreviewDto) {

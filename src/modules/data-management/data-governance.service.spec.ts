@@ -9,7 +9,29 @@ function matchesCustomerEmployeeReference(
   if ('customerId' in where) throw new Error('Customer filters must use Customer.id, not customerId');
   if (typeof where.id === 'number' && row.id !== where.id) return false;
   if (where.id?.not !== undefined && row.id === where.id.not) return false;
-  const alternatives = Array.isArray(where.OR) ? where.OR : [];
+  if (where.NOT?.originLead?.customerId !== undefined) {
+    const originLeadCustomerId = row.originLead?.customerId;
+    if (originLeadCustomerId === where.NOT.originLead.customerId) return false;
+  }
+  if (Array.isArray(where.AND)) {
+    for (const condition of where.AND) {
+      if (!matchesCustomerEmployeeReference(row, condition, employeeTenants)) return false;
+    }
+  }
+  if (Array.isArray(where.OR)) {
+    const isOwnershipOr = where.OR.some((c: any) => 'id' in c || 'originLead' in c);
+    if (isOwnershipOr) {
+      const matchesOwnership = where.OR.some((c: any) => {
+        if (typeof c.id === 'number') return row.id === c.id;
+        if (c.originLead?.customerId !== undefined) return row.originLead?.customerId === c.originLead.customerId;
+        return false;
+      });
+      if (!matchesOwnership) return false;
+    }
+  }
+  const alternatives = Array.isArray(where.OR)
+    ? where.OR.filter((c: any) => 'assignedEmployeeRel' in c || 'createdByEmployeeRel' in c)
+    : [];
   if (!alternatives.length) return true;
   return alternatives.some((condition: Record<string, any>) => {
     for (const [relation, field] of [
@@ -347,10 +369,14 @@ describe('DataGovernanceService employee reset dependencies', () => {
       { assignedEmployeeRel: { customerId: 12 } },
       { createdByEmployeeRel: { customerId: 12 } },
     ] } });
-    expect(customer.count).toHaveBeenCalledWith({ where: { id: { not: 12 }, OR: [
-      { assignedEmployeeRel: { customerId: 12 } },
-      { createdByEmployeeRel: { customerId: 12 } },
-    ] } });
+    expect(customer.count).toHaveBeenCalledWith({ where: {
+      id: { not: 12 },
+      NOT: { originLead: { customerId: 12 } },
+      OR: [
+        { assignedEmployeeRel: { customerId: 12 } },
+        { createdByEmployeeRel: { customerId: 12 } },
+      ],
+    } });
     const customerCountFilters = customer.count.mock.calls.map(([args]) => args.where);
     expect(customerCountFilters.every((where) => !('customerId' in where))).toBe(true);
     expect(assignment).toMatchObject({
@@ -390,10 +416,14 @@ describe('DataGovernanceService employee reset dependencies', () => {
     const warnings = await (service as any).dependencyWarnings(['employees'], 12, client);
     const assignment = warnings.find((item: any) => item.model === 'customer');
 
-    expect(customer.count).toHaveBeenCalledWith({ where: { id: { not: 12 }, OR: [
-      { assignedEmployeeRel: { customerId: 12 } },
-      { createdByEmployeeRel: { customerId: 12 } },
-    ] } });
+    expect(customer.count).toHaveBeenCalledWith({ where: {
+      id: { not: 12 },
+      NOT: { originLead: { customerId: 12 } },
+      OR: [
+        { assignedEmployeeRel: { customerId: 12 } },
+        { createdByEmployeeRel: { customerId: 12 } },
+      ],
+    } });
     expect(assignment).toMatchObject({ records: 3, crossTenantRecords: 3 });
   });
 
@@ -685,7 +715,12 @@ describe('DataGovernanceService employee reset dependencies', () => {
       updateMany: jest.fn(async ({ where, data }: { where: Record<string, any>; data: Record<string, any> }) => {
       let count = 0;
       for (const row of customerRows) {
-        if (row.id !== where.id) continue;
+        const matchesOwner = where.id !== undefined
+          ? row.id === where.id
+          : Array.isArray(where.OR)
+            ? where.OR.some((c: any) => c.id === row.id || (c.originLead && (row as any).originLead?.customerId === c.originLead.customerId))
+            : true;
+        if (!matchesOwner) continue;
         const assignedIds = where.assignedEmployeeId?.in as number[] | undefined;
         const creatorIds = where.createdByEmployeeId?.in as number[] | undefined;
         if (row.assignedEmployeeId != null && assignedIds?.includes(row.assignedEmployeeId)) {
@@ -724,16 +759,109 @@ describe('DataGovernanceService employee reset dependencies', () => {
 
     expect(result).toMatchObject({ success: true, recordsDeleted: 1, verified: true, countsAfter: { employee: 0 } });
     expect(customer.updateMany).toHaveBeenCalledWith({
-      where: { id: 12, assignedEmployeeId: { in: [99] } },
+      where: { OR: [{ id: 12 }, { originLead: { customerId: 12 } }], assignedEmployeeId: { in: [99] } },
       data: { assignedEmployeeId: null },
     });
     expect(customer.updateMany).toHaveBeenCalledWith({
-      where: { id: 12, createdByEmployeeId: { in: [99] } },
+      where: { OR: [{ id: 12 }, { originLead: { customerId: 12 } }], createdByEmployeeId: { in: [99] } },
       data: { createdByEmployeeId: null },
     });
     expect(customerRows).toEqual([
       { id: 12, assignedEmployeeId: null, createdByEmployeeId: null },
       { id: 20, assignedEmployeeId: 200, createdByEmployeeId: null },
     ]);
+  });
+
+  it('handles comma-separated modules and scope variants in previewReset', async () => {
+    const makeDelegate = (count = 0) => ({
+      count: jest.fn(async () => count),
+      findMany: jest.fn(async () => []),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+    });
+    const prisma = new Proxy({}, {
+      get: () => makeDelegate(),
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(prisma);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const previewFromString = await service.previewReset(12, { modules: 'employees,departments', scope: 'tenant' });
+    expect(previewFromString.modules.map((m) => m.id)).toEqual(['employees', 'departments']);
+    expect(previewFromString.scope).toBe('tenant');
+
+    const previewFromArray = await service.previewReset(12, { modules: ['employees', 'departments'], scope: 'selected' });
+    expect(previewFromArray.modules.map((m) => m.id)).toEqual(['employees', 'departments']);
+    expect(previewFromArray.scope).toBe('tenant');
+  });
+
+  it('correctly treats converted customers (originLead.customerId) as same-tenant, avoiding false cross-tenant blocks', async () => {
+    const employeeTenants = new Map([[501, 12]]);
+    const customerRows = [
+      { id: 12, assignedEmployeeId: null, createdByEmployeeId: null },
+      // Customer 99 is converted from a Lead owned by tenant 12 (same-tenant customer)
+      { id: 99, originLead: { customerId: 12 }, assignedEmployeeId: 501, createdByEmployeeId: null },
+    ];
+    const customer = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => customerRows.filter((row) =>
+        matchesCustomerEmployeeReference(row, where, employeeTenants),
+      ).length),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ customer }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const warnings = await (service as any).dependencyWarnings(['employees'], 12, client);
+    const assignment = warnings.find((item: any) => item.model === 'customer');
+
+    expect(assignment).toMatchObject({
+      records: 1,
+      crossTenantRecords: 0,
+      resolvedRecords: 1,
+      unresolvedRecords: 0,
+      blocking: false,
+    });
+  });
+
+  it('blocks reset when another tenant converted customer references current tenant employees', async () => {
+    const employeeTenants = new Map([[501, 12]]);
+    const customerRows = [
+      { id: 12, assignedEmployeeId: null, createdByEmployeeId: null },
+      // Customer 105 is converted from a Lead owned by tenant 99 (cross-tenant customer)
+      { id: 105, originLead: { customerId: 99 }, assignedEmployeeId: 501, createdByEmployeeId: null },
+    ];
+    const customer = {
+      count: jest.fn(async ({ where }: { where: Record<string, any> }) => customerRows.filter((row) =>
+        matchesCustomerEmployeeReference(row, where, employeeTenants),
+      ).length),
+      findMany: jest.fn().mockResolvedValue([]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    const client = new Proxy({ customer }, {
+      get: (target, key: string | symbol) => {
+        if (key in target) return target[key as keyof typeof target];
+        if (key === '$queryRaw') return jest.fn().mockResolvedValue([]);
+        return { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+      },
+    }) as unknown as PrismaService;
+    const service = new DataGovernanceService(client);
+    Object.defineProperty(service, 'countProtectedRecords', { value: jest.fn().mockResolvedValue({}) });
+
+    const warnings = await (service as any).dependencyWarnings(['employees'], 12, client);
+    const assignment = warnings.find((item: any) => item.model === 'customer');
+
+    expect(assignment).toMatchObject({
+      records: 1,
+      crossTenantRecords: 1,
+      resolvedRecords: 0,
+      unresolvedRecords: 1,
+      blocking: true,
+    });
   });
 });
