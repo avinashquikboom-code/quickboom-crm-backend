@@ -1033,9 +1033,9 @@ export class AuthService {
     }
 
     // 2. Strict Target App / Expected Role Login Validation (Must precede generic suspension checks)
-    if (upperExpectedRole === 'SUPER_ADMIN') {
-      if (userRole !== 'SUPER_ADMIN') {
-        throw new ForbiddenException('These credentials are not registered as a Super Admin account.');
+    if (upperExpectedRole === 'SUPER_ADMIN' || upperExpectedRole === 'ADMIN') {
+      if (userRole !== 'SUPER_ADMIN' && !isSuperAdminRole) {
+        throw new ForbiddenException('These credentials are not registered as an Admin account.');
       }
     } else if (['COMPANY_ADMIN', 'COMPANY_ADMIN_MOBILE'].includes(upperExpectedRole)) {
       if (userRole !== 'COMPANY_ADMIN') {
@@ -1043,10 +1043,6 @@ export class AuthService {
       }
       if (user.customer && !user.customer.isActive) {
         throw new UnauthorizedException('Your company account is suspended.');
-      }
-    } else if (upperExpectedRole === 'ADMIN') {
-      if (userRole !== 'SUPER_ADMIN' && userRole !== 'COMPANY_ADMIN') {
-        throw new ForbiddenException('These credentials are not registered as an Admin account.');
       }
     } else if (['CUSTOMER', 'CUSTOMER_MOBILE', 'CUSTOMER_ADMIN'].includes(upperExpectedRole)) {
       if (userRole === 'EMPLOYEE' || isEmployeeRole) {

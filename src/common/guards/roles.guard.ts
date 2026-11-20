@@ -26,7 +26,7 @@ export class RolesGuard implements CanActivate {
       ? user.roles.map((r: any) => String(r).toUpperCase().replace(/\s+/g, '_'))
       : (user.role ? [String(user.role).toUpperCase().replace(/\s+/g, '_')] : []);
 
-    const hasSuperAdmin = userRoles.includes('SUPER_ADMIN');
+    const hasSuperAdmin = userRoles.includes('SUPER_ADMIN') || userRoles.includes('ADMIN');
     if (hasSuperAdmin) {
       return true;
     }
