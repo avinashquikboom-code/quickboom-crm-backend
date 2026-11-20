@@ -71,6 +71,26 @@ describe('DataCaptureService', () => {
     prisma = module.get<PrismaService>(PrismaService);
   });
 
+  describe('getCustomerJobs ownership scope', () => {
+    it('lists only the authenticated employee jobs within the requested tenant', async () => {
+      mockPrisma.dataCaptureJob.findMany.mockResolvedValueOnce([]);
+
+      await service.getCustomerJobs(7, { id: 42, customerId: 7, role: 'EMPLOYEE' });
+
+      expect(mockPrisma.dataCaptureJob.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { customerId: 7, userId: 42 },
+        orderBy: { createdAt: 'desc' },
+      }));
+    });
+
+    it('rejects employee history lookup without an authenticated user id', async () => {
+      await expect(service.getCustomerJobs(7, { role: 'EMPLOYEE' })).rejects.toThrow(
+        'Authenticated user is required to view capture history.',
+      );
+      expect(mockPrisma.dataCaptureJob.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('refreshes an expired stored Places photo and serves the new photo', async () => {
     const oldName = 'places/ChIJtest/photos/expired';
     const newName = 'places/ChIJtest/photos/current';
@@ -416,12 +436,13 @@ describe('DataCaptureService', () => {
         limit: 20,
         status: 'VALIDATED',
         source: 'GOOGLE_PLACES',
-      }, { role: 'CUSTOMER', customerId: 1 });  // normal tenant user
+      }, { id: 42, role: 'CUSTOMER', customerId: 1 });  // normal tenant user
 
       expect(mockPrisma.dataCapturePlace.count).toHaveBeenCalledWith({
         where: {
           AND: [
             { deletedAt: null },
+            { job: { is: { userId: 42 } } },
             { customerId: 1 },
             { status: 'VALIDATED' },
             { source: 'GOOGLE_PLACES' },
