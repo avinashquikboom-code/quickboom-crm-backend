@@ -1327,6 +1327,7 @@ export class AuthService {
       middleName: rawMiddleName || null,
       lastName: cleanUserLastName,
       fullName: personFullName || user.firstName,
+      avatar: user.avatar || null,
       role: userRole,
       roleId: roleId,
       roleType: userRoleType,
