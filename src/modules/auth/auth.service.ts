@@ -606,6 +606,8 @@ export class AuthService {
 
     const upperExpectedRole = (appType || '').trim().toUpperCase();
     const isEmployeeLogin = ['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole);
+    const inactiveEmployeeMessage =
+      'Your employee account is inactive or has been deleted. Please contact your administrator.';
 
     const rawInput = (email || '').trim();
     const normalizedEmail = rawInput.toLowerCase();
@@ -662,7 +664,7 @@ export class AuthService {
       // 1. Prioritize User account with an active linked Employee
       user = await this.prisma.user.findFirst({
         where: {
-          employee: { isNot: null },
+          employee: { is: { status: 'ACTIVE', mobileLoginEnabled: true } },
           OR: [
             ...emailConditions,
             { employee: { employeeCode: { equals: rawInput, mode: 'insensitive' } } },
@@ -688,6 +690,8 @@ export class AuthService {
       if (!user) {
         const matchedEmployee = await this.prisma.employee.findFirst({
           where: {
+            status: 'ACTIVE',
+            mobileLoginEnabled: true,
             OR: empWhere,
           },
           include: {
@@ -715,76 +719,6 @@ export class AuthService {
           user = matchedEmployee.user;
           if (!user.employee) {
             user.employee = matchedEmployee;
-          }
-        } else if (matchedEmployee) {
-          // Auto-heal: Employee exists in Employee Master but has no linked User account
-          const existingUserForEmp = await this.prisma.user.findUnique({
-            where: { email: matchedEmployee.email.toLowerCase() },
-            include: {
-              customer: true,
-              userRoles: { include: { role: true } },
-            },
-          });
-
-          if (existingUserForEmp) {
-            await this.prisma.employee.update({
-              where: { id: matchedEmployee.id },
-              data: { userId: existingUserForEmp.id },
-            });
-            if (!existingUserForEmp.customerId && matchedEmployee.customerId) {
-              await this.prisma.user.update({
-                where: { id: existingUserForEmp.id },
-                data: { customerId: matchedEmployee.customerId },
-              });
-              existingUserForEmp.customerId = matchedEmployee.customerId;
-            }
-            user = {
-              ...existingUserForEmp,
-              employee: matchedEmployee,
-            } as any;
-          } else {
-            const rawPassword = password || 'Password@123';
-            const passwordHash = await bcrypt.hash(rawPassword, 10);
-            const createdUser = await this.prisma.user.create({
-              data: {
-                customerId: matchedEmployee.customerId,
-                email: matchedEmployee.email.toLowerCase(),
-                phone: matchedEmployee.phone || null,
-                firstName: matchedEmployee.firstName,
-                lastName: matchedEmployee.lastName,
-                passwordHash,
-                isActive: matchedEmployee.status === 'ACTIVE',
-                isVerified: true,
-              },
-              include: {
-                customer: true,
-                userRoles: { include: { role: true } },
-              },
-            });
-            await this.prisma.employee.update({
-              where: { id: matchedEmployee.id },
-              data: { userId: createdUser.id },
-            });
-
-            // Ensure Employee role
-            const empRole = await this.prisma.role.findFirst({
-              where: {
-                OR: [
-                  { customerId: matchedEmployee.customerId, name: { equals: 'Employee', mode: 'insensitive' } },
-                  { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
-                ],
-              },
-            });
-            if (empRole) {
-              await this.prisma.userRole.create({
-                data: { userId: createdUser.id, roleId: empRole.id },
-              }).catch(() => null);
-            }
-
-            user = {
-              ...createdUser,
-              employee: matchedEmployee,
-            } as any;
           }
         }
       }
@@ -818,6 +752,7 @@ export class AuthService {
     if (!user) {
       const matchedEmployee = await this.prisma.employee.findFirst({
         where: {
+          ...(isEmployeeLogin ? { status: 'ACTIVE', mobileLoginEnabled: true } : {}),
           OR: empWhere,
         },
         include: {
@@ -846,126 +781,34 @@ export class AuthService {
         if (!user.employee) {
           user.employee = matchedEmployee;
         }
-      } else if (matchedEmployee) {
-        // Auto-heal: Employee exists in Employee Master but has no linked User account
-        const existingUserForEmp = await this.prisma.user.findUnique({
-          where: { email: matchedEmployee.email.toLowerCase() },
-          include: {
-            customer: true,
-            userRoles: { include: { role: true } },
-          },
-        });
-
-        if (existingUserForEmp) {
-          await this.prisma.employee.update({
-            where: { id: matchedEmployee.id },
-            data: { userId: existingUserForEmp.id },
-          });
-          if (!existingUserForEmp.customerId && matchedEmployee.customerId) {
-            await this.prisma.user.update({
-              where: { id: existingUserForEmp.id },
-              data: { customerId: matchedEmployee.customerId },
-            });
-            existingUserForEmp.customerId = matchedEmployee.customerId;
-          }
-          user = {
-            ...existingUserForEmp,
-            employee: matchedEmployee,
-          } as any;
-        } else {
-          const rawPassword = password || 'Password@123';
-          const passwordHash = await bcrypt.hash(rawPassword, 10);
-          const createdUser = await this.prisma.user.create({
-            data: {
-              customerId: matchedEmployee.customerId,
-              email: matchedEmployee.email.toLowerCase(),
-              phone: matchedEmployee.phone || null,
-              firstName: matchedEmployee.firstName,
-              lastName: matchedEmployee.lastName,
-              passwordHash,
-              isActive: matchedEmployee.status === 'ACTIVE',
-              isVerified: true,
-            },
-            include: {
-              customer: true,
-              userRoles: { include: { role: true } },
-            },
-          });
-          await this.prisma.employee.update({
-            where: { id: matchedEmployee.id },
-            data: { userId: createdUser.id },
-          });
-
-          // Ensure Employee role
-          const empRole = await this.prisma.role.findFirst({
-            where: {
-              OR: [
-                { customerId: matchedEmployee.customerId, name: { equals: 'Employee', mode: 'insensitive' } },
-                { customerId: null, name: { equals: 'Employee', mode: 'insensitive' } },
-              ],
-            },
-          });
-          if (empRole) {
-            await this.prisma.userRole.create({
-              data: { userId: createdUser.id, roleId: empRole.id },
-            }).catch(() => null);
-          }
-
-          user = {
-            ...createdUser,
-            employee: matchedEmployee,
-          } as any;
-        }
       }
     }
 
-    // Auto-heal: User exists, but employee relation is unlinked (e.g. Employee.userId was null)
-    if (user && !user.employee && typeof this.prisma?.employee?.findFirst === 'function') {
-      const unlinkedEmployee = await this.prisma.employee.findFirst({
-        where: {
-          OR: [
-            { email: { equals: normalizedEmail, mode: 'insensitive' } },
-            ...(phoneDigits.length >= 10 ? [{ phone: { contains: phoneDigits.slice(-10) } }] : []),
-          ],
-        },
-        include: {
-          department: true,
-          designation: true,
-        },
-      });
-      if (unlinkedEmployee) {
-        await this.prisma.employee.update({
-          where: { id: unlinkedEmployee.id },
-          data: { userId: user.id },
-        }).catch(() => null);
-        user.employee = unlinkedEmployee;
-        if (!user.customerId && unlinkedEmployee.customerId) {
-          await this.prisma.user.update({
-            where: { id: user.id },
-            data: { customerId: unlinkedEmployee.customerId },
-          }).catch(() => null);
-          user.customerId = unlinkedEmployee.customerId;
-        }
-      }
+    if (isEmployeeLogin && user?.employee?.status === 'PAYMENT_PENDING') {
+      throw new UnauthorizedException('Payment verification pending.');
+    }
+    if (isEmployeeLogin && user?.employee?.status === 'PAYMENT_REJECTED') {
+      throw new UnauthorizedException('Payment verification rejected. Please contact administrator.');
+    }
+    if (isEmployeeLogin && user?.employee && (
+      user.employee.userId !== user.id ||
+      user.employee.status !== 'ACTIVE' ||
+      user.employee.mobileLoginEnabled === false
+    )) {
+      throw new UnauthorizedException(inactiveEmployeeMessage);
     }
 
     if (!user || user.deletedAt) {
-      if (user?.deletedAt && user.employee && user.employee.status === 'ACTIVE') {
-        // Auto-heal soft-deleted user if active employee
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { deletedAt: null, isActive: true },
-        }).catch(() => null);
-        user.deletedAt = null;
-        user.isActive = true;
-      } else {
-        throw new UnauthorizedException({
-          statusCode: 401,
-          message: 'Invalid credentials',
-          code: 'INVALID_CREDENTIALS',
-          error: 'Unauthorized',
-        });
-      }
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: isEmployeeLogin ? inactiveEmployeeMessage : 'Invalid credentials',
+        code: 'INVALID_CREDENTIALS',
+        error: 'Unauthorized',
+      });
+    }
+
+    if (isEmployeeLogin && !user.employee) {
+      throw new UnauthorizedException(inactiveEmployeeMessage);
     }
 
     const isPasswordValid =
@@ -981,15 +824,15 @@ export class AuthService {
     }
 
     if (!user.isActive) {
-      if (user.employee && user.employee.status === 'ACTIVE') {
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { isActive: true },
-        }).catch(() => null);
-        user.isActive = true;
-      } else {
-        throw new UnauthorizedException('Your account has been deactivated');
-      }
+      // Never auto-reactivate a credential during login. In particular, removed
+      // employees retain a disabled User row so old credentials stay revoked.
+      throw new UnauthorizedException(
+        user.employee || isEmployeeLogin ? inactiveEmployeeMessage : 'Your account has been deactivated',
+      );
+    }
+
+    if (user.employee && user.employee.userId !== user.id) {
+      throw new UnauthorizedException(inactiveEmployeeMessage);
     }
 
     // Auto-heal Super Admin role for System Admin account (User ID 1 or admin@quikboom.com / admin@quickboom.com)
@@ -1535,60 +1378,14 @@ export class AuthService {
     };
   }
 
-  /**
-   * Auto-provisions an Employee record with autoincremented employeeCode (EMP-001, EMP-002, ...)
-   * if a user does not have one attached.
-   */
+  /** Returns the employee already linked to the authenticated user. */
   private async ensureEmployee(user: any): Promise<any> {
     if (user.employee) {
       return user.employee;
     }
-
-    try {
-      let customerId = user.customerId;
-      if (!customerId) {
-        throw new Error(`User ${user.id} has no customerId assigned. Cannot auto-provision employee without a real customer.`);
-      }
-
-      // Generate next sequential EMP code
-      const totalEmployees = await this.prisma.employee.count();
-      const codeSeq = String(totalEmployees + 1).padStart(3, '0');
-      const employeeCode = `EMP-${codeSeq}`;
-
-      const newEmployee = await this.prisma.employee.create({
-        data: {
-          customerId,
-          userId: user.id,
-          employeeCode,
-          firstName: user.firstName || 'Employee',
-          lastName: user.lastName || '',
-          email: user.email,
-          phone: user.phone || null,
-          status: 'ACTIVE',
-          mobileLoginEnabled: true,
-          branch: 'Head Office',
-        },
-        include: {
-          department: true,
-          designation: true,
-        },
-      });
-
-      return newEmployee;
-    } catch (err) {
-      const fallbackCode = `EMP-${String(user.id).padStart(3, '0')}`;
-      return {
-        id: user.id,
-        employeeCode: fallbackCode,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        phone: user.phone,
-        status: 'ACTIVE',
-        mobileLoginEnabled: true,
-        branch: 'Head Office',
-      };
-    }
+    throw new UnauthorizedException(
+      'Your employee account is inactive or has been deleted. Please contact your administrator.',
+    );
   }
 
   async refreshToken(dto: RefreshTokenDto, crmApp = false) {
@@ -1732,9 +1529,21 @@ export class AuthService {
 
     const isEmployeeRole = !isSuperAdminRole && !isCustomerAdminRole && !isCompanyAdminRole && isEmployeeRoleCheck;
 
-    if (isEmployeeRole) {
+    // A User row linked to an employee is an employee credential even if an old
+    // token carries a different role claim. Employee deletion disables this row;
+    // checking the relation here makes all authenticated APIs fail closed.
+    if ((user as any).employee && (
+      !(user as any).employee.userId ||
+      Number((user as any).employee.userId) !== Number(user.id) ||
+      (user as any).employee.status !== 'ACTIVE' ||
+      (user as any).employee.mobileLoginEnabled === false
+    )) {
+      throw new UnauthorizedException('Your employee account is inactive or has been deleted. Please contact your administrator.');
+    }
+
+    if (isEmployeeRole || Boolean((user as any).employee)) {
       const empStatus = (user as any).employee?.status || 'ACTIVE';
-      if (!(user as any).employee || empStatus !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
+      if (!(user as any).employee || Number((user as any).employee.userId) !== Number(user.id) || empStatus !== 'ACTIVE' || (user as any).employee.mobileLoginEnabled === false) {
         if (existingToken) {
           await this.prisma.refreshToken.update({
             where: { id: existingToken.id },
@@ -1857,14 +1666,19 @@ export class AuthService {
         ],
         deletedAt: null,
       },
+      include: { employee: true },
     });
 
     if (!user) {
       throw new BadRequestException('No account found matching this mobile number. Please check the number or register first.');
     }
-
     if (!user.isActive) {
-      throw new ForbiddenException('User account is deactivated. Please contact support.');
+      throw new ForbiddenException(user.employee
+        ? 'Your employee account is inactive or has been deleted. Please contact your administrator.'
+        : 'User account is deactivated. Please contact support.');
+    }
+    if (user.employee && (user.employee.userId !== user.id || user.employee.status !== 'ACTIVE' || !user.employee.mobileLoginEnabled)) {
+      throw new ForbiddenException('Your employee account is inactive or has been deleted. Please contact your administrator.');
     }
 
     // Resend cooldown check (60 seconds)
@@ -1954,7 +1768,12 @@ export class AuthService {
     }
 
     if (!user.isActive) {
-      throw new ForbiddenException('User account is deactivated. Please contact support.');
+      throw new ForbiddenException(user.employee
+        ? 'Your employee account is inactive or has been deleted. Please contact your administrator.'
+        : 'User account is deactivated. Please contact support.');
+    }
+    if (user.employee && (user.employee.userId !== user.id || user.employee.status !== 'ACTIVE' || !user.employee.mobileLoginEnabled)) {
+      throw new ForbiddenException('Your employee account is inactive or has been deleted. Please contact your administrator.');
     }
 
     // Check if OTP was generated
@@ -2138,7 +1957,7 @@ export class AuthService {
         OR: emailLookupVariants.map((e) => ({ email: { equals: e, mode: 'insensitive' as const } })),
         deletedAt: null,
       },
-      include: { customer: true },
+      include: { customer: true, employee: true },
     });
 
     // To prevent user enumeration, return generic success if email does not exist
@@ -2150,9 +1969,13 @@ export class AuthService {
         message: 'If an account exists with this email address, a verification OTP has been sent.',
       };
     }
-
     if (!user.isActive) {
-      throw new ForbiddenException('User account is deactivated. Please contact support.');
+      throw new ForbiddenException(user.employee
+        ? 'Your employee account is inactive or has been deleted. Please contact your administrator.'
+        : 'User account is deactivated. Please contact support.');
+    }
+    if (user.employee && (user.employee.userId !== user.id || user.employee.status !== 'ACTIVE' || !user.employee.mobileLoginEnabled)) {
+      throw new ForbiddenException('Your employee account is inactive or has been deleted. Please contact your administrator.');
     }
 
     // Enforce 60 seconds cooldown
@@ -2259,7 +2082,12 @@ export class AuthService {
     }
 
     if (!user.isActive) {
-      throw new ForbiddenException('User account is deactivated. Please contact support.');
+      throw new ForbiddenException(user.employee
+        ? 'Your employee account is inactive or has been deleted. Please contact your administrator.'
+        : 'User account is deactivated. Please contact support.');
+    }
+    if (user.employee && (user.employee.userId !== user.id || user.employee.status !== 'ACTIVE' || !user.employee.mobileLoginEnabled)) {
+      throw new ForbiddenException('Your employee account is inactive or has been deleted. Please contact your administrator.');
     }
 
     // Check if OTP was generated

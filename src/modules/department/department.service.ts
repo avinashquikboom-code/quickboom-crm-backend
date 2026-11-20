@@ -28,50 +28,6 @@ export class DepartmentService {
     return cleaned.substring(0, 6) || 'DEPT';
   }
 
-  private async isModuleResetByTenant(customerId: number, moduleId: string): Promise<boolean> {
-    try {
-      const resetAudit = await this.prisma.auditLog.findFirst({
-        where: {
-          action: 'DATA_RESET',
-          status: 'SUCCESS',
-          OR: [
-            { customerId },
-            { customerId: null, details: { path: ['scope'], equals: 'global' } },
-          ],
-        },
-        orderBy: { id: 'desc' },
-        select: { details: true },
-      });
-      if (!resetAudit?.details) return false;
-      const details = resetAudit.details as any;
-      if (details.scope === 'application' || details.scope === 'global') return true;
-      if (Array.isArray(details.modules) && details.modules.includes(moduleId)) return true;
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
-  private async hasDepartmentDeletion(customerId: number): Promise<boolean> {
-    try {
-      const deletion = await this.prisma.auditLog.findFirst({
-        where: {
-          customerId,
-          action: 'DELETE',
-          OR: [
-            { module: 'DEPARTMENTS' },
-            { entityType: 'Department' },
-            { description: { contains: 'Department' } },
-          ],
-        },
-        select: { id: true },
-      });
-      return Boolean(deletion);
-    } catch {
-      return false;
-    }
-  }
-
   async findAll(
     customerId: number | string,
     options: {
@@ -104,7 +60,7 @@ export class DepartmentService {
 
     const skip = (Math.max(1, page) - 1) * Math.max(1, limit);
 
-    let [total, departments] = await Promise.all([
+    const [total, departments] = await Promise.all([
       this.prisma.department.count({ where }),
       this.prisma.department.findMany({
         where,
@@ -130,65 +86,6 @@ export class DepartmentService {
         take: limit,
       }),
     ]);
-
-    // Count total departments for this customer across the entire workspace (unfiltered)
-    const totalCustomerDepts = await this.prisma.department.count({
-      where: { customerId: numCustomerId },
-    });
-
-    const isReset = await this.isModuleResetByTenant(numCustomerId, 'departments');
-    const hasDeleted = await this.hasDepartmentDeletion(numCustomerId);
-
-    // Auto-seed standard departments ONLY for brand new workspaces that have 0 departments
-    // and have NEVER reset or deleted any departments
-    if (totalCustomerDepts === 0 && !isReset && !hasDeleted && !search) {
-      const defaultDepts = [
-        { name: 'Engineering & IT', code: 'ENG', description: 'Software and infrastructure operations' },
-        { name: 'Sales & Marketing', code: 'SALES', description: 'Business development and client growth' },
-        { name: 'Human Resources', code: 'HR', description: 'Talent and employee relations' },
-        { name: 'Operations', code: 'OPS', description: 'Daily business logistics and processes' },
-        { name: 'Finance & Accounts', code: 'FIN', description: 'Accounting and payroll management' },
-      ];
-
-      for (const d of defaultDepts) {
-        await this.prisma.department.create({
-          data: {
-            customerId: numCustomerId,
-            name: d.name,
-            code: d.code,
-            description: d.description,
-            isActive: true,
-          },
-        }).catch(() => null);
-      }
-
-      [total, departments] = await Promise.all([
-        this.prisma.department.count({ where }),
-        this.prisma.department.findMany({
-          where,
-          include: {
-            _count: {
-              select: {
-                employees: true,
-                designations: true,
-              },
-            },
-            designations: {
-              where: { isActive: true },
-              select: {
-                id: true,
-                name: true,
-                code: true,
-                isActive: true,
-              },
-            },
-          },
-          orderBy: { name: 'asc' },
-          skip,
-          take: limit,
-        }),
-      ]);
-    }
 
     // Lookup department head names if headId is present
     const headIds = departments

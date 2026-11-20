@@ -2560,6 +2560,33 @@ export class EmployeeService {
 
       // Invalidate tokens/sessions
       if (userId) {
+        // Keep shared/admin accounts intact, but disable employee-only credentials.
+        const isSharedOrAdmin = await tx.user.findFirst({
+          where: {
+            id: userId,
+            OR: [
+              { userRoles: { some: { role: { type: { in: [RoleType.SUPER_ADMIN, RoleType.CUSTOMER_ADMIN, RoleType.TENANT_ADMIN] } } } } },
+              { assignedLeads: { some: {} } }, { createdLeads: { some: {} } },
+              { assignedDeals: { some: {} } }, { assignedContacts: { some: {} } },
+              { assignedTickets: { some: {} } }, { createdTickets: { some: {} } },
+              { assignedTasks: { some: {} } }, { createdTasks: { some: {} } },
+            ],
+          },
+          select: { id: true },
+        });
+        if (!isSharedOrAdmin) {
+          await tx.user.update({
+            where: { id: userId },
+            data: {
+              isActive: false,
+              // Keep unique identifiers reserved so registration cannot revive
+              // this credential before an administrator provisions a replacement.
+              deletedAt: null,
+              otpCode: null,
+              otpExpiresAt: null,
+            },
+          });
+        }
         if (tx.refreshToken?.deleteMany) {
           await tx.refreshToken.deleteMany({ where: { userId } });
         }

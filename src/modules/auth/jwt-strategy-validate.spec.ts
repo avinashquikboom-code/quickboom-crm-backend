@@ -171,6 +171,21 @@ describe('JwtStrategy.validate regression tests (No Employee.managerId mismatch)
     await expect(strategy.validate({ sub: 100 })).rejects.toThrow(UnauthorizedException);
   });
 
+  it('rejects an old access token after its linked employee is removed', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 101,
+      isActive: false,
+      deletedAt: null,
+      employee: null,
+      customer: { id: 9, isActive: true },
+      userRoles: [],
+    });
+
+    await expect(strategy.validate({ sub: 101, role: 'EMPLOYEE' })).rejects.toThrow(
+      'User account is inactive or no longer exists.',
+    );
+  });
+
   it('resolves tenant association and permissions for employee user', async () => {
     const mockUser = {
       id: 3,

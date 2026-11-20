@@ -66,6 +66,20 @@ describe('Auth Service - MSG91 OTP Authentication Flow', () => {
   });
 
   describe('sendOtp', () => {
+    it('rejects OTP delivery for an inactive linked employee', async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        id: 11,
+        phone: '9876543211',
+        isActive: true,
+        employee: { id: 4, userId: 11, status: 'INACTIVE', mobileLoginEnabled: false },
+      });
+
+      await expect(authService.sendOtp({ mobile: '9876543211' })).rejects.toThrow(
+        'Your employee account is inactive or has been deleted. Please contact your administrator.',
+      );
+      expect(msg91Service.sendOtp).not.toHaveBeenCalled();
+    });
+
     it('dispatches 6-digit OTP to existing user mobile', async () => {
       prisma.user.findFirst.mockResolvedValue({
         id: 10,
