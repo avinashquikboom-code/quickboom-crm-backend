@@ -1174,7 +1174,16 @@ export class DataCaptureService implements OnModuleInit {
             'Google Places API quota limit reached. Please try again later.',
             HttpStatus.TOO_MANY_REQUESTS,
           );
-        } else if (err.response?.status === 400 || err.response?.status === 403) {
+        } else if (
+          err.response?.status === 403 ||
+          err.response?.data?.error?.status === 'PERMISSION_DENIED' ||
+          /caller does not have permission|api key not authorized/i.test(String(err.response?.data?.error?.message || ''))
+        ) {
+          throw new HttpException(
+            'Google Places is not authorized for the configured API key. Ask an administrator to verify Places API (New) is enabled, billing is active, and the key restrictions allow requests from this API server. Then run Admin Settings → Integrations → Google Maps → Test Connection.',
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
+        } else if (err.response?.status === 400) {
           throw new BadRequestException(
             `Google Places search error: ${err.response?.data?.error?.message || err.message}`,
           );

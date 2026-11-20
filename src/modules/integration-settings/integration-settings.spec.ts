@@ -204,6 +204,14 @@ describe('Integration Settings & Gateway Dynamic System', () => {
       expect(mapsConfig.apiKey).toBe('AIzaSy_custom_db_maps_key_999');
       expect(mapsConfig.config.defaultCity).toBe('Bangalore, Karnataka');
     });
+
+    it('explains how to resolve Google Places permission-denied errors', () => {
+      const hint = (service as any).googleMapsTestFailureHint('The caller does not have permission');
+      expect(hint).toContain('Places API (New) is enabled');
+      expect(hint).toContain('billing is active');
+      expect(hint).toContain('API key restrictions');
+    });
+
   });
 
   describe('5. Provider Normalization & Gateway Status Flags', () => {

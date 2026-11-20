@@ -596,6 +596,23 @@ describe('DataCaptureService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it('returns actionable configuration guidance when Google rejects the Places API key', async () => {
+      mockPrisma.dataCaptureJob.count.mockResolvedValue(0);
+      mockPrisma.dataCapturePlace.count.mockResolvedValue(0);
+      mockPrisma.dataCaptureJob.aggregate.mockResolvedValue({ _sum: { googleApiRequests: 0 } });
+      mockIntegrationSettingsService.getGoogleMapsConfig.mockResolvedValue({ isEnabled: true, apiKey: 'unit-test-key' });
+      jest.spyOn(axios, 'post').mockRejectedValueOnce({
+        message: 'Request failed with status code 400',
+        response: {
+          status: 400,
+          data: { error: { status: 'PERMISSION_DENIED', message: 'The caller does not have permission' } },
+        },
+      });
+
+      await expect(service.extractPlaces(1, 1, { keyword: 'Dentists', location: 'Pune' }))
+        .rejects.toThrow('Google Places is not authorized for the configured API key');
+    });
+
     it('throws BadRequestException when both keyword and location are missing', async () => {
       await expect(
         service.extractPlaces(1, 1, {}),
