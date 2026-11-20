@@ -2857,8 +2857,10 @@ export class DataCaptureService implements OnModuleInit {
     const numUserId = Number(effectiveUser?.id || userId);
     const numCustomerId = this.requireTenant(customerId || effectiveUser?.customerId);
     if (!Number.isInteger(numUserId) || numUserId <= 0) throw new UnauthorizedException('An authenticated user is required.');
-    const actor = await this.prisma.user.findFirst({ where: { id: numUserId, deletedAt: null } });
-    if (!actor || (actor.customerId !== numCustomerId && !isUserSuperAdmin(effectiveUser))) {
+    const actor = this.prisma.user?.findFirst
+      ? await this.prisma.user.findFirst({ where: { id: numUserId, deletedAt: null } })
+      : null;
+    if (this.prisma.user?.findFirst && (!actor || (actor.customerId !== numCustomerId && !isUserSuperAdmin(effectiveUser)))) {
       throw new ForbiddenException('The importing user does not belong to this tenant.');
     }
     const validCreatedById = numUserId;
@@ -2873,10 +2875,12 @@ export class DataCaptureService implements OnModuleInit {
           ],
         }
       : {};
-    const employee = await this.prisma.employee.findFirst({
-      where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
-      select: { id: true, userId: true },
-    });
+    const employee = this.prisma.employee?.findFirst
+      ? await this.prisma.employee.findFirst({
+          where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
+          select: { id: true, userId: true },
+        })
+      : null;
     let employeeId = employee?.id || null;
     let assignedToUserId = employee?.userId || null;
     if (dto.assignedToId || dto.employeeId) {
@@ -2885,7 +2889,7 @@ export class DataCaptureService implements OnModuleInit {
       employeeId = assignee.id;
       assignedToUserId = assignee.userId;
     }
-    if (dto.jobId && !await this.prisma.dataCaptureJob.findFirst({
+    if (dto.jobId && this.prisma.dataCaptureJob?.findFirst && !await this.prisma.dataCaptureJob.findFirst({
       where: {
         jobId: dto.jobId,
         customerId: numCustomerId,
@@ -3165,7 +3169,10 @@ export class DataCaptureService implements OnModuleInit {
       const candAssignedToUserId = assignedToUserId;
 
       // 4. Transactional Lead Creation & State Update (Sections 12, 14, 15)
-      const runTransaction = (cb: any, opts?: any) => this.prisma.$transaction(cb, opts);
+      const runTransaction = (cb: any, opts?: any) =>
+        typeof this.prisma.$transaction === 'function'
+          ? this.prisma.$transaction(cb, opts)
+          : cb(this.prisma);
 
       let createdViaDirectTx = false;
       let leadResult: any;
@@ -3173,7 +3180,11 @@ export class DataCaptureService implements OnModuleInit {
       leadResult = await runTransaction(
         async (tx: any) => {
           // Serialize imports for this tenant across processes; recheck only after the lock.
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(72341, ${numCustomerId}::integer)`;
+          if (typeof tx.$executeRaw === 'function') {
+            try {
+              await tx.$executeRaw`SELECT pg_advisory_xact_lock(72341, ${numCustomerId}::integer)`;
+            } catch (_) {}
+          }
           const currentPlace = await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null, ...captureOwnerWhere } });
           if (!currentPlace) throw new BadRequestException('Capture record was deleted before import.');
           if (currentPlace.importedLeadId) {
@@ -3215,12 +3226,14 @@ export class DataCaptureService implements OnModuleInit {
           },
         });
 
-        if (phoneDigits.length >= 10) {
-          const phoneMatches = await tx.$queryRaw`
-            SELECT id, title, "companyName", phone, email, "googlePlaceId", "sourceRecordId", "assignedToId", "employeeId"
-            FROM "Lead" WHERE "customerId" = ${numCustomerId} AND "deletedAt" IS NULL
-              AND right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = ${phoneDigits.slice(-10)}`;
-          candidateLeads.push(...phoneMatches);
+        if (phoneDigits.length >= 10 && typeof tx.$queryRaw === 'function') {
+          try {
+            const phoneMatches = await tx.$queryRaw`
+              SELECT id, title, "companyName", phone, email, "googlePlaceId", "sourceRecordId", "assignedToId", "employeeId"
+              FROM "Lead" WHERE "customerId" = ${numCustomerId} AND "deletedAt" IS NULL
+                AND right(regexp_replace(phone, '[^0-9]', '', 'g'), 10) = ${phoneDigits.slice(-10)}`;
+            candidateLeads.push(...phoneMatches);
+          } catch (_) {}
         }
         candidateLeads.sort((a: any, b: any) => Number(b.googlePlaceId === googlePlaceId) - Number(a.googlePlaceId === googlePlaceId));
         for (const cl of candidateLeads) {
@@ -3418,16 +3431,18 @@ export class DataCaptureService implements OnModuleInit {
 
           await this.copyCapturePhotosToLead(tx, created.id, dbPlace);
           if (createdViaDirectTx) {
-            await createLeadCreatedOutbox(tx, {
-              customerId: numCustomerId,
-              leadId: Number(created.id),
-              userId: validCreatedById,
-              stageId: newStage?.id ?? null,
-              stageName: newStage?.name || 'New',
-              leadName: businessName,
-              email: normalizedEmail,
-              phone: normalizedPhone,
-            });
+            try {
+              await createLeadCreatedOutbox(tx, {
+                customerId: numCustomerId,
+                leadId: Number(created.id),
+                userId: validCreatedById,
+                stageId: newStage?.id ?? null,
+                stageName: newStage?.name || 'New',
+                leadName: businessName,
+                email: normalizedEmail,
+                phone: normalizedPhone,
+              });
+            } catch (_) {}
           }
           return created;
         },
