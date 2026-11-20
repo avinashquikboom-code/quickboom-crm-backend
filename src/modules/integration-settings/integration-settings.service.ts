@@ -1559,7 +1559,7 @@ export class IntegrationSettingsService {
   /**
    * Tests integration credentials live against the third-party API.
    */
-  async testIntegration(provider: string, dto?: TestIntegrationDto, adminUserId?: number) {
+  async testIntegration(provider: string, dto?: TestIntegrationDto, adminUserId?: number): Promise<Record<string, any>> {
     const normProvider = normalizeProvider(provider);
     try {
       const result = await this.runProviderConnectionTest(provider, dto, adminUserId);
@@ -1593,6 +1593,9 @@ export class IntegrationSettingsService {
 
   private googleMapsTestFailureHint(googleMessage: string): string {
     const m = (googleMessage || '').toLowerCase();
+    if (m.includes('caller does not have permission') || m.includes('permission_denied') || m.includes('api key not authorized')) {
+      return ' Confirm Places API (New) is enabled for the Google Cloud project, billing is active, and the API key restrictions allow requests from this API server.';
+    }
     if (
       m.includes('places api') ||
       m.includes('not been used') ||
