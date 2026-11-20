@@ -25,8 +25,9 @@ export class HrmsLiveDashboardController {
     @CurrentCustomer() customerId: number | string | undefined,
     @Query('customerId') customerIdQuery?: string,
     @Query('date') dateQuery?: string,
+    @Query('period') periodQuery?: string,
   ) {
-    return this.attendanceService.getLiveDashboardData(user, customerIdQuery || customerId, dateQuery);
+    return this.attendanceService.getLiveDashboardData(user, customerIdQuery || customerId, dateQuery, periodQuery);
   }
 
   @Get('live-employees')
