@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
+import * as crypto from 'crypto';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
 import {
   applyPermissionItems,
