@@ -157,6 +157,7 @@ describe('AuthService - Token Refresh Flow', () => {
       customerId: 3,
       employee: {
         id: 15,
+        userId: 20,
         status: 'INACTIVE', // Inactive employee!
         mobileLoginEnabled: true,
       },
@@ -173,6 +174,22 @@ describe('AuthService - Token Refresh Flow', () => {
 
     await expect(
       authService.refreshToken({ refreshToken: 'emp-refresh-token' }),
-    ).rejects.toThrow('Employee account is inactive or no longer exists.');
+    ).rejects.toThrow('Your employee account is inactive or has been deleted. Please contact your administrator.');
+  });
+
+  it('rejects refresh after employee deletion deactivates its user account', async () => {
+    jwtService.verify.mockReturnValue({ sub: 21, role: 'EMPLOYEE' });
+    prisma.refreshToken.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValue({
+      id: 21,
+      isActive: false,
+      deletedAt: null,
+      employee: null,
+      userRoles: [],
+    });
+
+    await expect(
+      authService.refreshToken({ refreshToken: 'employee-refresh-token' }),
+    ).rejects.toThrow(UnauthorizedException);
   });
 });

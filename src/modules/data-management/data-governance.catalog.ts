@@ -498,6 +498,17 @@ const MODULE_ALIASES: Record<string, string> = {
   'loan-type': 'loan-types',
   'loan_type': 'loan-types',
   'loantypes': 'loan-types',
+  'salary-structure': 'salary-structures',
+  'salary_structure': 'salary-structures',
+  'salary_structures': 'salary-structures',
+  'salarystructure': 'salary-structures',
+  'salarystructures': 'salary-structures',
+  'salary-structure-types': 'salary-structures',
+  'payroll-policy': 'payroll-policies',
+  'payroll_policy': 'payroll-policies',
+  'payroll_policies': 'payroll-policies',
+  'payrollpolicy': 'payroll-policies',
+  'payrollpolicies': 'payroll-policies',
 };
 
 export function resolveModuleId(id: string): string {

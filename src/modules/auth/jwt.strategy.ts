@@ -174,10 +174,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       (payloadRole === 'EMPLOYEE' ||
         (payload.roleType === RoleType.CUSTOM && user.employee != null));
 
-    if (tokenIsEmployee) {
-      if (!user.employee || user.employee.status !== 'ACTIVE' || user.employee.mobileLoginEnabled === false) {
+    if (user.employee || tokenIsEmployee) {
+      if (!user.employee || user.employee.userId !== user.id || user.employee.status !== 'ACTIVE' || user.employee.mobileLoginEnabled === false) {
         this.logger.warn(`[JWT_STRATEGY] Employee record for user ${userId} is missing or inactive`);
-        throw new UnauthorizedException('Employee account is inactive or no longer exists.');
+        throw new UnauthorizedException('Your employee account is inactive or has been deleted. Please contact your administrator.');
       }
     }
 

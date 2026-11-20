@@ -231,6 +231,36 @@ describe('Auth Service - Employee Registration & Mobile Login Tests', () => {
   });
 
   describe('Employee Mobile Login Status Validation', () => {
+    it('rejects a deleted employee with the previous password without creating or relinking a user', async () => {
+      const compare = jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+      prisma.user.findFirst
+        .mockResolvedValueOnce(null) // no linked active employee login
+        .mockResolvedValueOnce({
+          id: 107,
+          email: 'deleted@quikboom.com',
+          passwordHash: 'old-hash',
+          isActive: false,
+          deletedAt: null,
+          employee: null,
+          userRoles: [],
+        });
+      prisma.employee.findFirst.mockResolvedValue({
+        id: 17,
+        employeeCode: 'EMP-017',
+        email: 'deleted@quikboom.com',
+        status: 'ACTIVE',
+        mobileLoginEnabled: true,
+        userId: null,
+      });
+
+      await expect(
+        authService.login('deleted@quikboom.com', 'OldPassword123!', 'EMPLOYEE'),
+      ).rejects.toThrow('Your employee account is inactive or has been deleted. Please contact your administrator.');
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.employee.update).toBeUndefined();
+      compare.mockRestore();
+    });
+
     it('blocks employee login with "Payment verification pending." when employee status is PAYMENT_PENDING', async () => {
       const bcrypt = require('bcrypt');
       jest.spyOn(bcrypt, 'compare').mockImplementation(() => Promise.resolve(true));
