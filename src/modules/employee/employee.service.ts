@@ -23,6 +23,7 @@ import {
   formatDurationHoursMinutes,
 } from '../../common/utils/timezone.util';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
+import { isAuthorizedSalesTelecaller } from '../../common/crm/crm-employee-category';
 
 export interface FindAllEmployeesParams {
   customerId?: number | string;
@@ -3264,6 +3265,7 @@ export class EmployeeService {
     const employee = await this.prisma.employee.findUnique({
       where: { id: empId },
       include: {
+        department: true,
         designation: true,
         user: {
           include: {
@@ -3426,6 +3428,19 @@ export class EmployeeService {
         ROLE_PERMISSION_DEFAULTS[matchedKey].forEach((p) => {
           rolePermissionsSet.add(`${p.module.toUpperCase()}:${p.action.toUpperCase()}`);
         });
+      }
+    }
+
+    if (isAuthorizedSalesTelecaller(employee)) {
+      for (const key of [
+        'DATA_CAPTURE:VIEW',
+        'DATA_CAPTURE:CREATE',
+        'DATA_CAPTURE:EDIT',
+        'LEADS:VIEW',
+        'LEADS:CREATE',
+        'LEADS:EDIT',
+      ]) {
+        rolePermissionsSet.add(key);
       }
     }
 

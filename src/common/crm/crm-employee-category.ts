@@ -8,6 +8,21 @@ export interface CrmEmployeeSignals {
   roles?: Array<string | null | undefined>;
 }
 
+/** Explicitly configured Sales Telecaller cohort allowed CRM mobile defaults. */
+export function isAuthorizedSalesTelecaller(employee: any): boolean {
+  const department = employee?.department;
+  const designation = employee?.designation;
+  const departmentSignals = [department?.name, department?.code].map(text);
+  const designationSignals = [designation?.name, designation?.code].map(text);
+  return employee?.status === 'ACTIVE' &&
+    employee?.mobileLoginEnabled !== false &&
+    designation?.crmMobileAccess === true &&
+    departmentSignals.some((value) => value.includes('SALES')) &&
+    designationSignals.some((value) =>
+      value.includes('TELECALL') || value.includes('TELESALES') || value.includes('TELESELL'),
+    );
+}
+
 function text(value?: string | null): string {
   return String(value || '').trim().toUpperCase();
 }

@@ -29,7 +29,7 @@ import {
 } from './dto/auth.dto';
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
-import { CrmEmployeeCategory, classifyCrmEmployee } from '../../common/crm/crm-employee-category';
+import { CrmEmployeeCategory, classifyCrmEmployee, isAuthorizedSalesTelecaller } from '../../common/crm/crm-employee-category';
 import { assertCrmAppEmployee, crmCategoryForEmployee } from '../../common/crm/crm-app-access';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
@@ -2471,6 +2471,22 @@ export class AuthService {
     }
     if (roleNames.length === 0 && user.employee) {
       roleNames.push('TELECALLER');
+    }
+
+    // Existing designation-linked roles may have only a partial permission
+    // set. Supply the required CRM actions only for the explicitly enabled
+    // Sales Telecaller cohort; employee DENY overrides are applied below.
+    if (isAuthorizedSalesTelecaller(user.employee)) {
+      for (const [module, action] of [
+        ['DATA_CAPTURE', 'VIEW'],
+        ['DATA_CAPTURE', 'CREATE'],
+        ['DATA_CAPTURE', 'EDIT'],
+        ['LEADS', 'VIEW'],
+        ['LEADS', 'CREATE'],
+        ['LEADS', 'EDIT'],
+      ]) {
+        permissionsMap.set(`${module}:${action}`, { module, action });
+      }
     }
 
     let desigId = user.employee?.designationId;

@@ -92,6 +92,7 @@ describe('DataCaptureController RBAC & Permissions Enforcement', () => {
         { module: 'DATA_CAPTURE', action: 'VIEW' },
         { module: 'DATA_CAPTURE', action: 'CREATE' },
         { module: 'DATA_CAPTURE', action: 'EDIT' },
+        { module: 'LEADS', action: 'CREATE' },
       ],
     };
 

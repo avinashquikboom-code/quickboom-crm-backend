@@ -1676,6 +1676,16 @@ export class DataCaptureService implements OnModuleInit {
       // - Normal user                        => strictly scoped to their customerId
       const andConditions: any[] = [{ deletedAt: null }];
 
+      const captureOwnerUserId = user && !isUserAdmin(user)
+        ? Number(user.id || user.userId)
+        : null;
+      if (user && !isUserAdmin(user) && (!Number.isInteger(captureOwnerUserId) || captureOwnerUserId <= 0)) {
+        throw new UnauthorizedException('Authenticated user is required to list Data Capture records.');
+      }
+      if (captureOwnerUserId) {
+        andConditions.push({ job: { is: { userId: captureOwnerUserId } } });
+      }
+
       if (isSuperAdmin) {
         if (hasExplicitCustomer) {
           andConditions.push({ customerId: numCustomerId });
@@ -1839,7 +1849,7 @@ export class DataCaptureService implements OnModuleInit {
   /**
    * Get single captured place details with duplicate detection
    */
-  async getPlaceById(customerId: string | number | undefined, id: number | string): Promise<CapturedPlace> {
+  async getPlaceById(customerId: string | number | undefined, id: number | string, user?: any): Promise<CapturedPlace> {
     const numCustomerId = this.requireTenant(customerId);
     const numId = Number(id);
 
@@ -1853,6 +1863,13 @@ export class DataCaptureService implements OnModuleInit {
     };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
+    }
+    if (user && !isUserAdmin(user)) {
+      const ownerUserId = Number(user.id || user.userId);
+      if (!Number.isInteger(ownerUserId) || ownerUserId <= 0) {
+        throw new UnauthorizedException('Authenticated user is required to view Data Capture records.');
+      }
+      where.job = { is: { userId: ownerUserId } };
     }
 
     const place = await this.prisma.dataCapturePlace.findFirst({
@@ -2690,6 +2707,9 @@ export class DataCaptureService implements OnModuleInit {
       throw new ForbiddenException('The importing user does not belong to this tenant.');
     }
     const validCreatedById = numUserId;
+    const captureOwnerWhere = effectiveUser && !isUserAdmin(effectiveUser)
+      ? { job: { is: { userId: numUserId } } }
+      : {};
     const employee = await this.prisma.employee.findFirst({
       where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
       select: { id: true, userId: true },
@@ -2702,7 +2722,13 @@ export class DataCaptureService implements OnModuleInit {
       employeeId = assignee.id;
       assignedToUserId = assignee.userId;
     }
-    if (dto.jobId && !await this.prisma.dataCaptureJob.findFirst({ where: { jobId: dto.jobId, customerId: numCustomerId } })) {
+    if (dto.jobId && !await this.prisma.dataCaptureJob.findFirst({
+      where: {
+        jobId: dto.jobId,
+        customerId: numCustomerId,
+        ...(effectiveUser && !isUserAdmin(effectiveUser) ? { userId: numUserId } : {}),
+      },
+    })) {
       throw new NotFoundException('Capture session not found.');
     }
 
@@ -2753,7 +2779,7 @@ export class DataCaptureService implements OnModuleInit {
       rawCandidates = [{ ...dto, googlePlaceId: dto.googlePlaceId, sourceRecordId: dto.sourceRecordId || dto.googlePlaceId }];
     } else if (dto.jobId) {
       const jobPlaces = await this.prisma.dataCapturePlace.findMany({
-        where: { jobId: dto.jobId, customerId: numCustomerId, deletedAt: null },
+        where: { jobId: dto.jobId, customerId: numCustomerId, deletedAt: null, ...captureOwnerWhere },
         orderBy: { id: 'asc' },
       });
       rawCandidates = jobPlaces;
@@ -2806,14 +2832,14 @@ export class DataCaptureService implements OnModuleInit {
       // Priority A: Match by primary key id
       if (Number.isSafeInteger(candidateNumId) && candidateNumId > 0) {
         dbPlace = await this.prisma.dataCapturePlace.findFirst({
-          where: { id: candidateNumId, customerId: numCustomerId, deletedAt: null },
+          where: { id: candidateNumId, customerId: numCustomerId, deletedAt: null, ...captureOwnerWhere },
         });
       }
 
       // Priority B: Match by googlePlaceId
       if (!dbPlace && candGoogleId) {
         dbPlace = await this.prisma.dataCapturePlace.findFirst({
-          where: { googlePlaceId: candGoogleId, customerId: numCustomerId, deletedAt: null, ...(dto.jobId ? { jobId: dto.jobId } : {}) },
+          where: { googlePlaceId: candGoogleId, customerId: numCustomerId, deletedAt: null, ...(dto.jobId ? { jobId: dto.jobId } : {}), ...captureOwnerWhere },
         });
       }
 
@@ -2824,6 +2850,7 @@ export class DataCaptureService implements OnModuleInit {
           where: {
             customerId: numCustomerId,
             deletedAt: null,
+            ...captureOwnerWhere,
             OR: [
               ...(Number.isSafeInteger(numCandidateSrc) && numCandidateSrc > 0 ? [{ id: numCandidateSrc }] : []),
               { sourceRecordId: candSourceId },
@@ -2968,7 +2995,7 @@ export class DataCaptureService implements OnModuleInit {
         async (tx: any) => {
           // Serialize imports for this tenant across processes; recheck only after the lock.
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(72341, ${numCustomerId}::integer)`;
-          const currentPlace = await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null } });
+          const currentPlace = await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId, deletedAt: null, ...captureOwnerWhere } });
           if (!currentPlace) throw new BadRequestException('Capture record was deleted before import.');
           if (currentPlace.importedLeadId) {
             matchedLead = await tx.lead.findFirst({
@@ -3348,11 +3375,18 @@ export class DataCaptureService implements OnModuleInit {
   /**
    * Get extraction history for customer from PostgreSQL
    */
-  async getCustomerJobs(customerId?: string | number): Promise<ExtractionJob[]> {
+  async getCustomerJobs(customerId?: string | number, user?: any): Promise<ExtractionJob[]> {
     const numCustomerId = Number(customerId);
     const where: any = {};
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
+    }
+    if (user && !isUserAdmin(user)) {
+      const ownerUserId = Number(user.id || user.userId);
+      if (!Number.isInteger(ownerUserId) || ownerUserId <= 0) {
+        throw new UnauthorizedException('Authenticated user is required to view capture history.');
+      }
+      where.userId = ownerUserId;
     }
 
     const jobs = await this.prisma.dataCaptureJob.findMany({
@@ -3413,11 +3447,18 @@ export class DataCaptureService implements OnModuleInit {
   /**
    * Get single extraction job details
    */
-  async getJobById(customerId: string | number | undefined, jobId: string): Promise<ExtractionJob> {
+  async getJobById(customerId: string | number | undefined, jobId: string, user?: any): Promise<ExtractionJob> {
     const numCustomerId = Number(customerId);
     const where: any = { jobId: jobId.trim() };
     if (!isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
+    }
+    if (user && !isUserAdmin(user)) {
+      const ownerUserId = Number(user.id || user.userId);
+      if (!Number.isInteger(ownerUserId) || ownerUserId <= 0) {
+        throw new UnauthorizedException('Authenticated user is required to view capture history.');
+      }
+      where.userId = ownerUserId;
     }
 
     const job = await this.prisma.dataCaptureJob.findFirst({
@@ -3670,9 +3711,13 @@ export class DataCaptureService implements OnModuleInit {
     return 'Partial';
   }
 
-  private async loadSessionRows(customerId: number) {
+  private async loadSessionRows(customerId: number, user?: any) {
+    const ownerUserId = user && !isUserAdmin(user) ? Number(user.id || user.userId) : null;
+    if (user && !isUserAdmin(user) && (!Number.isInteger(ownerUserId) || ownerUserId <= 0)) {
+      throw new UnauthorizedException('Authenticated user is required to view capture history.');
+    }
     const jobs = await this.prisma.dataCaptureJob.findMany({
-      where: { customerId },
+      where: { customerId, ...(ownerUserId ? { userId: ownerUserId } : {}) },
       orderBy: { createdAt: 'desc' },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -3765,9 +3810,9 @@ export class DataCaptureService implements OnModuleInit {
     }, { sessions: 0, captured: 0, imported: 0, pending: 0, failed: 0, duplicates: 0 });
   }
 
-  async listCaptureSessions(customerId: string | number | undefined, query: CaptureSessionQueryDto) {
+  async listCaptureSessions(customerId: string | number | undefined, query: CaptureSessionQueryDto, user?: any) {
     const tenantId = this.requireTenant(customerId);
-    const rows = await this.loadSessionRows(tenantId);
+    const rows = await this.loadSessionRows(tenantId, user);
     const filtered = this.filterSessions(rows, query);
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
@@ -3783,9 +3828,9 @@ export class DataCaptureService implements OnModuleInit {
     };
   }
 
-  async getCaptureSession(customerId: string | number | undefined, jobId: string) {
+  async getCaptureSession(customerId: string | number | undefined, jobId: string, user?: any) {
     const tenantId = this.requireTenant(customerId);
-    const rows = await this.loadSessionRows(tenantId);
+    const rows = await this.loadSessionRows(tenantId, user);
     const row = rows.find((item) => item.id === jobId);
     if (!row) throw new NotFoundException('Capture session not found.');
     return {
@@ -3823,8 +3868,8 @@ export class DataCaptureService implements OnModuleInit {
     }, req);
   }
 
-  async exportCaptureSessions(customerId: string | number | undefined, query: CaptureSessionQueryDto, format: 'csv' | 'pdf') {
-    const listed = await this.listCaptureSessions(customerId, { ...query, page: 1, limit: 1000 });
+  async exportCaptureSessions(customerId: string | number | undefined, query: CaptureSessionQueryDto, format: 'csv' | 'pdf', user?: any) {
+    const listed = await this.listCaptureSessions(customerId, { ...query, page: 1, limit: 1000 }, user);
     const rows = listed.data || [];
     const customer = await this.prisma.customer.findFirst({ where: { id: this.requireTenant(customerId) }, select: { name: true, companyName: true } });
     const company = customer?.companyName || customer?.name || 'QB Suite';

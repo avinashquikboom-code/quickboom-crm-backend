@@ -227,15 +227,15 @@ export class DataCaptureController {
   @Get('jobs')
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get extraction job history' })
-  async getCustomerJobs(@CurrentCustomer() customerId: string) {
-    return this.dataCaptureService.getCustomerJobs(customerId);
+  async getCustomerJobs(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    return this.dataCaptureService.getCustomerJobs(customerId, user);
   }
 
   @Get('history')
   @RequirePermissions({ module: 'DATA_CAPTURE', action: 'VIEW' })
   @ApiOperation({ summary: 'Alias for extraction job history' })
-  async getCustomerHistory(@CurrentCustomer() customerId: string) {
-    return this.dataCaptureService.getCustomerJobs(customerId);
+  async getCustomerHistory(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    return this.dataCaptureService.getCustomerJobs(customerId, user);
   }
 
   @Get('sessions')
@@ -243,9 +243,10 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Capture session history with import counts' })
   async listSessions(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query() query: CaptureSessionQueryDto,
   ) {
-    return this.dataCaptureService.listCaptureSessions(customerId, query);
+    return this.dataCaptureService.listCaptureSessions(customerId, query, user);
   }
 
   @Get('sessions/export')
@@ -253,11 +254,12 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Export capture history as CSV or PDF' })
   async exportSessions(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Query() query: CaptureSessionQueryDto,
     @Query('format') format: string,
     @Res() res: Response,
   ) {
-    const file = await this.dataCaptureService.exportCaptureSessions(customerId, query, format === 'pdf' ? 'pdf' : 'csv');
+    const file = await this.dataCaptureService.exportCaptureSessions(customerId, query, format === 'pdf' ? 'pdf' : 'csv', user);
     res.setHeader('Content-Type', file.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
     res.send(file.body);
@@ -268,9 +270,10 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Capture session details and record outcomes' })
   async getSession(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Param('jobId') jobId: string,
   ) {
-    return this.dataCaptureService.getCaptureSession(customerId, jobId);
+    return this.dataCaptureService.getCaptureSession(customerId, jobId, user);
   }
 
   @Post('sessions/:jobId/retry-failed')
@@ -294,9 +297,10 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Get single extraction job details' })
   async getJobById(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Param('id') id: string,
   ) {
-    return this.dataCaptureService.getJobById(customerId, id);
+    return this.dataCaptureService.getJobById(customerId, id, user);
   }
 
   /**
@@ -515,11 +519,12 @@ export class DataCaptureController {
   @ApiOperation({ summary: 'Get single Data Capture record or job details' })
   async getPlaceOrJobById(
     @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
     @Param('id') id: string,
   ) {
     if (id.startsWith('job-')) {
-      return this.dataCaptureService.getJobById(customerId, id);
+      return this.dataCaptureService.getJobById(customerId, id, user);
     }
-    return this.dataCaptureService.getPlaceById(customerId, id);
+    return this.dataCaptureService.getPlaceById(customerId, id, user);
   }
 }

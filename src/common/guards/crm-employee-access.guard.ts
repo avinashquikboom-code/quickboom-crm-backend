@@ -65,7 +65,7 @@ export class CrmEmployeeAccessGuard implements CanActivate {
       });
     }
 
-    this.assertOwnRecords(request, user);
+    await this.assertOwnRecords(request, user);
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(request.method || '').toUpperCase())) {
       await this.audit(request, user, category, 'ACCESS', 'SUCCESS');
     }
@@ -103,20 +103,77 @@ export class CrmEmployeeAccessGuard implements CanActivate {
     });
   }
 
-  private assertOwnRecords(request: any, user: any) {
+  private async assertOwnRecords(request: any, user: any) {
     const requested = Number(request.query?.employeeId ?? request.query?.assignedToId);
-    if (!Number.isInteger(requested) || requested <= 0) return;
     const permissions = Array.isArray(user.permissions) ? user.permissions : [];
     const broaderAccess = permissions.some((permission: any) => {
+      const module = String(permission?.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/[.:]/g, '_');
       const action = String(permission?.action || '').toUpperCase();
-      return action === 'VIEW_ALL' || action === 'ALL' || action === 'MANAGE' || action === '*';
+      return ['DATA_CAPTURE', 'DATACAPTURE'].includes(module) &&
+        ['VIEW_ALL', 'ALL', 'MANAGE', '*'].includes(action);
     });
-    if (broaderAccess) return;
-    const ownIds = [user.employee?.id, user.employeeId]
-      .map((value) => Number(value))
-      .filter((value) => Number.isInteger(value) && value > 0);
-    if (!ownIds.includes(requested)) {
-      throw new ForbiddenException('You can only access CRM records assigned to you.');
+    if (Number.isInteger(requested) && requested > 0 && !broaderAccess) {
+      const ownIds = [user.employee?.id, user.employeeId]
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0);
+      if (!ownIds.includes(requested)) {
+        throw new ForbiddenException('You can only access CRM records assigned to you.');
+      }
+    }
+
+    const path = String(request.originalUrl || request.url || '');
+    if (!path.includes('/data-capture/') || isUserAdmin(user) || broaderAccess) return;
+    const userId = Number(user.id || user.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new ForbiddenException('Authenticated employee required to access capture records.');
+    }
+    const jobId = request.params?.jobId ||
+      (path.includes('/jobs/') ? request.params?.id : null);
+    if (jobId && this.prisma?.dataCaptureJob?.findFirst) {
+      const ownedJob = await this.prisma.dataCaptureJob.findFirst({
+        where: {
+          jobId: String(jobId),
+          userId,
+          ...(Number(user.customerId) > 0 ? { customerId: Number(user.customerId) } : {}),
+        },
+        select: { jobId: true },
+      });
+      if (!ownedJob) throw new ForbiddenException('You can only access your own capture sessions.');
+      return;
+    }
+    const recordId = Number(request.params?.id);
+    if (Number.isInteger(recordId) && recordId > 0 && this.prisma?.dataCapturePlace?.findFirst) {
+      const ownedRecord = await this.prisma.dataCapturePlace.findFirst({
+        where: {
+          id: recordId,
+          ...(Number(user.customerId) > 0 ? { customerId: Number(user.customerId) } : {}),
+          job: { is: { userId } },
+        },
+        select: { id: true },
+      });
+      if (!ownedRecord) throw new ForbiddenException('You can only access your own captured records.');
+    }
+
+    const body = request.body || {};
+    const requestedIds = [
+      ...(Array.isArray(body.ids) ? body.ids : []),
+      ...(Array.isArray(body.placeIds) ? body.placeIds : []),
+      ...(Array.isArray(body.captureIds) ? body.captureIds : []),
+      ...(Array.isArray(body.places) ? body.places.map((item: any) => item?.id || item?.captureId || item?.dataCaptureId) : []),
+    ].map(Number).filter((id: number) => Number.isInteger(id) && id > 0);
+    const uniqueIds = [...new Set(requestedIds)];
+    if (uniqueIds.length && this.prisma?.dataCapturePlace?.findMany) {
+      const ownedRecords = await this.prisma.dataCapturePlace.findMany({
+        where: {
+          id: { in: uniqueIds },
+          ...(Number(user.customerId) > 0 ? { customerId: Number(user.customerId) } : {}),
+          job: { is: { userId } },
+        },
+        select: { id: true },
+      });
+      if (ownedRecords.length !== uniqueIds.length) {
+        throw new ForbiddenException('You can only access your own captured records.');
+      }
     }
   }
 

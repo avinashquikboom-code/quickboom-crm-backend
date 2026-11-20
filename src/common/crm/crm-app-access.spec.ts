@@ -6,16 +6,16 @@ describe('assertCrmAppEmployee', () => {
     return { employee: { findFirst: jest.fn().mockResolvedValue(employee) } };
   }
 
-  it('allows an active BPO employee from the department record', async () => {
+  it('allows an active legacy BPO employee with CRM mobile access configured', async () => {
     await expect(assertCrmAppEmployee(prismaFor({
       id: 4,
       status: 'ACTIVE',
       mobileLoginEnabled: true,
       department: { name: 'BPO', code: 'BPO' },
-      designation: { name: 'Executive', code: 'EXE' },
+      designation: { name: 'BPO Executive', code: 'BPO_EXE', crmMobileAccess: true },
       teamMembers: [],
       ledTeams: [],
-    }), { id: 9 })).resolves.toBe('BPO');
+    }), { id: 9 })).resolves.toBe('SALES');
   });
 
   it('allows an active sales employee to open assigned leads', async () => {
@@ -27,7 +27,7 @@ describe('assertCrmAppEmployee', () => {
       designation: { name: 'Sales Executive', code: 'SALES' },
       teamMembers: [],
       ledTeams: [],
-    }), { id: 11 })).resolves.toBe('SALES');
+    }), { id: 11, permissions: [{ module: 'LEADS', action: 'VIEW' }] })).resolves.toBe('SALES');
   });
 
   it('allows an active Visitor employee from the team record', async () => {
@@ -48,5 +48,17 @@ describe('assertCrmAppEmployee', () => {
   ])('blocks %s', async (_label, employee) => {
     await expect(assertCrmAppEmployee(prismaFor(employee), { id: 1 })).rejects.toBeInstanceOf(ForbiddenException);
     await expect(assertCrmAppEmployee(prismaFor(employee), { id: 1 })).rejects.toThrow(CRM_APP_ACCESS_DENIED);
+  });
+
+  it('blocks a Sales department employee without mobile CRM designation or module permissions', async () => {
+    await expect(assertCrmAppEmployee(prismaFor({
+      id: 12,
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { name: 'Sales Department', code: 'SALES' },
+      designation: { name: 'Sales Assistant', code: 'SALES_ASST', crmMobileAccess: false },
+      teamMembers: [],
+      ledTeams: [],
+    }), { id: 20 })).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
