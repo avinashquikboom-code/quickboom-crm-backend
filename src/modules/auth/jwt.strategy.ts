@@ -7,6 +7,7 @@ import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
+import { isAuthorizedSalesTelecaller } from '../../common/crm/crm-employee-category';
 import {
   applyPermissionItems,
   resolveCustomerAppPermissionItems,
@@ -353,7 +354,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     // 3. If permissionsMap still has no business modules (or 0 permissions), fallback to role defaults
     const hasAnyModulePerm = Array.from(permissionsMap.keys()).some((k: string) =>
-      ['DASHBOARD', 'ATTENDANCE', 'CALENDAR', 'MY_WORK', 'LEADS', 'TASKS', 'LEAVE', 'SALARY'].some((m) =>
+      ['DASHBOARD', 'ATTENDANCE', 'CALENDAR', 'MY_WORK', 'LEADS', 'DATA_CAPTURE', 'TASKS', 'LEAVE', 'SALARY'].some((m) =>
         k.startsWith(`${m}:`),
       ),
     );
@@ -404,6 +405,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             break;
           }
         }
+      }
+    }
+
+    // Repair partial role mappings only for opted-in Sales Telecallers. Keep
+    // JWT permissions fresh from the database and preserve employee DENY
+    // overrides applied below.
+    if (isAuthorizedSalesTelecaller(user.employee)) {
+      for (const [module, action] of [
+        ['DATA_CAPTURE', 'VIEW'],
+        ['DATA_CAPTURE', 'CREATE'],
+        ['DATA_CAPTURE', 'EDIT'],
+        ['LEADS', 'VIEW'],
+        ['LEADS', 'CREATE'],
+        ['LEADS', 'EDIT'],
+      ]) {
+        permissionsMap.set(`${module}:${action}`, { module, action });
       }
     }
 

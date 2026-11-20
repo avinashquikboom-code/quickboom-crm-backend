@@ -161,6 +161,48 @@ describe('JwtStrategy.validate regression tests (No Employee.managerId mismatch)
     expect(result.roles).toContain('EMPLOYEE');
   });
 
+  it('adds only the authorized Sales Telecaller CRM permissions to a partial JWT role mapping', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 21,
+      email: 'sales.telecaller@company.com',
+      firstName: 'Sales',
+      lastName: 'Telecaller',
+      customerId: 10,
+      isActive: true,
+      deletedAt: null,
+      employee: {
+        id: 52,
+        customerId: 10,
+        userId: 21,
+        status: 'ACTIVE',
+        mobileLoginEnabled: true,
+        department: { id: 5, name: 'Sales Department', code: 'SALES' },
+        designation: { id: 8, name: 'Telecaller', code: 'TELECALLER', crmMobileAccess: true },
+        employeeModuleOverrides: [],
+      },
+      customer: { id: 10, name: 'Acme Corp', isActive: true },
+      userRoles: [{ role: {
+        id: 3,
+        name: 'TELECALLER',
+        type: RoleType.CUSTOM,
+        rolePermissions: [{ permission: { id: 30, module: 'LEADS', action: 'VIEW' } }],
+      } }],
+    });
+
+    const result = await strategy.validate({ sub: 21, role: 'EMPLOYEE' });
+    const granted = result.permissions.map((permission: any) => `${permission.module}:${permission.action}`);
+    expect(granted).toEqual(expect.arrayContaining([
+      'DATA_CAPTURE:VIEW',
+      'DATA_CAPTURE:CREATE',
+      'DATA_CAPTURE:EDIT',
+      'LEADS:VIEW',
+      'LEADS:CREATE',
+      'LEADS:EDIT',
+    ]));
+    expect(granted).not.toContain('DATA_CAPTURE:DELETE');
+    expect(granted).not.toContain('EMPLOYEES:MANAGE');
+  });
+
   it('rejects invalid or inactive token subject', async () => {
     await expect(strategy.validate({ sub: null })).rejects.toThrow(UnauthorizedException);
 

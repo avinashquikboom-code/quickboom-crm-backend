@@ -45,7 +45,7 @@ export async function seedRbac() {
     { name: 'TEAM_LEADER', type: RoleType.CUSTOM, desc: 'Team Leader with CRM lead and follow-up access' },
     { name: 'SALES_MANAGER', type: RoleType.CUSTOM, desc: 'Sales Manager with CRM lead and follow-up access' },
     { name: 'SALES', type: RoleType.CUSTOM, desc: 'Sales role for CRM follow-ups and visits' },
-    { name: 'SALES_EXECUTIVE', type: RoleType.CUSTOM, desc: 'Sales Executive role for CRM follow-ups and visits' },
+    { name: 'SALES_TELECALLER', type: RoleType.CUSTOM, desc: 'Sales Telecaller role for CRM capture and lead follow-ups' },
   ];
 
   for (const r of rolesToEnsure) {

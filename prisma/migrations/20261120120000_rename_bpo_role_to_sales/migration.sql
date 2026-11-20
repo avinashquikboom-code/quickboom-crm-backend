@@ -18,7 +18,7 @@ BEGIN
     FROM "Role"
     WHERE "customerId" IS NOT DISTINCT FROM legacy_role."customerId"
       AND upper(name) = CASE upper(legacy_role.name)
-        WHEN 'BPO_EXECUTIVE' THEN 'SALES_EXECUTIVE'
+        WHEN 'BPO_EXECUTIVE' THEN 'SALES_TELECALLER'
         ELSE 'SALES'
       END
       AND "deletedAt" IS NULL
@@ -29,11 +29,11 @@ BEGIN
     IF sales_role_id IS NULL THEN
       UPDATE "Role"
       SET name = CASE upper(legacy_role.name)
-          WHEN 'BPO_EXECUTIVE' THEN 'SALES_EXECUTIVE'
+          WHEN 'BPO_EXECUTIVE' THEN 'SALES_TELECALLER'
           ELSE 'SALES'
         END,
         description = CASE upper(legacy_role.name)
-          WHEN 'BPO_EXECUTIVE' THEN 'Sales Executive role for CRM follow-ups and visits'
+          WHEN 'BPO_EXECUTIVE' THEN 'Sales Telecaller role for CRM capture and lead follow-ups'
           ELSE 'Sales role for CRM follow-ups and visits'
         END,
         "updatedAt" = CURRENT_TIMESTAMP

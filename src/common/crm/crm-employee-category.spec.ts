@@ -1,12 +1,12 @@
-import { classifyCrmEmployee } from './crm-employee-category';
+import { classifyCrmEmployee, isAuthorizedSalesTelecaller } from './crm-employee-category';
 
 describe('classifyCrmEmployee', () => {
-  it('classifies BPO from department even when the designation is telesales', () => {
+  it('maps a legacy BPO department to Sales even when the designation is telesales', () => {
     expect(classifyCrmEmployee({
       departmentName: 'BPO',
       designationName: 'Telesales Representative',
       roles: ['EMPLOYEE'],
-    })).toBe('BPO');
+    })).toBe('SALES');
   });
 
   it('classifies Visitor employees from designation', () => {
@@ -43,11 +43,34 @@ describe('classifyCrmEmployee', () => {
     })).toBe('NONE');
   });
 
-  it('does not treat a CRM mobile flag substitute such as telesales as BPO', () => {
+  it('keeps telecaller accounts in the Sales CRM category for legacy compatibility', () => {
     expect(classifyCrmEmployee({
       departmentName: 'Telesales',
       designationName: 'Telecaller',
       roles: ['TELECALLER'],
-    })).toBe('NONE');
+  })).toBe('SALES');
+  });
+
+  it('enables the Telecaller baseline only for an active, opted-in Sales department designation', () => {
+    expect(isAuthorizedSalesTelecaller({
+      status: 'ACTIVE',
+      department: { name: 'Sales Department', code: 'SALES' },
+      designation: { name: 'Telecaller', code: 'TELECALLER', crmMobileAccess: true },
+    })).toBe(true);
+    expect(isAuthorizedSalesTelecaller({
+      status: 'ACTIVE',
+      department: { name: 'Sales Department', code: 'SALES' },
+      designation: { name: 'Sales Executive', code: 'SALES_EXEC', crmMobileAccess: true },
+    })).toBe(false);
+    expect(isAuthorizedSalesTelecaller({
+      status: 'ACTIVE',
+      department: { name: 'Operations', code: 'OPS' },
+      designation: { name: 'Telecaller', code: 'TELECALLER', crmMobileAccess: true },
+    })).toBe(false);
+    expect(isAuthorizedSalesTelecaller({
+      status: 'ACTIVE',
+      department: { name: 'Sales Department', code: 'SALES' },
+      designation: { name: 'Telecaller', code: 'TELECALLER', crmMobileAccess: false },
+    })).toBe(false);
   });
 });

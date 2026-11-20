@@ -206,6 +206,37 @@ describe('EmployeeService Data Capture RBAC & Permissions', () => {
     expect(dataCaptureMod?.effective).toBe(true);
   });
 
+  it('repairs partial permissions only for an explicitly enabled Sales Telecaller designation', async () => {
+    const salesTelecaller = {
+      ...mockEmployeeTelecaller,
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { id: 9, name: 'Sales Department', code: 'SALES' },
+      designation: {
+        ...mockEmployeeTelecaller.designation,
+        name: 'Telecaller',
+        code: 'TELECALLER',
+        crmMobileAccess: true,
+        role: {
+          id: 2,
+          name: 'Telecaller',
+          rolePermissions: [{ permission: { module: 'LEADS', action: 'VIEW' } }],
+        },
+      },
+    };
+    prisma.employee.findUnique.mockResolvedValue(salesTelecaller);
+    prisma.role.findFirst.mockResolvedValue({
+      rolePermissions: [{ permission: { module: 'LEADS', action: 'VIEW' } }],
+    });
+
+    const result = await service.getEmployeePermissions({ employeeId: 1, customerId: 100 });
+    const capturePermissions = result.granularPermissions.filter((p) => p.module === 'DATA_CAPTURE');
+    expect(capturePermissions.find((p) => p.action === 'VIEW')?.effective).toBe(true);
+    expect(capturePermissions.find((p) => p.action === 'CREATE')?.effective).toBe(true);
+    expect(capturePermissions.find((p) => p.action === 'EDIT')?.effective).toBe(true);
+    expect(capturePermissions.find((p) => p.action === 'DELETE')?.effective).toBe(false);
+  });
+
   it('7. verifies search filter works for data, Data Capture, and DATA_CAPTURE', () => {
     const sampleModule = {
       moduleKey: 'DATA_CAPTURE',

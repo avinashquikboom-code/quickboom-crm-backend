@@ -58,15 +58,16 @@ export async function assertCrmAppEmployee(prisma: any, user: any): Promise<CrmE
 
   const category = crmCategoryForEmployee(employee);
   const active = employee?.status === 'ACTIVE' && employee?.mobileLoginEnabled !== false;
-  const explicitLeadAccess = hasExplicitLeadView(user);
-  if (!employee || !active || (category === 'NONE' && !explicitLeadAccess)) {
+  const designationAccess = employee?.designation?.crmMobileAccess === true;
+  const configuredModuleAccess = hasExplicitLeadView(user) || hasExplicitDataCaptureView(user);
+  if (!employee || !active || (category !== 'VISITOR' && !designationAccess && !configuredModuleAccess)) {
     throw new ForbiddenException({
       statusCode: 403,
       error: CRM_APP_ACCESS_RESTRICTED_TITLE,
       message: CRM_APP_ACCESS_RESTRICTED_MESSAGE,
     });
   }
-  return category === 'NONE' ? 'SALES' : category;
+  return category === 'VISITOR' ? 'VISITOR' : 'SALES';
 }
 
 export function hasExplicitLeadView(user: any): boolean {
@@ -75,5 +76,14 @@ export function hasExplicitLeadView(user: any): boolean {
     const moduleName = String(permission?.module || '').toUpperCase().replace(/^EMPLOYEE\./, '');
     const action = String(permission?.action || '').toUpperCase();
     return (moduleName === 'LEADS' || moduleName === 'LEAD') && ['VIEW', 'READ', 'MANAGE', 'ALL'].includes(action);
+  });
+}
+
+function hasExplicitDataCaptureView(user: any): boolean {
+  const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  return permissions.some((permission: any) => {
+    const moduleName = String(permission?.module || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/[.:]/g, '_');
+    const action = String(permission?.action || '').toUpperCase();
+    return ['DATA_CAPTURE', 'DATACAPTURE'].includes(moduleName) && ['VIEW', 'READ', 'MANAGE', 'ALL'].includes(action);
   });
 }
