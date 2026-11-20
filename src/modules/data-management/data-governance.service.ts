@@ -2334,8 +2334,9 @@ export class DataGovernanceService {
   }
 
   private assertSuperAdmin(role: string) {
-    if (String(role || '').toUpperCase() !== 'SUPER_ADMIN') {
-      throw new ForbiddenException('Only a Super Admin can run this data operation.');
+    const norm = String(role || '').toUpperCase();
+    if (norm !== 'SUPER_ADMIN' && norm !== 'ADMIN') {
+      throw new ForbiddenException('Only a Super Admin or Admin can run this data operation.');
     }
   }
 
