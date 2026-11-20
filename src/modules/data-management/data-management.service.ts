@@ -86,6 +86,85 @@ export class DataManagementService {
   }
 
   /**
+   * Captures an immutable snapshot of all Super Admin accounts before any reset
+   */
+  private async snapshotSuperAdmins(tx: Prisma.TransactionClient) {
+    if (typeof (tx as any)?.user?.findMany !== 'function') {
+      return new Map();
+    }
+    const totalUsers = typeof (tx as any)?.user?.count === 'function' ? await (tx as any).user.count() : 0;
+    const superAdminAccounts = await (tx as any).user.findMany({
+      where: {
+        OR: [
+          { userRoles: { some: { role: { OR: [{ type: RoleType.SUPER_ADMIN }, { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } }] } } } },
+          { customerId: null },
+        ],
+      },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        isActive: true,
+        customerId: true,
+        userRoles: { select: { role: { select: { id: true, name: true, type: true } } } },
+      },
+    });
+
+    if (totalUsers > 0 && !superAdminAccounts.length) {
+      throw new ForbiddenException('Critical Safety Violation: No Super Admin account detected among existing users. Reset cannot proceed.');
+    }
+
+    return new Map(
+      superAdminAccounts.map((adm: any) => [
+        adm.id,
+        {
+          email: adm.email,
+          passwordHash: adm.passwordHash,
+          isActive: adm.isActive,
+          customerId: adm.customerId,
+          roles: adm.userRoles?.map((ur: any) => ur.role?.type || ur.role?.name) || [],
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Verifies that Super Admin credentials and privileges are completely untouched after reset
+   */
+  private async verifySuperAdminInvariants(tx: Prisma.TransactionClient, snapshots: Map<number, any>) {
+    if (!snapshots || snapshots.size === 0 || typeof (tx as any)?.user?.findUnique !== 'function') {
+      return;
+    }
+    for (const [adminId, snapshot] of snapshots) {
+      const adminAfter = await (tx as any).user.findUnique({
+        where: { id: adminId },
+        include: { userRoles: { include: { role: true } } },
+      });
+      if (!adminAfter) {
+        throw new InternalServerErrorException(
+          `CRITICAL SAFETY VALIDATION FAILED: Super Admin account #${adminId} was deleted during reset. Transaction rolled back.`,
+        );
+      }
+      if (adminAfter.email !== snapshot.email || adminAfter.passwordHash !== snapshot.passwordHash || adminAfter.isActive !== snapshot.isActive) {
+        throw new InternalServerErrorException(
+          `CRITICAL SAFETY VALIDATION FAILED: Super Admin credentials for account #${adminId} were modified during reset. Transaction rolled back.`,
+        );
+      }
+      const hasSuperAdminRole =
+        adminAfter.userRoles?.some(
+          (ur: any) =>
+            ur.role?.type === RoleType.SUPER_ADMIN ||
+            ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'].includes(ur.role?.name),
+        ) || adminAfter.customerId === null;
+      if (!hasSuperAdminRole) {
+        throw new InternalServerErrorException(
+          `CRITICAL SAFETY VALIDATION FAILED: Super Admin role was revoked from account #${adminId}. Transaction rolled back.`,
+        );
+      }
+    }
+  }
+
+  /**
    * GET /api/v1/admin/data-management/summary
    * Fetches real live database record counts for all customer modules
    */
@@ -306,6 +385,7 @@ export class DataManagementService {
     const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       switch (normModule) {
         case 'crm': {
           // Leaf children
@@ -444,6 +524,7 @@ export class DataManagementService {
           },
         });
       }
+      await this.verifySuperAdminInvariants(tx, adminSnapshots);
     });
 
     this.logger.log(
@@ -492,6 +573,7 @@ export class DataManagementService {
     const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       // ── Step 1: Deep leaf children across all transactional areas ─────────────
       if (tx.leadActivityTimeline?.deleteMany) await tx.leadActivityTimeline.deleteMany({ where: { lead: { customerId: numCustomerId } } });
       if (tx.leadNote?.deleteMany) await tx.leadNote.deleteMany({ where: { lead: { customerId: numCustomerId } } });
@@ -658,6 +740,8 @@ export class DataManagementService {
           );
         }
       }
+
+      await this.verifySuperAdminInvariants(tx, adminSnapshots);
     });
 
     this.logger.log(
@@ -800,6 +884,7 @@ export class DataManagementService {
     const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       switch (normModule) {
         case 'attendance': {
           const breaks = tx.attendanceBreak?.deleteMany
@@ -1030,6 +1115,7 @@ export class DataManagementService {
     const cnt = (res?: { count?: number } | null): number => (res && typeof res.count === 'number' ? res.count : 0);
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       // 1. Task children then tasks
       if (tx.taskHistory?.deleteMany) {
         await tx.taskHistory.deleteMany({
@@ -1637,6 +1723,9 @@ export class DataManagementService {
 
     // Atomic Prisma Transaction with cascading deletions in foreign-key order
     const resetResult = await this.prisma.$transaction(async (tx) => {
+      // ── MANDATORY SAFETY VALIDATION: Super Admin Pre-Execution Snapshot ─
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
+
       const cnt = (res: any) => (res && typeof res.count === 'number' ? res.count : 0);
 
       // 1. Dependent leaf tables without direct customerId
@@ -1744,12 +1833,25 @@ export class DataManagementService {
       const claims = tx.employeeClaim?.deleteMany ? await tx.employeeClaim.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
       const loans = tx.employeeLoan?.deleteMany ? await tx.employeeLoan.deleteMany({ where: { customerId: numCustomerId } }) : { count: 0 };
 
-      // 10. Auth sessions & refresh tokens for linked users
+      // 10. Auth sessions & refresh tokens for non-admin linked users only (Admin/Super Admin preserved)
+      const nonAdminUserFilter = {
+        customerId: numCustomerId,
+        userRoles: {
+          none: {
+            role: {
+              OR: [
+                { type: RoleType.SUPER_ADMIN },
+                { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+              ],
+            },
+          },
+        },
+      };
       if (tx.refreshToken?.deleteMany) {
-        await tx.refreshToken.deleteMany({ where: { user: { customerId: numCustomerId } } });
+        await tx.refreshToken.deleteMany({ where: { user: nonAdminUserFilter } });
       }
       if (tx.session?.deleteMany) {
-        await tx.session.deleteMany({ where: { user: { customerId: numCustomerId } } });
+        await tx.session.deleteMany({ where: { user: nonAdminUserFilter } });
       }
 
       // 11. Storage reset
@@ -1828,6 +1930,9 @@ export class DataManagementService {
           `Customer data reset verification failed: records still remain for Customer #${numCustomerId}. Rolling back transaction.`,
         );
       }
+
+      // 14. MANDATORY SAFETY VALIDATION: Verify Super Admin Invariants
+      await this.verifySuperAdminInvariants(tx, adminSnapshots);
 
       return { totalDeleted };
     });
@@ -2032,6 +2137,7 @@ export class DataManagementService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       await tx.customer.update({
         where: { id: numId },
         data: { isActive: true, deletedAt: null },
@@ -2237,6 +2343,7 @@ export class DataManagementService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       await this.purgeCustomerInTx(tx, numId);
     });
 
@@ -2275,6 +2382,7 @@ export class DataManagementService {
     const userId = employee.userId ? Number(employee.userId) : null;
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       await tx.employee.update({
         where: { id: numId },
         data: { status: 'ACTIVE' },
@@ -2311,6 +2419,7 @@ export class DataManagementService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       await this.purgeEmployeeInTx(tx, numId);
     });
 
@@ -2401,6 +2510,7 @@ export class DataManagementService {
 
     // Atomic Prisma transaction
     await this.prisma.$transaction(async (tx) => {
+      const adminSnapshots = await this.snapshotSuperAdmins(tx);
       for (const cid of customerIds) {
         await this.purgeCustomerInTx(tx, cid);
       }

@@ -53,19 +53,19 @@ async function seedDefaultLeadStages(customerId: number | null) {
 }
 
 async function main() {
-  const email = 'admin@quikboom.com';
+  const email = process.env.SEED_SUPER_ADMIN_EMAIL?.trim() || 'admin@quikboom.com';
   const aliasEmail = 'admin@quickboom.com';
-  const password = '123456';
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const password = process.env.SEED_SUPER_ADMIN_PASSWORD || '123456';
+  const demoPassword = '123456';
 
   // 1. Ensure standard roles exist (SUPER_ADMIN, CUSTOMER, EMPLOYEE, COMPANY_ADMIN)
   let superAdminRole = await prisma.role.findFirst({
     where: {
       OR: [
-        { id: 2 },
         { type: RoleType.SUPER_ADMIN },
         { name: 'SUPER_ADMIN' },
         { name: 'Super Administrator' },
+        { name: 'Super Admin' },
       ],
     },
   });
@@ -76,14 +76,6 @@ async function main() {
         name: 'SUPER_ADMIN',
         type: RoleType.SUPER_ADMIN,
         description: 'Full administrative platform access',
-      },
-    });
-  } else {
-    superAdminRole = await prisma.role.update({
-      where: { id: superAdminRole.id },
-      data: {
-        name: 'SUPER_ADMIN',
-        type: RoleType.SUPER_ADMIN,
       },
     });
   }
@@ -116,20 +108,37 @@ async function main() {
     });
   }
 
-  // 2. Find or Create User ID = 1 (Do not create another Super Admin if ID 1 exists)
-  let user = await prisma.user.findUnique({
-    where: { id: 1 },
+  // 2. Find or create the Super Admin. Seeding must never reset or rename an
+  // existing account; only a newly created account receives seed credentials.
+  let user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: { equals: email, mode: 'insensitive' } },
+        { email: { equals: aliasEmail, mode: 'insensitive' } },
+        {
+          userRoles: {
+            some: {
+              role: {
+                OR: [
+                  { type: RoleType.SUPER_ADMIN },
+                  { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    },
   });
 
+  // Keep the established ID 1 account when it is a platform-level account
+  // without a role link, but never promote a tenant user just because of its ID.
   if (!user) {
-    user = await prisma.user.findFirst({
-      where: {
-        OR: [{ email }, { email: aliasEmail }],
-      },
-    });
+    user = await prisma.user.findFirst({ where: { id: 1, customerId: null } });
   }
 
   if (!user) {
+    const hashedPassword = await bcrypt.hash(password, 10);
     user = await prisma.user.create({
       data: {
         email,
@@ -141,34 +150,19 @@ async function main() {
         isVerified: true,
       },
     });
-    console.log(`✅ Created Super Admin user (${user.email} / ${password}) with ID: ${user.id}`);
+    console.log(`✅ Created Super Admin user (${user.email}) with ID: ${user.id}`);
   } else {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        email,
-        firstName: 'Super',
-        lastName: 'Admin',
-        passwordHash: hashedPassword,
-        isActive: true,
-        isVerified: true,
-        deletedAt: null,
-      },
-    });
-    console.log(`✅ Updated Super Admin user ID: ${user.id} (${user.email})`);
+    console.log(`✓ Preserved existing Super Admin account ID: ${user.id} (${user.email})`);
   }
 
-  // 3. Ensure UserRole: userId = user.id, roleId = superAdminRole.id
-  await prisma.userRole.deleteMany({
-    where: { userId: user.id },
+  // Add the Super Admin grant without deleting any existing role assignments.
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId: user.id, roleId: superAdminRole.id } },
+    create: { userId: user.id, roleId: superAdminRole.id },
+    update: {},
   });
 
-  await prisma.userRole.create({
-    data: {
-      userId: user.id,
-      roleId: superAdminRole.id,
-    },
-  });
+  const hashedPassword = await bcrypt.hash(demoPassword, 10);
 
   // 4. Ensure default customer exists and is active
   let customer = await prisma.customer.findFirst();
@@ -211,7 +205,7 @@ async function main() {
         isVerified: true,
       },
     });
-    console.log(`✅ Created Demo Employee user (${demoEmail} / ${password})`);
+    console.log(`✅ Created Demo Employee user (${demoEmail} / ${demoPassword})`);
   } else {
     demoUser = await prisma.user.update({
       where: { id: demoUser.id },
@@ -695,7 +689,7 @@ QUIKBOOM Digital Marketing Agency`,
     }
   }
 
-  console.log(`✅ Ready: Admin (admin@quikboom.com) & Demo Employee (demo@gmail.com) with password: ${password}`);
+  console.log(`✅ Ready: Super Admin (${user.email}) & Demo Employee (${demoEmail})`);
 }
 
 main()
