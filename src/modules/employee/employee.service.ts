@@ -2527,9 +2527,14 @@ export class EmployeeService {
         const count = await delegate.count({ where: { employeeId: numId } });
         if (count > 0) blockers.push(`${label}: ${count}`);
       }
-      const shareRows = await tx.$queryRaw<Array<{ records: number | bigint }>>(Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" = ${numId}`);
-      const shareCount = Number(shareRows[0]?.records || 0);
-      if (shareCount) blockers.push(`Commission shares: ${shareCount}`);
+      const [tableCheck] = await tx.$queryRaw<Array<{ exists: boolean }>>(
+        Prisma.sql`SELECT to_regclass('public.commission_shares') IS NOT NULL AS exists`
+      );
+      if (tableCheck?.exists) {
+        const shareRows = await tx.$queryRaw<Array<{ records: number | bigint }>>(Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" = ${numId}`);
+        const shareCount = Number(shareRows[0]?.records || 0);
+        if (shareCount) blockers.push(`Commission shares: ${shareCount}`);
+      }
       const externalCustomerReferences = await tx.customer.count({
         where: {
           id: { not: empCustomerId },

@@ -2493,10 +2493,17 @@ export class DataGovernanceService {
         checks.push({ parent: 'employees', model: 'taskProof', label: 'Task proof uploader references', where: { employeeId: { in: employeeIds }, ...(customerId == null ? {} : { task: { customerId } }) }, ...(customerId == null ? {} : { crossTenantWhere: { employeeId: { in: employeeIds }, task: { customerId: { not: customerId } } } }), policy: 'set-null' });
         checks.push({ parent: 'employees', model: 'locationTrackingSetting', label: 'Location tracking settings', where: { employeeId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { employeeId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'cascade' });
         checks.push({ parent: 'employees', model: 'department', label: 'Department head references', where: { headId: { in: employeeIds } }, ...(customerId == null ? {} : { crossTenantWhere: { headId: { in: employeeIds }, customerId: { not: customerId } } }), policy: 'set-null' });
-        const shareRows = await (client as Prisma.TransactionClient).$queryRaw<Array<{ records: number | bigint }>>(Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" IN (${Prisma.join(employeeIds)})`);
-        const shareCount = Number(shareRows[0]?.records || 0);
-        if (shareCount) checks.push({ parent: 'employees', model: 'commission_shares', label: 'Commission shares (protected financial records)', where: {}, policy: 'protected' });
-        if (shareCount) checks[checks.length - 1].where.records = shareCount;
+        const [tableCheck] = await (client as Prisma.TransactionClient).$queryRaw<Array<{ exists: boolean }>>(
+          Prisma.sql`SELECT to_regclass('public.commission_shares') IS NOT NULL AS exists`
+        );
+        if (tableCheck?.exists) {
+          const shareRows = await (client as Prisma.TransactionClient).$queryRaw<Array<{ records: number | bigint }>>(
+            Prisma.sql`SELECT COUNT(*)::int AS records FROM "commission_shares" WHERE "employeeId" IN (${Prisma.join(employeeIds)})`
+          );
+          const shareCount = Number(shareRows[0]?.records || 0);
+          if (shareCount) checks.push({ parent: 'employees', model: 'commission_shares', label: 'Commission shares (protected financial records)', where: {}, policy: 'protected' });
+          if (shareCount) checks[checks.length - 1].where.records = shareCount;
+        }
       }
       const customerReferenceFilters = this.customerEmployeeReferenceFilters(customerId);
       checks.push({

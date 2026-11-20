@@ -55,6 +55,7 @@ export class TransformInterceptor<T>
           statusCode: response.statusCode,
           success: typeof data?.success === 'boolean' ? data.success : true,
           message: data?.message || 'Operation completed successfully',
+          ...(data?.timestamp ? { timestamp: data.timestamp } : {}),
           data,
         };
       }),
