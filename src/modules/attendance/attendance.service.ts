@@ -1637,12 +1637,23 @@ result: SUCCESS`);
     return d;
   }
 
-  async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string) {
+  async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string, periodParam?: string) {
     const customerId = await this.resolveCustomerId(user, customerIdParam);
     await this.processAutoCheckOuts({ customerId });
     const { start: startOfDay, end: endOfDay } = getBusinessDayRange(dateParam);
 
-    const [activeEmployees, offices, attendances, locations] = await Promise.all([
+    const [
+      activeEmployees,
+      offices,
+      attendances,
+      locations,
+      pendingLeavesCount,
+      pendingClaimsCount,
+      payrollAggregate,
+      leavesToday,
+      remoteToday,
+      recentAuditLogs,
+    ] = await Promise.all([
       this.prisma.employee.findMany({
         where: {
           customerId,
@@ -1653,6 +1664,7 @@ result: SUCCESS`);
           designation: true,
           office: true,
           shift: true,
+          user: { select: { avatar: true } },
         },
         orderBy: { id: 'asc' },
       }),
@@ -1681,6 +1693,67 @@ result: SUCCESS`);
           timestamp: { gte: startOfDay, lte: endOfDay },
         },
         orderBy: { timestamp: 'desc' },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { customerId, status: 'PENDING' },
+      }),
+      this.prisma.employeeClaim.count({
+        where: { customerId, status: 'PENDING' },
+      }),
+      this.prisma.salarySlip.aggregate({
+        where: { customerId },
+        _sum: { netSalary: true },
+      }),
+      this.prisma.leaveRequest.findMany({
+        where: {
+          customerId,
+          status: 'APPROVED',
+          fromDate: { lte: endOfDay },
+          toDate: { gte: startOfDay },
+        },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              department: { select: { name: true } },
+              designation: { select: { name: true } },
+              user: { select: { avatar: true } },
+            },
+          },
+          leaveType: true,
+        },
+        orderBy: { fromDate: 'asc' },
+      }),
+      this.prisma.remoteRequest.findMany({
+        where: {
+          customerId,
+          status: 'APPROVED',
+          fromDate: { lte: endOfDay },
+          toDate: { gte: startOfDay },
+        },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              department: { select: { name: true } },
+              designation: { select: { name: true } },
+              user: { select: { avatar: true } },
+            },
+          },
+        },
+        orderBy: { fromDate: 'asc' },
+      }),
+      this.prisma.auditLog.findMany({
+        where: { customerId },
+        include: { user: { select: { firstName: true, lastName: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 15,
       }),
     ]);
 
@@ -1795,6 +1868,7 @@ result: SUCCESS`);
         id: emp.id,
         employeeCode: emp.employeeCode,
         name: `${emp.firstName} ${emp.lastName}`.trim(),
+        avatar: emp.user?.avatar || null,
         email: emp.email,
         phone: emp.phone || null,
         department: emp.department?.name || 'General',
@@ -1854,13 +1928,156 @@ result: SUCCESS`);
     const working = formattedEmployees.filter((e) => e.currentStatus === 'WORKING').length;
     const onBreak = formattedEmployees.filter((e) => e.currentStatus === 'ON_BREAK').length;
     const punchedOut = formattedEmployees.filter((e) => e.currentStatus === 'PUNCHED_OUT').length;
-    const remote = formattedEmployees.filter((e) => e.workMode.toUpperCase() === 'REMOTE').length;
     const insideRadius = formattedEmployees.filter(
       (e) => e.locationStatus === 'INSIDE_RADIUS',
     ).length;
     const outsideRadius = formattedEmployees.filter(
       (e) => e.locationStatus === 'OUTSIDE_RADIUS',
     ).length;
+
+    // 1. Department distribution calculation
+    const deptMap: Record<string, number> = {};
+    for (const emp of activeEmployees) {
+      const dName = emp.department?.name || 'General';
+      deptMap[dName] = (deptMap[dName] || 0) + 1;
+    }
+    const departmentDistribution = Object.entries(deptMap)
+      .map(([name, count]) => ({
+        name,
+        count,
+        percentage: totalEmployees > 0 ? Math.round((count / totalEmployees) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    // 2. Birthdays matching target date
+    const targetDateObj = dateParam ? new Date(dateParam) : now;
+    const targetMonth = targetDateObj.getMonth();
+    const targetDay = targetDateObj.getDate();
+    const targetMonthUTC = targetDateObj.getUTCMonth();
+    const targetDayUTC = targetDateObj.getUTCDate();
+
+    const birthdaysToday = activeEmployees
+      .filter((emp) => {
+        if (!emp.dob) return false;
+        const d = new Date(emp.dob);
+        const matchesLocal = d.getMonth() === targetMonth && d.getDate() === targetDay;
+        const matchesUTC = d.getUTCMonth() === targetMonthUTC && d.getUTCDate() === targetDayUTC;
+        return matchesLocal || matchesUTC;
+      })
+      .map((emp) => ({
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName} ${emp.lastName}`.trim(),
+        department: emp.department?.name || 'General',
+        designation: emp.designation?.name || 'Staff',
+        dob: emp.dob?.toISOString() || null,
+        avatar: emp.user?.avatar || null,
+      }));
+
+    // 3. On leave today
+    const formattedLeaves = leavesToday.map((lr) => ({
+      id: lr.id,
+      employeeId: lr.employeeId,
+      employeeCode: lr.employee?.employeeCode,
+      name: lr.employee ? `${lr.employee.firstName} ${lr.employee.lastName}`.trim() : 'Employee',
+      avatar: lr.employee?.user?.avatar || null,
+      department: lr.employee?.department?.name || 'General',
+      designation: lr.employee?.designation?.name || 'Staff',
+      leaveType: typeof lr.leaveType === 'string' ? lr.leaveType : lr.leaveType?.name || 'Leave',
+      startDate: lr.fromDate.toISOString().split('T')[0],
+      endDate: lr.toDate.toISOString().split('T')[0],
+      status: lr.status,
+      days: lr.days,
+    }));
+
+    // 4. Remote work today (unique employees to prevent duplicates)
+    const remoteWorkerMap = new Map<number, any>();
+    for (const r of remoteToday) {
+      if (!remoteWorkerMap.has(r.employeeId)) {
+        remoteWorkerMap.set(r.employeeId, {
+          id: r.id,
+          employeeId: r.employeeId,
+          employeeCode: r.employee?.employeeCode,
+          name: r.employee ? `${r.employee.firstName} ${r.employee.lastName}`.trim() : 'Employee',
+          avatar: r.employee?.user?.avatar || null,
+          department: r.employee?.department?.name || 'General',
+          designation: r.employee?.designation?.name || 'Staff',
+          startDate: r.fromDate.toISOString().split('T')[0],
+          endDate: r.toDate.toISOString().split('T')[0],
+          status: r.status,
+          duration: `${r.days || 1} day(s)`,
+        });
+      }
+    }
+    const formattedRemoteWorkers = Array.from(remoteWorkerMap.values());
+
+    // 5. Recent HR timeline activities
+    const formattedActivities: Array<{
+      id: string;
+      type: string;
+      module: string;
+      employeeName: string;
+      title: string;
+      description: string;
+      timestamp: string;
+    }> = [];
+
+    for (const log of recentAuditLogs) {
+      const actor = log.user ? `${log.user.firstName} ${log.user.lastName}`.trim() : 'System';
+      formattedActivities.push({
+        id: `audit-${log.id}`,
+        type: log.action,
+        module: log.module || 'HRM',
+        employeeName: actor,
+        title: `${log.module || 'HR'}: ${log.action.replace(/_/g, ' ')}`,
+        description: log.description || `${actor} executed ${log.action.toLowerCase().replace(/_/g, ' ')}`,
+        timestamp: log.createdAt.toISOString(),
+      });
+    }
+
+    for (const lr of leavesToday.slice(0, 3)) {
+      formattedActivities.push({
+        id: `leave-${lr.id}`,
+        type: 'LEAVE_APPROVED',
+        module: 'Leaves',
+        employeeName: lr.employee ? `${lr.employee.firstName} ${lr.employee.lastName}`.trim() : 'Employee',
+        title: 'Leave Approved',
+        description: `${lr.employee ? `${lr.employee.firstName} ${lr.employee.lastName}`.trim() : 'Employee'} on approved ${typeof lr.leaveType === 'string' ? lr.leaveType : lr.leaveType?.name || 'Leave'}`,
+        timestamp: lr.updatedAt ? lr.updatedAt.toISOString() : lr.createdAt.toISOString(),
+      });
+    }
+
+    formattedActivities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const finalActivities = formattedActivities.slice(0, 10);
+
+    // 6. Optional multi-day period attendance breakdown (for Week and Month toggles)
+    let periodAttendance: any = null;
+    if (periodParam && periodParam !== 'today') {
+      const pStart = periodParam === 'week'
+        ? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        : new Date(now.getFullYear(), now.getMonth(), 1);
+      const pEnd = endOfDay;
+      const [pAttendances, pLeaves] = await Promise.all([
+        this.prisma.attendance.findMany({
+          where: { customerId, date: { gte: pStart, lte: pEnd } },
+          select: { status: true, isLate: true },
+        }),
+        this.prisma.leaveRequest.count({
+          where: { customerId, status: 'APPROVED', fromDate: { lte: pEnd }, toDate: { gte: pStart } },
+        }),
+      ]);
+      const pPresent = pAttendances.filter((a) => a.status === 'PRESENT' || a.status === 'HALF_DAY').length;
+      const pAbsent = pAttendances.filter((a) => a.status === 'ABSENT').length;
+      const pLate = pAttendances.filter((a) => a.isLate).length;
+      periodAttendance = {
+        present: pPresent,
+        absent: pAbsent,
+        late: pLate,
+        onBreak,
+        onLeave: pLeaves,
+        total: pAttendances.length + pLeaves,
+      };
+    }
 
     return {
       success: true,
@@ -1873,10 +2090,20 @@ result: SUCCESS`);
           working,
           onBreak,
           punchedOut,
-          remote,
+          remote: formattedRemoteWorkers.length,
+          onLeave: formattedLeaves.length,
           insideRadius,
           outsideRadius,
+          pendingLeaves: pendingLeavesCount,
+          pendingClaims: pendingClaimsCount,
+          payrollNet: Number(payrollAggregate._sum?.netSalary || 0),
         },
+        departments: departmentDistribution,
+        birthdays: birthdaysToday,
+        onLeaveToday: formattedLeaves,
+        remoteToday: formattedRemoteWorkers,
+        recentActivities: finalActivities,
+        periodAttendance,
         employees: formattedEmployees,
         offices: offices.map((o) => ({
           id: o.id,
