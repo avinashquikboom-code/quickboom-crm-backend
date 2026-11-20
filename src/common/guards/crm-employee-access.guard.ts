@@ -43,16 +43,16 @@ export class CrmEmployeeAccessGuard implements CanActivate {
       return true;
     }
 
-    const required = this.reflector.getAllAndOverride<Array<'BPO' | 'VISITOR' | 'SALES'>>(CRM_CATEGORY_KEY, [
+    const required = this.reflector.getAllAndOverride<Array<'SALES' | 'VISITOR'>>(CRM_CATEGORY_KEY, [
       context.getHandler(),
       context.getClass(),
-    ]) || ['BPO', 'VISITOR', 'SALES'];
+    ]) || ['SALES', 'VISITOR'];
 
     const category = await this.resolveCategory(user);
     const employeeStatus = String(user.employee?.status || 'ACTIVE').toUpperCase();
-    const sharedRoute = required.includes('BPO') && required.includes('VISITOR') && required.includes('SALES');
+    const sharedRoute = required.includes('SALES') && required.includes('VISITOR');
     const allowed = employeeStatus === 'ACTIVE' && (
-      required.includes(category as 'BPO' | 'VISITOR' | 'SALES') ||
+      required.includes(category as 'SALES' | 'VISITOR') ||
       (sharedRoute && category === 'NONE' && hasExplicitLeadView(user))
     );
     if (!allowed) {
