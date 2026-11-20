@@ -46,6 +46,29 @@ export const PROTECTED_RECORDS = [
   'SHARED SYSTEM DATA — Global plans, permissions, and singleton integration/payment configuration are not tenant-owned reset data and are excluded.',
 ];
 
+export const PROTECTED_SYSTEM_RECORDS = [
+  {
+    category: 'Super Admin Account',
+    status: 'Protected',
+    description: 'System-level Super Administrator account, credentials, and access control records are strictly excluded from reset.',
+  },
+  {
+    category: 'Admin Credentials',
+    status: 'Protected',
+    description: 'Email, password hash, security configuration, and recovery credentials remain permanently intact.',
+  },
+  {
+    category: 'Authentication Records',
+    status: 'Protected',
+    description: 'User sessions, refresh tokens, and JWT authentication infrastructure are strictly protected.',
+  },
+  {
+    category: 'Roles & Permissions',
+    status: 'Protected',
+    description: 'System RBAC definitions, administrative roles, and system permission mappings are preserved.',
+  },
+];
+
 export const FORBIDDEN_MODELS = [
   'user',
   'role',

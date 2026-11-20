@@ -10,11 +10,13 @@ import { createReadStream } from 'fs';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { gzipSync, gunzipSync } from 'zlib';
-import { Prisma } from '@prisma/client';
+import { Prisma, RoleType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createLeadCreatedOutbox } from '../lead/lead-stage-outbox';
 import {
   PROTECTED_RECORDS,
+  PROTECTED_SYSTEM_RECORDS,
+  FORBIDDEN_MODELS,
   RESET_MODULES,
   TableRule,
   availableModules,
@@ -293,6 +295,7 @@ export class DataGovernanceService {
         blockedTemplates: blockedTemplateCount,
       },
       customerBreakdown,
+      protectedSystemRecords: PROTECTED_SYSTEM_RECORDS,
       protected: PROTECTED_RECORDS,
     };
   }
@@ -398,6 +401,56 @@ export class DataGovernanceService {
           let pendingDesignationRoleLinksCleared = 0;
           await this.acquireResetAdvisoryLock(tx, tenantId);
           await this.lockResetRoots(tx, moduleIds, tenantId);
+
+          // ── MANDATORY SAFETY VALIDATION: Target Model Exclusion ───────────
+          for (const table of tablesForModules(moduleIds)) {
+            if (FORBIDDEN_MODELS.includes(table.model)) {
+              throw new ForbiddenException(`Critical Safety Violation: Reset targets protected system/auth model '${table.model}'. Operation rejected.`);
+            }
+          }
+
+          // ── MANDATORY SAFETY VALIDATION: Super Admin Pre-Execution Snapshot ─
+          const totalUsers = typeof tx.user?.count === 'function' ? await tx.user.count() : 0;
+          const superAdminAccounts = typeof tx.user?.findMany === 'function'
+            ? await tx.user.findMany({
+                where: {
+                  OR: [
+                    { userRoles: { some: { role: { OR: [{ type: RoleType.SUPER_ADMIN }, { name: { in: ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'] } }] } } } },
+                    { customerId: null },
+                  ],
+                },
+                select: {
+                  id: true,
+                  email: true,
+                  passwordHash: true,
+                  isActive: true,
+                  customerId: true,
+                  userRoles: {
+                    select: {
+                      role: { select: { id: true, name: true, type: true } },
+                    },
+                  },
+                },
+              })
+            : [];
+
+          if (totalUsers > 0 && !superAdminAccounts.length) {
+            throw new ForbiddenException('Critical Safety Violation: No Super Admin account detected among existing users. Reset aborted to protect system authentication.');
+          }
+
+          const adminSnapshots = new Map(
+            superAdminAccounts.map((adm) => [
+              adm.id,
+              {
+                email: adm.email,
+                passwordHash: adm.passwordHash,
+                isActive: adm.isActive,
+                customerId: adm.customerId,
+                roles: adm.userRoles.map((ur) => ur.role.type || ur.role.name),
+              },
+            ]),
+          );
+
           const dependencyWarnings = await this.dependencyWarnings(moduleIds, tenantId, tx);
           if (moduleIds.includes('employees')) {
             const employeeDependencies = dependencyWarnings
@@ -918,6 +971,45 @@ export class DataGovernanceService {
               throw new Error('Protected WhatsApp campaigns did not remain intact after reset.');
             }
           }
+          // ── MANDATORY SAFETY VALIDATION: Post-Reset Invariant Verification ──
+          if (adminSnapshots.size > 0 && typeof tx.user?.findUnique === 'function') {
+            for (const [adminId, snapshot] of adminSnapshots) {
+              const adminAfter = await tx.user.findUnique({
+                where: { id: adminId },
+                include: {
+                  userRoles: { include: { role: true } },
+                },
+              });
+
+              if (!adminAfter) {
+                throw new Error(`CRITICAL SAFETY VALIDATION FAILED: Super Admin account #${adminId} was deleted during reset. Transaction rolled back.`);
+              }
+
+              if (adminAfter.email !== snapshot.email) {
+                throw new Error(`CRITICAL SAFETY VALIDATION FAILED: Super Admin email changed from ${snapshot.email} to ${adminAfter.email}. Transaction rolled back.`);
+              }
+
+              if (adminAfter.passwordHash !== snapshot.passwordHash) {
+                throw new Error(`CRITICAL SAFETY VALIDATION FAILED: Super Admin password hash for ${snapshot.email} was modified. Transaction rolled back.`);
+              }
+
+              if (adminAfter.isActive !== snapshot.isActive) {
+                throw new Error(`CRITICAL SAFETY VALIDATION FAILED: Super Admin active status for ${snapshot.email} was modified. Transaction rolled back.`);
+              }
+
+              const hasSuperAdminRole =
+                adminAfter.userRoles.some(
+                  (ur) =>
+                    ur.role.type === RoleType.SUPER_ADMIN ||
+                    ['SUPER_ADMIN', 'Super Administrator', 'Super Admin'].includes(ur.role.name),
+                ) || adminAfter.customerId === null;
+
+              if (!hasSuperAdminRole) {
+                throw new Error(`CRITICAL SAFETY VALIDATION FAILED: Super Admin privileges were revoked from account #${adminId}. Transaction rolled back.`);
+              }
+            }
+          }
+
           return { deleted: pendingDeleted, designationRoleLinksCleared: pendingDesignationRoleLinksCleared };
         }, { timeout: 120000, maxWait: 10000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
         Object.assign(deleted, transactionDeleted.deleted);
