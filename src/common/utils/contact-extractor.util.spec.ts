@@ -102,4 +102,29 @@ describe('ContactExtractor Unit Tests', () => {
       expect(email).toBeNull();
     });
   });
+
+  describe('Website social profile extraction', () => {
+    it('extracts public business profile hrefs and ignores sharing links', () => {
+      const html = `
+        <a href="https://www.facebook.com/example.business">Facebook</a>
+        <a href='https://instagram.com/example_shop/?igshid=abc'>Instagram</a>
+        <a href="https://www.linkedin.com/company/example-inc/">LinkedIn</a>
+        <a href="https://x.com/example_shop">X</a>
+        <a href="https://www.youtube.com/@example-shop">YouTube</a>
+        <a href="https://www.facebook.com/sharer/sharer.php?u=site">Share</a>
+        <a href="https://example.com/social">Unrelated</a>`;
+      expect(ContactExtractor.extractSocialMediaFromHtml(html)).toEqual({
+        facebook: 'https://www.facebook.com/example.business',
+        instagram: 'https://instagram.com/example_shop',
+        linkedin: 'https://www.linkedin.com/company/example-inc',
+        twitter: 'https://x.com/example_shop',
+        youtube: 'https://www.youtube.com/@example-shop',
+      });
+    });
+
+    it('does not fetch private or localhost websites', async () => {
+      const result = await ContactExtractor.extractContactFromWebsite('http://127.0.0.1/admin');
+      expect(result).toEqual({ email: null, phone: null, enrichmentStatus: 'FAILED' });
+    });
+  });
 });

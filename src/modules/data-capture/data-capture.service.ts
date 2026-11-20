@@ -1238,7 +1238,7 @@ export class DataCaptureService implements OnModuleInit {
       status: place.googlePlaceId && existingPlaceIds.has(place.googlePlaceId) ? 'DUPLICATE' : 'CAPTURED',
       photos: undefined,
       socialMedia: undefined,
-      rawData: undefined,
+      rawData: { socialMediaEnrichmentStatus: place.website ? 'PENDING' : 'NOT_AVAILABLE' },
     }));
 
     // 6. Persist Job and Places to PostgreSQL
@@ -1329,6 +1329,7 @@ export class DataCaptureService implements OnModuleInit {
           isImported: Boolean(p.isImported),
           importedLeadId: p.importedLeadId || undefined,
       rawData: {
+        socialMediaEnrichmentStatus: (p.rawData as any)?.socialMediaEnrichmentStatus || 'NOT_AVAILABLE',
         city: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.city || null,
         state: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.state || null,
         country: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.country || null,
@@ -1336,6 +1337,8 @@ export class DataCaptureService implements OnModuleInit {
         attributions: allPlaces.find((live) => live.googlePlaceId === p.googlePlaceId)?.rawData?.attributions || [],
       },
     }));
+
+    this.enrichPlacesWithWebsiteContactsInBackground(mappedPlaces);
 
     const tDbDuration = Date.now() - tDbStart;
     const tTotal = Date.now() - tStart;
@@ -1370,23 +1373,36 @@ export class DataCaptureService implements OnModuleInit {
         if (!p.website || !p.id) continue;
         try {
           const webContact = await ContactExtractor.extractContactFromWebsite(p.website);
-          if (webContact && (webContact.email || (webContact.socialMedia && Object.keys(webContact.socialMedia).length > 0))) {
-            const updates: any = {};
-            if (webContact.email && !p.email) {
-              updates.email = webContact.email;
-            }
-            if (webContact.socialMedia) {
-              const existingSocial = (p.socialMedia as any) || {};
-              updates.socialMedia = { ...existingSocial, ...webContact.socialMedia };
-            }
-            if (Object.keys(updates).length > 0) {
-              await this.prisma.dataCapturePlace.update({
-                where: { id: p.id },
-                data: updates,
-              });
-            }
-          }
+          const saved = await this.prisma.dataCapturePlace.findFirst({
+            where: { id: p.id, customerId: Number(p.customerId), deletedAt: null },
+            select: { email: true, socialMedia: true, rawData: true },
+          });
+          if (!saved) continue;
+          const existingSocial = (saved.socialMedia as any) || {};
+          const socialMedia = { ...webContact.socialMedia, ...existingSocial };
+          const rawData = saved.rawData && typeof saved.rawData === 'object' && !Array.isArray(saved.rawData)
+            ? saved.rawData as Record<string, any> : {};
+          await this.prisma.dataCapturePlace.updateMany({
+            where: { id: p.id, customerId: Number(p.customerId), deletedAt: null },
+            data: {
+              ...(webContact.email && !saved.email ? { email: webContact.email } : {}),
+              ...(Object.keys(socialMedia).length ? { socialMedia } : {}),
+              rawData: { ...rawData, socialMediaEnrichmentStatus: webContact.enrichmentStatus },
+            },
+          });
         } catch (err: any) {
+          try {
+            const saved = await this.prisma.dataCapturePlace.findFirst({
+              where: { id: p.id, customerId: Number(p.customerId), deletedAt: null },
+              select: { rawData: true },
+            });
+            const rawData = saved?.rawData && typeof saved.rawData === 'object' && !Array.isArray(saved.rawData)
+              ? saved.rawData as Record<string, any> : {};
+            await this.prisma.dataCapturePlace.updateMany({
+              where: { id: p.id, customerId: Number(p.customerId), deletedAt: null },
+              data: { rawData: { ...rawData, socialMediaEnrichmentStatus: 'FAILED' } },
+            });
+          } catch { /* Capture creation remains independent of enrichment state writes. */ }
           this.logger.debug?.(`[Background Enrichment] Failed for place ${p.id} (${p.website}): ${err?.message}`);
         }
       }
@@ -1559,6 +1575,145 @@ export class DataCaptureService implements OnModuleInit {
       });
       affected += Number(result?.count || 0);
     }
+    return affected;
+  }
+
+  /**
+   * Comprehensive backfill for existing CRM Leads when re-importing or updating
+   * from Data Capture. Never overwrites non-empty existing data in CRM, but fills
+   * missing phone, email, website, address, coordinates, rating, reviews,
+   * category, social profiles, and description.
+   */
+  private async backfillEmptyLeadFields(
+    tx: any,
+    customerId: number,
+    leadId: number,
+    fields: {
+      phone?: string | null;
+      email?: string | null;
+      website?: string | null;
+      address?: string | null;
+      city?: string | null;
+      state?: string | null;
+      country?: string | null;
+      pincode?: string | null;
+      category?: string | null;
+      googlePlaceId?: string | null;
+      rating?: number | null;
+      reviewCount?: number | null;
+      latitude?: number | null;
+      longitude?: number | null;
+      socialMedia?: any;
+      customerRequirements?: string | null;
+    },
+  ): Promise<number> {
+    if (!tx?.lead || !Number.isSafeInteger(customerId) || customerId <= 0 || !Number.isSafeInteger(leadId) || leadId <= 0) {
+      return 0;
+    }
+
+    let affected = 0;
+
+    // 1. Text fields with empty-or-null checks
+    const textFields: Array<[string, string | null | undefined]> = [
+      ['phone', fields.phone],
+      ['email', fields.email],
+      ['website', fields.website],
+      ['address', fields.address],
+      ['city', fields.city],
+      ['state', fields.state],
+      ['country', fields.country],
+      ['pincode', fields.pincode],
+      ['category', fields.category],
+      ['googlePlaceId', fields.googlePlaceId],
+      ['customerRequirements', fields.customerRequirements],
+    ];
+
+    for (const [col, val] of textFields) {
+      if (val && typeof val === 'string' && val.trim().length > 0) {
+        try {
+          const res = await tx.lead.updateMany({
+            where: {
+              id: leadId,
+              customerId,
+              deletedAt: null,
+              OR: [{ [col]: null }, { [col]: '' }],
+            },
+            data: { [col]: val.trim() },
+          });
+          affected += Number(res?.count || 0);
+        } catch (_) {}
+      }
+    }
+
+    // 2. Numeric fields (rating, reviewCount, latitude, longitude)
+    const numericFields: Array<[string, number | null | undefined]> = [
+      ['rating', fields.rating],
+      ['reviewCount', fields.reviewCount],
+      ['latitude', fields.latitude],
+      ['longitude', fields.longitude],
+    ];
+
+    for (const [col, val] of numericFields) {
+      if (val !== undefined && val !== null && !isNaN(val)) {
+        try {
+          const res = await tx.lead.updateMany({
+            where: {
+              id: leadId,
+              customerId,
+              deletedAt: null,
+              [col]: null,
+            },
+            data: { [col]: val },
+          });
+          affected += Number(res?.count || 0);
+        } catch (_) {}
+      }
+    }
+
+    // 3. Social Media handles backfill
+    if (fields.socialMedia && typeof fields.socialMedia === 'object' && Object.keys(fields.socialMedia).length > 0) {
+      try {
+        const leadRow = await tx.lead.findFirst({
+          where: { id: leadId, customerId, deletedAt: null },
+          select: { socialMedia: true },
+        });
+        const existingSm = (leadRow?.socialMedia && typeof leadRow.socialMedia === 'object') ? leadRow.socialMedia : {};
+        const mergedSm = { ...fields.socialMedia, ...existingSm }; // non-empty existing takes precedence
+        if (JSON.stringify(mergedSm) !== JSON.stringify(existingSm)) {
+          await tx.lead.update({
+            where: { id: leadId },
+            data: { socialMedia: mergedSm },
+          });
+          affected++;
+        }
+      } catch (_) {}
+
+      // 4. Create missing LeadSocialProfile rows if supported
+      if (tx.leadSocialProfile && typeof tx.leadSocialProfile.findFirst === 'function' && typeof tx.leadSocialProfile.create === 'function') {
+        const profiles = this.extractSocialProfileList(fields.socialMedia);
+        for (const sp of profiles) {
+          try {
+            const exists = await tx.leadSocialProfile.findFirst({
+              where: { leadId, platform: sp.platform },
+            });
+            if (!exists) {
+              await tx.leadSocialProfile.create({
+                data: {
+                  leadId,
+                  platform: sp.platform,
+                  url: sp.url,
+                  source: 'CAPTURE_SOURCE',
+                  verificationStatus: 'UNVERIFIED',
+                  lastCheckedAt: null,
+                },
+              });
+              affected++;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
     return affected;
   }
 
@@ -1809,7 +1964,7 @@ export class DataCaptureService implements OnModuleInit {
           status: p.status || 'CAPTURED',
           notes: p.notes || undefined,
           rawData: this.isGoogleReference(p)
-            ? { ...(preview.rawData && typeof preview.rawData === 'object' ? preview.rawData : {}), userProvidedFields: this.userProvidedFieldNames(p) }
+            ? { ...(p.rawData && typeof p.rawData === 'object' ? p.rawData as object : {}), ...(preview.rawData && typeof preview.rawData === 'object' ? preview.rawData : {}), userProvidedFields: this.userProvidedFieldNames(p) }
             : (p.rawData || undefined),
           isImported: p.isImported,
           importedLeadId: p.importedLeadId || undefined,
@@ -1928,7 +2083,7 @@ export class DataCaptureService implements OnModuleInit {
       status: place.status || 'CAPTURED',
       notes: place.notes || undefined,
       rawData: this.isGoogleReference(place)
-        ? { ...(preview.rawData && typeof preview.rawData === 'object' ? preview.rawData : {}), userProvidedFields: this.userProvidedFieldNames(place) }
+        ? { ...(place.rawData && typeof place.rawData === 'object' ? place.rawData as object : {}), ...(preview.rawData && typeof preview.rawData === 'object' ? preview.rawData : {}), userProvidedFields: this.userProvidedFieldNames(place) }
         : (place.rawData || undefined),
       isImported: place.isImported,
       importedLeadId: place.importedLeadId || undefined,
@@ -2707,8 +2862,16 @@ export class DataCaptureService implements OnModuleInit {
       throw new ForbiddenException('The importing user does not belong to this tenant.');
     }
     const validCreatedById = numUserId;
-    const captureOwnerWhere = effectiveUser && !isUserAdmin(effectiveUser)
-      ? { job: { is: { userId: numUserId } } }
+    const isActorAdmin = isUserAdmin(effectiveUser) || isUserAdmin(actor);
+    const actorRoles = actor as any;
+    const hasExplicitRole = Boolean(effectiveUser?.role || effectiveUser?.roles || actorRoles?.role || actorRoles?.roles);
+    const captureOwnerWhere = effectiveUser && !isActorAdmin && hasExplicitRole
+      ? {
+          OR: [
+            { job: { is: { userId: numUserId } } },
+            { jobId: null },
+          ],
+        }
       : {};
     const employee = await this.prisma.employee.findFirst({
       where: { userId: numUserId, customerId: numCustomerId, status: 'ACTIVE' },
@@ -2949,24 +3112,40 @@ export class DataCaptureService implements OnModuleInit {
 
       const normalizedWebsite = fields.website || null;
 
-      const resolvedAddress = fields.address || null;
-      const resolvedCategory = fields.category || null;
-      const resolvedRating = googleReference ? null : (dbPlace.rating ?? null);
-      const resolvedReviewCount = googleReference ? null : (dbPlace.reviewCount ?? null);
-      const resolvedLatitude = googleReference ? null : (dbPlace.latitude ?? null);
-      const resolvedLongitude = googleReference ? null : (dbPlace.longitude ?? null);
-      const parsedAddress = { city: fields.city || null, state: fields.state || null, pincode: fields.pincode || null };
+      const resolvedAddress = fields.address || dbPlace.address || null;
+      const resolvedCategory = fields.category || dbPlace.category || null;
+      const resolvedRating = candidate.rating !== undefined && candidate.rating !== null
+        ? Number(candidate.rating)
+        : (dbPlace.rating ?? (googlePreviewName ? (googlePreviewName as any)?.__googlePreview?.rating : null) ?? null);
+      const resolvedReviewCount = candidate.reviewCount !== undefined && candidate.reviewCount !== null
+        ? Number(candidate.reviewCount)
+        : (dbPlace.reviewCount ?? (googlePreviewName ? (googlePreviewName as any)?.__googlePreview?.reviewCount : null) ?? null);
+      const resolvedLatitude = candidate.latitude !== undefined && candidate.latitude !== null
+        ? Number(candidate.latitude)
+        : (dbPlace.latitude ?? (googlePreviewName ? (googlePreviewName as any)?.__googlePreview?.latitude : null) ?? null);
+      const resolvedLongitude = candidate.longitude !== undefined && candidate.longitude !== null
+        ? Number(candidate.longitude)
+        : (dbPlace.longitude ?? (googlePreviewName ? (googlePreviewName as any)?.__googlePreview?.longitude : null) ?? null);
+
+      const parsedAddr = this.parseAddressComponents(resolvedAddress);
+      const captureLocation = dbPlace.rawData && typeof dbPlace.rawData === 'object' ? dbPlace.rawData : {};
+      const parsedAddress = {
+        city: fields.city || (captureLocation as any).city || parsedAddr.city || null,
+        state: fields.state || (captureLocation as any).state || parsedAddr.state || null,
+        pincode: fields.pincode || (captureLocation as any).pincode || parsedAddr.pincode || null,
+      };
+      const resolvedCountry = fields.country || (captureLocation as any).country || (parsedAddress.state || parsedAddress.city ? 'India' : null);
+      const resolvedDescription = fields.description || dbPlace.notes || (dbPlace.rawData as any)?.description || (dbPlace.rawData as any)?.notes || null;
       const genuineFirstName = '';
       const genuineLastName = '';
-      const placeSocialMedia = googleReference
-        ? (Object.keys(userSocialMedia).length
-            ? userSocialMedia
-            : (this.hasUserProvidedField(dbPlace, 'socialMedia') ? this.extractSocialMediaFromPlace(dbPlace) || null : null))
-        : (this.extractSocialMediaFromPlace(dbPlace) || (Object.keys(userSocialMedia).length ? userSocialMedia : null));
+      const storedSocialMedia = this.extractSocialMediaFromPlace(dbPlace) || {};
+      const placeSocialMedia = Object.keys(userSocialMedia).length || Object.keys(storedSocialMedia).length
+        ? { ...storedSocialMedia, ...userSocialMedia }
+        : null;
 
       // 3. Duplicate Detection against CRM Leads (Section 13)
       const leadOrConditions: any[] = [];
-      if (!googleReference && googlePlaceId) {
+      if (googlePlaceId) {
         leadOrConditions.push({ googlePlaceId });
         leadOrConditions.push({ sourceRecordId: googlePlaceId });
       }
@@ -3070,14 +3249,34 @@ export class DataCaptureService implements OnModuleInit {
 
 
           if (matchedLead) {
-            await this.backfillEmptyLeadContactFields(tx, numCustomerId, Number(matchedLead.id), fields);
+            await this.backfillEmptyLeadFields(tx, numCustomerId, Number(matchedLead.id), {
+              phone: normalizedPhone,
+              email: normalizedEmail,
+              website: normalizedWebsite,
+              address: resolvedAddress,
+              city: parsedAddress.city,
+              state: parsedAddress.state,
+              country: resolvedCountry,
+              pincode: parsedAddress.pincode,
+              category: resolvedCategory,
+              googlePlaceId,
+              rating: resolvedRating,
+              reviewCount: resolvedReviewCount,
+              latitude: resolvedLatitude,
+              longitude: resolvedLongitude,
+              socialMedia: placeSocialMedia,
+              customerRequirements: resolvedDescription,
+            });
             const currentPlace = await tx.dataCapturePlace.findFirst({ where: { id: dbPlace.id, customerId: numCustomerId } });
             await tx.dataCapturePlace.update({ where: { id: dbPlace.id }, data: {
               isImported: true, importedLeadId: matchedLead.id,
               status: currentPlace?.importedLeadId === matchedLead.id && currentPlace?.status === 'LEAD_CREATED' ? 'LEAD_CREATED' : 'DUPLICATE',
             } });
             await this.copyCapturePhotosToLead(tx, matchedLead.id, dbPlace);
-            return { ...matchedLead, alreadyExists: true };
+            const refreshedLead = await tx.lead.findFirst({
+              where: { id: matchedLead.id, customerId: numCustomerId, deletedAt: null },
+            });
+            return { ...(refreshedLead || matchedLead), alreadyExists: true };
           }
           // Resolve initial stage: 'NEW'
           let newStage = await tx.leadStage.findFirst({
@@ -3116,7 +3315,7 @@ export class DataCaptureService implements OnModuleInit {
                   city: parsedAddress.city,
                   state: parsedAddress.state,
                   pincode: parsedAddress.pincode,
-                  country: fields.country || null,
+                  country: resolvedCountry,
                   category: resolvedCategory,
                   source: resolvedSource,
                   createdFrom: leadCreatedFrom,
@@ -3135,6 +3334,7 @@ export class DataCaptureService implements OnModuleInit {
                   captureRequestId: placeCaptureRequestId,
                   sourceRecordId,
                   socialMedia: placeSocialMedia || null,
+                  customerRequirements: resolvedDescription || null,
                 },
               });
               createdViaDirectTx = true;
@@ -3174,7 +3374,9 @@ export class DataCaptureService implements OnModuleInit {
                   leadId: created.id,
                   platform: sp.platform,
                   url: sp.url,
-                  source: googleReference ? 'USER_PROVIDED' : 'CAPTURE_SOURCE',
+                  source: Object.keys(userSocialMedia).length || this.hasUserProvidedField(dbPlace, 'socialMedia')
+                    ? 'USER_PROVIDED'
+                    : 'CAPTURE_SOURCE',
                   verificationStatus: 'UNVERIFIED',
                   lastCheckedAt: null,
                 },

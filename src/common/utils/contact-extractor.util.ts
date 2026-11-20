@@ -1,4 +1,8 @@
 import axios from 'axios';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import * as http from 'node:http';
+import * as https from 'node:https';
 
 /**
  * Robust, production-grade contact extraction and normalization utility
@@ -23,6 +27,76 @@ const PLACEHOLDER_EMAILS = new Set([
 const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
 export class ContactExtractor {
+  private static isPublicIpv4(address: string): boolean {
+    const parts = address.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+    const [a, b] = parts;
+    return !(a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 0) ||
+      (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19)) ||
+      (a === 198 && b === 51) || (a === 203 && b === 0));
+  }
+
+  private static async publicIpv4For(hostname: string): Promise<string> {
+    if (isIP(hostname)) {
+      if (isIP(hostname) !== 4 || !this.isPublicIpv4(hostname)) throw new Error('Website host is not public.');
+      return hostname;
+    }
+    const addresses = await lookup(hostname, { all: true, family: 4, verbatim: true });
+    const publicAddress = addresses.find(({ address }) => this.isPublicIpv4(address));
+    if (!publicAddress || addresses.some(({ address }) => !this.isPublicIpv4(address))) {
+      throw new Error('Website host did not resolve exclusively to public addresses.');
+    }
+    return publicAddress.address;
+  }
+
+  private static async getPublicHtml(input: string): Promise<{ url: URL; html: string }> {
+    let url = new URL(input);
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid website URL.');
+      if (url.port && !((url.protocol === 'http:' && url.port === '80') || (url.protocol === 'https:' && url.port === '443'))) throw new Error('Non-standard website ports are not supported.');
+      const address = await this.publicIpv4For(url.hostname);
+      const agentOptions = {
+        lookup: (_hostname: string, options: any, callback: (...args: any[]) => void) => {
+          if (options?.all) callback(null, [{ address, family: 4 }]);
+          else callback(null, address, 4);
+        },
+      };
+      let response: any;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await axios.get(url.toString(), {
+            timeout: 3500,
+            maxContentLength: 500_000,
+            maxBodyLength: 500_000,
+            maxRedirects: 0,
+            httpAgent: new http.Agent(agentOptions),
+            httpsAgent: new https.Agent(agentOptions),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; QuikBoom-CRM-Discovery/1.0)',
+              Accept: 'text/html,application/xhtml+xml;q=0.9',
+            },
+            validateStatus: (status) => (status >= 200 && status < 300) || [301, 302, 303, 307, 308].includes(status),
+            responseType: 'text',
+          });
+          break;
+        } catch (error: any) {
+          const retryable = !error?.response || error.response.status === 429 || error.response.status >= 500;
+          if (!retryable || attempt === 1) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.location;
+        if (!location || redirects === 3) throw new Error('Website redirect limit exceeded.');
+        url = new URL(location, url);
+        continue;
+      }
+      return { url, html: typeof response.data === 'string' ? response.data.slice(0, 500_000) : '' };
+    }
+    throw new Error('Website redirect limit exceeded.');
+  }
   /**
    * Normalize a phone number into standard international format (+91XXXXXXXXXX or +E.164).
    * Returns null if missing, placeholder, or invalid.
@@ -227,95 +301,39 @@ export class ContactExtractor {
   } {
     if (!html || typeof html !== 'string') return {};
 
-    const social: {
-      facebook?: string;
-      instagram?: string;
-      linkedin?: string;
-      twitter?: string;
-      youtube?: string;
-      tiktok?: string;
-      pinterest?: string;
-    } = {};
-
-    // 1. Facebook
-    const fbMatch = html.match(
-      /https?:\/\/(?:www\.)?(?:facebook\.com|fb\.com)\/(?:pages\/[a-zA-Z0-9_.-]+\/\d+|profile\.php\?id=\d+|[a-zA-Z0-9._-]+)(?=[?"'\s>])/i,
-    );
-    if (fbMatch && fbMatch[0]) {
-      const url = fbMatch[0].replace(/\/+$/, '');
-      const lower = url.toLowerCase();
-      if (!/(sharer|share\.php|dialog|login|plugins|events|help|policies|home\.php)/.test(lower)) {
-        social.facebook = url;
-      }
+    const social: Record<string, string> = {};
+    const ignored = new Set(['share', 'sharer', 'intent', 'login', 'signup', 'home', 'explore', 'search', 'p', 'reel', 'reels', 'stories', 'watch', 'shorts', 'playlist', 'embed', 'feed', 'about', 'help', 'legal', 'privacy', 'terms', 'events', 'plugins', 'dialog', 'accounts']);
+    const candidates = new Set<string>();
+    const hrefPattern = /\bhref\s*=\s*(["'])(.*?)\1/gi;
+    for (const match of html.matchAll(hrefPattern)) candidates.add(match[2].replace(/&amp;/gi, '&').replace(/\\\//g, '/'));
+    const urlPattern = /https?:\\?\/\\?\/(?:www\.)?(?:facebook\.com|fb\.com|instagram\.com|linkedin\.com|youtube\.com|youtu\.be|x\.com|twitter\.com|tiktok\.com|pinterest\.[a-z.]+)[^\s"'<>\\]*/gi;
+    for (const match of html.matchAll(urlPattern)) candidates.add(match[0].replace(/\\\//g, '/').replace(/\\u0026/gi, '&').replace(/[,);}\]]+$/, ''));
+    for (const candidate of candidates) {
+      let url: URL;
+      try { url = new URL(candidate); } catch { continue; }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
+      const host = url.hostname.toLowerCase().replace(/^www\./, '');
+      const segments = url.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part).toLowerCase());
+      if (!segments.length || segments.some((part) => ignored.has(part)) || /\/sharing(?:\/|$)|share\.php/i.test(url.pathname + url.search)) continue;
+      let platform: string | undefined;
+      if (['facebook.com', 'fb.com'].includes(host) && (
+        (segments[0] === 'pages' && segments.length >= 3) ||
+        (segments[0] === 'profile.php' && /^\d+$/.test(url.searchParams.get('id') || '')) ||
+        (segments[0] !== 'pages' && segments[0] !== 'profile.php' && /^[a-z0-9._-]+$/i.test(segments[0]))
+      )) platform = 'facebook';
+      else if (host === 'instagram.com' && /^[a-z0-9._]{2,30}$/i.test(segments[0])) platform = 'instagram';
+      else if (host === 'linkedin.com' && ['company', 'in', 'school'].includes(segments[0]) && segments[1]) platform = 'linkedin';
+      else if (['x.com', 'twitter.com'].includes(host) && /^[a-z0-9_]{1,20}$/i.test(segments[0])) platform = 'twitter';
+      else if (host === 'youtube.com' && (segments[0]?.startsWith('@') || ['c', 'channel', 'user'].includes(segments[0]) && segments[1])) platform = 'youtube';
+      else if (host === 'youtu.be' && segments[0]) platform = 'youtube';
+      else if (host === 'tiktok.com' && /^@[a-z0-9_.-]{2,50}$/i.test(segments[0])) platform = 'tiktok';
+      else if (/^pinterest\.[a-z.]+$/.test(host) && /^[a-z0-9_.-]{2,50}$/i.test(segments[0])) platform = 'pinterest';
+      if (!platform || social[platform]) continue;
+      url.protocol = 'https:';
+      url.hash = '';
+      for (const key of [...url.searchParams.keys()]) if (/^(utm_|fbclid|gclid|igshid)/i.test(key)) url.searchParams.delete(key);
+      social[platform] = url.toString().replace(/\/$/, '');
     }
-
-    // 2. Instagram
-    const igMatch = html.match(
-      /https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,30})(?=[/?"'\s>])/i,
-    );
-    if (igMatch && igMatch[1]) {
-      const handle = igMatch[1].toLowerCase();
-      if (!['p', 'explore', 'stories', 'reels', 'reel', 'about', 'legal', 'accounts', 'developer'].includes(handle)) {
-        social.instagram = `https://www.instagram.com/${igMatch[1]}`;
-      }
-    }
-
-    // 3. LinkedIn
-    const liMatch = html.match(
-      /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|in|school)\/([a-zA-Z0-9\-_%]+)(?=[/?"'\s>])/i,
-    );
-    if (liMatch && liMatch[0]) {
-      const url = liMatch[0].replace(/\/+$/, '');
-      if (!url.toLowerCase().includes('/share') && !url.toLowerCase().includes('/sharing')) {
-        social.linkedin = url;
-      }
-    }
-
-    // 4. Twitter / X
-    const twMatch = html.match(
-      /https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]{1,20})(?=[/?"'\s>])/i,
-    );
-    if (twMatch && twMatch[1]) {
-      const handle = twMatch[1].toLowerCase();
-      if (!['intent', 'share', 'home', 'explore', 'search', 'hashtag', 'tos', 'privacy', 'login', 'signup'].includes(handle)) {
-        social.twitter = `https://x.com/${twMatch[1]}`;
-      }
-    }
-
-    // 5. YouTube
-    const ytMatch = html.match(
-      /https?:\/\/(?:www\.)?youtube\.com\/(?:@|c\/|channel\/|user\/)?([a-zA-Z0-9\-_]+)(?=[/?"'\s>])/i,
-    );
-    if (ytMatch && ytMatch[0]) {
-      const url = ytMatch[0].replace(/\/+$/, '');
-      const lower = url.toLowerCase();
-      if (!/(watch|embed|results|shorts|feed|playlist|live)/.test(lower)) {
-        social.youtube = url;
-      }
-    }
-
-    // 6. TikTok
-    const ttMatch = html.match(
-      /https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9_.-]{2,50})(?=[/?"'\s>])/i,
-    );
-    if (ttMatch && ttMatch[1]) {
-      const handle = ttMatch[1].toLowerCase();
-      if (!['discover', 'about', 'legal', 'trending', 'tag', 'explore', 'login'].includes(handle)) {
-        social.tiktok = `https://www.tiktok.com/@${ttMatch[1]}`;
-      }
-    }
-
-    // 7. Pinterest
-    const pinMatch = html.match(
-      /https?:\/\/(?:www\.)?pinterest\.(?:com|[a-z]{2,3})\/([a-zA-Z0-9_.-]{2,50})(?=[/?"'\s>])/i,
-    );
-    if (pinMatch && pinMatch[1]) {
-      const handle = pinMatch[1].toLowerCase();
-      if (!['pin', 'search', 'explore', 'about', 'business', 'ideas'].includes(handle)) {
-        social.pinterest = `https://www.pinterest.com/${pinMatch[1]}`;
-      }
-    }
-
     return social;
   }
 
@@ -327,6 +345,7 @@ export class ContactExtractor {
   ): Promise<{
     email: string | null;
     phone: string | null;
+    enrichmentStatus: 'COMPLETE' | 'FAILED';
     socialMedia?: {
       facebook?: string;
       instagram?: string;
@@ -338,36 +357,47 @@ export class ContactExtractor {
     };
   }> {
     if (!websiteUrl || typeof websiteUrl !== 'string') {
-      return { email: null, phone: null };
-    }
-
-    let cleanUrl = websiteUrl.trim();
-    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-      cleanUrl = `https://${cleanUrl}`;
+      return { email: null, phone: null, enrichmentStatus: 'FAILED' };
     }
 
     try {
-      const response = await axios.get(cleanUrl, {
-        timeout: 3500,
-        maxContentLength: 500_000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) QuikBoom-CRM-Discovery/1.0',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-        validateStatus: (status) => status >= 200 && status < 400,
-      });
-
-      const html = typeof response.data === 'string' ? response.data : '';
-      if (!html) return { email: null, phone: null };
-
-      const email = this.extractEmailFromText(html);
-      const phone = this.extractPhoneFromText(html);
-      const socialMedia = this.extractSocialMediaFromHtml(html);
-
-      return { email, phone, socialMedia: Object.keys(socialMedia).length > 0 ? socialMedia : undefined };
+      let cleanUrl = websiteUrl.trim();
+      if (!/^https?:\/\//i.test(cleanUrl)) cleanUrl = `https://${cleanUrl}`;
+      const base = new URL(cleanUrl);
+      if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) return { email: null, phone: null, enrichmentStatus: 'FAILED' };
+      const pendingPages = [base.toString()];
+      const visited = new Set<string>();
+      let email: string | null = null;
+      let phone: string | null = null;
+      let successfulPages = 0;
+      const socialMedia: Record<string, string> = {};
+      while (pendingPages.length && visited.size < 4) {
+        const page = pendingPages.shift()!;
+        if (visited.has(page)) continue;
+        visited.add(page);
+        if (visited.size > 1) await new Promise((resolve) => setTimeout(resolve, 150));
+        let result: { url: URL; html: string };
+        try { result = await this.getPublicHtml(page); } catch { continue; }
+        if (!result.html) continue;
+        successfulPages += 1;
+        email ||= this.extractEmailFromText(result.html);
+        phone ||= this.extractPhoneFromText(result.html);
+        const found = this.extractSocialMediaFromHtml(result.html);
+        for (const [platform, profile] of Object.entries(found)) if (!socialMedia[platform]) socialMedia[platform] = profile;
+        const links = [...result.html.matchAll(/\bhref\s*=\s*(["'])(.*?)\1/gi)].map((match) => match[2].replace(/&amp;/gi, '&'));
+        for (const href of links) {
+          try {
+            const target = new URL(href, result.url);
+            if (target.origin !== result.url.origin || target.protocol !== result.url.protocol || visited.has(target.toString())) continue;
+            if (/(?:contact|about|social|connect)/i.test(target.pathname) && !pendingPages.includes(target.toString())) pendingPages.push(target.toString());
+          } catch { /* Ignore malformed page links. */ }
+          if (visited.size + pendingPages.length >= 4) break;
+        }
+      }
+      return { email, phone, enrichmentStatus: successfulPages ? 'COMPLETE' : 'FAILED', socialMedia: Object.keys(socialMedia).length > 0 ? socialMedia : undefined };
     } catch {
       // Graceful fallback on network timeout, blocked crawler, or invalid SSL
-      return { email: null, phone: null };
+      return { email: null, phone: null, enrichmentStatus: 'FAILED' };
     }
   }
 
