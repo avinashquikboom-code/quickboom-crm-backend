@@ -1,4 +1,4 @@
-export type CrmEmployeeCategory = 'BPO' | 'VISITOR' | 'SALES' | 'NONE';
+export type CrmEmployeeCategory = 'SALES' | 'VISITOR' | 'NONE';
 
 export interface CrmEmployeeSignals {
   departmentName?: string | null;
@@ -44,10 +44,8 @@ function isSales(value?: string | null): boolean {
 
 /**
  * CRM category comes from the employee department, designation, team, and role
- * already stored for the account. A visitor designation or visitor team stays
- * Visitor even when the department display name contains BPO. A BPO department,
- * designation, or team stays BPO. Telesales belongs to that calling team.
- * Sales stays Sales.
+ * already stored for the account. Legacy BPO department/designation names map
+ * to Sales during the compatibility window. Telesales remains a calling team.
  */
 export function classifyCrmEmployee(signals: CrmEmployeeSignals): CrmEmployeeCategory {
   const values = [
@@ -69,7 +67,7 @@ export function classifyCrmEmployee(signals: CrmEmployeeSignals): CrmEmployeeCat
     return 'VISITOR';
   }
   if (departmentBpo || designationBpo || roleBpo || telesales) {
-    return 'BPO';
+    return 'SALES';
   }
   if (sales) {
     return 'SALES';

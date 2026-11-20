@@ -38,6 +38,8 @@ export interface FindAllEmployeesParams {
   page?: number;
   limit?: number;
   excludeAdmins?: boolean;
+  salesOnly?: boolean;
+  /** Deprecated alias retained for older clients. */
   bpoOnly?: boolean;
 }
 
@@ -247,9 +249,9 @@ export class EmployeeService {
       });
     }
 
-    const isBpoRequested = params.bpoOnly === true || (department && department.toUpperCase() === 'BPO');
+    const isSalesRequested = params.salesOnly === true || params.bpoOnly === true || (department && ['BPO', 'SALES'].includes(department.toUpperCase()));
 
-    if (isBpoRequested) {
+    if (isSalesRequested) {
       andConditions.push({
         OR: [
           { department: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },

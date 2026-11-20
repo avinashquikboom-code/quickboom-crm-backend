@@ -2867,7 +2867,7 @@ export class AuthService {
             designationCode: user.employee?.designation?.code,
             roles: roleNames,
           });
-    const isCrmEligible = crmCategory === 'BPO';
+    const isCrmEligible = crmCategory === 'SALES';
 
     return {
       role: specificRoleName,
@@ -2887,7 +2887,7 @@ export class AuthService {
 
   private determineCrmEligibility(emp: any): boolean {
     const category = this.crmCategoryFor(emp);
-    return category === 'BPO' || category === 'SALES';
+    return category === 'SALES';
   }
 
   private formatRoleDisplayName(name: string): string {

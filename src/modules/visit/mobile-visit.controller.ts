@@ -39,7 +39,7 @@ import {
  */
 @ApiTags('Mobile - Employee Visits')
 @ApiBearerAuth()
-@CrmCategory('BPO', 'VISITOR')
+@CrmCategory('SALES', 'VISITOR')
 @UseGuards(JwtAuthGuard, CustomerGuard, CrmEmployeeAccessGuard)
 @Controller('mobile/visits')
 export class MobileVisitController {

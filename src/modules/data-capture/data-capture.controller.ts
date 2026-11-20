@@ -47,7 +47,7 @@ import { CSV_IMPORT_MAX_BYTES } from './csv-import.util';
 @ApiTags('Data Capture (Google Places & Leads Extraction)')
 @ApiBearerAuth()
 @Controller('data-capture')
-@CrmCategory('BPO')
+@CrmCategory('SALES')
 @UseGuards(JwtAuthGuard, CustomerGuard, PermissionsGuard, CrmEmployeeAccessGuard)
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class DataCaptureController {
