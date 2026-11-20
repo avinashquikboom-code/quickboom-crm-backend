@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
@@ -120,7 +120,13 @@ handledBy: NestJS`);
   });
 
   // Global Prefix
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', {
+    exclude: [
+      { path: '', method: RequestMethod.GET },
+      { path: 'favicon.ico', method: RequestMethod.GET },
+      { path: 'favicon.png', method: RequestMethod.GET },
+    ],
+  });
 
   // Pipes, Filters, Interceptors
   app.useGlobalPipes(

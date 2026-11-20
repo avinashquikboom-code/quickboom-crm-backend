@@ -1,5 +1,8 @@
-import { Controller, Get, Logger } from '@nestjs/common';
+import { Controller, Get, HttpStatus, Logger, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Request, Response } from 'express';
+import { existsSync } from 'fs';
+import { join } from 'path';
 
 @ApiTags('Health & System Status')
 @Controller()
@@ -47,17 +50,38 @@ export class AppController {
     };
   }
 
-  @Get('')
+  @Get()
   @ApiOperation({ summary: 'API root welcome endpoint' })
-  @ApiResponse({ status: 200, description: 'Welcome message and API info' })
+  @ApiResponse({ status: 200, description: 'API is running successfully' })
   getRoot() {
     return {
       success: true,
-      message: 'QuikBoom Enterprise SaaS CRM Backend API is running',
-      version: '1.0.0',
-      status: 'online',
-      docs: '/api/docs',
+      message: 'API is running successfully',
       timestamp: new Date().toISOString(),
     };
+  }
+
+  @Get(['favicon.ico', 'favicon.png'])
+  @ApiOperation({ summary: 'Favicon handler' })
+  @ApiResponse({ status: 200, description: 'Favicon asset if available' })
+  @ApiResponse({ status: 204, description: 'No favicon asset available' })
+  getFavicon(@Req() req: Request, @Res() res: Response) {
+    const filename = req.path?.endsWith('.png') ? 'favicon.png' : 'favicon.ico';
+    const possiblePaths = [
+      join(process.cwd(), 'public', filename),
+      join(process.cwd(), 'assets', filename),
+      join(process.cwd(), 'uploads', filename),
+      join(process.cwd(), filename),
+      join(__dirname, '..', 'public', filename),
+      join(__dirname, '..', 'assets', filename),
+    ];
+
+    for (const filePath of possiblePaths) {
+      if (existsSync(filePath)) {
+        return res.sendFile(filePath);
+      }
+    }
+
+    return res.status(HttpStatus.NO_CONTENT).end();
   }
 }

@@ -7,6 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { existsSync } from 'fs';
+import { join } from 'path';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -41,6 +43,34 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       typeof exceptionResponse === 'object' && exceptionResponse?.code
         ? exceptionResponse.code
         : undefined;
+
+    // Check if this is an expected favicon request
+    const isFavicon =
+      request.url?.includes('favicon.ico') || request.url?.includes('favicon.png');
+
+    if (isFavicon) {
+      if (status === HttpStatus.NOT_FOUND) {
+        const filename = request.url.includes('.png') ? 'favicon.png' : 'favicon.ico';
+        const possiblePaths = [
+          join(process.cwd(), 'public', filename),
+          join(process.cwd(), 'assets', filename),
+          join(process.cwd(), 'uploads', filename),
+          join(process.cwd(), filename),
+          join(__dirname, '..', '..', 'public', filename),
+          join(__dirname, '..', '..', 'assets', filename),
+        ];
+        for (const filePath of possiblePaths) {
+          if (existsSync(filePath)) {
+            return response.sendFile(filePath);
+          }
+        }
+        return response.status(HttpStatus.NO_CONTENT).end();
+      }
+      this.logger.warn(
+        `[${request.method}] ${request.url} - Status: ${status} - Error: ${JSON.stringify(message)}`,
+      );
+      return response.status(status).end();
+    }
 
     this.logger.error(
       `[${request.method}] ${request.url} - Status: ${status} - Error: ${JSON.stringify(message)}`,
