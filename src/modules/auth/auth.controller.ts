@@ -178,8 +178,12 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Logout and terminate session' })
-  async logout() {
-    return { success: true, message: 'Logged out successfully' };
+  async logout(
+    @Body() body: { refreshToken?: string; accessToken?: string },
+    @Headers('authorization') authorization?: string,
+  ) {
+    const accessToken = body?.accessToken || authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+    return this.authService.logout(body?.refreshToken, accessToken);
   }
 
   @Public()

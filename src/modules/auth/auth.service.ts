@@ -3693,6 +3693,56 @@ export class AuthService {
     return this.getRolePermissions(role.id);
   }
 
+  async logout(refreshToken?: string, accessToken?: string) {
+    let revokedRefreshTokens = 0;
+    if (typeof refreshToken === 'string' && refreshToken.length > 0) {
+      const result = await this.prisma.refreshToken.updateMany({
+        where: { token: refreshToken, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      revokedRefreshTokens = result.count;
+    }
+
+    let revokedAccessToken = false;
+    if (typeof accessToken === 'string' && accessToken.length > 0) {
+      const cleanToken = accessToken.replace(/^Bearer\s+/i, '').trim();
+      const secrets = Array.from(new Set([
+        this.configService.get<string>('JWT_SECRET'),
+        process.env.JWT_SECRET,
+        this.configService.get<string>('JWT_ACCESS_SECRET'),
+        process.env.JWT_ACCESS_SECRET,
+      ].map((secret) => secret?.replace(/^['"]|['"]$/g, '').trim()).filter(Boolean)));
+
+      let payload: any = null;
+      for (const secret of secrets) {
+        try {
+          payload = this.jwtService.verify(cleanToken, { secret, ignoreExpiration: true });
+          break;
+        } catch {
+          // Check the legacy access-token secret as well.
+        }
+      }
+
+      const userId = Number(payload?.sub ?? payload?.userId ?? payload?.id);
+      if (payload && Number.isInteger(userId) && userId > 0) {
+        const digest = crypto.createHash('sha256').update(cleanToken).digest('hex');
+        const marker = `qb-revoked-access:${digest}`;
+        const existing = await this.prisma.session.findFirst({ where: { device: marker }, select: { id: true } });
+        if (!existing) {
+          await this.prisma.session.create({ data: { userId, device: marker } });
+        }
+        revokedAccessToken = true;
+      }
+    }
+
+    return {
+      success: true,
+      revokedRefreshTokens,
+      revokedAccessToken,
+      message: 'Logged out successfully',
+    };
+  }
+
   private async generateTokens(
     userId: number,
     customerId: number | null,
