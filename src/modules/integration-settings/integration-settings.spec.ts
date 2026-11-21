@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { IntegrationSettingsService } from './integration-settings.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import axios from 'axios';
 import {
   encryptSecret,
   decryptSecret,
@@ -556,6 +557,46 @@ describe('Integration Settings & Gateway Dynamic System', () => {
           credentials: { username: 'user@gmail.com', password: 'wrong_password' },
         }),
       ).rejects.toThrow('SMTP authentication failed (535): Invalid username or password');
+    });
+  });
+
+  describe('11. Anthropic Claude integration', () => {
+    it('masks configured Claude keys in admin settings', async () => {
+      const secret = 'sk-ant-api-super-secret-value';
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue({
+        provider: 'ANTHROPIC', isEnabled: true, environment: 'LIVE',
+        credentials: { apiKey: encryptSecret(secret) },
+        config: { model: 'claude-sonnet-5', maxTokens: 1024 }, deletedAt: null,
+      });
+      const result = await service.getMaskedProviderConfig('ANTHROPIC');
+      expect(result.credentials.apiKey).not.toBe(secret);
+      expect(result.credentials.apiKey).toContain('*');
+      expect(result.config.model).toBe('claude-sonnet-5');
+    });
+
+    it('tests the selected Claude model with the native Messages API format', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      const post = jest.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { model: 'claude-sonnet-5', usage: { input_tokens: 2, output_tokens: 1 } } } as any);
+      const result = await service.testIntegration('ANTHROPIC', {
+        credentials: { apiKey: 'sk-ant-test-key' },
+        config: { model: 'claude-sonnet-5', maxTokens: 1024 },
+      });
+      expect(result.status).toBe('CONNECTED');
+      expect(post).toHaveBeenCalledWith('https://api.anthropic.com/v1/messages', expect.objectContaining({
+        model: 'claude-sonnet-5', max_tokens: 32, system: expect.any(String), messages: expect.any(Array),
+      }), expect.objectContaining({ headers: expect.objectContaining({ 'x-api-key': 'sk-ant-test-key', 'anthropic-version': '2023-06-01' }) }));
+      expect(JSON.stringify(result)).not.toContain('sk-ant-test-key');
+      post.mockRestore();
+    });
+
+    it('returns a safe invalid-key message without reflecting provider response bodies', async () => {
+      mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+      const error: any = new Error('request failed');
+      error.response = { status: 401, data: { error: { message: 'secret provider response with key sk-ant-test-key' } } };
+      const post = jest.spyOn(axios, 'post').mockRejectedValue(error);
+      await expect(service.testIntegration('ANTHROPIC', { credentials: { apiKey: 'sk-ant-test-key' } }))
+        .rejects.toThrow('Anthropic API key is invalid or expired.');
+      post.mockRestore();
     });
   });
 });

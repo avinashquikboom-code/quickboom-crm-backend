@@ -99,6 +99,17 @@ export interface GeminiDynamicConfig {
   source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
 }
 
+export interface AnthropicDynamicConfig {
+  apiKey: string;
+  model?: string;
+  integrationName?: string;
+  maxTokens?: number;
+  temperature?: number;
+  isEnabled: boolean;
+  isConfigured: boolean;
+  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+}
+
 export interface AwsS3DynamicConfig {
   accessKeyId: string;
   secretAccessKey: string;
@@ -524,7 +535,7 @@ export class IntegrationSettingsService {
           isEnabled: Boolean(apiKey),
           environment: 'LIVE',
           credentials: { apiKey },
-          config: {},
+          config: { model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5', maxTokens: Number(process.env.ANTHROPIC_MAX_TOKENS) || 1024 },
           source: apiKey ? 'ENV_FALLBACK' : 'NONE',
         };
       }
@@ -840,6 +851,29 @@ export class IntegrationSettingsService {
     return { apiKey, isEnabled, isConfigured, source };
   }
 
+  /** Typed helper for Anthropic Claude settings. Secrets come from the encrypted settings record. */
+  async getAnthropicConfig(): Promise<AnthropicDynamicConfig> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.ANTHROPIC);
+    const creds = conf?.credentials || {};
+    const cfg = conf?.config || {};
+    const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || ''));
+    const isConfigured = Boolean(apiKey);
+    const isEnabled = conf?.isEnabled ?? isConfigured;
+    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const maxTokens = Number(cfg.maxTokens || 1024);
+    const temperature = Number(cfg.temperature);
+    return {
+      apiKey,
+      model: String(cfg.model || 'claude-sonnet-5'),
+      integrationName: String(cfg.integrationName || 'Claude AI'),
+      maxTokens: Number.isFinite(maxTokens) ? Math.max(1, Math.min(64000, Math.floor(maxTokens))) : 1024,
+      ...(Number.isFinite(temperature) ? { temperature: Math.max(0, Math.min(1, temperature)) } : {}),
+      isEnabled,
+      isConfigured,
+      source,
+    };
+  }
+
   /**
    * Typed helper for Firebase Cloud Messaging (FCM) dynamic configuration.
    * Priority: Database (Admin Settings) → ENV fallback.
@@ -1055,9 +1089,9 @@ export class IntegrationSettingsService {
     const existingCreds = existing?.credentials || {};
 
     // Validate non-empty API key for AI integrations
-    if (normProvider === IntegrationProvider.OPENAI || normProvider === IntegrationProvider.GEMINI) {
+    if (normProvider === IntegrationProvider.OPENAI || normProvider === IntegrationProvider.GEMINI || normProvider === IntegrationProvider.ANTHROPIC) {
       const incomingKey = dto.credentials?.apiKey;
-      const providerLabel = normProvider === IntegrationProvider.OPENAI ? 'OpenAI' : 'Google Gemini';
+      const providerLabel = normProvider === IntegrationProvider.OPENAI ? 'OpenAI' : normProvider === IntegrationProvider.GEMINI ? 'Google Gemini' : 'Anthropic';
       if (incomingKey !== undefined && typeof incomingKey === 'string' && incomingKey.trim().length === 0) {
         throw new BadRequestException(`${providerLabel} API Key cannot be empty or whitespace-only`);
       }
@@ -1486,6 +1520,22 @@ export class IntegrationSettingsService {
       };
     }
 
+    if (norm === IntegrationProvider.ANTHROPIC) {
+      const credentials = conf.credentials || {};
+      const apiKey = credentials.apiKey || credentials.api_key || '';
+      return {
+        ...base,
+        provider: norm,
+        isEnabled: conf.isEnabled,
+        environment: conf.environment,
+        credentials: { apiKey: apiKey ? maskSecret(String(apiKey)) : '' },
+        config: conf.config || {},
+        source: conf.source,
+        configured: Boolean(apiKey),
+        updatedAt: conf.updatedAt || null,
+      };
+    }
+
     const maskedCreds: Record<string, any> = {};
     for (const [k, v] of Object.entries(conf.credentials || {})) {
       if (typeof v === 'string' && (isSensitiveKey(k) || /token|secret|password|privatekey|apikey/i.test(k))) {
@@ -1541,6 +1591,36 @@ export class IntegrationSettingsService {
       configured: Boolean(conf.isEnabled || (Object.keys(conf.credentials || {}).length > 0 && conf.source === 'DATABASE')),
       updatedAt: conf.updatedAt || null,
     };
+  }
+
+  async getProviderModels(provider: string) {
+    const norm = normalizeProvider(provider);
+    if (norm !== IntegrationProvider.ANTHROPIC) {
+      throw new BadRequestException('Dynamic model discovery is not supported for this provider');
+    }
+    const config = await this.getAnthropicConfig();
+    if (!config.apiKey) throw new BadRequestException('Configure an Anthropic API key before loading models');
+    try {
+      const response = await axios.get('https://api.anthropic.com/v1/models', {
+        headers: { 'x-api-key': config.apiKey, 'anthropic-version': '2023-06-01' },
+        timeout: 8000,
+      });
+      const models = Array.isArray(response.data?.data) ? response.data.data : [];
+      return { success: true, provider: norm, data: models.map((model: any) => ({ id: model.id, name: model.display_name || model.id, createdAt: model.created_at || null, available: true })) };
+    } catch (error: any) {
+      this.logger.warn(`[ANTHROPIC_MODELS_FAILED] HTTP ${error?.response?.status || 'network'}`);
+      throw new BadRequestException(this.anthropicErrorMessage(error));
+    }
+  }
+
+  private anthropicErrorMessage(error: any): string {
+    const status = Number(error?.response?.status || 0);
+    if (status === 401) return 'Anthropic API key is invalid or expired.';
+    if (status === 404) return 'The selected Claude model is unavailable to this API key.';
+    if (status === 429) return 'Anthropic rate limit reached. Wait briefly and retry.';
+    if (status >= 500) return 'Anthropic is temporarily unavailable. Retry shortly.';
+    if (error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''))) return 'Anthropic request timed out. Retry shortly.';
+    return 'Anthropic connection failed. Check the API key and selected model.';
   }
 
   async toggleIntegration(provider: string, isEnabled: boolean, adminUserId?: number) {
@@ -2259,36 +2339,55 @@ export class IntegrationSettingsService {
           throw new BadRequestException('Anthropic API Key is required to test connection');
         }
 
-        try {
-          const response = await axios.get('https://api.anthropic.com/v1/models', {
-            headers: {
-              'x-api-key': apiKey.trim(),
-              'anthropic-version': '2023-06-01',
-            },
-            timeout: 8000,
-          });
-
-          if (response.status === 200) {
-            return {
-              success: true,
-              provider: 'ANTHROPIC',
-              status: 'CONNECTED',
-              message: 'Anthropic Claude API Key verified successfully!',
-              details: {
-                keyPrefix: apiKey.trim().substring(0, Math.min(8, apiKey.trim().length)) + '...',
-                modelsCount: response.data?.data?.length || 0,
-              },
-            };
-          }
-          throw new Error(`Unexpected response: ${response.status}`);
-        } catch (err: any) {
-          this.logger.error(`[ANTHROPIC_TEST_FAILED] ${err?.message}`);
-          const errMsg =
-            err?.response?.data?.error?.message ||
-            err?.message ||
-            'Could not authenticate with Anthropic API';
-          throw new BadRequestException(`Anthropic Claude connection test failed: ${errMsg}`);
+        const model = String(dto?.config?.model || active?.config?.model || 'claude-sonnet-5').trim();
+        const maxTokens = Math.max(1, Math.min(32, Number(dto?.config?.maxTokens || 16) || 16));
+        const temperature = Number(dto?.config?.temperature);
+        const request: Record<string, any> = {
+          model,
+          max_tokens: maxTokens,
+          system: 'Reply with the single word OK.',
+          messages: [{ role: 'user', content: 'Connection check.' }],
+        };
+        // New Opus 4.7+ and Mythos models reject non-default temperature. Omit unless explicitly configured.
+        if (Number.isFinite(temperature) && temperature !== 1 && !/(opus-4-7|mythos)/i.test(model)) {
+          request.temperature = Math.max(0, Math.min(1, temperature));
         }
+        let response: any;
+        try {
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              response = await axios.post('https://api.anthropic.com/v1/messages', request, {
+                headers: {
+                  'x-api-key': apiKey.trim(),
+                  'anthropic-version': '2023-06-01',
+                  'content-type': 'application/json',
+                },
+                timeout: 10000,
+              });
+              break;
+            } catch (error: any) {
+              const status = Number(error?.response?.status || 0);
+              if (attempt === 0 && (status === 429 || status >= 500)) {
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                continue;
+              }
+              throw error;
+            }
+          }
+        } catch (error: any) {
+          this.logger.warn(`[ANTHROPIC_TEST_FAILED] HTTP ${error?.response?.status || 'network'}`);
+          throw new BadRequestException(this.anthropicErrorMessage(error));
+        }
+        if (response?.status === 200 && response.data?.model) {
+          return {
+            success: true,
+            provider: 'ANTHROPIC',
+            status: 'CONNECTED',
+            message: 'Claude model connection verified successfully.',
+            details: { model: response.data.model, usage: response.data.usage || null },
+          };
+        }
+        throw new BadRequestException('Anthropic did not return a valid model response.');
       }
 
       case IntegrationProvider.SMTP: {

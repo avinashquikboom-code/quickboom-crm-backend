@@ -43,6 +43,16 @@ export class AiProviderService implements IAiProvider {
     return null;
   }
 
+  private async getAnthropicConfig(): Promise<any | null> {
+    if (!this.integrationSettingsService) return null;
+    try {
+      const config = await this.integrationSettingsService.getAnthropicConfig();
+      return config?.apiKey && config?.isEnabled !== false ? config : null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Generates REAL AI marketing text, captions, and hashtags
    * Priority: Google Gemini -> OpenAI -> Pollinations Live LLM
@@ -189,7 +199,41 @@ Special Instructions: ${instructions || 'None'}`;
       }
     }
 
-    // 3. Fallback to Pollinations Live AI LLM if neither Gemini nor OpenAI are set
+    // 3. Claude is an opt-in fallback. Existing Gemini -> OpenAI priority is unchanged.
+    const anthropic = await this.getAnthropicConfig();
+    if (anthropic) {
+      try {
+        const model = anthropic.model || 'claude-sonnet-5';
+        const request: Record<string, any> = {
+          model,
+          max_tokens: anthropic.maxTokens || 1024,
+          system: promptSystem,
+          messages: [{ role: 'user', content: promptUser }],
+        };
+        const temperature = Number(anthropic.temperature);
+        if (Number.isFinite(temperature) && temperature !== 1 && !/(opus-4-7|mythos)/i.test(model)) request.temperature = temperature;
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-api-key': anthropic.apiKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify(request),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (response.ok) {
+          const data = (await response.json()) as any;
+          const textOutput = Array.isArray(data?.content) ? data.content.filter((item: any) => item.type === 'text').map((item: any) => item.text).join('\n') : '';
+          if (textOutput) {
+            const parsed = this.parseJsonSafely(textOutput);
+            if (parsed?.caption) return { caption: parsed.caption, hashtags: this.normalizeHashtags(parsed.hashtags), cta: parsed.cta || resolvedCta };
+          }
+        } else {
+          this.logger.warn(`[AI_PROVIDER_ERROR] Anthropic API error HTTP ${response.status}`);
+        }
+      } catch (err: any) {
+        this.logger.warn(`[AI_PROVIDER_ERROR] Anthropic request failed: ${err?.name === 'TimeoutError' ? 'timeout' : 'request error'}`);
+      }
+    }
+
+    // 4. Fallback to Pollinations Live AI LLM when configured providers fail
     this.logger.log(
       `[AI_REQUEST_SENT] Calling Pollinations live AI LLM: product="${product}", type="${type}"`,
     );

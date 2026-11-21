@@ -110,6 +110,16 @@ export class IntegrationSettingsController {
     return this.integrationSettingsService.getMaskedProviderConfig(provider);
   }
 
+  @Get(':provider/models')
+  @ApiOperation({ summary: 'List available models for a configured AI integration' })
+  async getIntegrationModels(
+    @Param('provider') provider: string,
+    @CurrentUser() user: any,
+  ) {
+    this.checkAdminAccess(user);
+    return this.integrationSettingsService.getProviderModels(provider);
+  }
+
   @Put(':provider')
   @ApiOperation({
     summary:
