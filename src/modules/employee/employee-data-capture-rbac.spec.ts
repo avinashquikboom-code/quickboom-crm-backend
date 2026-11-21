@@ -235,6 +235,65 @@ describe('EmployeeService Data Capture RBAC & Permissions', () => {
     expect(capturePermissions.find((p) => p.action === 'CREATE')?.effective).toBe(true);
     expect(capturePermissions.find((p) => p.action === 'EDIT')?.effective).toBe(true);
     expect(capturePermissions.find((p) => p.action === 'DELETE')?.effective).toBe(false);
+    const leadDeletePermission = result.granularPermissions.find(
+      (permission) => permission.module === 'LEADS' && permission.action === 'DELETE',
+    );
+    expect(leadDeletePermission?.effective).toBe(true);
+  });
+
+  it('grants Sales department lead deletion while preserving employee DENY overrides', async () => {
+    const salesEmployee = {
+      ...mockEmployeeDesigner,
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { id: 9, name: 'Sales Department', code: 'SALES' },
+      designation: {
+        ...mockEmployeeDesigner.designation,
+        name: 'Sales Executive',
+        code: 'SALES_EXEC',
+        crmMobileAccess: false,
+      },
+      employeeModuleOverrides: [],
+    };
+    prisma.employee.findUnique.mockResolvedValue(salesEmployee);
+    const granted = await service.getEmployeePermissions({ employeeId: 2, customerId: 100 });
+    expect(granted.granularPermissions.find((p) => p.module === 'LEADS' && p.action === 'DELETE')?.effective).toBe(true);
+
+    prisma.employee.findUnique.mockResolvedValue({
+      ...salesEmployee,
+      employeeModuleOverrides: [{ moduleKey: 'LEADS:DELETE', override: AccessOverrideType.DENY }],
+    });
+    const deniedByOverride = await service.getEmployeePermissions({ employeeId: 2, customerId: 100 });
+    const permission = deniedByOverride.granularPermissions.find((p) => p.module === 'LEADS' && p.action === 'DELETE');
+    expect(permission?.roleDefault).toBe(true);
+    expect(permission?.effective).toBe(false);
+  });
+
+  it('respects an employee-level DENY override for Sales Telecaller lead deletion', async () => {
+    const salesTelecaller = {
+      ...mockEmployeeTelecaller,
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { id: 9, name: 'Sales Department', code: 'SALES' },
+      designation: {
+        ...mockEmployeeTelecaller.designation,
+        name: 'Telecaller',
+        code: 'TELECALLER',
+        crmMobileAccess: true,
+        role: { id: 2, name: 'Telecaller', rolePermissions: [] },
+      },
+      employeeModuleOverrides: [{ moduleKey: 'LEADS:DELETE', override: 'DENY' }],
+    };
+    prisma.employee.findUnique.mockResolvedValue(salesTelecaller);
+    prisma.role.findFirst.mockResolvedValue({ rolePermissions: [] });
+
+    const result = await service.getEmployeePermissions({ employeeId: 1, customerId: 100 });
+    const leadDeletePermission = result.granularPermissions.find(
+      (permission) => permission.module === 'LEADS' && permission.action === 'DELETE',
+    );
+    expect(leadDeletePermission?.roleDefault).toBe(true);
+    expect(leadDeletePermission?.override).toBe('DENY');
+    expect(leadDeletePermission?.effective).toBe(false);
   });
 
   it('7. verifies search filter works for data, Data Capture, and DATA_CAPTURE', () => {

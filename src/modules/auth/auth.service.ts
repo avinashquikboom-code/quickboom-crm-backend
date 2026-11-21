@@ -29,7 +29,7 @@ import {
 } from './dto/auth.dto';
 import { EmployeeType, RoleType, SubscriptionStatus } from '@prisma/client';
 import { QBIdGenerator } from './qb-id.generator';
-import { CrmEmployeeCategory, classifyCrmEmployee, isAuthorizedSalesTelecaller } from '../../common/crm/crm-employee-category';
+import { CrmEmployeeCategory, classifyCrmEmployee, isAuthorizedSalesTelecaller, isSalesDepartmentEmployee } from '../../common/crm/crm-employee-category';
 import { assertCrmAppEmployee, crmCategoryForEmployee } from '../../common/crm/crm-app-access';
 import { Msg91Service } from '../msg91/msg91.service';
 import { EmailService } from '../email/email.service';
@@ -2487,6 +2487,10 @@ export class AuthService {
       ]) {
         permissionsMap.set(`${module}:${action}`, { module, action });
       }
+    }
+    // Keep Sales lead deletion tenant-scoped and preserve per-employee DENY.
+    if (isSalesDepartmentEmployee(user.employee)) {
+      permissionsMap.set('LEADS:DELETE', { module: 'LEADS', action: 'DELETE' });
     }
 
     let desigId = user.employee?.designationId;

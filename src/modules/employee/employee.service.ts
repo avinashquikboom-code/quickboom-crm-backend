@@ -23,7 +23,7 @@ import {
   formatDurationHoursMinutes,
 } from '../../common/utils/timezone.util';
 import { PlanScheduleGateway } from '../work/plan-schedule.gateway';
-import { isAuthorizedSalesTelecaller } from '../../common/crm/crm-employee-category';
+import { isAuthorizedSalesTelecaller, isSalesDepartmentEmployee } from '../../common/crm/crm-employee-category';
 
 export interface FindAllEmployeesParams {
   customerId?: number | string;
@@ -3442,6 +3442,11 @@ export class EmployeeService {
       ]) {
         rolePermissionsSet.add(key);
       }
+    }
+    // Expose the same Sales delete grant to mobile RBAC; employee DENY
+    // overrides are evaluated below when granular permissions are returned.
+    if (isSalesDepartmentEmployee(employee)) {
+      rolePermissionsSet.add('LEADS:DELETE');
     }
 
     const desigUpper = (employee.designation?.name || roleName || '').toUpperCase();

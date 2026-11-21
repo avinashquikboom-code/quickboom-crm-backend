@@ -198,6 +198,7 @@ describe('JwtStrategy.validate regression tests (No Employee.managerId mismatch)
       'LEADS:VIEW',
       'LEADS:CREATE',
       'LEADS:EDIT',
+      'LEADS:DELETE',
     ]));
     expect(granted).not.toContain('DATA_CAPTURE:DELETE');
     expect(granted).not.toContain('EMPLOYEES:MANAGE');
