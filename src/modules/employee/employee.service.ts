@@ -3499,6 +3499,10 @@ export class EmployeeService {
         rolePermissionsSet.add('VISITS:CREATE');
         rolePermissionsSet.add('VISITS:VIEW');
         rolePermissionsSet.add('LEADS:SCHEDULE_VISIT');
+        // The employee permission API feeds Flutter's local sheet gate. Match
+        // JwtStrategy's CRM baseline so the client and API authorize equally.
+        rolePermissionsSet.add('FOLLOW_UP:VIEW');
+        rolePermissionsSet.add('FOLLOW_UP:CREATE');
       }
     }
 

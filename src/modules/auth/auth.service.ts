@@ -2727,6 +2727,15 @@ export class AuthService {
         if (!permissionsMap.has('LEADS:SCHEDULE_VISIT')) {
           permissionsMap.set('LEADS:SCHEDULE_VISIT', { module: 'LEADS', action: 'SCHEDULE_VISIT' });
         }
+        // Keep the profile/login permission payload aligned with JwtStrategy:
+        // eligible CRM users can schedule follow-ups, while employee DENY
+        // overrides below still remove these grants.
+        if (!permissionsMap.has('FOLLOW_UP:VIEW')) {
+          permissionsMap.set('FOLLOW_UP:VIEW', { module: 'FOLLOW_UP', action: 'VIEW' });
+        }
+        if (!permissionsMap.has('FOLLOW_UP:CREATE')) {
+          permissionsMap.set('FOLLOW_UP:CREATE', { module: 'FOLLOW_UP', action: 'CREATE' });
+        }
       }
     }
 
