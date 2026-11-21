@@ -154,6 +154,7 @@ export class AiStudioController {
       body?.message || '',
       body?.actionId,
       body?.confirm,
+      { primaryProvider: body?.primaryProvider, fallbackProvider: body?.fallbackProvider },
     );
     return { statusCode: 200, success: true, data: result };
   }
@@ -165,6 +166,14 @@ export class AiStudioController {
   async getNexusProviders() {
     const data = await this.aiGenerationService.getNexusProviderStatus();
     return { statusCode: 200, success: true, data };
+  }
+
+  @Get('admin/ai/nexus/capabilities')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get verified QB Nexus capabilities and permission inventory' })
+  async getNexusCapabilities() {
+    return { statusCode: 200, success: true, data: this.nexusOrchestrator.getCapabilityRegistry() };
   }
 
   @Post('admin/ai/nexus/transcribe')
