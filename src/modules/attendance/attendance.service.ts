@@ -1554,11 +1554,36 @@ result: SUCCESS`);
       const linkedById = Number(employee?.userId) === userId;
       const linkedByEmail = !employee?.userId && String(employee?.email || '').trim().toLowerCase() === String(user.email || '').trim().toLowerCase();
       if (!linkedById && !linkedByEmail) return;
-      const key = `${attendanceId}:${eventId}`;
-      const prior = await this.prisma.notification.findMany({ where: { userId, customerId: employee.customerId }, orderBy: { id: 'desc' }, take: 100, select: { data: true } });
-      if (prior.some((row: any) => row.data?.eventId === key)) return;
       const type = eventId.startsWith('LATE') ? 'LATE_MARK' : 'ATTENDANCE';
-      await this.notificationService.sendPushNotification({ userId, customerId: employee.customerId, title, body, type, data: { ...data, type, eventId: key, attendanceId: String(attendanceId), employeeId: String(employee.id), route: type === 'LATE_MARK' ? '/attendance/late-marks' : '/attendance' } });
+      const recipients = new Map<number, { body: string }>([[userId, { body }]]);
+      // Late marks are relevant to HR/admin users as well as the employee.
+      // Keep this on the same notification path so all mobile app variants get
+      // an in-app record and an FCM push with the same tenant-scoped payload.
+      if (eventId === 'LATE_MARK' && (this.prisma as any).user?.findMany) {
+        const admins = await (this.prisma as any).user.findMany({
+          where: {
+            customerId: employee.customerId,
+            deletedAt: null,
+            role: { in: ['HR', 'HR_ADMIN', 'HR_MANAGER', 'ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'CUSTOMER_ADMIN'] },
+          },
+          select: { id: true },
+        });
+        const employeeName = [employee.firstName, employee.lastName].filter(Boolean).join(' ') || 'An employee';
+        const managerBody = body.replace(/^You are (\d+) minutes late today\./, `${employeeName} punched in $1 minutes late today.`);
+        for (const admin of admins || []) {
+          const adminId = Number(admin?.id);
+          if (Number.isInteger(adminId) && adminId > 0 && !recipients.has(adminId)) {
+            recipients.set(adminId, { body: managerBody });
+          }
+        }
+      }
+
+      const key = `${attendanceId}:${eventId}`;
+      for (const [recipientId, recipient] of recipients) {
+        const prior = await this.prisma.notification.findMany({ where: { userId: recipientId, customerId: employee.customerId }, orderBy: { id: 'desc' }, take: 100, select: { data: true } });
+        if (prior.some((row: any) => row.data?.eventId === key)) continue;
+        await this.notificationService.sendPushNotification({ userId: recipientId, customerId: employee.customerId, title, body: recipient.body, type, data: { ...data, type, eventId: key, attendanceId: String(attendanceId), employeeId: String(employee.id), route: type === 'LATE_MARK' ? '/attendance/late-marks' : '/attendance' } });
+      }
     } catch (error: any) { console.error(`[ATTENDANCE_NOTIFICATION] event=${eventId} attendance=${attendanceId} failed: ${error?.message || 'dispatch error'}`); }
   }
 
