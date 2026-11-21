@@ -1951,7 +1951,6 @@ export class IntegrationSettingsService {
           status: 'CONNECTED',
           message: `ElevenLabs connection verified successfully! (${tier} subscription tier).${voiceInfo}${agentInfo}`,
           details: {
-            keyPrefix: apiKey.substring(0, Math.min(6, apiKey.length)) + '...',
             tier,
             voiceId: voiceId || undefined,
             speechEngineId: speechEngineId || undefined,
