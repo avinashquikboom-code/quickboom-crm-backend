@@ -1890,14 +1890,13 @@ export class IntegrationSettingsService {
     }
 
     if (normProvider === IntegrationProvider.ELEVENLABS) {
-      const apiKey = (resolvedCreds.apiKey || resolvedCreds.api_key || '').trim();
+      const apiKey = (resolvedCreds.apiKey || resolvedCreds.api_key || process.env.ELEVENLABS_API_KEY || '').trim();
       if (!apiKey || isMaskedSecret(apiKey)) {
         throw new BadRequestException('ElevenLabs API Key is required to test connection');
       }
 
-      const voiceId = String(dto?.config?.voiceId || active?.config?.voiceId || '').trim();
-      const speechEngineId = String(dto?.config?.speechEngineId || active?.config?.speechEngineId || '').trim();
-      if (!speechEngineId) throw new BadRequestException('ElevenLabs Speech Engine ID is required to test the voice connection.');
+      const voiceId = String(dto?.config?.voiceId || active?.config?.voiceId || process.env.ELEVENLABS_VOICE_ID || '').trim();
+      const speechEngineId = String(dto?.config?.speechEngineId || active?.config?.speechEngineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
 
       try {
         // 1. Verify API Key and user account via official ElevenLabs REST endpoint
@@ -1931,7 +1930,9 @@ export class IntegrationSettingsService {
         }
 
         // 3. Verify speech engine / conversational agent if configured
-        let agentInfo = '';
+        let agentInfo = speechEngineId
+          ? ''
+          : ' API key verified; voice sessions need ELEVENLABS_SPEECH_ENGINE_ID configured in the backend environment.';
         if (speechEngineId) {
           try {
             const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
