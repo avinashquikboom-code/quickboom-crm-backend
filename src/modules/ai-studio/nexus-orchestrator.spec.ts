@@ -170,4 +170,21 @@ describe('NexusOrchestratorService capability and safety boundaries', () => {
       fetchMock.mockRestore();
     }
   });
+
+  it('keeps OpenAI primary and falls back to Gemini when the OpenAI request fails', async () => {
+    integrations.getOpenAiConfig.mockResolvedValue({ apiKey: 'openai-test-key', model: 'gpt-4o-mini', isEnabled: true });
+    integrations.getGeminiConfig.mockResolvedValue({ apiKey: 'gemini-test-key', model: 'gemini-2.5-flash', isEnabled: true });
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response('temporarily unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'A quiet green morning.' }] } }] }), { status: 200 }));
+    try {
+      const response = await service.processMessage({ id: 8, customerId: 2, role: 'ADMIN' }, 'Write a short haiku.');
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.openai.com/v1/chat/completions');
+      expect(String(fetchMock.mock.calls[1][0])).toContain('generativelanguage.googleapis.com');
+      expect(response.answer).toBe('A quiet green morning.');
+      expect(response.provider).toContain('Google Gemini');
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
 });

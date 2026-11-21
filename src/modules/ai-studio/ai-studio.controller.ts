@@ -18,6 +18,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { AiCreditService } from './ai-credit.service';
 import { AiGenerationService } from './ai-generation.service';
 import { NexusOrchestratorService } from './nexus-orchestrator.service';
+import { NexusVoiceService } from './nexus-voice.service';
 import {
   GenerateContentDto,
   UpdateGenerationDto,
@@ -40,6 +41,7 @@ export class AiStudioController {
     private readonly aiCreditService: AiCreditService,
     private readonly aiGenerationService: AiGenerationService,
     private readonly nexusOrchestrator: NexusOrchestratorService,
+    private readonly nexusVoice: NexusVoiceService,
   ) {}
 
   private async resolveCustomerId(req: any): Promise<number> {
@@ -166,6 +168,56 @@ export class AiStudioController {
   async getNexusProviders() {
     const data = await this.aiGenerationService.getNexusProviderStatus();
     return { statusCode: 200, success: true, data };
+  }
+
+  @Get('admin/ai/nexus/voice/settings')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get ElevenLabs QB Nexus voice availability and settings without secrets' })
+  async getNexusVoiceSettings() {
+    return { statusCode: 200, success: true, data: await this.nexusVoice.getSettings() };
+  }
+
+  @Get('admin/ai/nexus/voice/voices')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'List configured ElevenLabs voices without exposing credentials' })
+  async getNexusVoiceVoices() {
+    return { statusCode: 200, success: true, data: await this.nexusVoice.getVoices() };
+  }
+
+  @Post('admin/ai/nexus/voice/token')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Create a short-lived ElevenLabs voice session token for the authenticated user' })
+  async getNexusVoiceToken(@Req() req: any) {
+    return { statusCode: 200, success: true, data: await this.nexusVoice.getSessionToken(req.user) };
+  }
+
+  @Post('admin/ai/nexus/voice/bind')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Bind an ElevenLabs conversation ID to the authenticated QB Suite user' })
+  async bindNexusVoiceSession(@Req() req: any, @Body() body: { conversationId?: string; bindingId?: string }) {
+    return { statusCode: 200, success: true, data: await this.nexusVoice.bindSession(req.user, body?.conversationId || '', body?.bindingId || '') };
+  }
+
+  @Post('admin/ai/nexus/voice/test')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Generate a short ElevenLabs voice preview for the signed-in administrator' })
+  async testNexusVoice(@Req() req: any, @Body() body: { text?: string; voiceId?: string }) {
+    const result = await this.nexusVoice.testVoice(req.user, body?.text || '', body?.voiceId);
+    return { statusCode: 200, success: true, data: result };
+  }
+
+  @Post('admin/ai/nexus/voice/speak')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Synthesize speech via ElevenLabs for QB Nexus responses and acknowledgements' })
+  async speakNexusVoice(@Req() req: any, @Body() body: { text?: string; voiceId?: string; speed?: number }) {
+    const result = await this.nexusVoice.speakText(req.user, body?.text || '', body?.voiceId, body?.speed);
+    return { statusCode: 200, success: true, data: result };
   }
 
   @Get('admin/ai/nexus/capabilities')

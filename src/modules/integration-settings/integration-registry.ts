@@ -110,6 +110,18 @@ export const INTEGRATION_REGISTRY: IntegrationDefinition[] = [
     ],
   },
   {
+    provider: 'ELEVENLABS',
+    displayName: 'ElevenLabs',
+    category: 'AI',
+    fields: [
+      { key: 'apiKey', label: 'ELEVENLABS_API_KEY', secret: true, required: true },
+      { key: 'speechEngineId', label: 'ELEVENLABS_SPEECH_ENGINE_ID', group: 'config', required: true, placeholder: 'seng_...' },
+      { key: 'voiceId', label: 'ELEVENLABS_VOICE_ID', group: 'config', placeholder: '21m00Tcm4TlvDq8ikWAM' },
+      { key: 'speechEnginePort', label: 'ELEVENLABS_SPEECH_ENGINE_PORT', group: 'config', type: 'number', placeholder: '3101' },
+      { key: 'modelId', label: 'Speech Model', group: 'config', placeholder: 'eleven_multilingual_v2' },
+    ],
+  },
+  {
     provider: 'SMTP',
     displayName: 'SMTP Email',
     category: 'Email',
