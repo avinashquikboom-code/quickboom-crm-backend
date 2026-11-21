@@ -142,51 +142,64 @@ export class CommissionService {
       return null;
     }
 
-    // 4. Check Commission Eligibility & Rate
-    // Rule:
-    // A. Check employee-specific CommissionConfig override:
-    //    If active, use that config. If inactive, employee is NOT eligible.
-    // B. If no employee config, check employee's designation:
-    //    If designation.commissionEnabled is true, use designation rate.
-    // C. Otherwise, employee is NOT eligible.
+    const tenantId = employee.customerId;
+    if (!Number.isSafeInteger(tenantId) || tenantId <= 0 || (customer.originLead?.customerId && customer.originLead.customerId !== tenantId)) {
+      throw new BadRequestException('Commission employee does not belong to the source lead tenant.');
+    }
+
+    // 4. Resolve the effective employee override or role-based commission rule.
     let commissionType: CommissionType = CommissionType.PERCENTAGE;
     let commissionRate = 0;
     let isEligible = false;
+    let role: any = null;
+    let roleConfiguration: any = null;
 
     if (employee.commissionConfig) {
       if (employee.commissionConfig.status === CommissionConfigStatus.ACTIVE) {
         commissionType = employee.commissionConfig.commissionType;
         commissionRate = employee.commissionConfig.commissionValue;
-        isEligible = true;
+        if (commissionType === CommissionType.FIXED) {
+          isEligible = commissionRate > 0;
+        } else {
+          role = await this.rules.resolveRole(employee, db);
+          roleConfiguration = await this.rules.applicable(tenantId, role.id, payment.createdAt, db);
+          isEligible = Boolean(roleConfiguration?.slabs?.length);
+        }
       } else {
         this.logger.log(
           `[COMMISSION] Employee #${employeeId} (${employee.firstName} ${employee.lastName}) has INACTIVE commission config. Skipping commission.`,
         );
         return null;
       }
-    } else if (employee.designation?.commissionEnabled) {
+    } else if (employee.designation?.commissionEnabled && employee.designation.commissionType === CommissionType.FIXED) {
       commissionType = employee.designation.commissionType;
       commissionRate = employee.designation.commissionRate;
-      isEligible = true;
+      isEligible = commissionRate > 0;
+    } else {
+      role = await this.rules.resolveRole(employee, db);
+      roleConfiguration = await this.rules.applicable(tenantId, role.id, payment.createdAt, db);
+      if (roleConfiguration?.slabs?.length) {
+        commissionType = CommissionType.PERCENTAGE;
+        isEligible = true;
+      } else if (employee.designation?.commissionEnabled) {
+        commissionType = employee.designation.commissionType;
+        commissionRate = employee.designation.commissionRate;
+        isEligible = commissionRate > 0;
+      }
     }
 
-    if (!isEligible || commissionRate <= 0) {
+    if (!isEligible || (commissionType === CommissionType.FIXED && commissionRate <= 0)) {
       this.logger.log(
         `[COMMISSION] Employee #${employeeId} (${employee.firstName} ${employee.lastName}, designation: ${employee.designation?.name || 'None'}) is not commission eligible (Rate: ${commissionRate}). Skipping.`,
       );
       return null;
     }
 
-    const tenantId = employee.customerId;
-    if (!Number.isSafeInteger(tenantId) || tenantId <= 0 || (customer.originLead?.customerId && customer.originLead.customerId !== tenantId)) {
-      throw new BadRequestException('Commission employee does not belong to the source lead tenant.');
-    }
     let selection: Awaited<ReturnType<CommissionRulesService['select']>> = null;
-    let role: any = null;
     let commissionAmount: number;
     try {
       if (commissionType === CommissionType.PERCENTAGE) {
-        role = await this.rules.resolveRole(employee, db);
+        role ||= await this.rules.resolveRole(employee, db);
         selection = await this.rules.select(tenantId, role.id, purchaseAmount, payment.createdAt, db);
         commissionRate = Number(selection.slab.ratePercent);
         commissionAmount = selection.total;
