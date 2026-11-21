@@ -45,6 +45,7 @@ export enum IntegrationProvider {
   ANTHROPIC = 'ANTHROPIC',
   SMTP = 'SMTP',
   FIREBASE = 'FIREBASE',
+  ELEVENLABS = 'ELEVENLABS',
 }
 
 export function normalizeProvider(provider: string): string {
@@ -66,6 +67,7 @@ export function normalizeProvider(provider: string): string {
   if (norm === 'ANTHROPIC' || norm === 'CLAUDE' || norm === 'ANTHROPIC_CLAUDE') return IntegrationProvider.ANTHROPIC;
   if (norm === 'SMTP' || norm === 'EMAIL' || norm === 'MAIL' || norm === 'SMTP_EMAIL') return IntegrationProvider.SMTP;
   if (norm === 'FIREBASE' || norm === 'FCM' || norm === 'FIREBASE_MESSAGING') return IntegrationProvider.FIREBASE;
+  if (norm === 'ELEVENLABS' || norm === 'ELEVEN_LABS') return IntegrationProvider.ELEVENLABS;
   return norm;
 }
 
@@ -542,6 +544,19 @@ export class IntegrationSettingsService {
         };
       }
 
+      case IntegrationProvider.ELEVENLABS: {
+        const apiKey = (process.env.ELEVENLABS_API_KEY || '').trim();
+        const speechEngineId = (process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
+        return {
+          provider: IntegrationProvider.ELEVENLABS,
+          isEnabled: Boolean(apiKey && speechEngineId),
+          environment: 'LIVE',
+          credentials: { apiKey },
+          config: { speechEngineId, voiceId: process.env.ELEVENLABS_VOICE_ID || '' },
+          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+        };
+      }
+
       case IntegrationProvider.FIREBASE: {
         const projectId = (
           process.env.FIREBASE_PROJECT_ID ||
@@ -877,6 +892,17 @@ export class IntegrationSettingsService {
       isConfigured,
       source,
     };
+  }
+
+  async getElevenLabsConfig(): Promise<{ apiKey: string; speechEngineId: string; voiceId?: string; modelId: string; isEnabled: boolean; isConfigured: boolean; source: string }> {
+    const conf = await this.getIntegrationConfig(IntegrationProvider.ELEVENLABS);
+    const credentials = conf?.credentials || {};
+    const config = conf?.config || {};
+    const apiKey = sanitizeSecret(String(credentials.apiKey || credentials.api_key || process.env.ELEVENLABS_API_KEY || ''));
+    const speechEngineId = String(config.speechEngineId || config.engineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
+    const voiceId = String(config.voiceId || process.env.ELEVENLABS_VOICE_ID || '').trim() || undefined;
+    const isConfigured = Boolean(apiKey && speechEngineId);
+    return { apiKey, speechEngineId, voiceId, modelId: String(config.modelId || 'eleven_multilingual_v2'), isEnabled: Boolean(conf?.isEnabled ?? isConfigured) && isConfigured, isConfigured, source: conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE') };
   }
 
   /**
