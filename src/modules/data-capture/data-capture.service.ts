@@ -697,24 +697,34 @@ export class DataCaptureService implements OnModuleInit {
    */
   private extractSocialMediaFromPlace(place: any): SocialMediaHandles | undefined {
     if (!place) return undefined;
-    let sm: any = place.socialMedia;
     const raw = place.rawData;
-    if (!sm && raw && typeof raw === 'object') {
-      sm = raw.socialMedia || raw.social_media || raw.social;
-    }
+    const socialSources = [
+      place.socialMedia,
+      raw && typeof raw === 'object'
+        ? raw.socialMedia || raw.social_media || raw.social || raw.socialLinks || raw.socialProfiles
+        : undefined,
+    ];
     const result: SocialMediaHandles = {};
     const seenUrls = new Set<string>();
+    const profileUrl = (value: any) =>
+      value && typeof value === 'object'
+        ? value.url || value.profileUrl || value.link || value.handle
+        : value;
     const addProfile = (platform: string, rawUrl: any) => {
       const normalized = this.normalizeSocialUrl(platform, rawUrl);
       if (!normalized || seenUrls.has(normalized.toLowerCase())) return;
       seenUrls.add(normalized.toLowerCase());
       const key = platform.toLowerCase() === 'x' ? 'twitter' : platform.toLowerCase();
       if (['instagram', 'facebook', 'youtube', 'linkedin', 'twitter', 'tiktok', 'pinterest', 'whatsapp', 'other'].includes(key)) {
-        (result as any)[key] = normalized;
+        if (!(result as any)[key]) (result as any)[key] = normalized;
       }
     };
 
-    if (sm) {
+    for (let sm of socialSources) {
+      if (typeof sm === 'string') {
+        try { sm = JSON.parse(sm); } catch { continue; }
+      }
+      if (!sm) continue;
       if (Array.isArray(sm)) {
         for (const item of sm) {
           if (!item) continue;
@@ -726,14 +736,18 @@ export class DataCaptureService implements OnModuleInit {
           }
         }
       } else if (typeof sm === 'object') {
+        const byPlatform = new Map(Object.entries(sm).map(([key, value]) => [key.toLowerCase(), value]));
         for (const platform of ['instagram', 'facebook', 'linkedin', 'twitter', 'youtube', 'tiktok', 'pinterest', 'whatsapp', 'other']) {
-          if (sm[platform]) addProfile(platform, sm[platform]);
+          const value = byPlatform.get(platform);
+          if (value) addProfile(platform, profileUrl(value));
         }
-        if (sm.x && !result.twitter) addProfile('twitter', sm.x);
-        if (Array.isArray(sm.profiles)) {
-          for (const profile of sm.profiles) {
+        const x = byPlatform.get('x');
+        if (x && !result.twitter) addProfile('twitter', profileUrl(x));
+        const profiles = byPlatform.get('profiles') || byPlatform.get('links') || byPlatform.get('items');
+        if (Array.isArray(profiles)) {
+          for (const profile of profiles) {
             const platform = String(profile?.platform || '').toLowerCase();
-            const url = String(profile?.url || '').trim();
+            const url = String(profile?.url || profile?.profileUrl || profile?.link || profile?.handle || '').trim();
             if (!platform || !url) continue;
             const normalizedPlatform = ['instagram', 'facebook', 'youtube', 'linkedin', 'twitter', 'x', 'tiktok', 'pinterest', 'whatsapp'].find((key) => platform.includes(key)) || 'other';
             addProfile(normalizedPlatform, url);
