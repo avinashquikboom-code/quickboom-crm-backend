@@ -5,7 +5,7 @@ ElevenLabs handles speech recognition and speech synthesis only. Voice transcrip
 ## Configuration
 
 1. Create a **Speech Engine** resource in ElevenLabs. Do not create or attach an ElevenLabs Agent.
-2. In QB Suite Admin → Settings → Integrations, configure **ElevenLabs Speech Engine** with the server API key, Speech Engine ID, and optional default voice ID. The API key is encrypted and masked by the existing integration settings service. Alternatively configure `ELEVENLABS_API_KEY`, `ELEVENLABS_SPEECH_ENGINE_ID`, and `ELEVENLABS_VOICE_ID` in the backend environment.
+2. In QB Suite Admin → Settings → Integrations, configure **ElevenLabs** with the server API key. The API key is encrypted and masked by the existing integration settings service. Configure `ELEVENLABS_SPEECH_ENGINE_ID`, optional `ELEVENLABS_VOICE_ID`, and `ELEVENLABS_SPEECH_ENGINE_PORT` in the backend environment; these server-side values are intentionally not shown in the admin form. `ELEVENLABS_API_KEY` can also be set in the backend environment instead of Integrations.
 3. Set `ELEVENLABS_SPEECH_ENGINE_PORT` (default `3101`). The backend starts the official SDK callback server when a voice session is requested.
 4. Configure the Speech Engine callback to a public `wss://` URL reverse-proxied to the backend callback server. The callback path is owned by the ElevenLabs Speech Engine configuration; route the WebSocket upgrade to port 3101 without buffering or terminating it. Keep SDK authorization enabled.
 5. If the deployment runs multiple backend replicas, use sticky routing so the authenticated token request, session bind request, and callback WebSocket reach the same replica. The short-lived binding and WebSocket session state are held in process memory.
