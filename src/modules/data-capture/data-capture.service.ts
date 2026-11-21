@@ -730,6 +730,15 @@ export class DataCaptureService implements OnModuleInit {
           if (sm[platform]) addProfile(platform, sm[platform]);
         }
         if (sm.x && !result.twitter) addProfile('twitter', sm.x);
+        if (Array.isArray(sm.profiles)) {
+          for (const profile of sm.profiles) {
+            const platform = String(profile?.platform || '').toLowerCase();
+            const url = String(profile?.url || '').trim();
+            if (!platform || !url) continue;
+            const normalizedPlatform = ['instagram', 'facebook', 'youtube', 'linkedin', 'twitter', 'x', 'tiktok', 'pinterest', 'whatsapp'].find((key) => platform.includes(key)) || 'other';
+            addProfile(normalizedPlatform, url);
+          }
+        }
       }
     }
 
@@ -1257,7 +1266,7 @@ export class DataCaptureService implements OnModuleInit {
         rawData: {
           ...(place.rawData || {}),
           ...(place.googlePhotos?.length ? { googlePhotos: place.googlePhotos } : {}),
-          socialMediaEnrichmentStatus: place.website ? 'PENDING' : 'NOT_AVAILABLE',
+          socialMediaEnrichmentStatus: place.website ? 'PENDING' : 'NOT_FOUND',
         },
       };
     });
@@ -1391,8 +1400,13 @@ export class DataCaptureService implements OnModuleInit {
     if (process.env.NODE_ENV === 'test') return;
     setImmediate(async () => {
       for (const p of places) {
-        if (!p.website || !p.id) continue;
+        if (!p.id) continue;
         try {
+          if (!p.website) {
+            await this.updateSocialEnrichmentState(p, 'NOT_FOUND');
+            continue;
+          }
+          await this.updateSocialEnrichmentState(p, 'PROCESSING');
           const webContact = await ContactExtractor.extractContactFromWebsite(p.website);
           const saved = await this.prisma.dataCapturePlace.findFirst({
             where: { id: p.id, customerId: Number(p.customerId), deletedAt: null },
@@ -1400,7 +1414,14 @@ export class DataCaptureService implements OnModuleInit {
           });
           if (!saved) continue;
           const existingSocial = (saved.socialMedia as any) || {};
-          const socialMedia = { ...webContact.socialMedia, ...existingSocial };
+          const urls = { ...(webContact.socialMedia || {}), ...existingSocial };
+        const profiles = Object.entries(urls).filter(([key]) => key !== 'profiles').map(([platform, url]) => ({
+            platform: platform.toUpperCase(),
+            url: String(url),
+            verificationStatus: 'VERIFIED',
+            discoverySource: 'OFFICIAL_WEBSITE',
+          }));
+          const socialMedia = { ...urls, profiles };
           const rawData = saved.rawData && typeof saved.rawData === 'object' && !Array.isArray(saved.rawData)
             ? saved.rawData as Record<string, any> : {};
           await this.prisma.dataCapturePlace.updateMany({
@@ -1427,6 +1448,19 @@ export class DataCaptureService implements OnModuleInit {
           this.logger.debug?.(`[Background Enrichment] Failed for place ${p.id} (${p.website}): ${err?.message}`);
         }
       }
+    });
+  }
+
+  private async updateSocialEnrichmentState(place: any, status: string) {
+    const saved = await this.prisma.dataCapturePlace.findFirst({
+      where: { id: place.id, customerId: Number(place.customerId), deletedAt: null },
+      select: { rawData: true },
+    });
+    const rawData = saved?.rawData && typeof saved.rawData === 'object' && !Array.isArray(saved.rawData)
+      ? saved.rawData as Record<string, any> : {};
+    await this.prisma.dataCapturePlace.updateMany({
+      where: { id: place.id, customerId: Number(place.customerId), deletedAt: null },
+      data: { rawData: { ...rawData, socialMediaEnrichmentStatus: status } },
     });
   }
 
@@ -3400,7 +3434,7 @@ export class DataCaptureService implements OnModuleInit {
           }
 
           // Attach Social Profiles to LeadSocialProfile (Section 10)
-          const spProfiles = this.extractSocialProfileList(placeSocialMedia);
+      const spProfiles = this.extractSocialProfileList(placeSocialMedia);
           if (tx.leadSocialProfile && typeof tx.leadSocialProfile.create === 'function') {
             for (const sp of spProfiles) {
               await tx.leadSocialProfile.create({
@@ -3411,7 +3445,9 @@ export class DataCaptureService implements OnModuleInit {
                   source: Object.keys(userSocialMedia).length || this.hasUserProvidedField(dbPlace, 'socialMedia')
                     ? 'USER_PROVIDED'
                     : 'CAPTURE_SOURCE',
-                  verificationStatus: 'UNVERIFIED',
+                  verificationStatus: (Array.isArray((placeSocialMedia as any)?.profiles) ? (placeSocialMedia as any).profiles : []).find((profile: any) =>
+                    String(profile.platform).toLowerCase() === sp.platform.toLowerCase()
+                  )?.verificationStatus || 'UNVERIFIED',
                   lastCheckedAt: null,
                 },
               });
