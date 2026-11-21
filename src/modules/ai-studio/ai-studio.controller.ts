@@ -135,6 +135,26 @@ export class AiStudioController {
     };
   }
 
+  @Post('admin/ai/nexus/chat')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Ask QB Nexus using business data scoped to the authenticated account' })
+  async askNexus(@Req() req: any, @Body() body: { message?: string }) {
+    const answer = await this.aiGenerationService.answerNexusQuestion(req.user, body?.message || '');
+    return { statusCode: 200, success: true, data: { answer } };
+  }
+
+  @Post('admin/ai/nexus/transcribe')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Transcribe a user-recorded QB Nexus voice clip without storing audio' })
+  @UseInterceptors(FileInterceptor('audio', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  async transcribeNexusAudio(@Req() req: any, @UploadedFile() file?: Express.Multer.File) {
+    const text = await this.aiGenerationService.transcribeNexusAudio(req.user, file);
+    return { statusCode: 200, success: true, data: { text } };
+  }
+
   @Get(['ai/generations', 'customer/ai/generations'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
