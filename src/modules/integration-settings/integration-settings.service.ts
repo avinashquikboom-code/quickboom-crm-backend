@@ -547,12 +547,14 @@ export class IntegrationSettingsService {
       case IntegrationProvider.ELEVENLABS: {
         const apiKey = (process.env.ELEVENLABS_API_KEY || '').trim();
         const speechEngineId = (process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
+        const voiceId = (process.env.ELEVENLABS_VOICE_ID || '').trim();
+        const speechEnginePort = Number(process.env.ELEVENLABS_SPEECH_ENGINE_PORT) || 3101;
         return {
           provider: IntegrationProvider.ELEVENLABS,
-          isEnabled: Boolean(apiKey && speechEngineId),
+          isEnabled: Boolean(apiKey),
           environment: 'LIVE',
           credentials: { apiKey },
-          config: { speechEngineId, voiceId: process.env.ELEVENLABS_VOICE_ID || '' },
+          config: { speechEngineId, voiceId, speechEnginePort },
           source: apiKey ? 'ENV_FALLBACK' : 'NONE',
         };
       }
@@ -894,15 +896,34 @@ export class IntegrationSettingsService {
     };
   }
 
-  async getElevenLabsConfig(): Promise<{ apiKey: string; speechEngineId: string; voiceId?: string; modelId: string; isEnabled: boolean; isConfigured: boolean; source: string }> {
+  async getElevenLabsConfig(): Promise<{
+    apiKey: string;
+    speechEngineId: string;
+    voiceId?: string;
+    speechEnginePort: number;
+    modelId: string;
+    isEnabled: boolean;
+    isConfigured: boolean;
+    source: string;
+  }> {
     const conf = await this.getIntegrationConfig(IntegrationProvider.ELEVENLABS);
     const credentials = conf?.credentials || {};
     const config = conf?.config || {};
     const apiKey = sanitizeSecret(String(credentials.apiKey || credentials.api_key || process.env.ELEVENLABS_API_KEY || ''));
     const speechEngineId = String(config.speechEngineId || config.engineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
     const voiceId = String(config.voiceId || process.env.ELEVENLABS_VOICE_ID || '').trim() || undefined;
+    const speechEnginePort = Number(config.speechEnginePort || process.env.ELEVENLABS_SPEECH_ENGINE_PORT) || 3101;
     const isConfigured = Boolean(apiKey && speechEngineId);
-    return { apiKey, speechEngineId, voiceId, modelId: String(config.modelId || 'eleven_multilingual_v2'), isEnabled: Boolean(conf?.isEnabled ?? isConfigured) && isConfigured, isConfigured, source: conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE') };
+    return {
+      apiKey,
+      speechEngineId,
+      voiceId,
+      speechEnginePort,
+      modelId: String(config.modelId || 'eleven_multilingual_v2'),
+      isEnabled: Boolean(conf?.isEnabled ?? isConfigured) && isConfigured,
+      isConfigured,
+      source: conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE'),
+    };
   }
 
   /**
@@ -1120,14 +1141,21 @@ export class IntegrationSettingsService {
     const existingCreds = existing?.credentials || {};
 
     // Validate non-empty API key for AI integrations
-    if (normProvider === IntegrationProvider.OPENAI || normProvider === IntegrationProvider.GEMINI || normProvider === IntegrationProvider.ANTHROPIC) {
+    if (normProvider === IntegrationProvider.OPENAI || normProvider === IntegrationProvider.GEMINI || normProvider === IntegrationProvider.ANTHROPIC || normProvider === IntegrationProvider.ELEVENLABS) {
       const incomingKey = dto.credentials?.apiKey;
-      const providerLabel = normProvider === IntegrationProvider.OPENAI ? 'OpenAI' : normProvider === IntegrationProvider.GEMINI ? 'Google Gemini' : 'Anthropic';
+      const providerLabel = normProvider === IntegrationProvider.OPENAI ? 'OpenAI' : normProvider === IntegrationProvider.GEMINI ? 'Google Gemini' : normProvider === IntegrationProvider.ANTHROPIC ? 'Anthropic' : 'ElevenLabs';
       if (incomingKey !== undefined && typeof incomingKey === 'string' && incomingKey.trim().length === 0) {
         throw new BadRequestException(`${providerLabel} API Key cannot be empty or whitespace-only`);
       }
       if (!existingCreds.apiKey && (!incomingKey || typeof incomingKey !== 'string' || !incomingKey.trim())) {
         throw new BadRequestException(`${providerLabel} API Key is required`);
+      }
+    }
+
+    if (normProvider === IntegrationProvider.ELEVENLABS && dto.config?.speechEnginePort !== undefined) {
+      const port = Number(dto.config.speechEnginePort);
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        throw new BadRequestException('ELEVENLABS_SPEECH_ENGINE_PORT must be an integer between 1024 and 65535');
       }
     }
 
@@ -1504,6 +1532,7 @@ export class IntegrationSettingsService {
       IntegrationProvider.OPENAI,
       IntegrationProvider.GEMINI,
       IntegrationProvider.ANTHROPIC,
+      IntegrationProvider.ELEVENLABS,
       IntegrationProvider.SMTP,
       IntegrationProvider.FIREBASE,
     ];
@@ -1551,7 +1580,7 @@ export class IntegrationSettingsService {
       };
     }
 
-    if (norm === IntegrationProvider.ANTHROPIC) {
+    if (norm === IntegrationProvider.ANTHROPIC || norm === IntegrationProvider.ELEVENLABS) {
       const credentials = conf.credentials || {};
       const apiKey = credentials.apiKey || credentials.api_key || '';
       return {
@@ -1560,7 +1589,12 @@ export class IntegrationSettingsService {
         isEnabled: conf.isEnabled,
         environment: conf.environment,
         credentials: { apiKey: apiKey ? maskSecret(String(apiKey)) : '' },
-        config: conf.config || {},
+        config: norm === IntegrationProvider.ELEVENLABS ? {
+          speechEngineId: conf.config?.speechEngineId || '',
+          voiceId: conf.config?.voiceId || '',
+          speechEnginePort: conf.config?.speechEnginePort || 3101,
+          ...(conf.config || {}),
+        } : (conf.config || {}),
         source: conf.source,
         configured: Boolean(apiKey),
         updatedAt: conf.updatedAt || null,
@@ -1853,6 +1887,88 @@ export class IntegrationSettingsService {
     if (normProvider === IntegrationProvider.GOOGLE_MAPS) {
       const mergedKey = this.resolveGoogleMapsApiKey(resolvedCreds);
       if (mergedKey) resolvedCreds.apiKey = mergedKey;
+    }
+
+    if (normProvider === IntegrationProvider.ELEVENLABS) {
+      const apiKey = (resolvedCreds.apiKey || resolvedCreds.api_key || '').trim();
+      if (!apiKey || isMaskedSecret(apiKey)) {
+        throw new BadRequestException('ElevenLabs API Key is required to test connection');
+      }
+
+      const voiceId = String(dto?.config?.voiceId || active?.config?.voiceId || '').trim();
+      const speechEngineId = String(dto?.config?.speechEngineId || active?.config?.speechEngineId || '').trim();
+      if (!speechEngineId) throw new BadRequestException('ElevenLabs Speech Engine ID is required to test the voice connection.');
+
+      try {
+        // 1. Verify API Key and user account via official ElevenLabs REST endpoint
+        const userRes = await axios.get('https://api.elevenlabs.io/v1/user', {
+          headers: { 'xi-api-key': apiKey },
+          timeout: 10000,
+        });
+
+        if (userRes.status !== 200) {
+          throw new Error(`Unexpected ElevenLabs response status: ${userRes.status}`);
+        }
+
+        const tier = userRes.data?.subscription?.tier || 'active';
+        let voiceInfo = '';
+
+        // 2. Validate configured voice ID if provided
+        if (voiceId) {
+          try {
+            const voiceRes = await axios.get(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`, {
+              headers: { 'xi-api-key': apiKey },
+              timeout: 8000,
+            });
+            if (voiceRes.status === 200 && voiceRes.data?.name) {
+              voiceInfo = ` Voice "${voiceRes.data.name}" verified.`;
+            }
+          } catch (voiceErr: any) {
+            if (voiceErr?.response?.status === 404) {
+              voiceInfo = ` Note: Voice ID "${voiceId}" not found in your account.`;
+            }
+          }
+        }
+
+        // 3. Verify speech engine / conversational agent if configured
+        let agentInfo = '';
+        if (speechEngineId) {
+          try {
+            const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
+            const client = new ElevenLabsClient({ apiKey });
+            const tokenRes = await client.conversationalAi.conversations.getWebrtcToken({ agentId: speechEngineId });
+            if (tokenRes?.token) {
+              agentInfo = ' Speech Engine ID verified.';
+            }
+          } catch {
+            agentInfo = ' Note: Speech Engine ID could not issue a session token.';
+          }
+        }
+
+        return {
+          success: true,
+          provider: 'ELEVENLABS',
+          status: 'CONNECTED',
+          message: `ElevenLabs connection verified successfully! (${tier} subscription tier).${voiceInfo}${agentInfo}`,
+          details: {
+            keyPrefix: apiKey.substring(0, Math.min(6, apiKey.length)) + '...',
+            tier,
+            voiceId: voiceId || undefined,
+            speechEngineId: speechEngineId || undefined,
+          },
+        };
+      } catch (err: any) {
+        this.logger.error(`[ELEVENLABS_TEST_FAILED] ${err?.message}`);
+        const status = err?.response?.status;
+        const errMsg =
+          status === 401
+            ? 'Invalid ElevenLabs API key. Please check your credentials at elevenlabs.io'
+            : err?.response?.data?.detail?.message ||
+              err?.response?.data?.message ||
+              err?.message ||
+              'Could not authenticate with ElevenLabs API';
+        throw new BadRequestException(`ElevenLabs connection test failed: ${errMsg}`);
+      }
     }
 
     switch (normProvider) {
