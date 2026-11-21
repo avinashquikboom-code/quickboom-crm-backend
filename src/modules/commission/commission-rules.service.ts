@@ -270,8 +270,29 @@ export class CommissionRulesService {
       const current = id ? await tx.commissionConfig.findFirst({ where: { id, customerId, roleId: { not: null } }, include: { slabs: true } }) : null;
       if (id && !current) throw new NotFoundException('Commission configuration not found.');
       if (body.status === 'ACTIVE') {
-        const conflicts = await tx.commissionConfig.count({ where: { customerId, roleId, status: 'ACTIVE', ...(id ? { id: { not: id } } : {}), AND: [ { OR: [{ endsAt: null }, { endsAt: { gte: startsAt } }] }, ...(endsAt ? [{ OR: [{ startsAt: null }, { startsAt: { lte: endsAt } }] }] : []) ] } });
-        if (conflicts) throw new ConflictException('An active configuration already covers this role and effective period.');
+        const conflicts = await tx.commissionConfig.findMany({
+          where: {
+            customerId,
+            roleId,
+            status: 'ACTIVE',
+            ...(id ? { id: { not: id } } : {}),
+            AND: [
+              { OR: [{ endsAt: null }, { endsAt: { gte: startsAt } }] },
+              ...(endsAt ? [{ OR: [{ startsAt: null }, { startsAt: { lte: endsAt } }] }] : []),
+            ],
+          },
+          select: { id: true, name: true, startsAt: true, endsAt: true },
+        });
+        if (conflicts.length) {
+          const descriptions = conflicts.map((conflict: any) => {
+            const start = conflict.startsAt ? new Date(conflict.startsAt).toISOString().slice(0, 10) : 'unbounded';
+            const end = conflict.endsAt ? new Date(conflict.endsAt).toISOString().slice(0, 10) : 'no end date';
+            return `#${conflict.id} (${conflict.name}, ${start} to ${end}; edit with PATCH /commissions/configs/rules/${conflict.id})`;
+          }).join(', ');
+          throw new ConflictException(
+            `An active configuration already covers this role and effective period: ${descriptions}. Edit an existing rule or choose a non-overlapping period.`,
+          );
+        }
       }
       const history = Array.isArray(current?.history)
         ? [...current.history]

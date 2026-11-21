@@ -269,6 +269,25 @@ describe('RBAC & Module Permission System', () => {
       expect(result.effectivePermissions.REPORTS.view).toBe(false);
     });
 
+    it('grants lead delete only to an explicitly enabled Sales Telecaller', async () => {
+      const salesTelecaller = {
+        id: 11,
+        customerId: 100,
+        employee: {
+          id: 1,
+          customerId: 100,
+          status: 'ACTIVE',
+          mobileLoginEnabled: true,
+          department: { id: 9, name: 'Sales Department', code: 'SALES' },
+          designation: { id: 2, name: 'Telecaller', code: 'TELECALLER', crmMobileAccess: true },
+          employeeModuleOverrides: [],
+        },
+        userRoles: [{ role: { name: 'TELECALLER', type: 'CUSTOM', rolePermissions: [] } }],
+      };
+      const result = await authService.resolveUserEffectivePermissions(11, salesTelecaller);
+      expect(result.effectivePermissions.LEADS.delete).toBe(true);
+    });
+
     it('grants full access across all modules for SUPER_ADMIN', async () => {
       const mockSuperAdmin = {
         id: 1,

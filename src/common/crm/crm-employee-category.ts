@@ -23,6 +23,21 @@ export function isAuthorizedSalesTelecaller(employee: any): boolean {
     );
 }
 
+/** Active Sales department mobile employees may delete leads they own or are assigned. */
+export function isSalesDepartmentEmployee(employee: any): boolean {
+  const department = employee?.department;
+  const designation = employee?.designation;
+  const departmentSignals = [department?.name, department?.code].map(text);
+  const designationSignals = [designation?.name, designation?.code].map(text);
+  const isVisitor = designationSignals.some((value) =>
+    value.includes('VISITOR') || value === 'VISIT' || value.includes('FIELD VISIT') || value.includes('FIELD_VISIT') || value.includes('FIELD OFFICER'),
+  );
+  return employee?.status === 'ACTIVE' &&
+    employee?.mobileLoginEnabled !== false &&
+    !isVisitor &&
+    departmentSignals.some((value) => value.includes('SALES'));
+}
+
 function text(value?: string | null): string {
   return String(value || '').trim().toUpperCase();
 }

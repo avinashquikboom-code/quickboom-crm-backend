@@ -1,4 +1,4 @@
-import { classifyCrmEmployee, isAuthorizedSalesTelecaller } from './crm-employee-category';
+import { classifyCrmEmployee, isAuthorizedSalesTelecaller, isSalesDepartmentEmployee } from './crm-employee-category';
 
 describe('classifyCrmEmployee', () => {
   it('maps a legacy BPO department to Sales even when the designation is telesales', () => {
@@ -72,5 +72,29 @@ describe('classifyCrmEmployee', () => {
       department: { name: 'Sales Department', code: 'SALES' },
       designation: { name: 'Telecaller', code: 'TELECALLER', crmMobileAccess: false },
     })).toBe(false);
+  });
+});
+
+describe('Sales department lead deletion permission', () => {
+  it('includes active mobile-enabled Sales employees', () => {
+    expect(isSalesDepartmentEmployee({
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { name: 'Sales Department', code: 'SALES' },
+      designation: { name: 'Sales Executive', code: 'SALES_EXEC' },
+    })).toBe(true);
+  });
+
+  it('excludes inactive, mobile-disabled, non-Sales, and visitor employees', () => {
+    const base = {
+      status: 'ACTIVE',
+      mobileLoginEnabled: true,
+      department: { name: 'Sales Department', code: 'SALES' },
+      designation: { name: 'Sales Executive', code: 'SALES_EXEC' },
+    };
+    expect(isSalesDepartmentEmployee({ ...base, status: 'INACTIVE' })).toBe(false);
+    expect(isSalesDepartmentEmployee({ ...base, mobileLoginEnabled: false })).toBe(false);
+    expect(isSalesDepartmentEmployee({ ...base, department: { name: 'Operations', code: 'OPS' } })).toBe(false);
+    expect(isSalesDepartmentEmployee({ ...base, designation: { name: 'Lead Visitor', code: 'VISITOR' } })).toBe(false);
   });
 });

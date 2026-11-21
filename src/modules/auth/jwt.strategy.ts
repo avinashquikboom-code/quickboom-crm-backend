@@ -7,7 +7,7 @@ import { RoleType } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
 import { STANDARD_PERMISSIONS, ROLE_PERMISSION_DEFAULTS, fromPermissionKey } from '../../common/constants/rbac.constants';
-import { isAuthorizedSalesTelecaller } from '../../common/crm/crm-employee-category';
+import { isAuthorizedSalesTelecaller, isSalesDepartmentEmployee } from '../../common/crm/crm-employee-category';
 import {
   applyPermissionItems,
   resolveCustomerAppPermissionItems,
@@ -422,6 +422,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ]) {
         permissionsMap.set(`${module}:${action}`, { module, action });
       }
+    }
+    // Sales employees can delete only leads they own/are assigned to; the
+    // employee override pass below can still deny this permission per user.
+    if (isSalesDepartmentEmployee(user.employee)) {
+      permissionsMap.set('LEADS:DELETE', { module: 'LEADS', action: 'DELETE' });
     }
 
     const desigUpper = (desigName || '').toUpperCase();

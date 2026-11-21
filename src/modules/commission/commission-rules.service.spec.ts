@@ -5,7 +5,7 @@ describe('Role-specific full-payment commission rules', () => {
   let db: any, rules: CommissionRulesService;
   const date = new Date('2026-11-14T00:00:00Z');
   beforeEach(() => {
-    db = { role: { findFirst: jest.fn(), findMany: jest.fn() }, commissionConfig: { findMany: jest.fn(), findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0), create: jest.fn().mockResolvedValue({id:1}), update: jest.fn() }, commissionSlab: { create: jest.fn().mockResolvedValue({id:20}), update: jest.fn(), updateMany: jest.fn() }, $queryRaw: jest.fn().mockRejectedValue(new Error("Cannot deserialize PostgreSQL void")), $executeRaw: jest.fn().mockResolvedValue(1) };
+    db = { role: { findFirst: jest.fn(), findMany: jest.fn() }, commissionConfig: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0), create: jest.fn().mockResolvedValue({id:1}), update: jest.fn() }, commissionSlab: { create: jest.fn().mockResolvedValue({id:20}), update: jest.fn(), updateMany: jest.fn() }, $queryRaw: jest.fn().mockRejectedValue(new Error("Cannot deserialize PostgreSQL void")), $executeRaw: jest.fn().mockResolvedValue(1) };
     db.$transaction = jest.fn(fn=>fn(db)); rules = new CommissionRulesService(db);
   });
   it.each([[40000,3,1200],[75000,5,3750],[125000,7,8750],[180000,10,18000]])('calculates full sale %s at %s%% = %s', (sale,rate,total)=>expect(fullSaleCommission(sale,rate)).toBe(total));
@@ -39,7 +39,9 @@ describe('Role-specific full-payment commission rules', () => {
   });
   it('checks tenant ownership and serialized active-period conflicts',async()=>{
     db.role.findFirst.mockResolvedValue(null);await expect(rules.save(2,1,config())).rejects.toThrow('tenant');
-    db.role.findFirst.mockResolvedValue({id:11});db.commissionConfig.count.mockResolvedValue(1);await expect(rules.save(2,1,config())).rejects.toBeInstanceOf(ConflictException);
+    db.role.findFirst.mockResolvedValue({id:11});
+    db.commissionConfig.findMany.mockResolvedValue([{id:8,name:'Existing Sales',startsAt:new Date('2026-01-01T00:00:00Z'),endsAt:null}]);
+    await expect(rules.save(2,1,config())).rejects.toThrow('PATCH /commissions/configs/rules/8');
     expect(db.$executeRaw).toHaveBeenCalled();expect(db.$queryRaw).not.toHaveBeenCalled();expect(db.commissionConfig.create).not.toHaveBeenCalled();
   });
   it('executes the tenant advisory lock before reading or writing configuration', async () => {
