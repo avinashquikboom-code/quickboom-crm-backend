@@ -3,6 +3,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { isUserAdmin } from '../../common/utils/role.util';
 import { STANDARD_PERMISSIONS } from '../../common/constants/rbac.constants';
+import { BUSINESS_TIMEZONE, formatTimeInTimezone, getBusinessDayRange, getBusinessDate } from '../../common/utils/timezone.util';
+
+class NexusToolExecutionError extends Error {
+  constructor(readonly toolName: string) {
+    super(`QB Nexus could not retrieve data for ${toolName}.`);
+    this.name = 'NexusToolExecutionError';
+  }
+}
 
 export interface PendingActionProposal {
   id: string;
@@ -137,6 +145,9 @@ export class NexusOrchestratorService {
       ? this.executeWithGemini(user, customerId, userId, session, message)
       : this.executeWithOpenAi(user, customerId, userId, session, message);
     const firstResult = await runProvider(preferred).catch((err) => {
+      if (err instanceof NexusToolExecutionError) {
+        return { answer: 'I could not retrieve that data from QB Suite right now. No result was assumed. Please retry in a moment.', provider: 'Nexus Operations Guard' };
+      }
       this.logger.warn(`[NEXUS_ORCHESTRATOR] ${preferred} failed: ${err.message || err}`);
       return null;
     });
@@ -145,6 +156,9 @@ export class NexusOrchestratorService {
       return firstResult;
     }
     const fallbackResult = fallback ? await runProvider(fallback).catch((err) => {
+      if (err instanceof NexusToolExecutionError) {
+        return { answer: 'I could not retrieve that data from QB Suite right now. No result was assumed. Please retry in a moment.', provider: 'Nexus Operations Guard' };
+      }
       this.logger.warn(`[NEXUS_ORCHESTRATOR] ${fallback} fallback failed: ${err.message || err}`);
       return null;
     }) : null;
@@ -155,7 +169,10 @@ export class NexusOrchestratorService {
 
     // 4. Fallback to Deterministic Engine
     this.logger.log(`[NEXUS_ORCHESTRATOR] Using Deterministic Engine fallback`);
-    const deterministicResult = await this.executeDeterministic(user, customerId, userId, session, message);
+    const deterministicResult = await this.executeDeterministic(user, customerId, userId, session, message).catch((err) => ({
+      answer: err instanceof ForbiddenException ? err.message : 'I could not retrieve that data from QB Suite right now. No result was assumed. Please retry in a moment.',
+      provider: 'Nexus Operations Guard',
+    }));
     session.history.push({ role: 'assistant', content: deterministicResult.answer });
     return deterministicResult;
   }
@@ -745,6 +762,89 @@ export class NexusOrchestratorService {
   // =========================================================================
   // TOOL EXECUTOR
   // =========================================================================
+
+  private async executeVerifiedTool(
+    name: string,
+    args: any,
+    user: any,
+    customerId: number,
+    userId: number,
+    session: SessionMemory,
+  ) {
+    try {
+      return await this.executeTool(name, args, user, customerId, userId, session);
+    } catch (error: any) {
+      this.logger.warn(`[NEXUS_TOOL_FAILURE] ${name}: ${error?.name || 'Error'}`);
+      throw new NexusToolExecutionError(name);
+    }
+  }
+
+  private isBusinessDataQuestion(message: string): boolean {
+    return /\b(leads?|prospects?|crm|customers?|deals?|pipeline|sales|commission|follow.?ups?|tasks?|projects?|employees?|staff|attendance|punch|leave|payroll|payslips?|salary|loans?|expenses?|reimbursements?|reports?|revenue|invoice|data capture|captures?|campaigns?|notifications?|integrations?|settings|permissions|roles|visits?|workforce|business performance)\b/i.test(message);
+  }
+
+  private renderVerifiedToolResults(results: Array<{ name: string; data: any }>): string {
+    if (!results.length) return '';
+    const lines: string[] = [];
+    for (const { name, data } of results) {
+      if (data?.error) {
+        lines.push(String(data.error));
+        continue;
+      }
+      switch (name) {
+        case 'crm_search_leads': {
+          const records = Array.isArray(data.leads) ? data.leads : [];
+          lines.push(`Found ${Number(data.totalCount) || 0} matching open lead(s).`);
+          for (const lead of records) lines.push(`#${lead.id} ${lead.name}${lead.company ? ` (${lead.company})` : ''} — ${lead.status}, ${lead.priority}, assigned to ${lead.assignedTo}.`);
+          if (data.totalCount > records.length) lines.push(`Showing ${records.length} records from the matching result set.`);
+          break;
+        }
+        case 'crm_get_lead_details':
+          lines.push(`Lead #${data.id}: ${data.name || 'Unnamed'}${data.company ? `, ${data.company}` : ''}; status ${data.status}; stage ${data.stage}; priority ${data.priority}; assignee ${data.assignee}.`);
+          break;
+        case 'crm_pipeline_summary':
+          lines.push(`Pipeline contains ${data.totalLeads} leads. Status counts: ${Object.entries(data.statusBreakdown || {}).map(([status, count]) => `${status}: ${count}`).join(', ') || 'none'}. Total pipeline value ${data.totalPipelineValue}; won value ${data.wonValue}.`);
+          break;
+        case 'hrm_search_employees': {
+          const employees = Array.isArray(data.employees) ? data.employees : [];
+          lines.push(`Found ${Number(data.totalCount) || 0} employee record(s) within your permitted scope.`);
+          for (const employee of employees) lines.push(`${employee.name} (${employee.code})${employee.designation ? ` — ${employee.designation}` : ''}${employee.department ? `, ${employee.department}` : ''}.`);
+          break;
+        }
+        case 'hrm_get_attendance_today':
+          lines.push(`Attendance as of ${data.asOf || formatTimeInTimezone(new Date(), BUSINESS_TIMEZONE)}: ${data.totalStaff} active staff, ${data.present} present, ${data.late} late, ${data.absent} absent, ${data.currentlyWorking} currently checked in.`);
+          break;
+        case 'hrm_get_leave_requests': {
+          const requests = Array.isArray(data.requests) ? data.requests : [];
+          lines.push(`Found ${Number(data.totalReturned) || 0} matching leave request(s).`);
+          for (const request of requests) lines.push(`#${request.id} ${request.employee} — ${request.type}, ${request.status}, ${request.from} to ${request.to} (${request.days} day(s)).`);
+          break;
+        }
+        case 'tasks_search': {
+          const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+          lines.push(`Found ${Number(data.totalCount) || 0} matching task(s).`);
+          for (const task of tasks) lines.push(`#${task.id} ${task.title} — ${task.status}, ${task.priority}, due ${task.dueDate}, assigned to ${task.assignee}.`);
+          break;
+        }
+        case 'tasks_propose_create':
+        case 'crm_propose_assign_leads':
+        case 'crm_propose_update_lead_status':
+          lines.push(String(data.confirmationPrompt || data.description || 'A confirmation is required before this change.'));
+          break;
+        case 'data_capture_stats':
+          lines.push(`Data Capture: ${data.totalCaptureJobs} job(s), ${data.totalPlacesCaptured} captured place(s).`);
+          break;
+        case 'dashboard_kpi_summary':
+          lines.push(`Business summary for your permitted scope: ${data.crm.totalLeads} lead(s), ${data.operations.openTasks} open task(s), ${data.operations.capturedPlaces} captured place(s).`);
+          if (data.hrm.activeStaff !== undefined) lines.push(`HRM: ${data.hrm.presentToday} present of ${data.hrm.activeStaff} active staff (${data.hrm.attendanceRate}).`);
+          else if (data.hrm.ownAttendanceRecordsToday !== undefined) lines.push(`Your attendance records today: ${data.hrm.ownAttendanceRecordsToday}.`);
+          break;
+        default:
+          lines.push('The requested tool returned verified data, but this result type does not have a safe answer formatter yet.');
+      }
+    }
+    return lines.join('\n');
+  }
 
   private async executeTool(
     name: string,
