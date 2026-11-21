@@ -87,6 +87,7 @@ export interface FirebaseDynamicConfig {
 export interface OpenAiDynamicConfig {
   apiKey: string;
   imageModel?: string;
+  model?: string;
   isEnabled: boolean;
   isConfigured: boolean;
   source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
@@ -830,11 +831,12 @@ export class IntegrationSettingsService {
     const cfg = conf?.config || {};
     const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.OPENAI_API_KEY || ''));
     const imageModel = String(cfg.imageModel || cfg.model || creds.imageModel || creds.model || process.env.OPENAI_IMAGE_MODEL || '').trim() || undefined;
+    const model = String(cfg.chatModel || cfg.model || creds.chatModel || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? isConfigured;
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
 
-    return { apiKey, imageModel, isEnabled, isConfigured, source };
+    return { apiKey, imageModel, model, isEnabled, isConfigured, source };
   }
 
   /**

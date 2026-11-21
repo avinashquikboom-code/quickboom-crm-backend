@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException, ForbiddenException } from '@ne
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { isUserAdmin } from '../../common/utils/role.util';
+import { STANDARD_PERMISSIONS } from '../../common/constants/rbac.constants';
 
 export interface PendingActionProposal {
   id: string;
@@ -39,6 +40,18 @@ interface SessionMemory {
   lastTaskId?: number;
   pendingAction?: PendingActionProposal | null;
 }
+
+export const NEXUS_CAPABILITY_REGISTRY = [
+  { module: 'CRM', capability: 'Search leads, details, pipeline', access: 'READ', verified: true },
+  { module: 'CRM', capability: 'Assign leads, update lead status', access: 'CONFIRMED_WRITE', verified: true },
+  { module: 'HRM', capability: 'Search employees, today attendance, leave requests', access: 'READ', verified: true },
+  { module: 'TASKS', capability: 'Search tasks, create tasks', access: 'READ_OR_CONFIRMED_WRITE', verified: true },
+  { module: 'DATA_CAPTURE', capability: 'Capture job/place counts and recent jobs', access: 'READ', verified: true },
+  { module: 'DASHBOARD', capability: 'Cross-module KPI summary', access: 'READ', verified: true },
+  { module: 'REPORTS', capability: 'Payroll, commissions, custom exports', access: 'UNAVAILABLE', verified: false },
+  { module: 'COMMUNICATIONS', capability: 'Send campaigns or notifications', access: 'UNAVAILABLE', verified: false },
+  { module: 'SYSTEM', capability: 'Manage roles, permissions, integrations', access: 'UNAVAILABLE', verified: false },
+] as const;
 
 @Injectable()
 export class NexusOrchestratorService {
@@ -87,6 +100,7 @@ export class NexusOrchestratorService {
     rawMessage: string,
     actionId?: string,
     confirm?: boolean,
+    providerPolicy?: { primaryProvider?: string; fallbackProvider?: string },
   ): Promise<NexusResponse> {
     const customerId = Number(user?.customerId);
     const userId = Number(user?.id);
@@ -98,7 +112,7 @@ export class NexusOrchestratorService {
     const message = String(rawMessage || '').trim();
 
     // 1. Check for Confirmation / Cancellation requests
-    if (confirm !== undefined || actionId || this.isConfirmationOrCancellation(message)) {
+    if (confirm !== undefined || actionId || (session.pendingAction && this.isConfirmationOrCancellation(message))) {
       const handled = await this.handleConfirmationFlow(user, customerId, userId, session, message, actionId, confirm);
       if (handled) return handled;
     }
@@ -113,24 +127,30 @@ export class NexusOrchestratorService {
       session.history = session.history.slice(-12);
     }
 
-    // 2. Try Primary Provider: OpenAI
-    const openAiResult = await this.executeWithOpenAi(user, customerId, userId, session, message).catch((err) => {
-      this.logger.warn(`[NEXUS_ORCHESTRATOR] OpenAI failed: ${err.message || err}`);
+    const preferred = providerPolicy?.primaryProvider === 'GEMINI' ? 'GEMINI' : 'OPENAI';
+    const fallback = providerPolicy?.fallbackProvider === 'DISABLED'
+      ? null
+      : providerPolicy?.fallbackProvider === 'OPENAI' || providerPolicy?.fallbackProvider === 'GEMINI'
+        ? providerPolicy.fallbackProvider
+        : preferred === 'OPENAI' ? 'GEMINI' : 'OPENAI';
+    const runProvider = (provider: string) => provider === 'GEMINI'
+      ? this.executeWithGemini(user, customerId, userId, session, message)
+      : this.executeWithOpenAi(user, customerId, userId, session, message);
+    const firstResult = await runProvider(preferred).catch((err) => {
+      this.logger.warn(`[NEXUS_ORCHESTRATOR] ${preferred} failed: ${err.message || err}`);
       return null;
     });
-    if (openAiResult) {
-      session.history.push({ role: 'assistant', content: openAiResult.answer });
-      return openAiResult;
+    if (firstResult) {
+      session.history.push({ role: 'assistant', content: firstResult.answer });
+      return firstResult;
     }
-
-    // 3. Try Secondary Provider: Google Gemini
-    const geminiResult = await this.executeWithGemini(user, customerId, userId, session, message).catch((err) => {
-      this.logger.warn(`[NEXUS_ORCHESTRATOR] Gemini fallback failed: ${err.message || err}`);
+    const fallbackResult = fallback ? await runProvider(fallback).catch((err) => {
+      this.logger.warn(`[NEXUS_ORCHESTRATOR] ${fallback} fallback failed: ${err.message || err}`);
       return null;
-    });
-    if (geminiResult) {
-      session.history.push({ role: 'assistant', content: geminiResult.answer });
-      return geminiResult;
+    }) : null;
+    if (fallbackResult) {
+      session.history.push({ role: 'assistant', content: fallbackResult.answer });
+      return fallbackResult;
     }
 
     // 4. Fallback to Deterministic Engine
@@ -145,11 +165,77 @@ export class NexusOrchestratorService {
   // =========================================================================
 
   private isConfirmationOrCancellation(message: string): boolean {
-    const lower = message.toLowerCase().trim();
-    return (
-      /^(confirm|yes|proceed|do it|sure|approved|execute|confirm action)$/i.test(lower) ||
-      /^(cancel|abort|stop|no|reject|dismiss|never mind|cancel action)$/i.test(lower)
+    return this.isConfirmation(message) || this.isCancellation(message);
+  }
+
+  private isConfirmation(message: string): boolean {
+    return /^(confirm|yes|proceed|do it|sure|approved|execute|confirm action)$/i.test(message.trim());
+  }
+
+  private isCancellation(message: string): boolean {
+    return /^(cancel|abort|stop|no|reject|dismiss|never mind|cancel action)$/i.test(message.trim());
+  }
+
+  private hasPermission(user: any, module: string, action: string): boolean {
+    if (isUserAdmin(user)) return true;
+    const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+    const normalize = (value: unknown) => String(value || '').toUpperCase().replace(/^EMPLOYEE\./, '').replace(/[._\s-]/g, '');
+    const targetModule = normalize(module);
+    const targetAction = normalize(action);
+    const hasDirectPermission = permissions.some((permission: any) => {
+      if (typeof permission === 'string') {
+        const [grantedModuleRaw, grantedActionRaw] = permission.split(':');
+        permission = { module: grantedModuleRaw, action: grantedActionRaw };
+      }
+      const grantedModule = normalize(permission?.module || permission?.code?.split(':')?.[0]);
+      const grantedAction = normalize(permission?.action || permission?.code?.split(':')?.[1]);
+      const moduleMatches = grantedModule === targetModule || grantedModule.replace(/S$/, '') === targetModule.replace(/S$/, '');
+      const actionMatches = grantedAction === targetAction || grantedAction === 'ALL' || grantedAction === 'MANAGE'
+        || (action === 'VIEW' && grantedAction === 'READ')
+        || (action === 'CREATE' && grantedAction === 'CREATE')
+        || (action === 'EDIT' && (grantedAction === 'EDIT' || grantedAction === 'UPDATE'))
+        || (action === 'CHANGE_STAGE' && (grantedAction === 'CHANGE_STAGE' || grantedAction === 'EDIT'));
+      return moduleMatches && actionMatches;
+    });
+    if (hasDirectPermission) return true;
+    const employeeOverrides = user?.employee?.employeeModuleOverrides || [];
+    const hasEmployeeOverride = employeeOverrides.some((override: any) => {
+      const grantedModule = normalize(override?.module || override?.moduleKey || override?.permission?.module);
+      const moduleMatches = grantedModule === targetModule || grantedModule.replace(/S$/, '') === targetModule.replace(/S$/, '');
+      const grantedAction = normalize(override?.action || override?.permission?.action);
+      const actionMatches = grantedAction === targetAction || grantedAction === 'ALL' || grantedAction === 'MANAGE'
+        || (action === 'VIEW' && grantedAction === 'READ')
+        || (action === 'CREATE' && grantedAction === 'CREATE')
+        || (action === 'EDIT' && (grantedAction === 'EDIT' || grantedAction === 'UPDATE'))
+        || (action === 'CHANGE_STAGE' && (grantedAction === 'CHANGE_STAGE' || grantedAction === 'EDIT'));
+      return moduleMatches && actionMatches;
+    });
+    if (hasEmployeeOverride) return true;
+    const hasRolePermission = (user?.userRoles || []).some((userRole: any) =>
+      (userRole?.role?.rolePermissions || []).some((rolePermission: any) => {
+        const permission = rolePermission?.permission || rolePermission;
+        const grantedModule = normalize(permission?.module);
+        const grantedAction = normalize(permission?.action);
+        const moduleMatches = grantedModule === targetModule || grantedModule.replace(/S$/, '') === targetModule.replace(/S$/, '');
+        const actionMatches = grantedAction === targetAction || grantedAction === 'ALL' || grantedAction === 'MANAGE'
+          || (action === 'VIEW' && grantedAction === 'READ')
+          || (action === 'CREATE' && grantedAction === 'CREATE')
+          || (action === 'EDIT' && (grantedAction === 'EDIT' || grantedAction === 'UPDATE'))
+          || (action === 'CHANGE_STAGE' && (grantedAction === 'CHANGE_STAGE' || grantedAction === 'EDIT'));
+        return moduleMatches && actionMatches;
+      }),
     );
+    return hasRolePermission;
+  }
+
+  private requirePermission(user: any, module: string, action: string): void {
+    if (!this.hasPermission(user, module, action)) {
+      throw new ForbiddenException(`Access denied: missing ${module}:${action} permission.`);
+    }
+  }
+
+  getCapabilityRegistry() {
+    return { permissions: STANDARD_PERMISSIONS, nexus: NEXUS_CAPABILITY_REGISTRY };
   }
 
   private async handleConfirmationFlow(
@@ -170,6 +256,10 @@ export class NexusOrchestratorService {
           suggestions: ['Show today’s pending leads', 'Today’s attendance summary', 'View open tasks'],
         };
       }
+      return null;
+    }
+
+    if (confirm !== true && !this.isConfirmation(message) && !this.isCancellation(message) && !actionId) {
       return null;
     }
 
@@ -226,32 +316,44 @@ export class NexusOrchestratorService {
 
     try {
       if (action.type === 'ASSIGN_LEADS') {
+        this.requirePermission(user, 'LEADS', 'EDIT');
         const { leadIds, employeeId, userId: assigneeUserId, employeeName } = action.payload;
-        if (!Array.isArray(leadIds) || leadIds.length === 0) {
+        if (!Array.isArray(leadIds) || leadIds.length === 0 || leadIds.length > 20 || new Set(leadIds).size !== leadIds.length) {
           throw new BadRequestException('No lead IDs provided for assignment.');
         }
 
+        const targetEmployee = await this.prisma.employee.findFirst({
+          where: { id: employeeId, customerId, status: 'ACTIVE' },
+          select: { id: true, userId: true, firstName: true, lastName: true },
+        });
+        if (!targetEmployee || targetEmployee.userId !== assigneeUserId) throw new BadRequestException('The assignee is no longer active or eligible. Please create a new proposal.');
+
         // Verify all leads belong to this customer
         const verifiedLeads = await this.prisma.lead.findMany({
-          where: { id: { in: leadIds }, customerId, deletedAt: null },
-          select: { id: true, title: true, firstName: true, lastName: true, companyName: true },
+          where: { id: { in: leadIds }, customerId, deletedAt: null, status: { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] } },
+          select: { id: true, title: true, firstName: true, lastName: true, companyName: true, assignedToId: true },
         });
 
-        if (verifiedLeads.length === 0) {
-          throw new BadRequestException('None of the target leads were found in your business.');
+        if (verifiedLeads.length !== leadIds.length) {
+          throw new BadRequestException('One or more proposed leads no longer exist. No leads were assigned; please run the search again.');
+        }
+
+        if (!isUserAdmin(user) && verifiedLeads.some((lead) => lead.assignedToId !== userId)) {
+          throw new BadRequestException('One or more proposed leads are no longer assigned to you. No leads were assigned; please search again.');
         }
 
         const validIds = verifiedLeads.map((l) => l.id);
 
         // Execute DB updates
-        await this.prisma.lead.updateMany({
-          where: { id: { in: validIds }, customerId },
+        const assignment = await this.prisma.lead.updateMany({
+          where: { id: { in: validIds }, customerId, deletedAt: null, status: { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] }, ...(!isUserAdmin(user) ? { assignedToId: userId } : {}) },
           data: {
             assignedToId: assigneeUserId || null,
             employeeId: employeeId || null,
             updatedAt: new Date(),
           },
         });
+        if (assignment.count !== validIds.length) throw new BadRequestException('The leads changed before assignment. No assignment was completed; please search again.');
 
         // Add timeline entries
         for (const lead of verifiedLeads) {
@@ -307,7 +409,16 @@ export class NexusOrchestratorService {
       }
 
       if (action.type === 'CREATE_TASK') {
+        this.requirePermission(user, 'TASKS', 'CREATE');
         const { title, description, priority, dueDate, assigneeUserId, employeeId, assigneeName } = action.payload;
+
+        if (!String(title || '').trim() || String(title).length > 180) throw new BadRequestException('Task title is invalid.');
+        if (!['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(String(priority).toUpperCase())) throw new BadRequestException('Task priority is invalid.');
+        if (dueDate && !Number.isFinite(new Date(dueDate).getTime())) throw new BadRequestException('Task due date is invalid.');
+        if (employeeId) {
+          const employee = await this.prisma.employee.findFirst({ where: { id: employeeId, customerId, status: 'ACTIVE' }, select: { id: true, userId: true } });
+          if (!employee || employee.userId !== assigneeUserId) throw new BadRequestException('The assignee is no longer active or eligible. Please create a new proposal.');
+        }
 
         const task = await this.prisma.task.create({
           data: {
@@ -353,11 +464,15 @@ export class NexusOrchestratorService {
       }
 
       if (action.type === 'UPDATE_LEAD_STATUS') {
+        this.requirePermission(user, 'LEADS', 'CHANGE_STAGE');
         const { leadId, status, oldStatus } = action.payload;
-        await this.prisma.lead.update({
-          where: { id: leadId },
+        const validStatuses = ['NEW', 'CONTACTED', 'CALL_BACK', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST', 'CANCELLED'];
+        if (!validStatuses.includes(status)) throw new BadRequestException('The requested lead status is not supported.');
+        const updated = await this.prisma.lead.updateMany({
+          where: { id: leadId, customerId, deletedAt: null, status: oldStatus },
           data: { status, updatedAt: new Date() },
         });
+        if (updated.count !== 1) throw new BadRequestException('The lead changed since the proposal. No update was made; please reload the lead.');
 
         await this.prisma.leadStatusHistory.create({
           data: {
@@ -407,15 +522,17 @@ export class NexusOrchestratorService {
       }
 
       if (action.type === 'UPDATE_TASK_STATUS') {
+        this.requirePermission(user, 'TASKS', 'UPDATE');
         const { taskId, status, oldStatus } = action.payload;
-        await this.prisma.task.update({
-          where: { id: taskId },
+        const updated = await this.prisma.task.updateMany({
+          where: { id: taskId, customerId, deletedAt: null, status: oldStatus },
           data: {
             status,
             ...(status === 'COMPLETED' ? { completedAt: new Date() } : {}),
             updatedAt: new Date(),
           },
         });
+        if (updated.count !== 1) throw new BadRequestException('The task changed since the proposal. No update was made; please reload the task.');
 
         await this.prisma.taskHistory.create({
           data: {
@@ -484,6 +601,13 @@ export class NexusOrchestratorService {
             status: { type: 'string', description: 'Lead status filter e.g. NEW, CONTACTED, PENDING, WON, LOST, etc. If omitted or PENDING, returns open pending leads.' },
             priority: { type: 'string', description: 'Priority filter: LOW, MEDIUM, HIGH, URGENT' },
             query: { type: 'string', description: 'Keyword search across lead name, company, email, or phone' },
+            source: { type: 'string', description: 'Lead source exact match, for example GOOGLE_PLACES' },
+            missingPhone: { type: 'boolean', description: 'Only return leads without a phone number' },
+            createdAfter: { type: 'string', description: 'Only records created at or after this ISO date' },
+            createdBefore: { type: 'string', description: 'Only records created before this ISO date' },
+            sortBy: { type: 'string', enum: ['createdAt', 'value', 'priority'], description: 'Sort field, defaults to newest first' },
+            sortOrder: { type: 'string', enum: ['asc', 'desc'], description: 'Sort direction, defaults to descending' },
+            offset: { type: 'integer', description: 'Number of records to skip (0 to 500)' },
             limit: { type: 'integer', description: 'Number of records to return (default 5, max 20)' },
             onlyUnassigned: { type: 'boolean', description: 'Set to true to only find unassigned leads' },
           },
@@ -573,6 +697,13 @@ export class NexusOrchestratorService {
             status: { type: 'string', description: 'Task status: PENDING, IN_PROGRESS, COMPLETED, CANCELLED' },
             priority: { type: 'string', description: 'Priority: LOW, MEDIUM, HIGH, URGENT' },
             query: { type: 'string', description: 'Title or description search query' },
+            assignedTo: { type: 'string', description: 'Assignee name or employee ID' },
+            overdue: { type: 'boolean', description: 'Only tasks with due date before today and not completed' },
+            dueAfter: { type: 'string', description: 'Only tasks due on or after this ISO date' },
+            dueBefore: { type: 'string', description: 'Only tasks due before this ISO date' },
+            sortBy: { type: 'string', enum: ['createdAt', 'dueDate', 'priority'], description: 'Sort field' },
+            sortOrder: { type: 'string', enum: ['asc', 'desc'], description: 'Sort direction' },
+            offset: { type: 'integer', description: 'Number of records to skip (0 to 500)' },
             limit: { type: 'integer', description: 'Maximum tasks to return (default 5)' },
           },
         },
@@ -624,12 +755,20 @@ export class NexusOrchestratorService {
     session: SessionMemory,
   ): Promise<any> {
     const isAdmin = isUserAdmin(user);
+    const readPermissions: Record<string, Array<[string, string]>> = {
+      crm_search_leads: [['LEADS', 'VIEW']], crm_get_lead_details: [['LEADS', 'VIEW']], crm_pipeline_summary: [['LEADS', 'VIEW']],
+      crm_propose_assign_leads: [['LEADS', 'VIEW'], ['LEADS', 'EDIT']], crm_propose_update_lead_status: [['LEADS', 'VIEW'], ['LEADS', 'CHANGE_STAGE']],
+      hrm_search_employees: [['EMPLOYEES', 'VIEW']], hrm_get_attendance_today: [['ATTENDANCE', 'VIEW']],
+      hrm_get_leave_requests: [['LEAVE', 'VIEW']], tasks_search: [['TASKS', 'VIEW']], tasks_propose_create: [['TASKS', 'CREATE']],
+      data_capture_stats: [['DATA_CAPTURE', 'VIEW']], dashboard_kpi_summary: [['DASHBOARD', 'VIEW']],
+    };
+    for (const [module, action] of readPermissions[name] || []) this.requirePermission(user, module, action);
     const accessScope = isAdmin ? {} : { assignedToId: userId };
 
     switch (name) {
       case 'crm_search_leads': {
-        const { status, priority, query, limit = 5, onlyUnassigned } = args || {};
-        const openStatuses = ['NEW', 'CONTACTED', 'CALL_BACK', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL'];
+        this.requirePermission(user, 'LEADS', 'VIEW');
+        const { status, priority, query, limit = 5, offset = 0, onlyUnassigned, source, missingPhone, createdAfter, createdBefore, sortBy, sortOrder } = args || {};
         
         let statusFilter: any = { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] };
         if (status && status.toUpperCase() !== 'PENDING' && status.toUpperCase() !== 'ALL') {
@@ -649,11 +788,20 @@ export class NexusOrchestratorService {
         }
 
         if (priority) {
-          where.priority = priority.toUpperCase();
+          if (['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(String(priority).toUpperCase())) where.priority = String(priority).toUpperCase();
+        }
+
+        if (source) where.source = { equals: String(source).slice(0, 80), mode: 'insensitive' };
+        if (missingPhone) where.AND = [...(where.AND || []), { OR: [{ phone: null }, { phone: '' }] }];
+        if (createdAfter || createdBefore) {
+          const dateFilter: any = {};
+          if (createdAfter && Number.isFinite(new Date(createdAfter).getTime())) dateFilter.gte = new Date(createdAfter);
+          if (createdBefore && Number.isFinite(new Date(createdBefore).getTime())) dateFilter.lt = new Date(createdBefore);
+          if (Object.keys(dateFilter).length) where.createdAt = dateFilter;
         }
 
         if (query) {
-          where.OR = [
+          const search = [
             { firstName: { contains: query, mode: 'insensitive' } },
             { lastName: { contains: query, mode: 'insensitive' } },
             { companyName: { contains: query, mode: 'insensitive' } },
@@ -661,14 +809,17 @@ export class NexusOrchestratorService {
             { phone: { contains: query, mode: 'insensitive' } },
             { email: { contains: query, mode: 'insensitive' } },
           ];
+          if (where.AND) where.AND.push({ OR: search });
+          else where.OR = search;
         }
 
         const [totalCount, leads] = await Promise.all([
           this.prisma.lead.count({ where }),
           this.prisma.lead.findMany({
             where,
-            take: Math.min(limit, 20),
-            orderBy: { createdAt: 'desc' },
+            take: Math.max(1, Math.min(Number(limit) || 5, 20)),
+            skip: Math.max(0, Math.min(Number(offset) || 0, 500)),
+            orderBy: { [(['createdAt', 'value', 'priority'].includes(sortBy) ? sortBy : 'createdAt')]: sortOrder === 'asc' ? 'asc' : 'desc' },
             select: {
               id: true,
               title: true,
@@ -708,6 +859,7 @@ export class NexusOrchestratorService {
       }
 
       case 'crm_get_lead_details': {
+        this.requirePermission(user, 'LEADS', 'VIEW');
         const leadId = Number(args?.leadId);
         if (!leadId) return { error: 'Invalid lead ID' };
 
@@ -742,6 +894,7 @@ export class NexusOrchestratorService {
       }
 
       case 'crm_pipeline_summary': {
+        this.requirePermission(user, 'LEADS', 'VIEW');
         const leads = await this.prisma.lead.findMany({
           where: { customerId, deletedAt: null, ...accessScope },
           select: { status: true, value: true },
@@ -769,6 +922,8 @@ export class NexusOrchestratorService {
       }
 
       case 'crm_propose_assign_leads': {
+        this.requirePermission(user, 'LEADS', 'EDIT');
+        this.requirePermission(user, 'EMPLOYEES', 'VIEW');
         const { employeeNameOrId, count = 5, leadIds } = args || {};
         if (!employeeNameOrId) return { error: 'Staff name or ID is required.' };
 
@@ -799,10 +954,30 @@ export class NexusOrchestratorService {
           });
         }
 
+        if (!isAdmin && !this.hasPermission(user, 'LEADS', 'EDIT')) throw new ForbiddenException('You cannot assign leads with your current permissions.');
+
         if (!employee) {
           return { error: `Active staff member "${empQuery}" not found. Please verify the employee name.` };
         }
 
+        const matchingEmployees = Number.isInteger(empNum) && empNum > 0
+          ? [employee]
+          : await this.prisma.employee.findMany({
+          where: {
+            customerId,
+            status: 'ACTIVE',
+            ...(Number.isInteger(empNum) && empNum > 0 ? { id: empNum } : { OR: [
+              { firstName: { contains: empQuery, mode: 'insensitive' } },
+              { lastName: { contains: empQuery, mode: 'insensitive' } },
+              { employeeCode: { contains: empQuery, mode: 'insensitive' } },
+            ] }),
+          },
+          take: 2,
+          select: { id: true, firstName: true, lastName: true },
+        });
+        if (matchingEmployees.length > 1) {
+          return { error: `More than one active employee matches "${empQuery}". Please provide an employee code or full name.` };
+        }
         const employeeFullName = `${employee.firstName} ${employee.lastName}`.trim();
         session.lastEmployeeId = employee.id;
         session.lastEmployeeName = employeeFullName;
@@ -810,9 +985,15 @@ export class NexusOrchestratorService {
         // 2. Identify target leads
         let targetLeadIds: number[] = [];
         if (Array.isArray(leadIds) && leadIds.length > 0) {
-          targetLeadIds = leadIds.map(Number).filter((n) => !isNaN(n));
+          targetLeadIds = [...new Set(leadIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
         } else if (session.lastLeadIds && session.lastLeadIds.length > 0) {
-          targetLeadIds = session.lastLeadIds.slice(0, Math.min(count, 20));
+          const requested = Math.max(1, Math.min(Number(count) || 5, 20));
+          if (session.lastLeadIds.length < requested) return { error: `Only ${session.lastLeadIds.length} records are in the previous result. Please run a fresh search or specify a smaller number.` };
+          if (!isAdmin && session.lastLeadIds.length > 0) {
+            const visible = await this.prisma.lead.count({ where: { customerId, deletedAt: null, id: { in: session.lastLeadIds }, assignedToId: userId } });
+            if (visible !== session.lastLeadIds.length) return { error: 'The previous lead result changed or is no longer accessible. Please search again.' };
+          }
+          targetLeadIds = session.lastLeadIds.slice(0, requested);
         } else {
           // Fetch pending leads
           const openLeads = await this.prisma.lead.findMany({
@@ -820,14 +1001,16 @@ export class NexusOrchestratorService {
               customerId,
               deletedAt: null,
               status: { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] },
-              assignedToId: null,
+              ...(isAdmin ? { assignedToId: null } : { assignedToId: userId }),
             },
-            take: Math.min(count, 20),
+            take: Math.max(1, Math.min(Number(count) || 5, 20)),
             select: { id: true },
             orderBy: { createdAt: 'desc' },
           });
           targetLeadIds = openLeads.map((l) => l.id);
         }
+
+        if (targetLeadIds.length > 20) return { error: 'A maximum of 20 leads can be included in one confirmed assignment.' };
 
         if (targetLeadIds.length === 0) {
           return { error: 'No eligible pending or unassigned leads found to assign.' };
@@ -868,12 +1051,13 @@ export class NexusOrchestratorService {
       }
 
       case 'crm_propose_update_lead_status': {
+        this.requirePermission(user, 'LEADS', 'CHANGE_STAGE');
         const { leadId, status } = args || {};
         const id = Number(leadId);
         if (!id || !status) return { error: 'Lead ID and target status are required.' };
 
         const lead = await this.prisma.lead.findFirst({
-          where: { id, customerId, deletedAt: null },
+          where: { id, customerId, deletedAt: null, ...accessScope },
           select: { id: true, title: true, firstName: true, lastName: true, companyName: true, status: true },
         });
 
@@ -881,6 +1065,8 @@ export class NexusOrchestratorService {
 
         const leadName = [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() || lead.companyName || lead.title || `#${id}`;
         const targetStatus = status.toUpperCase().trim();
+        const allowedStatuses = ['NEW', 'CONTACTED', 'CALL_BACK', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST', 'CANCELLED'];
+        if (!allowedStatuses.includes(targetStatus)) return { error: 'That lead status is not supported.' };
 
         const proposalId = `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const proposal: PendingActionProposal = {
@@ -910,8 +1096,14 @@ export class NexusOrchestratorService {
       }
 
       case 'hrm_search_employees': {
+        this.requirePermission(user, 'EMPLOYEES', 'VIEW');
         const { query, department, limit = 5 } = args || {};
         const where: any = { customerId, status: 'ACTIVE' };
+        if (!isAdmin) {
+          const ownEmployee = await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true } });
+          if (!ownEmployee) return { totalCount: 0, returnedCount: 0, employees: [] };
+          where.id = ownEmployee.id;
+        }
 
         if (query) {
           where.OR = [
@@ -960,6 +1152,19 @@ export class NexusOrchestratorService {
       }
 
       case 'hrm_get_attendance_today': {
+        this.requirePermission(user, 'ATTENDANCE', 'VIEW');
+        if (!isAdmin) {
+          const employee = await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true } });
+          if (!employee) return { totalStaff: 0, present: 0, late: 0, absent: 0, currentlyWorking: 0, recentPunches: [] };
+          const now = new Date();
+          const start = new Date(now); start.setHours(0, 0, 0, 0);
+          const end = new Date(now); end.setHours(23, 59, 59, 999);
+          const attendance = await this.prisma.attendance.findMany({
+            where: { customerId, employeeId: employee.id, date: { gte: start, lte: end } },
+            include: { employee: { select: { firstName: true, lastName: true, employeeCode: true } } },
+          });
+          return { totalStaff: 1, present: attendance.length, late: attendance.filter((item) => item.isLate).length, absent: attendance.length ? 0 : 1, currentlyWorking: attendance.filter((item) => item.punchIn && !item.punchOut).length, recentPunches: attendance.map((item) => ({ employee: `${item.employee.firstName} ${item.employee.lastName}`, code: item.employee.employeeCode })) };
+        }
         const now = new Date();
         const startOfDay = new Date(now);
         startOfDay.setHours(0, 0, 0, 0);
@@ -1001,8 +1206,19 @@ export class NexusOrchestratorService {
       }
 
       case 'hrm_get_leave_requests': {
+        this.requirePermission(user, 'LEAVE', 'VIEW');
         const { status = 'PENDING', limit = 5 } = args || {};
         const where: any = { customerId };
+        if (!isAdmin) {
+          const employee = await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true } });
+          if (!employee) return { totalReturned: 0, requests: [] };
+          where.employeeId = employee.id;
+        }
+        if (!isAdmin) {
+          const employee = await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true } });
+          if (!employee) return { totalReturned: 0, requests: [] };
+          where.employeeId = employee.id;
+        }
         if (status && status.toUpperCase() !== 'ALL') {
           where.status = status.toUpperCase();
         }
@@ -1033,98 +1249,143 @@ export class NexusOrchestratorService {
       }
 
       case 'tasks_search': {
-        const { status, priority, query, limit = 5 } = args || {};
+        this.requirePermission(user, 'TASKS', 'VIEW');
+        const { status, priority, query, limit = 5, offset = 0, assignedTo, overdue, dueAfter, dueBefore, sortBy, sortOrder } = args || {};
         const where: any = { customerId, deletedAt: null };
 
         if (!isAdmin) {
+          const ownEmployee = await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true } });
           where.OR = [
             { assignedToId: userId },
-            ...(session.lastEmployeeId ? [{ employeeId: session.lastEmployeeId }] : []),
+            ...(ownEmployee ? [{ employeeId: ownEmployee.id }] : []),
           ];
         }
 
         if (status && status.toUpperCase() !== 'ALL') {
-          where.status = status.toUpperCase();
+          const validStatuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'SUBMITTED', 'UNDER_REVIEW', 'REJECTED', 'BLOCKED'];
+          if (validStatuses.includes(String(status).toUpperCase())) where.status = String(status).toUpperCase();
         }
 
         if (priority) {
-          where.priority = priority.toUpperCase();
+          if (['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(String(priority).toUpperCase())) where.priority = String(priority).toUpperCase();
+        }
+
+        if (assignedTo) {
+          const assignee = await this.prisma.employee.findFirst({
+            where: {
+              customerId,
+              status: 'ACTIVE',
+              ...(Number.isInteger(Number(assignedTo)) ? { id: Number(assignedTo) } : { OR: [
+                { firstName: { contains: String(assignedTo).slice(0, 80), mode: 'insensitive' } },
+                { lastName: { contains: String(assignedTo).slice(0, 80), mode: 'insensitive' } },
+              ] }),
+            },
+            select: { id: true },
+          });
+          if (!assignee) return { totalCount: 0, tasks: [], message: 'No active matching assignee was found.' };
+          where.employeeId = assignee.id;
+        }
+
+        if (overdue) {
+          where.AND = [...(where.AND || []), { OR: [{ dueDate: { lt: new Date() } }, { dueAt: { lt: new Date() } }] }];
+          where.status = { notIn: ['COMPLETED', 'CANCELLED'] };
+        } else if (dueAfter || dueBefore) {
+          const dateFilter: any = {};
+          if (dueAfter && Number.isFinite(new Date(dueAfter).getTime())) dateFilter.gte = new Date(dueAfter);
+          if (dueBefore && Number.isFinite(new Date(dueBefore).getTime())) dateFilter.lt = new Date(dueBefore);
+          if (Object.keys(dateFilter).length) where.AND = [...(where.AND || []), { OR: [{ dueDate: dateFilter }, { dueAt: dateFilter }] }];
         }
 
         if (query) {
-          where.OR = [
+          const search = [
             { title: { contains: query, mode: 'insensitive' } },
             { description: { contains: query, mode: 'insensitive' } },
           ];
+          if (where.OR) where.AND = [{ OR: where.OR }, { OR: search }];
+          else where.OR = search;
         }
 
-        const tasks = await this.prisma.task.findMany({
+        const [totalCount, tasks] = await Promise.all([this.prisma.task.count({ where }), this.prisma.task.findMany({
           where,
-          take: Math.min(limit, 20),
-          orderBy: { createdAt: 'desc' },
+          take: Math.max(1, Math.min(Number(limit) || 5, 20)),
+          skip: Math.max(0, Math.min(Number(offset) || 0, 500)),
+          orderBy: { [(['createdAt', 'dueDate', 'priority'].includes(sortBy) ? sortBy : 'createdAt')]: sortOrder === 'asc' ? 'asc' : 'desc' },
           select: {
             id: true,
             title: true,
             status: true,
             priority: true,
             dueDate: true,
+            dueAt: true,
             assignedTo: { select: { firstName: true, lastName: true } },
             employee: { select: { firstName: true, lastName: true, employeeCode: true } },
           },
-        });
+        })]);
 
         return {
-          totalCount: tasks.length,
+          totalCount,
+          returnedCount: tasks.length,
           tasks: tasks.map((t) => ({
             id: t.id,
             title: t.title,
             status: t.status,
             priority: t.priority,
-            dueDate: t.dueDate ? new Date(t.dueDate).toLocaleDateString('en-IN') : 'None',
+            dueDate: t.dueDate || t.dueAt ? new Date(t.dueDate || t.dueAt).toLocaleDateString('en-IN') : 'None',
             assignee: t.employee ? `${t.employee.firstName} ${t.employee.lastName}` : (t.assignedTo ? `${t.assignedTo.firstName} ${t.assignedTo.lastName}` : 'Unassigned'),
           })),
         };
       }
 
       case 'tasks_propose_create': {
+        this.requirePermission(user, 'TASKS', 'CREATE');
+        if (args?.assigneeNameOrId) this.requirePermission(user, 'EMPLOYEES', 'VIEW');
         const { title, description, priority = 'MEDIUM', dueDate, assigneeNameOrId } = args || {};
         if (!title) return { error: 'Task title is required.' };
 
         let employee = null;
         if (assigneeNameOrId) {
           const empQuery = String(assigneeNameOrId).trim();
-          employee = await this.prisma.employee.findFirst({
+          const matches = await this.prisma.employee.findMany({
             where: {
               customerId,
               status: 'ACTIVE',
-              OR: [
+              ...(Number.isInteger(Number(empQuery)) ? { id: Number(empQuery) } : { OR: [
                 { firstName: { contains: empQuery, mode: 'insensitive' } },
                 { lastName: { contains: empQuery, mode: 'insensitive' } },
-              ],
+              ] }),
             },
+            take: 2,
             select: { id: true, userId: true, firstName: true, lastName: true, employeeCode: true },
           });
+          if (matches.length > 1) return { error: `More than one active employee matches "${empQuery}". Please provide a full name or employee ID.` };
+          employee = matches[0] || null;
+          if (!employee) return { error: `Active employee "${empQuery}" was not found.` };
         }
 
         const assigneeFullName = employee ? `${employee.firstName} ${employee.lastName}` : null;
         const proposalId = `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const normalizedTitle = String(title).trim();
+        const normalizedPriority = String(priority).toUpperCase();
+        if (!normalizedTitle || normalizedTitle.length > 180) return { error: 'Task title must be between 1 and 180 characters.' };
+        if (!['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(normalizedPriority)) return { error: 'Task priority is invalid.' };
+        if (dueDate && !Number.isFinite(new Date(dueDate).getTime())) return { error: 'Task due date is invalid.' };
         const proposal: PendingActionProposal = {
           id: proposalId,
           type: 'CREATE_TASK',
-          title: `Create Task: "${title}"`,
-          description: `Create new task with priority ${priority}${assigneeFullName ? ` assigned to ${assigneeFullName}` : ''}`,
+          title: `Create Task: "${normalizedTitle}"`,
+          description: `Create new task with priority ${normalizedPriority}${assigneeFullName ? ` assigned to ${assigneeFullName}` : ''}`,
           payload: {
-            title,
+            title: normalizedTitle,
             description,
-            priority: priority.toUpperCase(),
+            priority: normalizedPriority,
             dueDate,
             employeeId: employee?.id || null,
             assigneeUserId: employee?.userId || null,
             assigneeName: assigneeFullName,
           },
           summary: {
-            'Title': title,
-            'Priority': priority.toUpperCase(),
+            'Title': normalizedTitle,
+            'Priority': normalizedPriority,
             'Due Date': dueDate || 'Not set',
             'Assignee': assigneeFullName || 'Unassigned',
           },
@@ -1139,16 +1400,19 @@ export class NexusOrchestratorService {
           proposalId: proposal.id,
           title: proposal.title,
           description: proposal.description,
-          confirmationPrompt: `Ready to create task "${title}"${assigneeFullName ? ` for ${assigneeFullName}` : ''}. Would you like me to proceed?`,
+          confirmationPrompt: `Ready to create task "${normalizedTitle}"${assigneeFullName ? ` for ${assigneeFullName}` : ''}. Would you like me to proceed?`,
         };
       }
 
       case 'data_capture_stats': {
+        this.requirePermission(user, 'DATA_CAPTURE', 'VIEW');
+        const jobScope: any = { customerId, ...(isAdmin ? {} : { userId }) };
+        const placeScope: any = { customerId, ...(isAdmin ? {} : { job: { userId } }) };
         const [totalJobs, totalPlaces, recentJobs] = await Promise.all([
-          this.prisma.dataCaptureJob.count({ where: { customerId } }),
-          this.prisma.dataCapturePlace.count({ where: { customerId } }),
+          this.prisma.dataCaptureJob.count({ where: jobScope }),
+          this.prisma.dataCapturePlace.count({ where: placeScope }),
           this.prisma.dataCaptureJob.findMany({
-            where: { customerId },
+            where: jobScope,
             take: 3,
             orderBy: { createdAt: 'desc' },
             select: { jobId: true, keyword: true, location: true, capturedResults: true, createdAt: true },
@@ -1169,22 +1433,29 @@ export class NexusOrchestratorService {
       }
 
       case 'dashboard_kpi_summary': {
+        this.requirePermission(user, 'DASHBOARD', 'VIEW');
         const now = new Date();
         const startOfDay = new Date(now);
         startOfDay.setHours(0, 0, 0, 0);
+        const leadScope: any = { customerId, deletedAt: null, ...accessScope };
+        const taskScope: any = { customerId, deletedAt: null, status: { in: ['PENDING', 'IN_PROGRESS'] } };
+        if (!isAdmin) {
+          const ownEmployee = await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true } });
+          taskScope.OR = [{ assignedToId: userId }, ...(ownEmployee ? [{ employeeId: ownEmployee.id }] : [])];
+        }
 
         const [totalLeads, todayLeads, totalStaff, presentStaff, openTasks, totalPlaces] = await Promise.all([
-          this.prisma.lead.count({ where: { customerId, deletedAt: null } }),
-          this.prisma.lead.count({ where: { customerId, deletedAt: null, createdAt: { gte: startOfDay } } }),
-          this.prisma.employee.count({ where: { customerId, status: 'ACTIVE' } }),
-          this.prisma.attendance.count({ where: { customerId, date: { gte: startOfDay } } }),
-          this.prisma.task.count({ where: { customerId, deletedAt: null, status: { in: ['PENDING', 'IN_PROGRESS'] } } }),
-          this.prisma.dataCapturePlace.count({ where: { customerId } }),
+          this.prisma.lead.count({ where: leadScope }),
+          this.prisma.lead.count({ where: { ...leadScope, createdAt: { gte: startOfDay } } }),
+          this.prisma.employee.count({ where: isAdmin ? { customerId, status: 'ACTIVE' } : { customerId, userId, status: 'ACTIVE' } }),
+          this.prisma.attendance.count({ where: { customerId, date: { gte: startOfDay }, ...(!isAdmin ? { employee: { userId } } : {}) } }),
+          this.prisma.task.count({ where: taskScope }),
+          this.prisma.dataCapturePlace.count({ where: { customerId, ...(!isAdmin ? { job: { userId } } : {}) } }),
         ]);
 
         return {
           crm: { totalLeads, newLeadsToday: todayLeads },
-          hrm: { activeStaff: totalStaff, presentToday: presentStaff, attendanceRate: totalStaff > 0 ? `${Math.round((presentStaff / totalStaff) * 100)}%` : '0%' },
+          hrm: isAdmin ? { activeStaff: totalStaff, presentToday: presentStaff, attendanceRate: totalStaff > 0 ? `${Math.round((presentStaff / totalStaff) * 100)}%` : '0%' } : { ownAttendanceRecordsToday: presentStaff },
           operations: { openTasks, capturedPlaces: totalPlaces },
         };
       }
@@ -1220,11 +1491,13 @@ export class NexusOrchestratorService {
     const systemPrompt = [
       'You are QB Nexus, the centralized AI Operations Manager and Executive Copilot for QB Suite.',
       'You have live access to tools that query and propose actions across CRM, HRM, Tasks, Data Capture, and Reports.',
+      'Only use the declared tools. If the request needs a capability not declared, clearly say it is not available in Nexus yet.',
       'Rules:',
       '1. NEVER invent data or claim you made database changes yourself. Use tools to query facts.',
       '2. When the user asks to assign leads, change status, or create tasks, call the appropriate propose tool.',
-      '3. Be professional, concise, and helpful.',
-      '4. Format figures in INR (₹) and dates cleanly.',
+      '3. If a matching search finds no records, say so explicitly.',
+      '4. Be professional, concise, and helpful.',
+      '5. Format figures in INR (₹) and dates cleanly.',
     ].join('\n');
 
     const messages: any[] = [
@@ -1239,7 +1512,7 @@ export class NexusOrchestratorService {
         authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: config.model || 'gpt-4o-mini',
         messages,
         tools,
         tool_choice: 'auto',
@@ -1286,7 +1559,7 @@ export class NexusOrchestratorService {
           authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: config.model || 'gpt-4o-mini',
           messages,
           temperature: 0.2,
         }),
@@ -1299,7 +1572,7 @@ export class NexusOrchestratorService {
         if (finalAnswer) {
           return {
             answer: finalAnswer,
-            provider: 'OpenAI (gpt-4o-mini)',
+            provider: `OpenAI (${config.model || 'gpt-4o-mini'})`,
             pendingAction: session.pendingAction || null,
             suggestions: this.generateFollowUpSuggestions(session),
           };
@@ -1311,7 +1584,7 @@ export class NexusOrchestratorService {
     if (directAnswer) {
       return {
         answer: directAnswer,
-        provider: 'OpenAI (gpt-4o-mini)',
+        provider: `OpenAI (${config.model || 'gpt-4o-mini'})`,
         pendingAction: session.pendingAction || null,
         suggestions: this.generateFollowUpSuggestions(session),
       };
@@ -1343,7 +1616,7 @@ export class NexusOrchestratorService {
     const systemPrompt = [
       'You are QB Nexus, the centralized AI Operations Manager for QB Suite.',
       'Use the declared tools to fetch operational CRM/HRM data or to propose assignments/actions.',
-      'Never invent numbers. If a tool proposes an action, explain the action to the user and prompt them to confirm.',
+      'Never invent numbers. If a tool proposes an action, explain the action to the user and prompt them to confirm. If a requested capability is not declared, say it is unavailable.',
     ].join('\n');
 
     const contents: any[] = session.history.slice(-6).map((h) => ({
@@ -1351,10 +1624,11 @@ export class NexusOrchestratorService {
       parts: [{ text: h.content }],
     }));
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(config.apiKey)}`;
+    const model = String(config.model || 'gemini-2.5-flash').match(/^gemini-[a-z0-9.-]+$/i)?.[0] || 'gemini-2.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
@@ -1402,7 +1676,7 @@ export class NexusOrchestratorService {
         if (answer) {
           return {
             answer,
-            provider: 'Google Gemini (gemini-2.0-flash)',
+            provider: `Google Gemini (${model})`,
             pendingAction: session.pendingAction || null,
             suggestions: this.generateFollowUpSuggestions(session),
           };
@@ -1414,7 +1688,7 @@ export class NexusOrchestratorService {
     if (textAnswer) {
       return {
         answer: textAnswer,
-        provider: 'Google Gemini (gemini-2.0-flash)',
+        provider: `Google Gemini (${model})`,
         pendingAction: session.pendingAction || null,
         suggestions: this.generateFollowUpSuggestions(session),
       };
