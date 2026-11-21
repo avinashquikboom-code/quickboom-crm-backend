@@ -2109,6 +2109,20 @@ export class DataCaptureService implements OnModuleInit {
       throw new NotFoundException(`Data Capture record with ID ${numId} not found.`);
     }
 
+    const enrichmentRawData = place.rawData && typeof place.rawData === 'object'
+      ? place.rawData as Record<string, any>
+      : {};
+    const enrichmentStatus = String(enrichmentRawData.socialMediaEnrichmentStatus || '').toUpperCase();
+    const hasSocialProfiles = Boolean(this.extractSocialMediaFromPlace(place));
+    if (place.website && !hasSocialProfiles &&
+        (!enrichmentStatus || ['FAILED', 'NOT_AVAILABLE'].includes(enrichmentStatus))) {
+      // Older saved captures may have failed under the previous 500 KB page
+      // limit. Retry on detail open with the current bounded extractor, and
+      // expose PROCESSING immediately so the mobile detail view refreshes.
+      place.rawData = { ...enrichmentRawData, socialMediaEnrichmentStatus: 'PROCESSING' };
+      this.enrichPlacesWithWebsiteContactsInBackground([place]);
+    }
+
     // Saved non-Google records remain usable without Google. Google Place
     // details are fetched only as transient preview content for this response.
     if (this.isGoogleReference(place) && !place.businessName?.trim()) {
