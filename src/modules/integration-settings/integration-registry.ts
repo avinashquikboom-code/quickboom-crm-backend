@@ -95,6 +95,15 @@ export const INTEGRATION_REGISTRY: IntegrationDefinition[] = [
     ],
   },
   {
+    provider: 'ANTHROPIC',
+    displayName: 'Anthropic Claude',
+    category: 'AI',
+    fields: [
+      { key: 'apiKey', label: 'API Key', secret: true, required: true },
+      { key: 'model', label: 'Model', group: 'config', placeholder: 'claude-3-5-sonnet-20241022' },
+    ],
+  },
+  {
     provider: 'SMTP',
     displayName: 'SMTP Email',
     category: 'Email',
