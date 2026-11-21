@@ -52,7 +52,7 @@ export class NexusVoiceService implements OnModuleDestroy {
     await this.startSpeechEngineBridge(config.apiKey);
     const client = new ElevenLabsClient({ apiKey: config.apiKey });
     try {
-      const token = await client.conversationalAi.conversations.getWebrtcToken({ agentId: config.speechEngineId, participantName: `qb-${customerId}-${userId}` });
+      const token = await client.conversationalAi.conversations.getWebrtcToken({ agentId: config.speechEngineId, participantName: 'QB Nexus' });
       if (!token?.token) throw new Error('No temporary token received.');
       const bindingId = randomBytes(24).toString('base64url');
       const now = Date.now();
