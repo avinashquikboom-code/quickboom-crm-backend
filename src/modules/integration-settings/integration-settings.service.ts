@@ -42,6 +42,7 @@ export enum IntegrationProvider {
   SHIPROCKET = 'SHIPROCKET',
   OPENAI = 'OPENAI',
   GEMINI = 'GEMINI',
+  ANTHROPIC = 'ANTHROPIC',
   SMTP = 'SMTP',
   FIREBASE = 'FIREBASE',
 }
@@ -62,6 +63,7 @@ export function normalizeProvider(provider: string): string {
   if (norm === 'SHIPROCKET') return IntegrationProvider.SHIPROCKET;
   if (norm === 'OPENAI' || norm === 'OPEN_AI' || norm === 'CHATGPT') return IntegrationProvider.OPENAI;
   if (norm === 'GEMINI' || norm === 'GOOGLE_GEMINI' || norm === 'GOOGLE_AI') return IntegrationProvider.GEMINI;
+  if (norm === 'ANTHROPIC' || norm === 'CLAUDE' || norm === 'ANTHROPIC_CLAUDE') return IntegrationProvider.ANTHROPIC;
   if (norm === 'SMTP' || norm === 'EMAIL' || norm === 'MAIL' || norm === 'SMTP_EMAIL') return IntegrationProvider.SMTP;
   if (norm === 'FIREBASE' || norm === 'FCM' || norm === 'FIREBASE_MESSAGING') return IntegrationProvider.FIREBASE;
   return norm;
@@ -507,6 +509,18 @@ export class IntegrationSettingsService {
         ).trim();
         return {
           provider: IntegrationProvider.GEMINI,
+          isEnabled: Boolean(apiKey),
+          environment: 'LIVE',
+          credentials: { apiKey },
+          config: {},
+          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+        };
+      }
+
+      case IntegrationProvider.ANTHROPIC: {
+        const apiKey = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || '').trim();
+        return {
+          provider: IntegrationProvider.ANTHROPIC,
           isEnabled: Boolean(apiKey),
           environment: 'LIVE',
           credentials: { apiKey },
@@ -1424,6 +1438,7 @@ export class IntegrationSettingsService {
       IntegrationProvider.MSG91,
       IntegrationProvider.OPENAI,
       IntegrationProvider.GEMINI,
+      IntegrationProvider.ANTHROPIC,
       IntegrationProvider.SMTP,
       IntegrationProvider.FIREBASE,
     ];
@@ -2235,6 +2250,44 @@ export class IntegrationSettingsService {
             err?.message ||
             'Could not authenticate with Google Gemini API';
           throw new BadRequestException(`Google Gemini connection test failed: ${errMsg}`);
+        }
+      }
+
+      case IntegrationProvider.ANTHROPIC: {
+        const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
+        if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
+          throw new BadRequestException('Anthropic API Key is required to test connection');
+        }
+
+        try {
+          const response = await axios.get('https://api.anthropic.com/v1/models', {
+            headers: {
+              'x-api-key': apiKey.trim(),
+              'anthropic-version': '2023-06-01',
+            },
+            timeout: 8000,
+          });
+
+          if (response.status === 200) {
+            return {
+              success: true,
+              provider: 'ANTHROPIC',
+              status: 'CONNECTED',
+              message: 'Anthropic Claude API Key verified successfully!',
+              details: {
+                keyPrefix: apiKey.trim().substring(0, Math.min(8, apiKey.trim().length)) + '...',
+                modelsCount: response.data?.data?.length || 0,
+              },
+            };
+          }
+          throw new Error(`Unexpected response: ${response.status}`);
+        } catch (err: any) {
+          this.logger.error(`[ANTHROPIC_TEST_FAILED] ${err?.message}`);
+          const errMsg =
+            err?.response?.data?.error?.message ||
+            err?.message ||
+            'Could not authenticate with Anthropic API';
+          throw new BadRequestException(`Anthropic Claude connection test failed: ${errMsg}`);
         }
       }
 
