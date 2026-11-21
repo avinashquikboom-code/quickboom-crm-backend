@@ -48,7 +48,15 @@ export class NexusVoiceService implements OnModuleDestroy {
       throw new ForbiddenException('Your account is not scoped to a QB Suite business.');
     }
     const config = await this.integrations.getElevenLabsConfig();
-    if (!config.isEnabled) throw new BadRequestException('ElevenLabs voice is not configured or enabled. Text chat remains available.');
+    if (!config.apiKey) {
+      throw new BadRequestException('Configure the ElevenLabs API key in Integrations or ELEVENLABS_API_KEY on the backend. Text chat remains available.');
+    }
+    if (!config.speechEngineId) {
+      throw new BadRequestException('Set ELEVENLABS_SPEECH_ENGINE_ID in the backend environment to enable voice sessions. The API key alone cannot start a Speech Engine session. Text chat remains available.');
+    }
+    if (!config.isEnabled) {
+      throw new BadRequestException('Enable ElevenLabs in Admin Settings → Integrations to start voice sessions. Text chat remains available.');
+    }
     await this.startSpeechEngineBridge(config.apiKey);
     const client = new ElevenLabsClient({ apiKey: config.apiKey });
     try {

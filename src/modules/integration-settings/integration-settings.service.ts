@@ -1583,6 +1583,9 @@ export class IntegrationSettingsService {
     if (norm === IntegrationProvider.ANTHROPIC || norm === IntegrationProvider.ELEVENLABS) {
       const credentials = conf.credentials || {};
       const apiKey = credentials.apiKey || credentials.api_key || '';
+      const isConfigured = norm === IntegrationProvider.ELEVENLABS
+        ? Boolean(apiKey && (conf.config?.speechEngineId || conf.config?.engineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID))
+        : Boolean(apiKey);
       return {
         ...base,
         provider: norm,
@@ -1596,7 +1599,7 @@ export class IntegrationSettingsService {
           ...(conf.config || {}),
         } : (conf.config || {}),
         source: conf.source,
-        configured: Boolean(apiKey),
+        configured: isConfigured,
         updatedAt: conf.updatedAt || null,
       };
     }
