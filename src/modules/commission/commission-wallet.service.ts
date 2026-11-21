@@ -133,13 +133,28 @@ export class CommissionWalletService {
       configuration = await this.ruleEngine.applicable(customerId, role.id, new Date());
       if (!configuration) configurationError = 'No active commission configuration exists for your role.';
     } catch (error) { configurationError = error.message; }
-    const config = await this.prisma.commissionConfig.findUnique({ where: { employeeId: employee.id } });
-    const rate = config
-      ? { type: config.commissionType, value: config.commissionValue, status: config.status }
-      : employee.designation?.commissionEnabled
-        ? { type: employee.designation.commissionType, value: employee.designation.commissionRate, status: 'ACTIVE' }
-        : null;
-    const eligible = rate?.status === 'ACTIVE' && rate.value > 0;
+    const employeeOverride = await this.prisma.commissionConfig.findUnique({ where: { employeeId: employee.id } });
+    const roleSlabs = configuration?.slabs || [];
+    const roleHasActiveSlabs = roleSlabs.length > 0;
+    const designationRate = employee.designation?.commissionEnabled
+      ? { type: employee.designation.commissionType, value: employee.designation.commissionRate, status: 'ACTIVE' }
+      : null;
+    const rate = employeeOverride
+      ? { type: employeeOverride.commissionType, value: employeeOverride.commissionValue, status: employeeOverride.status }
+      : designationRate?.type === 'FIXED'
+        ? designationRate
+        : roleHasActiveSlabs
+        ? { type: 'PERCENTAGE', value: null, status: 'ACTIVE', source: 'ROLE_CONFIGURATION' }
+        : designationRate;
+    const eligible = employeeOverride
+      ? employeeOverride.status === 'ACTIVE' && (employeeOverride.commissionType === 'FIXED'
+        ? Number(employeeOverride.commissionValue) > 0
+        : roleHasActiveSlabs)
+      : designationRate?.type === 'FIXED'
+        ? Number(designationRate.value) > 0
+        : roleHasActiveSlabs || Boolean(designationRate && designationRate.value > 0);
+    const roleSlabsVisible = eligible && rate?.type === 'PERCENTAGE' &&
+      (!employeeOverride || employeeOverride.status === 'ACTIVE');
     return {
       source: 'ROLE_CONFIGURATION',
       eligibleRole: role ? { id: role.id, name: role.name } : null,
@@ -150,7 +165,7 @@ export class CommissionWalletService {
         : rate.type === 'FIXED'
           ? 'Your fixed commission amount applies; percentage slabs are not used.'
           : configurationError || 'Your role-specific slab percentage applies to the full confirmed payment amount. Existing earned credits retain their original rates.',
-      slabs: eligible && rate.type === 'PERCENTAGE' ? (configuration?.slabs || []) : [],
+      slabs: roleSlabsVisible ? roleSlabs : [],
       employeeRate: rate,
       calculationMethod: rate?.type === 'FIXED'
         ? 'Fixed configured amount per eligible purchase.'

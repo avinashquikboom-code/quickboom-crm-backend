@@ -76,6 +76,30 @@ describe('Commission wallet', () => {
     expect(result.note).not.toContain('without filtering');
     expect(db.commissionSlab.findMany).not.toHaveBeenCalled();
   });
+  it('exposes active role slabs even when legacy designation eligibility is disabled', async () => {
+    db.employee.findFirst.mockResolvedValue({
+      id: 7,
+      customerId: 2,
+      bankDetails: {},
+      designation: { commissionEnabled: false, commissionType: 'PERCENTAGE', commissionRate: 0 },
+    });
+    const result = await service.rules(2, 5);
+    expect(result.eligible).toBe(true);
+    expect(result.eligibleRole).toEqual({ id: 11, name: 'Configured Role' });
+    expect(result.slabs).toEqual([{ minAmount: 0, ratePercent: 5, roles: [11] }]);
+  });
+  it('hides percentage slabs for an active fixed designation rate', async () => {
+    db.employee.findFirst.mockResolvedValue({
+      id: 7,
+      customerId: 2,
+      bankDetails: {},
+      designation: { commissionEnabled: true, commissionType: 'FIXED', commissionRate: 250 },
+    });
+    const result = await service.rules(2, 5);
+    expect(result.eligible).toBe(true);
+    expect(result.employeeRate).toMatchObject({ type: 'FIXED', value: 250 });
+    expect(result.slabs).toEqual([]);
+  });
   it('requires a reference and explicit confirmation before recording payment', async () => {
     db.commissionWithdrawal.update.mockImplementation(({ data }) => Promise.resolve(data));
     const updated = await service.setWithdrawalStatus(2, 11, 'paid', 4, { paymentReference: 'bank-reference', processingConfirmed: true });

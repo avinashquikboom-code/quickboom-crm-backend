@@ -20,6 +20,12 @@ describe('Role engine payment and history integration',()=>{
   expect(row.calculationSnapshot).toMatchObject({roleId:11,configurationId:1,slabId:2,buyerCustomerId:100,tenantId:2,employeeAmount:'3750',leaderAmount:'0',saleAmount:'75000.00'});
   expect(db.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(db.commission.findUnique.mock.invocationCallOrder[0]);
  });
+ it('applies active role slabs when legacy designation commission is disabled',async()=>{
+  db.customer.findUnique.mockResolvedValue({id:100,leadId:10,originLead:{id:10,customerId:2},assignedEmployeeId:7,assignedEmployeeRel:{id:7,userId:8,customerId:2,designationId:11,status:'ACTIVE',designation:{commissionEnabled:false,commissionType:'PERCENTAGE',commissionRate:0}}});
+  const row=await service.calculateAndAwardCommission({customerId:100,purchaseId:5,purchaseAmount:75000});
+  expect(row).toMatchObject({customerId:2,employeeId:7,purchaseAmount:75000,commissionAmount:3750,commissionRate:5});
+  expect(row.calculationSnapshot).toMatchObject({roleId:11,configurationId:1,slabId:2});
+ });
  it('retains old calculation after a rate update and awards new events at the new rate',async()=>{
   const a=await service.calculateAndAwardCommission({customerId:100,purchaseId:1,purchaseAmount:75000});const snapshot=JSON.stringify(a.calculationSnapshot);
   rates[11]=7;
