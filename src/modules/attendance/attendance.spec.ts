@@ -682,6 +682,41 @@ describe('attendance push recipient mapping', () => {
 
     expect(send).not.toHaveBeenCalled();
   });
+
+  it('sends a tenant-scoped late mark to the employee and HR/admin users', async () => {
+    const send = jest.fn().mockResolvedValue({ delivered: true });
+    const prisma: any = {
+      user: {
+        findFirst: jest.fn().mockResolvedValue({ id: 5, email: 'worker@example.com' }),
+        findMany: jest.fn().mockResolvedValue([{ id: 7 }, { id: 5 }]),
+      },
+      notification: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new AttendanceService(prisma, { sendPushNotification: send } as any);
+
+    await (service as any).notifyAttendanceEvent(
+      { id: 10, userId: 5, customerId: 1, email: 'worker@example.com', firstName: 'Asha', lastName: 'Patil' },
+      44,
+      'LATE_MARK',
+      'Late Mark Recorded',
+      'You are 15 minutes late today. Your assigned shift started at 09:00.',
+      { lateMinutes: '15' },
+      5,
+    );
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { customerId: 1, deletedAt: null, role: { in: ['HR', 'HR_ADMIN', 'HR_MANAGER', 'ADMIN', 'COMPANY_ADMIN', 'TENANT_ADMIN', 'CUSTOMER_ADMIN'] } },
+    }));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, type: 'LATE_MARK' }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 7,
+      customerId: 1,
+      type: 'LATE_MARK',
+      body: 'Asha Patil punched in 15 minutes late today. Your assigned shift started at 09:00.',
+      data: expect.objectContaining({ attendanceId: '44', employeeId: '10', route: '/attendance/late-marks' }),
+    }));
+  });
 });
 
 
