@@ -65,7 +65,7 @@ export class ContactService {
       baseWhere.customerId = numCustomerId;
     }
 
-    const [total, active, newContacts, withVisits] = await Promise.all([
+    const [total, active, newContacts, withVisits, phoneContacts, emailContacts, companyGroups] = await Promise.all([
       this.prisma.contact.count({ where: { ...baseWhere } }),
       this.prisma.contact.count({ where: { ...baseWhere, status: 'ACTIVE' } }),
       this.prisma.contact.count({
@@ -80,6 +80,12 @@ export class ContactService {
           visits: { some: { status: 'SCHEDULED' } },
         },
       }),
+      this.prisma.contact.count({ where: { ...baseWhere, OR: [{ phone: { not: '' } }, { mobile: { not: '' } }] } }),
+      this.prisma.contact.count({ where: { ...baseWhere, email: { not: '' } } }),
+      this.prisma.contact.groupBy({
+        by: ['companyId'],
+        where: { ...baseWhere, companyId: { not: null } },
+      }),
     ]);
 
     return {
@@ -87,6 +93,9 @@ export class ContactService {
       active,
       new: newContacts,
       withFollowUps: withVisits,
+      companies: companyGroups.length,
+      phoneContacts,
+      emailContacts,
     };
   }
 
@@ -177,6 +186,7 @@ export class ContactService {
         { phone: { contains: s, mode: 'insensitive' } },
         { mobile: { contains: s, mode: 'insensitive' } },
         { designation: { contains: s, mode: 'insensitive' } },
+        { company: { is: { name: { contains: s, mode: 'insensitive' } } } },
       ];
     }
 

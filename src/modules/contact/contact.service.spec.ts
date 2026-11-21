@@ -8,6 +8,7 @@ describe('ContactService', () => {
   const mockPrisma = {
     contact: {
       count: jest.fn(),
+      groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn(),
       findFirst: jest.fn(),
       create: jest.fn(),
@@ -95,6 +96,25 @@ describe('ContactService', () => {
       expect(result.data).toHaveLength(1);
       expect(result.meta.total).toBe(1);
     });
+
+    it('searches linked company names together with contact fields and applies type/status filters', async () => {
+      mockPrisma.contact.count.mockResolvedValue(0);
+      mockPrisma.contact.findMany.mockResolvedValue([]);
+
+      await service.findAll('7', { page: 2, limit: 20, search: 'Northwind', type: 'PARTNER', status: 'ACTIVE' }, { role: 'CUSTOMER', customerId: 7 });
+
+      const expectedWhere = expect.objectContaining({
+        customerId: 7,
+        deletedAt: null,
+        type: 'PARTNER',
+        status: 'ACTIVE',
+        OR: expect.arrayContaining([
+          { company: { is: { name: { contains: 'Northwind', mode: 'insensitive' } } } },
+        ]),
+      });
+      expect(mockPrisma.contact.count).toHaveBeenCalledWith({ where: expectedWhere });
+      expect(mockPrisma.contact.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expectedWhere, skip: 20, take: 20 }));
+    });
   });
 
   describe('getMetrics', () => {
@@ -111,6 +131,25 @@ describe('ContactService', () => {
       expect(mockPrisma.contact.count).toHaveBeenCalledWith(
         expect.objectContaining({ where: { deletedAt: null } }),
       );
+    });
+
+    it('returns tenant scoped company, phone, and email counts from contact records', async () => {
+      mockPrisma.contact.count
+        .mockResolvedValueOnce(8)
+        .mockResolvedValueOnce(5)
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(7)
+        .mockResolvedValueOnce(6);
+      mockPrisma.contact.groupBy.mockResolvedValue([{ companyId: 3 }, { companyId: 9 }]);
+
+      const metrics = await service.getMetrics('12', { role: 'CUSTOMER', customerId: 12 });
+
+      expect(metrics).toMatchObject({ total: 8, active: 5, companies: 2, phoneContacts: 7, emailContacts: 6 });
+      expect(mockPrisma.contact.groupBy).toHaveBeenCalledWith({
+        by: ['companyId'],
+        where: { customerId: 12, deletedAt: null, companyId: { not: null } },
+      });
     });
   });
 });
