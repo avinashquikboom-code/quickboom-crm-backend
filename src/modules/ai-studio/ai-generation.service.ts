@@ -3,16 +3,19 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiProviderService } from './ai-provider.service';
 import { AiCreditService } from './ai-credit.service';
 import { GenerateContentDto, UpdateGenerationDto } from './dto/ai-studio.dto';
 import { S3Service } from '../s3/s3.service';
+import { isUserAdmin } from '../../common/utils/role.util';
 
 @Injectable()
 export class AiGenerationService {
   private readonly logger = new Logger(AiGenerationService.name);
+  private readonly nexusRequests = new Map<number, number[]>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -20,6 +23,61 @@ export class AiGenerationService {
     private readonly aiCredit: AiCreditService,
     private readonly s3Service: S3Service,
   ) {}
+
+  async answerNexusQuestion(user: any, rawQuestion: string): Promise<string> {
+    const question = String(rawQuestion || '').trim().slice(0, 1200);
+    if (!question) throw new BadRequestException('Ask QB Nexus a question first.');
+    const customerId = Number(user?.customerId);
+    const userId = Number(user?.id);
+    if (!Number.isInteger(customerId) || customerId <= 0 || !Number.isInteger(userId) || userId <= 0) {
+      throw new ForbiddenException('Your account is not scoped to a QB Suite business.');
+    }
+    this.assertNexusRateLimit(userId);
+
+    const context: Record<string, any> = { scope: 'Current user business only', availableData: [] };
+    if (/\b(lead|leads|pipeline|prospect|crm)\b/i.test(question)) {
+      const accessScope = isUserAdmin(user) ? {} : { assignedToId: userId };
+      const openStatuses = { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] };
+      const baseWhere: any = { customerId, deletedAt: null, status: openStatuses, ...accessScope };
+      const pendingCount = await this.prisma.lead.count({ where: baseWhere });
+      const now = new Date();
+      const dayStart = new Date(now);
+      dayStart.setHours(0, 0, 0, 0);
+      const todayCount = await this.prisma.lead.count({ where: { ...baseWhere, createdAt: { gte: dayStart, lte: now } } });
+      context.availableData.push({
+        source: 'CRM leads',
+        pendingCount,
+        createdTodayPendingCount: todayCount,
+        asOf: now.toISOString(),
+        definition: 'Pending means lead status is not WON, LOST, CANCELLED, or CONVERTED.',
+      });
+    }
+    return this.aiProvider.answerAssistant(question, context);
+  }
+
+  private assertNexusRateLimit(userId: number) {
+    const recent = (this.nexusRequests.get(userId) || []).filter((timestamp) => Date.now() - timestamp < 60_000);
+    if (recent.length >= 20) throw new BadRequestException('QB Nexus is receiving requests too quickly. Wait a minute and retry.');
+    recent.push(Date.now());
+    this.nexusRequests.set(userId, recent);
+  }
+
+  async transcribeNexusAudio(user: any, file?: Express.Multer.File): Promise<string> {
+    const customerId = Number(user?.customerId);
+    const userId = Number(user?.id);
+    if (!Number.isInteger(customerId) || customerId <= 0 || !Number.isInteger(userId) || userId <= 0) {
+      throw new ForbiddenException('Your account is not scoped to a QB Suite business.');
+    }
+    if (!file?.buffer?.length || file.buffer.length > 10 * 1024 * 1024) {
+      throw new BadRequestException('Record a short audio clip up to 10 MB.');
+    }
+    this.assertNexusRateLimit(userId);
+    const mimeType = String(file.mimetype || '');
+    if (!/^audio\/(webm|ogg|mp4|mpeg|wav|x-wav|mp3)/i.test(mimeType)) {
+      throw new BadRequestException('This audio format is not supported.');
+    }
+    return this.aiProvider.transcribeAssistantAudio(file.buffer, mimeType);
+  }
 
   /**
    * Generates AI Content based on customer selection (Post, Poster, Video, Caption, Hashtags)

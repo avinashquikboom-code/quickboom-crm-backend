@@ -10,6 +10,7 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
   let service: AiGenerationService;
 
   const mockPrisma = {
+    lead: { count: jest.fn() },
     aiGeneration: {
       create: jest.fn(),
       findUnique: jest.fn(),
@@ -24,6 +25,8 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
   };
 
   const mockAiProvider = {
+    answerAssistant: jest.fn(),
+    transcribeAssistantAudio: jest.fn(),
     generateText: jest.fn(),
     generateImage: jest.fn(),
     generatePoster: jest.fn(),
@@ -60,6 +63,9 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
 
     mockAiCredit.validateCreditAvailability.mockResolvedValue({ requiredCredits: 5, currentBalance: 50 });
     mockAiCredit.deductCreditsOnSuccess.mockResolvedValue({ creditsSpent: 5, newBalance: 45 });
+    mockPrisma.lead.count.mockResolvedValue(18);
+    mockAiProvider.answerAssistant.mockResolvedValue('There are 18 pending leads.');
+    mockAiProvider.transcribeAssistantAudio.mockResolvedValue('Show my pending leads.');
     mockS3Service.uploadBuffer.mockResolvedValue({
       imageUrl: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/marketing/banners/1/AIGEN-1234.png',
       imageKey: 'marketing/banners/1/AIGEN-1234.png',
@@ -68,6 +74,41 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
       Promise.resolve(`https://presigned.example.com/${keyOrUrl}`),
     );
     mockS3Service.extractKey.mockImplementation((keyOrUrl) => keyOrUrl);
+  });
+
+  describe('QB Nexus grounded assistant', () => {
+    it('answers lead questions with tenant-scoped counts and passes only aggregates to AI', async () => {
+      const answer = await service.answerNexusQuestion({ id: 7, customerId: 3, role: 'ADMIN' }, "How many pending leads do we have today?");
+      expect(answer).toBe('There are 18 pending leads.');
+      expect(mockPrisma.lead.count).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({ customerId: 3, deletedAt: null, status: { notIn: expect.any(Array) } }) }));
+      expect(mockAiProvider.answerAssistant).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ availableData: [expect.objectContaining({ source: 'CRM leads', pendingCount: 18, createdTodayPendingCount: 18 })] }));
+    });
+
+    it('limits non-admin users to leads assigned to their own user ID', async () => {
+      await service.answerNexusQuestion({ id: 19, customerId: 5, role: 'EMPLOYEE' }, 'Summarize my leads');
+      expect(mockPrisma.lead.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ customerId: 5, assignedToId: 19 }) }));
+    });
+
+    it('rejects users without a tenant scope', async () => {
+      await expect(service.answerNexusQuestion({ id: 1 }, 'Show my leads')).rejects.toThrow('not scoped to a QB Suite business');
+      expect(mockPrisma.lead.count).not.toHaveBeenCalled();
+    });
+
+    it('transcribes an explicitly uploaded clip for a scoped user without persisting it', async () => {
+      const buffer = Buffer.from('audio bytes');
+      const text = await service.transcribeNexusAudio(
+        { id: 19, customerId: 5, role: 'EMPLOYEE' },
+        { buffer, mimetype: 'audio/webm' } as Express.Multer.File,
+      );
+      expect(text).toBe('Show my pending leads.');
+      expect(mockAiProvider.transcribeAssistantAudio).toHaveBeenCalledWith(buffer, 'audio/webm');
+      expect(mockS3Service.uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it('rejects transcription without a tenant scope', async () => {
+      await expect(service.transcribeNexusAudio({ id: 19 }, { buffer: Buffer.from('x'), mimetype: 'audio/webm' } as Express.Multer.File)).rejects.toThrow('not scoped');
+      expect(mockAiProvider.transcribeAssistantAudio).not.toHaveBeenCalled();
+    });
   });
 
   describe('POSTER Generation', () => {

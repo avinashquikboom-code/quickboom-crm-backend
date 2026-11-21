@@ -53,6 +53,90 @@ export class AiProviderService implements IAiProvider {
     }
   }
 
+  async answerAssistant(question: string, authorizedContext: Record<string, any>): Promise<string> {
+    const system = [
+      'You are QB Nexus, the QB Suite business assistant.',
+      'Answer concisely and only use the authorized business data provided below.',
+      'If the data does not contain the answer, say you cannot access that information yet.',
+      'Never invent counts, records, permissions, actions, or business facts.',
+      `Authorized data: ${JSON.stringify(authorizedContext)}`,
+    ].join('\n');
+    const gemini = this.integrationSettingsService ? await this.integrationSettingsService.getGeminiConfig().catch(() => null) : null;
+    const openai = this.integrationSettingsService ? await this.integrationSettingsService.getOpenAiConfig().catch(() => null) : null;
+    const anthropic = await this.getAnthropicConfig();
+
+    if (gemini?.apiKey && gemini.isEnabled !== false) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(gemini.apiKey)}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: question }] }] }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (response.ok) {
+          const data = await response.json() as any;
+          const answer = data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('').trim();
+          if (answer) return answer;
+        }
+      } catch {}
+    }
+    if (openai?.apiKey && openai.isEnabled !== false) {
+      try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openai.apiKey}` },
+          body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: question }] }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (response.ok) {
+          const data = await response.json() as any;
+          const answer = data?.choices?.[0]?.message?.content?.trim();
+          if (answer) return answer;
+        }
+      } catch {}
+    }
+    if (anthropic) {
+      try {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': anthropic.apiKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({ model: anthropic.model || 'claude-sonnet-5', max_tokens: Math.min(anthropic.maxTokens || 512, 1024), system, messages: [{ role: 'user', content: question }] }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (response.ok) {
+          const data = await response.json() as any;
+          const answer = data?.content?.filter((part: any) => part.type === 'text').map((part: any) => part.text).join('\n').trim();
+          if (answer) return answer;
+        }
+      } catch {}
+    }
+    throw new BadRequestException('QB Nexus could not reach an enabled AI provider.');
+  }
+
+  async transcribeAssistantAudio(audio: Buffer, mimeType: string): Promise<string> {
+    const config = this.integrationSettingsService
+      ? await this.integrationSettingsService.getOpenAiConfig().catch(() => null)
+      : null;
+    if (!config?.apiKey || config.isEnabled === false) {
+      throw new BadRequestException('Manual transcription requires an enabled OpenAI integration.');
+    }
+    const form = new FormData();
+    const audioBytes = new Uint8Array(audio.length);
+    audioBytes.set(audio);
+    form.append('file', new Blob([audioBytes.buffer], { type: mimeType }), 'nexus-voice.webm');
+    form.append('model', 'gpt-4o-mini-transcribe');
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      throw new BadRequestException('The transcription service could not process that recording.');
+    }
+    const result = await response.json() as { text?: string };
+    const transcript = String(result?.text || '').trim().slice(0, 1200);
+    if (!transcript) throw new BadRequestException('No speech was recognized. Please try again.');
+    return transcript;
+  }
+
   /**
    * Generates REAL AI marketing text, captions, and hashtags
    * Priority: Google Gemini -> OpenAI -> Pollinations Live LLM
