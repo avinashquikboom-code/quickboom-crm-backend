@@ -2002,7 +2002,9 @@ export class DataCaptureService implements OnModuleInit {
           id: p.id,
           provider: p.source || 'GOOGLE_PLACES',
           googlePlaceId: p.googlePlaceId || undefined,
-          businessName: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'businessName') ? (preview.businessName || '') : p.businessName,
+          businessName: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'businessName')
+            ? (p.businessName?.trim() || preview.businessName || '')
+            : p.businessName,
           category: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'category') ? preview.category : (p.category || undefined),
           address: this.isGoogleReference(p) && !this.hasUserProvidedField(p, 'address') ? preview.address : (p.address || undefined),
           phone: p.phone || preview.phone || undefined,
@@ -2121,7 +2123,9 @@ export class DataCaptureService implements OnModuleInit {
       id: place.id,
       provider: place.source || 'GOOGLE_PLACES',
       googlePlaceId: place.googlePlaceId || undefined,
-      businessName: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'businessName') ? (preview.businessName || '') : place.businessName,
+      businessName: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'businessName')
+        ? (place.businessName?.trim() || preview.businessName || '')
+        : place.businessName,
       category: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'category') ? preview.category : (place.category || undefined),
       address: this.isGoogleReference(place) && !this.hasUserProvidedField(place, 'address') ? preview.address : (place.address || undefined),
       phone: place.phone || preview.phone || undefined,
