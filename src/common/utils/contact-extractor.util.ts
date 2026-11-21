@@ -54,8 +54,8 @@ export class ContactExtractor {
   private static async getPublicHtml(input: string): Promise<{ url: URL; html: string }> {
     let url = new URL(input);
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid website URL.');
-      if (url.port && !((url.protocol === 'http:' && url.port === '80') || (url.protocol === 'https:' && url.port === '443'))) throw new Error('Non-standard website ports are not supported.');
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid website URL.');
+      if (url.port && url.port !== '443') throw new Error('Non-standard website ports are not supported.');
       const address = await this.publicIpv4For(url.hostname);
       const agentOptions = {
         lookup: (_hostname: string, options: any, callback: (...args: any[]) => void) => {
@@ -345,7 +345,7 @@ export class ContactExtractor {
   ): Promise<{
     email: string | null;
     phone: string | null;
-    enrichmentStatus: 'COMPLETE' | 'FAILED';
+    enrichmentStatus: 'COMPLETED' | 'PARTIAL' | 'NOT_FOUND' | 'FAILED';
     socialMedia?: {
       facebook?: string;
       instagram?: string;
@@ -394,7 +394,13 @@ export class ContactExtractor {
           if (visited.size + pendingPages.length >= 4) break;
         }
       }
-      return { email, phone, enrichmentStatus: successfulPages ? 'COMPLETE' : 'FAILED', socialMedia: Object.keys(socialMedia).length > 0 ? socialMedia : undefined };
+      const profilesFound = Object.keys(socialMedia).length > 0;
+      const enrichmentStatus = !successfulPages
+        ? 'FAILED'
+        : profilesFound
+          ? (Object.keys(socialMedia).length >= 2 ? 'COMPLETED' : 'PARTIAL')
+          : 'NOT_FOUND';
+      return { email, phone, enrichmentStatus, socialMedia: profilesFound ? socialMedia : undefined };
     } catch {
       // Graceful fallback on network timeout, blocked crawler, or invalid SSL
       return { email: null, phone: null, enrichmentStatus: 'FAILED' };
