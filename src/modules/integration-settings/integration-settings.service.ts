@@ -94,6 +94,7 @@ export interface OpenAiDynamicConfig {
 
 export interface GeminiDynamicConfig {
   apiKey: string;
+  model?: string;
   isEnabled: boolean;
   isConfigured: boolean;
   source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
@@ -843,12 +844,14 @@ export class IntegrationSettingsService {
   async getGeminiConfig(): Promise<GeminiDynamicConfig> {
     const conf = await this.getIntegrationConfig(IntegrationProvider.GEMINI);
     const creds = conf?.credentials || {};
+    const cfg = conf?.config || {};
     const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''));
+    const model = String(cfg.model || creds.model || process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? isConfigured;
     const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
 
-    return { apiKey, isEnabled, isConfigured, source };
+    return { apiKey, model, isEnabled, isConfigured, source };
   }
 
   /** Typed helper for Anthropic Claude settings. Secrets come from the encrypted settings record. */

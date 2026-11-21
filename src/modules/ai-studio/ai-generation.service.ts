@@ -24,7 +24,12 @@ export class AiGenerationService {
     private readonly s3Service: S3Service,
   ) {}
 
-  async answerNexusQuestion(user: any, rawQuestion: string): Promise<string> {
+  async answerNexusQuestion(
+    user: any,
+    rawQuestion: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    providerPolicy: { primaryProvider?: string; fallbackProvider?: string } = {},
+  ): Promise<{ answer: string; provider: 'OPENAI' | 'GEMINI' }> {
     const question = String(rawQuestion || '').trim().slice(0, 1200);
     if (!question) throw new BadRequestException('Ask QB Nexus a question first.');
     const customerId = Number(user?.customerId);
@@ -34,25 +39,106 @@ export class AiGenerationService {
     }
     this.assertNexusRateLimit(userId);
 
-    const context: Record<string, any> = { scope: 'Current user business only', availableData: [] };
+    const context: Record<string, any> = { scope: 'Current user business only', availableData: [], permissions: [] };
+    const isAdmin = isUserAdmin(user);
+    const { start: dayStart, end: dayEnd, now } = this.getNexusTodayRange();
+    const employee = isAdmin ? null : await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true, firstName: true, lastName: true, employeeCode: true, status: true } });
+    const employeeScope = employee ? { employeeId: employee.id } : { employeeId: -1 };
+
     if (/\b(lead|leads|pipeline|prospect|crm)\b/i.test(question)) {
-      const accessScope = isUserAdmin(user) ? {} : { assignedToId: userId };
+      const accessScope = isAdmin ? {} : { assignedToId: userId };
       const openStatuses = { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] };
       const baseWhere: any = { customerId, deletedAt: null, status: openStatuses, ...accessScope };
-      const pendingCount = await this.prisma.lead.count({ where: baseWhere });
-      const now = new Date();
-      const dayStart = new Date(now);
-      dayStart.setHours(0, 0, 0, 0);
-      const todayCount = await this.prisma.lead.count({ where: { ...baseWhere, createdAt: { gte: dayStart, lte: now } } });
-      context.availableData.push({
-        source: 'CRM leads',
-        pendingCount,
-        createdTodayPendingCount: todayCount,
-        asOf: now.toISOString(),
-        definition: 'Pending means lead status is not WON, LOST, CANCELLED, or CONVERTED.',
-      });
+      const [pendingCount, totalCount, convertedCount, todayCount] = await Promise.all([
+        this.prisma.lead.count({ where: baseWhere }),
+        this.prisma.lead.count({ where: { customerId, deletedAt: null, ...accessScope } }),
+        this.prisma.lead.count({ where: { customerId, deletedAt: null, status: { in: ['WON', 'CONVERTED'] }, ...accessScope } }),
+        this.prisma.lead.count({ where: { ...baseWhere, createdAt: { gte: dayStart, lt: dayEnd } } }),
+      ]);
+      const leadData: Record<string, any> = { source: 'CRM leads', totalCount, pendingCount, convertedCount, createdTodayPendingCount: todayCount, asOf: now.toISOString(), definition: 'Pending means status is not WON, LOST, CANCELLED, or CONVERTED.' };
+      if (/\b(list|show|details|names|who|follow.?ups?|assigned)\b/i.test(question)) {
+        const leads = await this.prisma.lead.findMany({
+          where: { ...baseWhere, ...(/follow.?ups?/i.test(question) ? { nextFollowUpDate: { gte: now } } : {}) },
+          select: { id: true, firstName: true, lastName: true, companyName: true, status: true, assignedToId: true, nextFollowUpDate: true },
+          orderBy: [{ nextFollowUpDate: 'asc' }, { createdAt: 'desc' }], take: 8,
+        });
+        leadData.records = leads.map((lead: any) => ({ id: lead.id, name: `${lead.firstName || ''} ${lead.lastName || ''}`.trim(), company: lead.companyName, status: lead.status, assignedToId: lead.assignedToId, nextFollowUpDate: lead.nextFollowUpDate }));
+      }
+      context.availableData.push(leadData);
     }
-    return this.aiProvider.answerAssistant(question, context);
+
+    if (/\b(employee|employees|staff|attendance|absent|present|leave|payroll|salary|hrm|hr)\b/i.test(question)) {
+      if (isAdmin) {
+        const [employeeCount, activeEmployees, presentToday, absentToday, pendingLeaves] = await Promise.all([
+          this.prisma.employee.count({ where: { customerId } }),
+          this.prisma.employee.count({ where: { customerId, status: 'ACTIVE' } }),
+          this.prisma.attendance.count({ where: { customerId, date: { gte: dayStart, lt: dayEnd }, status: 'PRESENT' } }),
+          this.prisma.attendance.count({ where: { customerId, date: { gte: dayStart, lt: dayEnd }, status: 'ABSENT' } }),
+          this.prisma.leaveRequest.count({ where: { customerId, status: 'PENDING' } }),
+        ]);
+        context.availableData.push({ source: 'HRM', employeeCount, activeEmployeeCount: activeEmployees, presentTodayCount: presentToday, absentTodayCount: absentToday, pendingLeaveRequestCount: pendingLeaves, asOf: now.toISOString() });
+        if (/\b(list|show|directory|names|who)\b.*\b(employee|employees|staff)\b/i.test(question)) {
+          const directory = await this.prisma.employee.findMany({ where: { customerId }, select: { firstName: true, lastName: true, employeeCode: true, status: true }, orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }], take: 50 });
+          context.availableData.push({ source: 'Employee directory', employees: directory.map((person: any) => ({ name: `${person.firstName} ${person.lastName}`, employeeCode: person.employeeCode, status: person.status })) });
+        }
+        if (/\b(payroll|salary)\b/i.test(question)) {
+          const payroll = await this.prisma.payroll.aggregate({ where: { customerId, status: { notIn: ['CANCELLED', 'FAILED'] } }, _sum: { grossSalary: true, netSalary: true }, _count: { _all: true } });
+          context.availableData.push({ source: 'Payroll summary', payrollCount: payroll._count?._all || 0, grossSalaryTotal: payroll._sum?.grossSalary || 0, netSalaryTotal: payroll._sum?.netSalary || 0 });
+        }
+        if (/\b(absent|who.*(attendance|present)|list.*employee)\b/i.test(question)) {
+          const absentees = await this.prisma.attendance.findMany({ where: { customerId, date: { gte: dayStart, lt: dayEnd }, status: 'ABSENT' }, select: { employee: { select: { firstName: true, lastName: true, employeeCode: true } } }, take: 50 });
+          context.availableData.push({ source: 'Absent employees today', employees: absentees.map((row: any) => ({ name: `${row.employee.firstName} ${row.employee.lastName}`, employeeCode: row.employee.employeeCode })) });
+        }
+      } else {
+        context.permissions.push('Organization-wide HR and payroll records are restricted to administrators. Only the authenticated employee’s own attendance and leave data is available.');
+        if (employee) {
+          const [attendance, pendingLeaves] = await Promise.all([
+            this.prisma.attendance.findFirst({ where: { customerId, ...employeeScope, date: { gte: dayStart, lt: dayEnd } }, select: { status: true, punchIn: true, punchOut: true } }),
+            this.prisma.leaveRequest.count({ where: { customerId, ...employeeScope, status: 'PENDING' } }),
+          ]);
+          context.availableData.push({ source: 'Current employee self-service', profile: { name: `${employee.firstName} ${employee.lastName}`, employeeCode: employee.employeeCode, status: employee.status }, attendanceToday: attendance || 'No attendance entry recorded today.', ownPendingLeaveRequestCount: pendingLeaves });
+        } else context.availableData.push({ source: 'Current employee self-service', status: 'No employee profile is linked to this login.' });
+      }
+    }
+
+    if (/\b(task|tasks|project|projects|work schedule)\b/i.test(question)) {
+      const taskWhere: any = { customerId, deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } };
+      if (!isAdmin) taskWhere.OR = [{ assignedToId: userId }, ...(employee ? [{ employeeId: employee.id }] : [])];
+      const pendingTaskCount = await this.prisma.task.count({ where: taskWhere });
+      const workWhere: any = { customerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] }, scheduledDate: { gte: now } };
+      if (!isAdmin) workWhere.assignedToId = employee?.id || -1;
+      const upcomingWorkCount = await this.prisma.work.count({ where: workWhere });
+      context.availableData.push({ source: 'Tasks and work schedule', pendingTaskCount, upcomingWorkCount });
+    }
+
+    if (/\b(revenue|income|sales report|business performance|invoice|invoices)\b/i.test(question)) {
+      if (isAdmin) {
+        const invoiceSummary = await this.prisma.invoice.aggregate({ where: { customerId, deletedAt: null, status: 'PAID' }, _sum: { totalAmount: true }, _count: { _all: true } });
+        context.availableData.push({ source: 'Paid invoice summary', paidInvoiceCount: invoiceSummary._count?._all || 0, paidInvoiceTotal: invoiceSummary._sum?.totalAmount || 0 });
+      } else context.permissions.push('Business-wide revenue and invoice records are restricted to administrators.');
+    }
+
+    if (/\b(data capture|captured leads|capture searches)\b/i.test(question)) {
+      const where: any = { customerId, searchedAt: { gte: dayStart, lt: dayEnd } };
+      if (!isAdmin) where.employeeId = employee?.id || -1;
+      const searchesToday = await this.prisma.dataCaptureSearch.count({ where });
+      context.availableData.push({ source: 'Data Capture', searchesToday });
+    }
+
+    const res: any = await this.aiProvider.answerAssistant(question, context, history, providerPolicy);
+    return typeof res === 'string' ? { answer: res, provider: 'OPENAI' as const } : res;
+  }
+
+  private getNexusTodayRange() {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+    const part = (type: string) => Number(parts.find((entry) => entry.type === type)?.value);
+    const start = new Date(Date.UTC(part('year'), part('month') - 1, part('day')) - 330 * 60 * 1000);
+    return { now, start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+  }
+
+  async getNexusProviderStatus() {
+    return this.aiProvider.getAssistantProviderStatus();
   }
 
   private assertNexusRateLimit(userId: number) {
@@ -62,7 +148,11 @@ export class AiGenerationService {
     this.nexusRequests.set(userId, recent);
   }
 
-  async transcribeNexusAudio(user: any, file?: Express.Multer.File): Promise<string> {
+  async transcribeNexusAudio(
+    user: any,
+    file?: Express.Multer.File,
+    providerPolicy: { primaryProvider?: string; fallbackProvider?: string } = {},
+  ): Promise<string> {
     const customerId = Number(user?.customerId);
     const userId = Number(user?.id);
     if (!Number.isInteger(customerId) || customerId <= 0 || !Number.isInteger(userId) || userId <= 0) {
@@ -76,7 +166,9 @@ export class AiGenerationService {
     if (!/^audio\/(webm|ogg|mp4|mpeg|wav|x-wav|mp3)/i.test(mimeType)) {
       throw new BadRequestException('This audio format is not supported.');
     }
-    return this.aiProvider.transcribeAssistantAudio(file.buffer, mimeType);
+    return Object.keys(providerPolicy || {}).length
+      ? this.aiProvider.transcribeAssistantAudio(file.buffer, mimeType, providerPolicy)
+      : this.aiProvider.transcribeAssistantAudio(file.buffer, mimeType);
   }
 
   /**

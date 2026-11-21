@@ -53,88 +53,136 @@ export class AiProviderService implements IAiProvider {
     }
   }
 
-  async answerAssistant(question: string, authorizedContext: Record<string, any>): Promise<string> {
-    const system = [
-      'You are QB Nexus, the QB Suite business assistant.',
-      'Answer concisely and only use the authorized business data provided below.',
-      'If the data does not contain the answer, say you cannot access that information yet.',
-      'Never invent counts, records, permissions, actions, or business facts.',
-      `Authorized data: ${JSON.stringify(authorizedContext)}`,
-    ].join('\n');
-    const gemini = this.integrationSettingsService ? await this.integrationSettingsService.getGeminiConfig().catch(() => null) : null;
-    const openai = this.integrationSettingsService ? await this.integrationSettingsService.getOpenAiConfig().catch(() => null) : null;
-    const anthropic = await this.getAnthropicConfig();
-
-    if (gemini?.apiKey && gemini.isEnabled !== false) {
-      try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(gemini.apiKey)}`, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: question }] }] }),
-          signal: AbortSignal.timeout(20000),
-        });
-        if (response.ok) {
-          const data = await response.json() as any;
-          const answer = data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('').trim();
-          if (answer) return answer;
-        }
-      } catch {}
-    }
-    if (openai?.apiKey && openai.isEnabled !== false) {
-      try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openai.apiKey}` },
-          body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: question }] }),
-          signal: AbortSignal.timeout(20000),
-        });
-        if (response.ok) {
-          const data = await response.json() as any;
-          const answer = data?.choices?.[0]?.message?.content?.trim();
-          if (answer) return answer;
-        }
-      } catch {}
-    }
-    if (anthropic) {
-      try {
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': anthropic.apiKey, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify({ model: anthropic.model || 'claude-sonnet-5', max_tokens: Math.min(anthropic.maxTokens || 512, 1024), system, messages: [{ role: 'user', content: question }] }),
-          signal: AbortSignal.timeout(20000),
-        });
-        if (response.ok) {
-          const data = await response.json() as any;
-          const answer = data?.content?.filter((part: any) => part.type === 'text').map((part: any) => part.text).join('\n').trim();
-          if (answer) return answer;
-        }
-      } catch {}
-    }
-    throw new BadRequestException('QB Nexus could not reach an enabled AI provider.');
+  private resolveGeminiModel(model?: string): string {
+    const configuredModel = String(model || '').trim();
+    return /^gemini-[a-z0-9.-]+$/i.test(configuredModel) ? configuredModel : 'gemini-2.5-flash';
   }
 
-  async transcribeAssistantAudio(audio: Buffer, mimeType: string): Promise<string> {
-    const config = this.integrationSettingsService
-      ? await this.integrationSettingsService.getOpenAiConfig().catch(() => null)
-      : null;
-    if (!config?.apiKey || config.isEnabled === false) {
-      throw new BadRequestException('Manual transcription requires an enabled OpenAI integration.');
+  async getAssistantProviderStatus() {
+    const [openai, gemini] = await Promise.all([
+      this.integrationSettingsService?.getOpenAiConfig().catch(() => null),
+      this.integrationSettingsService?.getGeminiConfig().catch(() => null),
+    ]);
+    return {
+      OPENAI: { configured: Boolean(openai?.apiKey), enabled: Boolean(openai?.apiKey && openai?.isEnabled !== false), model: 'gpt-4o-mini' },
+      GEMINI: { configured: Boolean(gemini?.apiKey), enabled: Boolean(gemini?.apiKey && gemini?.isEnabled !== false), model: this.resolveGeminiModel(gemini?.model) },
+    };
+  }
+
+  async answerAssistant(
+    question: string,
+    authorizedContext: Record<string, any>,
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    policy: { primaryProvider?: string; fallbackProvider?: string } = {},
+  ): Promise<{ answer: string; provider: 'OPENAI' | 'GEMINI' }> {
+    const system = [
+      'You are QB Nexus, the QB Suite business assistant.',
+      'Answer concisely using only the authorized business data provided below and the conversation history.',
+      'Treat permission denials in the data as final. If the data does not contain the answer, say you cannot access that information yet.',
+      'Never invent counts, records, permissions, actions, or business facts. You are read-only and must not claim you executed an action.',
+      `Authorized data: ${JSON.stringify(authorizedContext)}`,
+    ].join('\n');
+    const [openai, gemini] = await Promise.all([
+      this.integrationSettingsService?.getOpenAiConfig().catch(() => null),
+      this.integrationSettingsService?.getGeminiConfig().catch(() => null),
+    ]);
+    const configs = {
+      OPENAI: openai?.apiKey && openai.isEnabled !== false ? openai : null,
+      GEMINI: gemini?.apiKey && gemini.isEnabled !== false ? gemini : null,
+    };
+    const primary = policy.primaryProvider === 'GEMINI' ? 'GEMINI' : 'OPENAI';
+    const fallback = policy.fallbackProvider === 'DISABLED' ? null : policy.fallbackProvider === 'OPENAI' || policy.fallbackProvider === 'GEMINI' ? policy.fallbackProvider : (primary === 'OPENAI' ? 'GEMINI' : 'OPENAI');
+    const order = [primary, ...(fallback && fallback !== primary ? [fallback] : [])] as Array<'OPENAI' | 'GEMINI'>;
+    const safeHistory = history.slice(-12).map((item) => ({ role: item.role, content: item.content.slice(0, 1600) }));
+    for (const provider of order) {
+      const config = configs[provider];
+      if (!config) continue;
+      try {
+        const response = provider === 'OPENAI'
+          ? await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
+            body: JSON.stringify({ model: 'gpt-4o-mini', messages: [
+              { role: 'system', content: system },
+              ...safeHistory.map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: item.content })),
+              { role: 'user', content: question },
+            ] }), signal: AbortSignal.timeout(20000),
+          })
+          : await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${this.resolveGeminiModel(gemini?.model)}:generateContent`, {
+            method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
+            body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [
+              ...safeHistory.map((item) => ({ role: item.role === 'assistant' ? 'model' : 'user', parts: [{ text: item.content }] })),
+              { role: 'user', parts: [{ text: question }] },
+            ] }), signal: AbortSignal.timeout(20000),
+          });
+        if (!response.ok) {
+          this.logger.warn(`[QB_NEXUS_PROVIDER] ${provider} request failed with HTTP ${response.status}`);
+          continue;
+        }
+        const data = await response.json() as any;
+        const answer = provider === 'OPENAI'
+          ? data?.choices?.[0]?.message?.content?.trim()
+          : data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('').trim();
+        if (answer) return { answer, provider };
+      } catch (error: any) {
+        this.logger.warn(`[QB_NEXUS_PROVIDER] ${provider} request failed: ${error?.name || 'provider error'}`);
+      }
     }
-    const form = new FormData();
-    const audioBytes = new Uint8Array(audio.length);
-    audioBytes.set(audio);
-    form.append('file', new Blob([audioBytes.buffer], { type: mimeType }), 'nexus-voice.webm');
-    form.append('model', 'gpt-4o-mini-transcribe');
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${config.apiKey}` },
-      body: form,
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) {
-      throw new BadRequestException('The transcription service could not process that recording.');
+    throw new BadRequestException('QB Nexus could not reach the selected AI provider or its configured fallback.');
+  }
+
+  async transcribeAssistantAudio(
+    audio: Buffer,
+    mimeType: string,
+    policy: { primaryProvider?: string; fallbackProvider?: string } = {},
+  ): Promise<string> {
+    const [openai, gemini] = await Promise.all([
+      this.integrationSettingsService?.getOpenAiConfig().catch(() => null),
+      this.integrationSettingsService?.getGeminiConfig().catch(() => null),
+    ]);
+    const configs = {
+      OPENAI: openai?.apiKey && openai.isEnabled !== false ? openai : null,
+      GEMINI: gemini?.apiKey && gemini.isEnabled !== false ? gemini : null,
+    };
+    const primary = policy.primaryProvider === 'GEMINI' ? 'GEMINI' : 'OPENAI';
+    const fallback = policy.fallbackProvider === 'DISABLED' ? null : policy.fallbackProvider === 'OPENAI' || policy.fallbackProvider === 'GEMINI' ? policy.fallbackProvider : (primary === 'OPENAI' ? 'GEMINI' : 'OPENAI');
+    const providers = [primary, ...(fallback && fallback !== primary ? [fallback] : [])] as Array<'OPENAI' | 'GEMINI'>;
+
+    for (const provider of providers) {
+      const config = configs[provider];
+      if (!config) continue;
+      try {
+        let transcript = '';
+        if (provider === 'OPENAI') {
+          const audioBytes = new Uint8Array(audio.length);
+          audioBytes.set(audio);
+          const form = new FormData();
+          form.append('file', new Blob([audioBytes.buffer], { type: mimeType }), 'nexus-voice.webm');
+          form.append('model', 'gpt-4o-mini-transcribe');
+          const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST', headers: { authorization: `Bearer ${config.apiKey}` }, body: form,
+            signal: AbortSignal.timeout(30_000),
+          });
+          if (!response.ok) { this.logger.warn(`[QB_NEXUS_TRANSCRIPTION] ${provider} returned HTTP ${response.status}`); continue; }
+          const result = await response.json() as { text?: string };
+          transcript = String(result?.text || '').trim();
+        } else {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${this.resolveGeminiModel(gemini?.model)}:generateContent`, {
+            method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
+            body: JSON.stringify({ contents: [{ role: 'user', parts: [
+              { text: 'Transcribe the user speech in this audio clip. Return only the words spoken. Do not answer the request.' },
+              { inlineData: { mimeType, data: audio.toString('base64') } },
+            ] }] }), signal: AbortSignal.timeout(30_000),
+          });
+          if (!response.ok) { this.logger.warn(`[QB_NEXUS_TRANSCRIPTION] ${provider} returned HTTP ${response.status}`); continue; }
+          const result = await response.json() as any;
+          transcript = result?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('').trim() || '';
+        }
+        if (transcript) return transcript.slice(0, 1200);
+      } catch (error: any) {
+        this.logger.warn(`[QB_NEXUS_TRANSCRIPTION] ${provider} failed: ${error?.name || 'provider error'}`);
+      }
     }
-    const result = await response.json() as { text?: string };
-    const transcript = String(result?.text || '').trim().slice(0, 1200);
-    if (!transcript) throw new BadRequestException('No speech was recognized. Please try again.');
-    return transcript;
+    throw new BadRequestException('The configured voice transcription providers could not process that recording.');
   }
 
   /**

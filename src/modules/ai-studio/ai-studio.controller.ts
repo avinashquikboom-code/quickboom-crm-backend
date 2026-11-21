@@ -17,6 +17,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagg
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AiCreditService } from './ai-credit.service';
 import { AiGenerationService } from './ai-generation.service';
+import { NexusOrchestratorService } from './nexus-orchestrator.service';
 import {
   GenerateContentDto,
   UpdateGenerationDto,
@@ -38,6 +39,7 @@ export class AiStudioController {
   constructor(
     private readonly aiCreditService: AiCreditService,
     private readonly aiGenerationService: AiGenerationService,
+    private readonly nexusOrchestrator: NexusOrchestratorService,
   ) {}
 
   private async resolveCustomerId(req: any): Promise<number> {
@@ -139,9 +141,30 @@ export class AiStudioController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Ask QB Nexus using business data scoped to the authenticated account' })
-  async askNexus(@Req() req: any, @Body() body: { message?: string }) {
-    const answer = await this.aiGenerationService.answerNexusQuestion(req.user, body?.message || '');
-    return { statusCode: 200, success: true, data: { answer } };
+  async askNexus(@Req() req: any, @Body() body: {
+    message?: string;
+    actionId?: string;
+    confirm?: boolean;
+    history?: Array<{ role?: string; content?: string }>;
+    primaryProvider?: string;
+    fallbackProvider?: string;
+  }) {
+    const result = await this.nexusOrchestrator.processMessage(
+      req.user,
+      body?.message || '',
+      body?.actionId,
+      body?.confirm,
+    );
+    return { statusCode: 200, success: true, data: result };
+  }
+
+  @Get('admin/ai/nexus/providers')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get configured QB Nexus AI provider health without exposing credentials' })
+  async getNexusProviders() {
+    const data = await this.aiGenerationService.getNexusProviderStatus();
+    return { statusCode: 200, success: true, data };
   }
 
   @Post('admin/ai/nexus/transcribe')
@@ -150,8 +173,12 @@ export class AiStudioController {
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Transcribe a user-recorded QB Nexus voice clip without storing audio' })
   @UseInterceptors(FileInterceptor('audio', { limits: { fileSize: 10 * 1024 * 1024 } }))
-  async transcribeNexusAudio(@Req() req: any, @UploadedFile() file?: Express.Multer.File) {
-    const text = await this.aiGenerationService.transcribeNexusAudio(req.user, file);
+  async transcribeNexusAudio(
+    @Req() req: any,
+    @Body() body: { primaryProvider?: string; fallbackProvider?: string },
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    const text = await this.aiGenerationService.transcribeNexusAudio(req.user, file, body || {});
     return { statusCode: 200, success: true, data: { text } };
   }
 
