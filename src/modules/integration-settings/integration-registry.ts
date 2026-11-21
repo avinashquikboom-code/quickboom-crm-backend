@@ -7,6 +7,9 @@ export type IntegrationField = {
   type?: 'text' | 'password' | 'number' | 'select' | 'boolean';
   options?: string[];
   placeholder?: string;
+  min?: number;
+  max?: number;
+  step?: number;
 };
 
 export type IntegrationDefinition = {
@@ -100,7 +103,10 @@ export const INTEGRATION_REGISTRY: IntegrationDefinition[] = [
     category: 'AI',
     fields: [
       { key: 'apiKey', label: 'API Key', secret: true, required: true },
-      { key: 'model', label: 'Model', group: 'config', placeholder: 'claude-3-5-sonnet-20241022' },
+      { key: 'integrationName', label: 'Integration Name', group: 'config', placeholder: 'Claude AI' },
+      { key: 'model', label: 'Model Selection', group: 'config', type: 'select', required: true, options: ['claude-sonnet-5', 'claude-opus-5', 'claude-haiku-4-5-20251001'] },
+      { key: 'maxTokens', label: 'Maximum Output Tokens', group: 'config', type: 'number', placeholder: '1024' },
+      { key: 'temperature', label: 'Temperature (supported models only)', group: 'config', type: 'number', placeholder: '1', min: 0, max: 1, step: 0.1 },
     ],
   },
   {
