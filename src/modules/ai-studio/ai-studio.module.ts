@@ -6,11 +6,12 @@ import { AiStudioController } from './ai-studio.controller';
 import { AiProviderService } from './ai-provider.service';
 import { AiCreditService } from './ai-credit.service';
 import { AiGenerationService } from './ai-generation.service';
+import { NexusOrchestratorService } from './nexus-orchestrator.service';
 
 @Module({
   imports: [PrismaModule, S3Module, IntegrationSettingsModule],
   controllers: [AiStudioController],
-  providers: [AiProviderService, AiCreditService, AiGenerationService],
-  exports: [AiCreditService, AiGenerationService, AiProviderService],
+  providers: [AiProviderService, AiCreditService, AiGenerationService, NexusOrchestratorService],
+  exports: [AiCreditService, AiGenerationService, AiProviderService, NexusOrchestratorService],
 })
 export class AiStudioModule {}

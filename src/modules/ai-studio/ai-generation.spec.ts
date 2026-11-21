@@ -10,7 +10,15 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
   let service: AiGenerationService;
 
   const mockPrisma = {
-    lead: { count: jest.fn() },
+    lead: { count: jest.fn(), findMany: jest.fn() },
+    employee: { findFirst: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+    attendance: { count: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
+    leaveRequest: { count: jest.fn() },
+    payroll: { aggregate: jest.fn() },
+    task: { count: jest.fn() },
+    work: { count: jest.fn() },
+    invoice: { aggregate: jest.fn() },
+    dataCaptureSearch: { count: jest.fn() },
     aiGeneration: {
       create: jest.fn(),
       findUnique: jest.fn(),
@@ -64,7 +72,20 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
     mockAiCredit.validateCreditAvailability.mockResolvedValue({ requiredCredits: 5, currentBalance: 50 });
     mockAiCredit.deductCreditsOnSuccess.mockResolvedValue({ creditsSpent: 5, newBalance: 45 });
     mockPrisma.lead.count.mockResolvedValue(18);
-    mockAiProvider.answerAssistant.mockResolvedValue('There are 18 pending leads.');
+    mockPrisma.lead.findMany.mockResolvedValue([]);
+    mockPrisma.employee.findFirst.mockResolvedValue({ id: 32 });
+    mockPrisma.employee.findMany.mockResolvedValue([]);
+    mockPrisma.employee.count.mockResolvedValue(1);
+    mockPrisma.attendance.count.mockResolvedValue(0);
+    mockPrisma.attendance.findFirst.mockResolvedValue(null);
+    mockPrisma.attendance.findMany.mockResolvedValue([]);
+    mockPrisma.leaveRequest.count.mockResolvedValue(0);
+    mockPrisma.payroll.aggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: { grossSalary: 0, netSalary: 0 } });
+    mockPrisma.task.count.mockResolvedValue(0);
+    mockPrisma.work.count.mockResolvedValue(0);
+    mockPrisma.invoice.aggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: { totalAmount: 0 } });
+    mockPrisma.dataCaptureSearch.count.mockResolvedValue(0);
+    mockAiProvider.answerAssistant.mockResolvedValue({ answer: 'There are 18 pending leads.', provider: 'OPENAI' });
     mockAiProvider.transcribeAssistantAudio.mockResolvedValue('Show my pending leads.');
     mockS3Service.uploadBuffer.mockResolvedValue({
       imageUrl: 'https://test-crm-bucket.s3.ap-south-1.amazonaws.com/marketing/banners/1/AIGEN-1234.png',
@@ -78,10 +99,10 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
 
   describe('QB Nexus grounded assistant', () => {
     it('answers lead questions with tenant-scoped counts and passes only aggregates to AI', async () => {
-      const answer = await service.answerNexusQuestion({ id: 7, customerId: 3, role: 'ADMIN' }, "How many pending leads do we have today?");
-      expect(answer).toBe('There are 18 pending leads.');
+      const result = await service.answerNexusQuestion({ id: 7, customerId: 3, role: 'ADMIN' }, "How many pending leads do we have today?");
+      expect(result.answer).toBe('There are 18 pending leads.');
       expect(mockPrisma.lead.count).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({ customerId: 3, deletedAt: null, status: { notIn: expect.any(Array) } }) }));
-      expect(mockAiProvider.answerAssistant).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ availableData: [expect.objectContaining({ source: 'CRM leads', pendingCount: 18, createdTodayPendingCount: 18 })] }));
+      expect(mockAiProvider.answerAssistant).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ availableData: [expect.objectContaining({ source: 'CRM leads', pendingCount: 18, createdTodayPendingCount: 18 })] }), [], {});
     });
 
     it('limits non-admin users to leads assigned to their own user ID', async () => {
@@ -108,6 +129,31 @@ describe('AiGenerationService - Content Generation & Credit Invariants', () => {
     it('rejects transcription without a tenant scope', async () => {
       await expect(service.transcribeNexusAudio({ id: 19 }, { buffer: Buffer.from('x'), mimetype: 'audio/webm' } as Express.Multer.File)).rejects.toThrow('not scoped');
       expect(mockAiProvider.transcribeAssistantAudio).not.toHaveBeenCalled();
+    });
+
+    it('limits HR attendance and leave data for employees to their own profile', async () => {
+      await service.answerNexusQuestion({ id: 19, customerId: 5, role: 'EMPLOYEE' }, 'Show my attendance and pending leave requests');
+      expect(mockPrisma.employee.findFirst).toHaveBeenCalledWith({ where: { customerId: 5, userId: 19 }, select: { id: true, firstName: true, lastName: true, employeeCode: true, status: true } });
+      expect(mockPrisma.attendance.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ customerId: 5, employeeId: 32 }) }));
+      expect(mockPrisma.leaveRequest.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ customerId: 5, employeeId: 32, status: 'PENDING' }) }));
+      expect(mockPrisma.employee.count).not.toHaveBeenCalled();
+    });
+
+    it('does not pass payroll or revenue data to non-admin users', async () => {
+      await service.answerNexusQuestion({ id: 19, customerId: 5, role: 'EMPLOYEE' }, 'Show payroll salary and revenue totals');
+      expect(mockPrisma.payroll.aggregate).not.toHaveBeenCalled();
+      expect(mockPrisma.invoice.aggregate).not.toHaveBeenCalled();
+      expect(mockAiProvider.answerAssistant.mock.calls.at(-1)[1].permissions).toEqual(expect.arrayContaining([
+        expect.stringContaining('payroll records are restricted'),
+        expect.stringContaining('revenue and invoice records are restricted'),
+      ]));
+    });
+
+    it('passes conversation history and provider selection to the existing provider abstraction', async () => {
+      const history = [{ role: 'user' as const, content: 'How many pending leads?' }];
+      const policy = { primaryProvider: 'GEMINI', fallbackProvider: 'OPENAI' };
+      await service.answerNexusQuestion({ id: 7, customerId: 3, role: 'ADMIN' }, 'Show them', history, policy);
+      expect(mockAiProvider.answerAssistant).toHaveBeenCalledWith('Show them', expect.any(Object), history, policy);
     });
   });
 
