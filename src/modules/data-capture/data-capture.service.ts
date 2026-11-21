@@ -1224,31 +1224,43 @@ export class DataCaptureService implements OnModuleInit {
 
     const resolvedCreatedFrom = resolveCreatedFrom(req, user || userOrUserId, dto.createdFrom);
 
-    const placesToCreate = allPlaces.filter((place) => place.businessName).map((place) => ({
-      customerId: effectiveCustomerId,
-      googlePlaceId: place.googlePlaceId,
-      sourceRecordId: place.googlePlaceId,
-      // Google Places content is returned to the client as an attributed live
-      // preview. Persist only the Place ID (permitted identifier) for later
-      // resolution; do not copy Google content into CRM or capture columns.
-      businessName: '',
-      category: null,
-      address: null,
-      phone: null,
-      website: null,
-      rating: null,
-      reviewCount: null,
-      latitude: null,
-      longitude: null,
-      googleMapsUrl: null,
-      businessStatus: null,
-      source: 'GOOGLE_PLACES',
-      createdFrom: resolvedCreatedFrom,
-      status: place.googlePlaceId && existingPlaceIds.has(place.googlePlaceId) ? 'DUPLICATE' : 'CAPTURED',
-      photos: undefined,
-      socialMedia: undefined,
-      rawData: { socialMediaEnrichmentStatus: place.website ? 'PENDING' : 'NOT_AVAILABLE' },
-    }));
+    // Never create an anonymous Google record: the Place ID and business name
+    // are the minimum identity required for a useful, retry-safe capture.
+    const placesToCreate = allPlaces.map((place) => {
+      const businessName = String(place.businessName || '').trim();
+      const googlePlaceId = String(place.googlePlaceId || '').trim();
+      if (!businessName || !googlePlaceId) {
+        throw new BadRequestException(
+          'Google Places did not return a business name and Place ID for one or more results. No records were saved; please retry the search.',
+        );
+      }
+      return {
+        customerId: effectiveCustomerId,
+        googlePlaceId,
+        sourceRecordId: googlePlaceId,
+        businessName,
+        category: place.category || null,
+        address: place.address && place.address !== 'N/A' ? place.address : null,
+        phone: place.phone || null,
+        website: place.website || null,
+        rating: place.rating ?? null,
+        reviewCount: place.reviewCount ?? null,
+        latitude: place.latitude ?? null,
+        longitude: place.longitude ?? null,
+        googleMapsUrl: place.googleMapsUrl || null,
+        businessStatus: place.businessStatus || 'OPERATIONAL',
+        source: 'GOOGLE_PLACES',
+        createdFrom: resolvedCreatedFrom,
+        status: existingPlaceIds.has(googlePlaceId) ? 'DUPLICATE' : 'CAPTURED',
+        photos: place.photos?.length ? place.photos as any : undefined,
+        socialMedia: undefined,
+        rawData: {
+          ...(place.rawData || {}),
+          ...(place.googlePhotos?.length ? { googlePhotos: place.googlePhotos } : {}),
+          socialMediaEnrichmentStatus: place.website ? 'PENDING' : 'NOT_AVAILABLE',
+        },
+      };
+    });
 
     // 6. Persist Job and Places to PostgreSQL
     const createdJob = await this.prisma.dataCaptureJob.create({
