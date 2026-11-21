@@ -68,8 +68,11 @@ export class ContactExtractor {
         try {
           response = await axios.get(url.toString(), {
             timeout: 3500,
-            maxContentLength: 500_000,
-            maxBodyLength: 500_000,
+            // Large Shopify storefronts commonly exceed 500 KB before their
+            // social/footer links appear. Keep a bounded response, but allow
+            // enough HTML to inspect the page safely.
+            maxContentLength: 2_000_000,
+            maxBodyLength: 2_000_000,
             maxRedirects: 0,
             httpAgent: new http.Agent(agentOptions),
             httpsAgent: new https.Agent(agentOptions),
@@ -93,7 +96,7 @@ export class ContactExtractor {
         url = new URL(location, url);
         continue;
       }
-      return { url, html: typeof response.data === 'string' ? response.data.slice(0, 500_000) : '' };
+      return { url, html: typeof response.data === 'string' ? response.data.slice(0, 2_000_000) : '' };
     }
     throw new Error('Website redirect limit exceeded.');
   }
@@ -197,6 +200,11 @@ export class ContactExtractor {
 
     // Convert to lowercase
     const lower = str.toLowerCase();
+    // A permissive email regex can mistake CDN paths such as
+    // `jquery@3.6.0` for an address. Emails cannot contain URL path separators,
+    // and public email domains end in an alphabetic suffix.
+    const domain = lower.slice(lower.lastIndexOf('@') + 1);
+    if (/[\\/]/.test(lower) || !/\.[a-z]{2,63}$/.test(domain)) return null;
 
     // Validate email format
     if (!EMAIL_REGEX.test(lower)) {
