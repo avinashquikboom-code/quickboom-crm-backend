@@ -1058,6 +1058,53 @@ export class EmailTemplateService {
   }
 
   /**
+   * Aggregates global email template and delivery statistics for a customer/tenant.
+   * Deduplicates by key so custom overrides don't double count against system defaults.
+   */
+  async getTemplateStats(customerId?: number | null) {
+    const numCustomerId = customerId && !isNaN(Number(customerId)) && Number(customerId) > 0 ? Number(customerId) : null;
+    const scope = numCustomerId ? { OR: [{ customerId: numCustomerId }, { customerId: null }] } : {};
+
+    // Retrieve live templates scoped to customer and system defaults to perform key deduplication
+    const liveTemplates = await this.prisma.emailTemplate.findMany({
+      where: { deletedAt: null, ...scope },
+      select: { id: true, key: true, customerId: true, isActive: true },
+    });
+
+    const keyMap = new Map<string, { isActive: boolean; customerId: number | null }>();
+    for (const t of liveTemplates) {
+      if (!keyMap.has(t.key) || (t.customerId === numCustomerId && keyMap.get(t.key)?.customerId === null)) {
+        keyMap.set(t.key, { isActive: t.isActive, customerId: t.customerId });
+      }
+    }
+
+    let active = 0;
+    let inactive = 0;
+    for (const item of keyMap.values()) {
+      if (item.isActive) active += 1;
+      else inactive += 1;
+    }
+    const total = keyMap.size;
+
+    const [archived, sent] = await Promise.all([
+      this.prisma.emailTemplate.count({
+        where: { deletedAt: { not: null }, ...scope },
+      }).catch(() => 0),
+      this.prisma.emailLog.count({
+        where: { status: 'SENT', ...(numCustomerId ? { customerId: numCustomerId } : {}) },
+      }).catch(() => 0),
+    ]);
+
+    return {
+      total,
+      active,
+      inactive,
+      archived,
+      sent,
+    };
+  }
+
+  /**
    * Lists templates with optional search and category filters.
    */
   async findAll(customerId?: number | null, query?: { category?: string; isActive?: string | boolean; search?: string; page?: string | number; limit?: string | number; status?: string; sort?: string }) {
@@ -1067,10 +1114,12 @@ export class EmailTemplateService {
     const status = String(query?.status || '').toUpperCase();
     const where: any = {
       deletedAt: status === 'ARCHIVED' ? { not: null } : null,
-      OR: [
-        { customerId: numCustomerId },
-        { customerId: null },
-      ],
+      ...(numCustomerId ? {
+        OR: [
+          { customerId: numCustomerId },
+          { customerId: null },
+        ],
+      } : {}),
     };
 
     if (query?.category && query.category !== 'ALL') {
@@ -1119,22 +1168,23 @@ export class EmailTemplateService {
     }
 
     const rows = Array.from(map.values());
-    if (query?.page == null || query.page === '') return rows;
+    const stats = await this.getTemplateStats(numCustomerId);
+
+    if (query?.page == null || query.page === '') {
+      return {
+        data: rows,
+        items: rows,
+        pagination: { page: 1, limit: rows.length, total: rows.length, totalPages: 1 },
+        stats,
+      };
+    }
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
-    const scope = { OR: [{ customerId: numCustomerId }, { customerId: null }] };
-    const [totalAll, active, inactive, archived, sent] = await Promise.all([
-      this.prisma.emailTemplate.count({ where: { deletedAt: null, ...scope } }),
-      this.prisma.emailTemplate.count({ where: { deletedAt: null, isActive: true, ...scope } }),
-      this.prisma.emailTemplate.count({ where: { deletedAt: null, isActive: false, ...scope } }),
-      this.prisma.emailTemplate.count({ where: { deletedAt: { not: null }, ...scope } }),
-      this.prisma.emailLog.count({ where: { status: 'SENT', ...(numCustomerId ? { customerId: numCustomerId } : {}) } }),
-    ]);
     return {
       data: rows.slice((page - 1) * limit, page * limit),
       items: rows.slice((page - 1) * limit, page * limit),
       pagination: { page, limit, total: rows.length, totalPages: Math.max(1, Math.ceil(rows.length / limit)) },
-      stats: { total: totalAll, active, inactive, archived, sent },
+      stats,
     };
   }
 
