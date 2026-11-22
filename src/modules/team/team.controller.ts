@@ -116,6 +116,18 @@ export class TeamController {
     return this.teamService.getTeamCalendar(id, query, user, targetCustomerId);
   }
 
+  @Get('stats')
+  @ApiOperation({ summary: 'Get team pod statistics' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getStats(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: any,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const targetCustomerId = this.resolveTargetCustomerId(user, customerId, customerIdQuery);
+    return this.teamService.getStats(targetCustomerId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single team details with members and leader' })
   @ApiQuery({ name: 'customerId', required: false })

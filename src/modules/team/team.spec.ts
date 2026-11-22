@@ -18,6 +18,7 @@ describe('TeamService - Functional End-to-End Team Management', () => {
       delete: jest.fn(),
     },
     teamMember: {
+      findMany: jest.fn(),
       createMany: jest.fn(),
       deleteMany: jest.fn(),
       upsert: jest.fn(),
@@ -262,6 +263,24 @@ describe('TeamService - Functional End-to-End Team Management', () => {
 
       const res = await service.removeMember(101, 1, 10);
       expect(mockPrismaService.teamMember.delete).toHaveBeenCalled();
+    });
+  });
+
+  describe('7. getStats (Team Statistics)', () => {
+    it('should return accurate team counts and members count', async () => {
+      mockPrismaService.team.count
+        .mockResolvedValueOnce(5) // total
+        .mockResolvedValueOnce(4) // active
+        .mockResolvedValueOnce(1); // inactive
+      mockPrismaService.teamMember.findMany.mockResolvedValue([{ employeeId: 10 }, { employeeId: 11 }]);
+      mockPrismaService.team.findFirst.mockResolvedValue({ updatedAt: new Date('2026-11-20') });
+
+      const stats = await service.getStats(101);
+      expect(stats.total).toBe(5);
+      expect(stats.active).toBe(4);
+      expect(stats.inactive).toBe(1);
+      expect(stats.totalMembers).toBe(2);
+      expect(stats.lastUpdated).toBeDefined();
     });
   });
 });

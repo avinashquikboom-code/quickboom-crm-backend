@@ -36,7 +36,8 @@ export class CouponService {
 
   async stats() {
     const now = new Date();
-    const [total, active, inactive, redemptionsSum] = await Promise.all([
+    const validExpiry = [{ expiresAt: null }, { expiresAt: { gte: now } }];
+    const [total, active, inactive, expired, scheduled, redemptionsSum] = await Promise.all([
       this.prisma.coupon.count({
         where: { deletedAt: null },
       }),
@@ -44,13 +45,31 @@ export class CouponService {
         where: {
           deletedAt: null,
           isActive: true,
-          OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+          AND: [
+            { OR: validExpiry },
+            { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+          ],
         },
       }),
       this.prisma.coupon.count({
         where: {
           deletedAt: null,
-          OR: [{ isActive: false }, { expiresAt: { lt: now } }],
+          isActive: false,
+          OR: validExpiry,
+        },
+      }),
+      this.prisma.coupon.count({
+        where: {
+          deletedAt: null,
+          expiresAt: { lt: now },
+        },
+      }),
+      this.prisma.coupon.count({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          startsAt: { gt: now },
+          OR: validExpiry,
         },
       }),
       this.prisma.coupon.aggregate({
@@ -59,7 +78,7 @@ export class CouponService {
       }),
     ]);
     const used = redemptionsSum._sum?.timesRedeemed || 0;
-    return { total, active, inactive, used };
+    return { total, active, inactive, expired, scheduled, used, totalRedemptions: used };
   }
 
   async list(query: {
@@ -87,26 +106,47 @@ export class CouponService {
       ];
     }
 
-    const status = String(query.status || '').toUpperCase();
+    const status = String(query.status || '').trim().toUpperCase();
+    if (status && status !== 'ALL' && !['ACTIVE', 'INACTIVE', 'EXPIRED', 'SCHEDULED'].includes(status)) {
+      throw new BadRequestException('Invalid coupon status filter');
+    }
     if (status === 'ACTIVE') {
       where.isActive = true;
       where.AND = [
         ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
         { OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
       ];
     } else if (status === 'INACTIVE') {
       where.isActive = false;
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+      ];
     } else if (status === 'EXPIRED') {
       where.expiresAt = { lt: now };
+    } else if (status === 'SCHEDULED') {
+      where.isActive = true;
+      where.startsAt = { gt: now };
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+      ];
     }
 
-    const discountType = String(query.discountType || '').toUpperCase();
+    const discountType = String(query.discountType || '').trim().toUpperCase();
+    if (discountType && discountType !== 'ALL' && !['PERCENTAGE', 'FIXED'].includes(discountType)) {
+      throw new BadRequestException('Invalid coupon discount type filter');
+    }
     if (discountType === 'PERCENTAGE' || discountType === 'FIXED') {
       where.discountType = discountType;
     }
 
-    const planId = Number(query.planId);
-    if (!isNaN(planId) && planId > 0) {
+    const planId = query.planId == null || query.planId === '' ? undefined : Number(query.planId);
+    if (planId !== undefined && (!Number.isInteger(planId) || planId <= 0)) {
+      throw new BadRequestException('Invalid planId filter');
+    }
+    if (planId !== undefined) {
       where.AND = [
         ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
         { OR: [{ appliesToAllPlans: true }, { plans: { some: { planId } } }] },
@@ -115,28 +155,29 @@ export class CouponService {
 
     if (query.startDate) {
       const sDate = new Date(query.startDate);
-      if (!isNaN(sDate.getTime())) {
-        where.AND = [
-          ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
-          { OR: [{ startsAt: { gte: sDate } }, { createdAt: { gte: sDate } }] },
-        ];
+      if (isNaN(sDate.getTime())) {
+        throw new BadRequestException('Invalid startDate filter');
       }
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { OR: [{ startsAt: { gte: sDate } }, { createdAt: { gte: sDate } }] },
+      ];
     }
 
     if (query.endDate) {
       const eDate = new Date(query.endDate);
-      if (!isNaN(eDate.getTime())) {
-        where.AND = [
-          ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
-          { OR: [{ expiresAt: { lte: eDate } }, { createdAt: { lte: eDate } }] },
-        ];
+      if (isNaN(eDate.getTime())) {
+        throw new BadRequestException('Invalid endDate filter');
       }
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { OR: [{ expiresAt: { lte: eDate } }, { createdAt: { lte: eDate } }] },
+      ];
     }
 
-    const total = await this.prisma.coupon.count({ where });
-
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Number(query.limit) > 0 ? Number(query.limit) : 20;
+    const page = this.parsePositiveInteger(query.page, 'page', 1);
+    const limit = this.parsePositiveInteger(query.limit, 'limit', 20);
+    if (limit > 100) throw new BadRequestException('limit cannot exceed 100');
     const skip = (page - 1) * limit;
 
     const validSortFields = [
@@ -148,10 +189,16 @@ export class CouponService {
       'expiresAt',
       'isActive',
     ];
-    const sortBy = validSortFields.includes(query.sortBy || '')
-      ? query.sortBy!
-      : 'createdAt';
-    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+    const sortBy = query.sortBy || 'createdAt';
+    if (!validSortFields.includes(sortBy)) {
+      throw new BadRequestException('Invalid coupon sortBy field');
+    }
+    const sortOrder = String(query.sortOrder || 'desc').toLowerCase();
+    if (sortOrder !== 'asc' && sortOrder !== 'desc') {
+      throw new BadRequestException('sortOrder must be asc or desc');
+    }
+
+    const total = await this.prisma.coupon.count({ where });
 
     const rows = await this.prisma.coupon.findMany({
       where,
@@ -179,6 +226,15 @@ export class CouponService {
         totalPages: Math.ceil(total / limit) || 1,
       },
     };
+  }
+
+  private parsePositiveInteger(value: string | number | undefined, label: string, fallback: number): number {
+    if (value == null || value === '') return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) {
+      throw new BadRequestException(`${label} must be a positive integer`);
+    }
+    return parsed;
   }
 
   async getOne(id: number) {
@@ -627,7 +683,13 @@ export class CouponService {
       planIds: (row.plans || []).map((item: any) => item.planId),
       planNames,
       isActive: row.isActive,
-      status: !row.isActive ? 'INACTIVE' : expired ? 'EXPIRED' : 'ACTIVE',
+      status: expired
+        ? 'EXPIRED'
+        : !row.isActive
+          ? 'INACTIVE'
+          : row.startsAt && new Date(row.startsAt) > now
+            ? 'SCHEDULED'
+            : 'ACTIVE',
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

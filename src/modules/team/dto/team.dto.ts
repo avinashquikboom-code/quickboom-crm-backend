@@ -21,6 +21,17 @@ export class CreateTeamDto {
   @IsOptional()
   description?: string;
 
+  @ApiPropertyOptional({ example: 'POD-CORE', description: 'Unique code for the team pod' })
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @ApiPropertyOptional({ example: 10, description: 'Maximum member capacity of the pod' })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  capacity?: number;
+
   @ApiPropertyOptional({ example: 12, description: 'Employee ID of the designated team leader' })
   @IsOptional()
   @IsInt()
@@ -50,6 +61,17 @@ export class UpdateTeamDto {
   @IsString()
   @IsOptional()
   description?: string;
+
+  @ApiPropertyOptional({ example: 'POD-CORE', description: 'Unique code for the team pod' })
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @ApiPropertyOptional({ example: 10, description: 'Maximum member capacity of the pod' })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  capacity?: number;
 
   @ApiPropertyOptional({ example: 12, description: 'Employee ID of the designated team leader' })
   @IsOptional()
