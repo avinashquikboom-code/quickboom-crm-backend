@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkService } from './work.service';
+import { WorkPermissionService } from './work-permission.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkStatus, WorkType } from '@prisma/client';
 
@@ -19,6 +20,8 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       scheduledDate: new Date('2026-09-10T10:00:00.000Z'),
       scheduledTime: '10:00 AM',
       status: WorkStatus.ASSIGNED,
+      priority: 'HIGH',
+      description: 'Capture the product launch video.',
       notes: 'Shoot location at studio',
       customer: {
         id: 10,
@@ -95,7 +98,7 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       id: 104,
       customerId: 40,
       subscriptionId: 77,
-      assignedToId: null, // Assigned through Team
+      assignedToId: 1, // Team member 1 is explicitly assigned this work
       editorId: null,
       workType: WorkType.STORY_DESIGN,
       title: 'Story Design',
@@ -206,6 +209,17 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
       providers: [
         WorkService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: WorkPermissionService,
+          useValue: {
+            getAllowedActivityTypesForEmployee: jest.fn().mockResolvedValue({
+              role: 'EMPLOYEE',
+              allowedTypes: new Set<string>(),
+              isFullAccess: true,
+              isProductionManager: false,
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -220,6 +234,10 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
     expect(item101?.customerName).toBe('Acme Corp');
     expect(item101?.title).toBe('Reels Video Shoot');
     expect(item101?.time).toBe('10:00 AM');
+    expect(item101?.startTime).toBe('10:00 AM');
+    expect(item101?.endTime).toBeNull();
+    expect(item101?.priority).toBe('HIGH');
+    expect(item101?.description).toBe('Capture the product launch video.');
     expect(item101?.location).toBe('123 Market St, Mumbai, Maharashtra');
     expect(item101?.status).toBe(WorkStatus.ASSIGNED);
   });
@@ -236,6 +254,20 @@ describe('Employee Calendar Isolation & Mapping Tests', () => {
   it('Employee 4 (unassigned) does NOT see Employee 1 or Employee 2 assigned work', async () => {
     const calendar = await workService.getEmployeeCalendar(4);
     expect(calendar).toHaveLength(0);
+  });
+
+  it('does not fabricate schedule times when a work item has none', async () => {
+    const storedTime = mockWorkItems[0].scheduledTime;
+    mockWorkItems[0].scheduledTime = null as any;
+    try {
+      const calendar = await workService.getEmployeeCalendar(1);
+      const item101 = calendar.find((item) => item.id === '101');
+      expect(item101?.scheduledTime).toBeNull();
+      expect(item101?.startTime).toBeNull();
+      expect(item101?.endTime).toBeNull();
+    } finally {
+      mockWorkItems[0].scheduledTime = storedTime;
+    }
   });
 
   it('Employee 3 sees only their own work (Creative Post Design for Beta LLC)', async () => {

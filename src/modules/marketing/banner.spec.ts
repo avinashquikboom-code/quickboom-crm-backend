@@ -5,6 +5,53 @@ import { BannerUploadService } from './banner-upload.service';
 import { BannerController } from './banner.controller';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { CreateMarketingBannerDto, QueryMarketingBannerDto } from './dto/banner.dto';
+
+describe('CreateMarketingBannerDto optional fields validation', () => {
+  it('allows all optional fields to be empty strings, null, or omitted without errors', () => {
+    const dto = plainToInstance(
+      CreateMarketingBannerDto,
+      {
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/valid.jpg',
+        title: '',
+        subtitle: '',
+        description: '',
+        ctaText: '',
+        ctaUrl: '',
+        priority: '',
+        startAt: '',
+        endAt: null,
+      },
+      { enableImplicitConversion: true },
+    );
+    const errors = validateSync(dto);
+    expect(errors).toHaveLength(0);
+    expect(dto.priority).toBe(0);
+    expect(dto.startAt).toBeNull();
+    expect(dto.endAt).toBeNull();
+  });
+});
+
+describe('QueryMarketingBannerDto boolean query parsing', () => {
+  it('parses string false as false for inactive banner filtering', () => {
+    const query = plainToInstance(QueryMarketingBannerDto, { isActive: 'false' }, { enableImplicitConversion: true });
+    expect(query.isActive).toBe(false);
+    expect(validateSync(query)).toHaveLength(0);
+  });
+
+  it('parses string true as true for active and published filtering', () => {
+    const query = plainToInstance(
+      QueryMarketingBannerDto,
+      { isActive: 'true', isPublished: 'true' },
+      { enableImplicitConversion: true },
+    );
+    expect(query.isActive).toBe(true);
+    expect(query.isPublished).toBe(true);
+    expect(validateSync(query)).toHaveLength(0);
+  });
+});
 
 describe('Marketing Module - Banner Service & Controller', () => {
   let service: BannerService;
@@ -272,6 +319,130 @@ describe('Marketing Module - Banner Service & Controller', () => {
 
       const activated = await service.setStatus(banner.id, true, user);
       expect(activated.isActive).toBe(true);
+    });
+
+    it('creates banner with only the required image input (all optional fields omitted)', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const dto = {
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/only-image.jpg',
+      };
+
+      const result = await service.create(dto as any, user);
+      expect(result).toBeDefined();
+      expect(result.id).toBeDefined();
+      expect(result.title).toBe('');
+      expect(result.subtitle).toBeNull();
+      expect(result.description).toBeNull();
+      expect(result.ctaText).toBeNull();
+      expect(result.ctaUrl).toBeNull();
+      expect(result.priority).toBe(0);
+      expect(result.startAt).toBeNull();
+      expect(result.endAt).toBeNull();
+    });
+
+    it('creates banner with all optional fields empty strings or null', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const dto = {
+        title: '',
+        subtitle: '',
+        description: '',
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/empty-fields.jpg',
+        ctaText: '',
+        ctaUrl: '',
+        priority: 0,
+        startAt: null,
+        endAt: null,
+      };
+
+      const result = await service.create(dto as any, user);
+      expect(result).toBeDefined();
+      expect(result.title).toBe('');
+      expect(result.subtitle).toBeNull();
+      expect(result.description).toBeNull();
+      expect(result.ctaText).toBeNull();
+      expect(result.ctaUrl).toBeNull();
+      expect(result.priority).toBe(0);
+      expect(result.startAt).toBeNull();
+      expect(result.endAt).toBeNull();
+    });
+
+    it('creates banner with some optional fields populated', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const dto = {
+        title: 'Partial Banner',
+        imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/partial.jpg',
+        ctaText: 'Explore',
+        // subtitle, description, ctaUrl, startAt, endAt omitted
+      };
+
+      const result = await service.create(dto as any, user);
+      expect(result.title).toBe('Partial Banner');
+      expect(result.ctaText).toBe('Explore');
+      expect(result.subtitle).toBeNull();
+      expect(result.description).toBeNull();
+      expect(result.ctaUrl).toBeNull();
+      expect(result.priority).toBe(0);
+    });
+
+    it('edits banner and clears optional fields', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const banner = await service.create(
+        {
+          title: 'Full Banner',
+          subtitle: 'Original Subtitle',
+          description: 'Original Description',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/full.jpg',
+          ctaText: 'Original CTA',
+          ctaUrl: 'https://example.com/orig',
+          priority: 25,
+          startAt: '2026-01-01T00:00:00.000Z',
+          endAt: '2026-12-31T23:59:59.000Z',
+        },
+        user,
+      );
+
+      expect(banner.title).toBe('Full Banner');
+      expect(banner.subtitle).toBe('Original Subtitle');
+      expect(banner.startAt).toBeDefined();
+
+      // Clear all optional fields
+      const updated = await service.update(
+        banner.id,
+        {
+          title: '',
+          subtitle: '',
+          description: '',
+          ctaText: '',
+          ctaUrl: '',
+          priority: 0,
+          startAt: null,
+          endAt: null,
+        } as any,
+        user,
+      );
+
+      expect(updated.title).toBe('');
+      expect(updated.subtitle).toBeNull();
+      expect(updated.description).toBeNull();
+      expect(updated.ctaText).toBeNull();
+      expect(updated.ctaUrl).toBeNull();
+      expect(updated.priority).toBe(0);
+      expect(updated.startAt).toBeNull();
+      expect(updated.endAt).toBeNull();
+    });
+
+    it('saves banner without dates and keeps them null', async () => {
+      const user = { id: 10, customerId: 101, role: 'COMPANY_ADMIN' };
+      const banner = await service.create(
+        {
+          title: 'Dateless Banner',
+          imageUrl: 'https://quikboom-marketing-banners.s3.ap-south-1.amazonaws.com/marketing/banners/dateless.jpg',
+        },
+        user,
+      );
+
+      expect(banner.startAt).toBeNull();
+      expect(banner.endAt).toBeNull();
     });
 
     it('soft deletes marketing banner by setting deletedAt', async () => {
