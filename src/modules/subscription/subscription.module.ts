@@ -4,6 +4,8 @@ import { SubscriptionService } from './subscription.service';
 import { PlanAccessService } from './plan-access.service';
 import { CustomPlanController } from './custom-plan.controller';
 import { CustomPlanService } from './custom-plan.service';
+import { CouponController } from './coupon.controller';
+import { CouponService } from './coupon.service';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { ScheduleModule } from '../schedule/schedule.module';
 import { WorkModule } from '../work/work.module';
@@ -15,8 +17,8 @@ import { CommissionModule } from '../commission/commission.module';
 
 @Module({
   imports: [PrismaModule, ScheduleModule, WorkModule, NotificationModule, WhatsappModule, InvoiceModule, CommissionModule],
-  controllers: [SubscriptionController, CustomPlanController],
-  providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
-  exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService],
+  controllers: [SubscriptionController, CustomPlanController, CouponController],
+  providers: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService, CouponService],
+  exports: [SubscriptionService, PlanAccessService, CustomPlanService, InstallmentService, CouponService],
 })
 export class SubscriptionModule {}
