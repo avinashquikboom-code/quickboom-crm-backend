@@ -718,8 +718,8 @@ export class CustomerService {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
   }) {
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
     const where: any = {
@@ -757,13 +757,11 @@ export class CustomerService {
       }
     }
 
-    let orderBy: any = { createdAt: 'desc' };
-    if (query.sortBy) {
-      const direction = query.sortOrder === 'asc' ? 'asc' : 'desc';
-      if (['name', 'createdAt', 'storageUsed'].includes(query.sortBy)) {
-        orderBy = { [query.sortBy]: direction };
-      }
-    }
+    const allowedSortFields = ['name', 'createdAt', 'storageUsed'] as const;
+    const sortBy = allowedSortFields.includes(query.sortBy as (typeof allowedSortFields)[number])
+      ? query.sortBy!
+      : 'createdAt';
+    const orderBy: any = { [sortBy]: query.sortOrder === 'asc' ? 'asc' : 'desc' };
 
     const [total, customers, allCustomersStats] = await Promise.all([
       this.prisma.customer.count({ where }),
@@ -804,31 +802,23 @@ export class CustomerService {
         },
       }),
       this.prisma.customer.findMany({
-        where: { deletedAt: null, NOT: SYSTEM_CUSTOMER_EXCLUSIONS },
-        include: {
+        where,
+        select: {
+          id: true,
+          isActive: true,
+          storageUsed: true,
+          userLimit: true,
           subscriptions: {
             where: { deletedAt: null },
             orderBy: { createdAt: 'desc' },
             take: 1,
             include: { plan: true },
           },
-          originLead: {
-            include: { stage: true },
-          },
-          leads: {
-            where: { deletedAt: null },
-            orderBy: { updatedAt: 'desc' },
-            take: 1,
-            include: { stage: true },
-          },
-          works: {
-            select: { id: true, status: true },
-          },
+          works: { select: { status: true } },
           _count: {
             select: {
               users: { where: { deletedAt: null } },
               leads: { where: { deletedAt: null } },
-              works: true,
               dataCapturePlaces: { where: { deletedAt: null } },
             },
           },
@@ -890,7 +880,7 @@ export class CustomerService {
       const userCount = c._count?.users || 0;
       const leadCount = c._count?.leads || 0;
       const sub = c.subscriptions?.[0];
-      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 5;
+      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 0;
       const storageBytes = Number(c.storageUsed || 0);
 
       totalAllocatedSeats += userCount;
@@ -906,13 +896,14 @@ export class CustomerService {
     let items = (customers as any[]).map((c) => {
       const sub = c.subscriptions?.[0];
       const users = c._count?.users || 0;
-      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 50;
+      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? null;
       const leads = c._count?.leads || 0;
-      const maxLeads = sub?.customLeadLimit ?? sub?.plan?.leadLimit ?? c.leadLimit ?? 500;
+      const maxLeads = sub?.customLeadLimit ?? sub?.plan?.leadLimit ?? c.leadLimit ?? null;
       const storageBytes = Number(c.storageUsed || 0);
-      const maxStorageBytes = Number(sub?.customStorageLimit ?? sub?.plan?.storageLimit ?? c.storageLimit ?? 5368709120);
-      const seatPct = maxUsers > 0 ? Math.min(100, Math.round((users / maxUsers) * 100)) : 0;
-      const leadPct = maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : 0;
+      const rawStorageLimit = sub?.customStorageLimit ?? sub?.plan?.storageLimit ?? c.storageLimit ?? null;
+      const maxStorageBytes = rawStorageLimit === null ? null : Number(rawStorageLimit);
+      const seatPct = maxUsers !== null && maxUsers > 0 ? Math.min(100, Math.round((users / maxUsers) * 100)) : null;
+      const leadPct = maxLeads !== null && maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : null;
 
       const customerStatus = computeCustomerStatus(c);
       const linkedLead = (c as any).originLead || c.leads?.[0];
@@ -949,7 +940,7 @@ export class CustomerService {
         storageBytes,
         maxStorageBytes,
         storage: formatStorage(storageBytes),
-        maxStorage: formatStorage(maxStorageBytes),
+        maxStorage: maxStorageBytes === null ? null : formatStorage(maxStorageBytes),
         worksCount: c._count?.works || 0,
         dataCapturePlacesCount: c._count?.dataCapturePlaces || 0,
         createdAt: c.createdAt,
@@ -987,10 +978,10 @@ export class CustomerService {
       },
       items,
       pagination: {
-        total: items.length,
+        total,
         page,
         limit,
-        totalPages: Math.ceil(items.length / limit) || 1,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }

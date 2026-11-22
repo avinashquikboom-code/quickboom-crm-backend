@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CustomerService } from './customer.service';
@@ -25,7 +26,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WorkService } from '../work/work.service';
 import { AiCreditService } from '../ai-studio/ai-credit.service';
 import { AdminAdjustCreditsDto } from '../ai-studio/dto/ai-studio.dto';
-import { isUserSuperAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
+import { isUserSuperAdmin, isUserAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { CustomerMobilePermissionService } from './customer-mobile-permission.service';
@@ -178,6 +179,7 @@ export class CustomerController {
   @ApiQuery({ name: 'sortBy', required: false })
   @ApiQuery({ name: 'sortOrder', required: false })
   async getResourceConsumption(
+    @CurrentUser() user: any,
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('dateFrom') dateFrom?: string,
@@ -187,13 +189,24 @@ export class CustomerController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
   ) {
+    if (!isUserSuperAdmin(user) && !isUserAdmin(user)) {
+      throw new ForbiddenException('Only authorized administrators can view resource usage');
+    }
+    const parsedPage = page === undefined ? 1 : Number(page);
+    const parsedLimit = limit === undefined ? 20 : Number(limit);
+    if (!Number.isInteger(parsedPage) || parsedPage < 1) {
+      throw new BadRequestException('page must be a positive integer');
+    }
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+      throw new BadRequestException('limit must be an integer between 1 and 100');
+    }
     return this.customerService.getResourceConsumption({
       search,
       status,
       dateFrom,
       dateTo,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
+      page: parsedPage,
+      limit: parsedLimit,
       sortBy,
       sortOrder,
     });

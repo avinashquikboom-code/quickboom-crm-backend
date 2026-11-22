@@ -159,6 +159,7 @@ describe('CustomerService - Resource Consumption', () => {
     expect(result.summary.activeCustomers).toBe(2);
 
     expect(result.items).toHaveLength(2);
+    expect(result.pagination).toEqual({ total: 2, page: 1, limit: 20, totalPages: 1 });
     const item1 = result.items[0];
     expect(item1.id).toBe(1);
     expect(item1.name).toBe('Acme Enterprise');
@@ -184,6 +185,18 @@ describe('CustomerService - Resource Consumption', () => {
     expect(callArgs.where.deletedAt).toBeNull();
     expect(callArgs.where.OR).toBeDefined();
     expect(callArgs.where.createdAt).toBeDefined();
+  });
+
+  it('reports database total and page metadata independently of the current page rows', async () => {
+    prisma.customer.findMany
+      .mockResolvedValueOnce([mockCustomers[1]])
+      .mockResolvedValueOnce(mockCustomers);
+
+    const result = await service.getResourceConsumption({ page: 2, limit: 1 });
+
+    expect(prisma.customer.count).toHaveBeenCalled();
+    expect(prisma.customer.findMany.mock.calls[0][0]).toMatchObject({ skip: 1, take: 1 });
+    expect(result.pagination).toEqual({ total: 2, page: 2, limit: 1, totalPages: 2 });
   });
 
   describe('findOne Authorization & Access Control', () => {
