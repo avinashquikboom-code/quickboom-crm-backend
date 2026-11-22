@@ -39,6 +39,7 @@ export async function seedRbac() {
     { name: 'SOCIAL_MEDIA_MANAGER', type: RoleType.CUSTOM, desc: 'Social Media Manager for creative management and publishing' },
     { name: 'PHOTOGRAPHER', type: RoleType.CUSTOM, desc: 'Photographer and Reel Shooter for on-site shoots' },
     { name: 'SALES_EXECUTIVE', type: RoleType.CUSTOM, desc: 'Sales Executive for on-ground visits and leads' },
+    { name: 'FIELD_SALES_EXECUTIVE', type: RoleType.CUSTOM, desc: 'Field Sales Executive for on-site client visits and execution' },
     { name: 'HR', type: RoleType.CUSTOM, desc: 'HR Manager/Executive' },
     { name: 'EMPLOYEE', type: RoleType.CUSTOM, desc: 'General Employee role' },
     { name: 'MANAGER', type: RoleType.CUSTOM, desc: 'Department/Team Manager' },

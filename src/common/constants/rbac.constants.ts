@@ -667,9 +667,33 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
     { module: "SETTINGS", action: "SETTING_PROFILE" },
   ],
 
-  // 9. VISITOR / FIELD OFFICER:
+  // 9. FIELD SALES EXECUTIVE (formerly Visitor / Field Officer):
   // Receives assigned visits, check-in (start), and complete.
   // Intentionally does NOT have VISITS:CREATE (only Admin / BPO / Telecaller schedules visits).
+  FIELD_SALES_EXECUTIVE: [
+    { module: "DASHBOARD", action: "VIEW" },
+    { module: "DASHBOARD", action: "CARD_STATS" },
+    { module: "DASHBOARD", action: "CARD_VISITS" },
+    { module: "CALENDAR", action: "VIEW" },
+    { module: "CALENDAR", action: "VIEW_ASSIGNED" },
+    { module: "VISITS", action: "VIEW" },
+    { module: "VISITS", action: "START" },
+    { module: "VISITS", action: "COMPLETE" },
+    { module: "LEADS", action: "VIEW" },
+    { module: "LEADS", action: "TAB_OVERVIEW" },
+    { module: "LEADS", action: "TAB_ACTIVITY" },
+    { module: "ATTENDANCE", action: "VIEW" },
+    { module: "ATTENDANCE", action: "PUNCH_IN" },
+    { module: "ATTENDANCE", action: "PUNCH_OUT" },
+    { module: "LEAVE", action: "VIEW" },
+    { module: "LEAVE", action: "CREATE" },
+    { module: "NOTIFICATIONS", action: "VIEW" },
+    { module: "NOTIFICATIONS", action: "READ" },
+    { module: "PROFILE", action: "VIEW" },
+    { module: "PROFILE", action: "EDIT" },
+    { module: "SETTINGS", action: "VIEW" },
+    { module: "SETTINGS", action: "SETTING_PROFILE" },
+  ],
   VISITOR: [
     { module: "DASHBOARD", action: "VIEW" },
     { module: "DASHBOARD", action: "CARD_STATS" },
@@ -697,6 +721,10 @@ export const ROLE_PERMISSION_DEFAULTS: Record<string, PermissionItem[]> = {
 };
 
 // Aliases for matching
+ROLE_PERMISSION_DEFAULTS.FIELD_SALES = ROLE_PERMISSION_DEFAULTS.FIELD_SALES_EXECUTIVE;
+ROLE_PERMISSION_DEFAULTS.FIELD_VISITOR = ROLE_PERMISSION_DEFAULTS.FIELD_SALES_EXECUTIVE;
+ROLE_PERMISSION_DEFAULTS.FIELD_OFFICER = ROLE_PERMISSION_DEFAULTS.FIELD_SALES_EXECUTIVE;
+ROLE_PERMISSION_DEFAULTS.VISITOR = ROLE_PERMISSION_DEFAULTS.FIELD_SALES_EXECUTIVE;
 ROLE_PERMISSION_DEFAULTS.GRAPHIC_DESIGNER = ROLE_PERMISSION_DEFAULTS.DESIGNER;
 ROLE_PERMISSION_DEFAULTS.VIDEO_EDITOR = ROLE_PERMISSION_DEFAULTS.EDITOR;
 ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_EXECUTIVE = ROLE_PERMISSION_DEFAULTS.SOCIAL_MEDIA_MANAGER;

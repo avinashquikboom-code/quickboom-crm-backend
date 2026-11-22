@@ -383,7 +383,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           const upper = String(candidate).toUpperCase().replace(/\s+/g, '_');
           let matched: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) matched = upper;
-          else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) matched = 'VISITOR';
+          else if (upper.includes('FIELD_SALES_EXECUTIVE') || upper.includes('FIELD_SALES') || upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) matched = 'FIELD_SALES_EXECUTIVE';
           else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) matched = 'TELECALLER';
           else if (upper.includes('DESIGN')) matched = 'DESIGNER';
           else if (upper.includes('EDIT')) matched = 'EDITOR';
@@ -434,12 +434,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       .map((ur: any) => String(ur.role?.name || ur.role?.type || '').trim().toUpperCase());
     const isVisitorDesignation = Boolean(
       desigUpper && (
+        desigUpper.includes('FIELD_SALES_EXECUTIVE') ||
+        desigUpper.includes('FIELD SALES EXECUTIVE') ||
+        desigUpper.includes('FIELD_SALES') ||
+        desigUpper.includes('FIELD SALES') ||
         desigUpper.includes('VISITOR') ||
         desigUpper === 'VISIT' ||
         desigUpper.includes('FIELD VISIT') ||
         desigUpper.includes('FIELD OFFICER')
       )
-    ) || roleNamesUpper.some((name: string) => name.includes('VISITOR') || name === 'VISIT');
+    ) || roleNamesUpper.some((name: string) =>
+      name.includes('FIELD_SALES_EXECUTIVE') ||
+      name.includes('FIELD SALES') ||
+      name.includes('VISITOR') ||
+      name === 'VISIT'
+    );
 
     if (isVisitorDesignation) {
       // Visitors only view, start (check-in), and complete assigned visits.

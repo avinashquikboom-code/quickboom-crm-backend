@@ -2029,7 +2029,7 @@ export class NotificationService {
         return null;
       }
 
-      const visitorLabel = (visitorName || '').trim() || 'Visitor';
+      const visitorLabel = (visitorName || '').trim() || 'Field Sales Executive';
       const title = 'Visit Completed';
       const body = `${visitorLabel} completed the visit for ${resolvedLeadName || 'the lead'}.`;
 
@@ -2044,6 +2044,7 @@ export class NotificationService {
           visitId: String(visitId),
           leadId: leadId ? String(leadId) : '',
           leadName: resolvedLeadName,
+          fieldSalesExecutiveName: visitorLabel,
           visitorName: visitorLabel,
         },
       });

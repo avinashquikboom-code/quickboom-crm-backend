@@ -39,7 +39,7 @@ import {
  */
 @ApiTags('Mobile - Employee Visits')
 @ApiBearerAuth()
-@CrmCategory('SALES', 'VISITOR')
+@CrmCategory('SALES', 'FIELD_SALES_EXECUTIVE', 'VISITOR')
 @UseGuards(JwtAuthGuard, CustomerGuard, CrmEmployeeAccessGuard)
 @Controller('mobile/visits')
 export class MobileVisitController {
@@ -51,13 +51,20 @@ export class MobileVisitController {
 
   private isVisitorEmployee(employee: any, user: any): boolean {
     const desigName = (employee?.designation?.name || '').toUpperCase();
+    const desigCode = (employee?.designation?.code || '').toUpperCase();
     const roleName = (user?.role || '').toUpperCase();
     const roleTypeName = (user?.roleType || '').toUpperCase();
     return (
+      desigName.includes('FIELD_SALES_EXECUTIVE') ||
+      desigName.includes('FIELD SALES') ||
+      desigCode.includes('FIELD_SALES') ||
       desigName.includes('VISIT') ||
       desigName.includes('FIELD') ||
+      roleName.includes('FIELD_SALES_EXECUTIVE') ||
+      roleName.includes('FIELD SALES') ||
       roleName.includes('VISITOR') ||
       roleName.includes('VISIT') ||
+      roleTypeName.includes('FIELD_SALES_EXECUTIVE') ||
       roleTypeName.includes('VISITOR') ||
       roleTypeName.includes('VISIT')
     );
@@ -75,7 +82,7 @@ export class MobileVisitController {
     if (!this.isVisitorEmployee(employee, user)) return;
     if (!this.visitorOwnsAccount(employee, user) || employee.customerId !== Number(customerId) ||
         visit.customerId !== employee.customerId || visit.employeeId !== employee.id) {
-      throw new ForbiddenException('Only the authenticated Visitor assigned to this visit can access it.');
+      throw new ForbiddenException('Only the authenticated Field Sales Executive assigned to this visit can access it.');
     }
   }
 
@@ -923,7 +930,7 @@ export class MobileVisitController {
             hasActiveScheduledVisit: true,
           })
         ) {
-          throw new ForbiddenException('Visitors may only transition VISIT_SCHEDULED to VISIT_DONE.');
+          throw new ForbiddenException('Field Sales Executives may only transition VISIT_SCHEDULED to VISIT_DONE.');
         }
       }
     }

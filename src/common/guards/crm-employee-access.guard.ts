@@ -43,16 +43,20 @@ export class CrmEmployeeAccessGuard implements CanActivate {
       return true;
     }
 
-    const required = this.reflector.getAllAndOverride<Array<'SALES' | 'VISITOR'>>(CRM_CATEGORY_KEY, [
+    const required = this.reflector.getAllAndOverride<Array<'SALES' | 'FIELD_SALES_EXECUTIVE' | 'VISITOR'>>(CRM_CATEGORY_KEY, [
       context.getHandler(),
       context.getClass(),
-    ]) || ['SALES', 'VISITOR'];
+    ]) || ['SALES', 'FIELD_SALES_EXECUTIVE', 'VISITOR'];
 
     const category = await this.resolveCategory(user);
     const employeeStatus = String(user.employee?.status || 'ACTIVE').toUpperCase();
-    const sharedRoute = required.includes('SALES') && required.includes('VISITOR');
+    const sharedRoute = required.includes('SALES') && (required.includes('FIELD_SALES_EXECUTIVE') || required.includes('VISITOR'));
+    const categoryAllowed = (required as string[]).includes(category) ||
+      (category === 'SALES' && (required as string[]).includes('BPO')) ||
+      (category === 'FIELD_SALES_EXECUTIVE' && (required.includes('FIELD_SALES_EXECUTIVE') || required.includes('VISITOR'))) ||
+      (category === 'VISITOR' && (required.includes('FIELD_SALES_EXECUTIVE') || required.includes('VISITOR')));
     const allowed = employeeStatus === 'ACTIVE' && (
-      required.includes(category as 'SALES' | 'VISITOR') ||
+      categoryAllowed ||
       (sharedRoute && category === 'NONE' && hasExplicitLeadView(user))
     );
     if (!allowed) {

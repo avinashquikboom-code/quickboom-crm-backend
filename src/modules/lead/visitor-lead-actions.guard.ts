@@ -12,6 +12,6 @@ export class VisitorLeadActionsGuard implements CanActivate {
     const handler = context.getHandler().name;
     if (handler === 'checkDuplicate' || handler === 'updateStatus') return true;
     if (handler === 'manageVisit' && ['START', 'COMPLETE'].includes(request.body?.action) && request.body?.employeeId == null) return true;
-    throw new ForbiddenException('Visitors may only complete their assigned scheduled visit; other lead mutations are forbidden.');
+    throw new ForbiddenException('Field Sales Executives may only complete their assigned scheduled visit; other lead mutations are forbidden.');
   }
 }

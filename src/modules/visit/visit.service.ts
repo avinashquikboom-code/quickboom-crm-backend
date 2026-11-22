@@ -207,7 +207,7 @@ export class VisitService {
       // Visited By is ONLY the employee who actually completed the visit when completed.
       // Must NOT be dummy string 'Visitor', must be the real employee name.
       const actualEmpName =
-        v.completedBy && v.completedBy !== 'Visitor'
+        v.completedBy && v.completedBy !== 'Visitor' && v.completedBy !== 'Field Sales Executive'
           ? v.completedBy
           : empNameFromId || null;
 
@@ -222,6 +222,12 @@ export class VisitService {
           ? {
               id: v.completedById || empFromId?.id || null,
               name: finalVisitedByName,
+            }
+          : null,
+        assignedFieldSalesExecutive: v.employee
+          ? {
+              id: v.employee.id,
+              name: `${v.employee.firstName || ''} ${v.employee.lastName || ''}`.trim(),
             }
           : null,
         assignedVisitor: v.employee
@@ -305,6 +311,12 @@ export class VisitService {
         ? {
             id: visit.completedById || completedEmployee?.id || null,
             name: finalVisitedByName,
+          }
+        : null,
+      assignedFieldSalesExecutive: visit.employee
+        ? {
+            id: visit.employee.id,
+            name: `${visit.employee.firstName || ''} ${visit.employee.lastName || ''}`.trim(),
           }
         : null,
       assignedVisitor: visit.employee
@@ -723,6 +735,12 @@ export class VisitService {
         ? {
             id: updated.completedById || completedEmployee?.id || null,
             name: finalVisitedByName,
+          }
+        : null,
+      assignedFieldSalesExecutive: updated.employee
+        ? {
+            id: updated.employee.id,
+            name: `${updated.employee.firstName || ''} ${updated.employee.lastName || ''}`.trim(),
           }
         : null,
       assignedVisitor: updated.employee

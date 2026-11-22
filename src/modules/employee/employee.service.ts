@@ -3400,8 +3400,8 @@ export class EmployeeService {
       let matchedKey: string | null = null;
       if (ROLE_PERMISSION_DEFAULTS[upper]) {
         matchedKey = upper;
-      } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
-        matchedKey = 'VISITOR';
+      } else if (upper.includes('FIELD_SALES_EXECUTIVE') || upper.includes('FIELD_SALES') || upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
+        matchedKey = 'FIELD_SALES_EXECUTIVE';
       } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
         matchedKey = 'TELECALLER';
       } else if (upper.includes('DESIGNER')) {
@@ -3452,12 +3452,19 @@ export class EmployeeService {
     const desigUpper = (employee.designation?.name || roleName || '').toUpperCase();
     const isVisitorDesignation = Boolean(
       desigUpper && (
+        desigUpper.includes('FIELD_SALES_EXECUTIVE') ||
+        desigUpper.includes('FIELD SALES EXECUTIVE') ||
+        desigUpper.includes('FIELD_SALES') ||
+        desigUpper.includes('FIELD SALES') ||
         desigUpper.includes('VISITOR') ||
         desigUpper === 'VISIT' ||
         desigUpper.includes('FIELD VISIT') ||
         desigUpper.includes('FIELD OFFICER')
       )
-    ) || userRoleNames.some((name) => String(name || '').trim().toUpperCase().includes('VISITOR'));
+    ) || userRoleNames.some((name) => {
+      const u = String(name || '').trim().toUpperCase();
+      return u.includes('FIELD_SALES_EXECUTIVE') || u.includes('FIELD SALES') || u.includes('VISITOR');
+    });
 
     if (isVisitorDesignation) {
       // Visitors only view, start (check-in), and complete assigned visits.
