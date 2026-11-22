@@ -9,7 +9,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma, RoleType, CommissionStatus } from '@prisma/client';
+import { Prisma, RoleType, CommissionStatus, SubscriptionStatus, TaskStatus } from '@prisma/client';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -73,6 +73,18 @@ export interface UpcomingCallInfo {
   scheduledAt: string;
   status: 'SCHEDULED';
   notes?: string;
+}
+
+export interface CustomerTeamAssignmentActor {
+  id?: number | string;
+  name?: string;
+  email?: string;
+  role?: string;
+  roleType?: string;
+  roles?: Array<string | { type?: string; name?: string }>;
+  customerId?: number | string;
+  employeeId?: number | string;
+  employee?: { id?: number | string; customerId?: number | string };
 }
 
 export function parseCallDateTime(dateVal: Date | string, timeStr?: string | null): Date {
@@ -718,8 +730,8 @@ export class CustomerService {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
   }) {
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
     const where: any = {
@@ -757,13 +769,11 @@ export class CustomerService {
       }
     }
 
-    let orderBy: any = { createdAt: 'desc' };
-    if (query.sortBy) {
-      const direction = query.sortOrder === 'asc' ? 'asc' : 'desc';
-      if (['name', 'createdAt', 'storageUsed'].includes(query.sortBy)) {
-        orderBy = { [query.sortBy]: direction };
-      }
-    }
+    const allowedSortFields = ['name', 'createdAt', 'storageUsed'] as const;
+    const sortBy = allowedSortFields.includes(query.sortBy as (typeof allowedSortFields)[number])
+      ? query.sortBy!
+      : 'createdAt';
+    const orderBy: any = { [sortBy]: query.sortOrder === 'asc' ? 'asc' : 'desc' };
 
     const [total, customers, allCustomersStats] = await Promise.all([
       this.prisma.customer.count({ where }),
@@ -804,31 +814,23 @@ export class CustomerService {
         },
       }),
       this.prisma.customer.findMany({
-        where: { deletedAt: null, NOT: SYSTEM_CUSTOMER_EXCLUSIONS },
-        include: {
+        where,
+        select: {
+          id: true,
+          isActive: true,
+          storageUsed: true,
+          userLimit: true,
           subscriptions: {
             where: { deletedAt: null },
             orderBy: { createdAt: 'desc' },
             take: 1,
             include: { plan: true },
           },
-          originLead: {
-            include: { stage: true },
-          },
-          leads: {
-            where: { deletedAt: null },
-            orderBy: { updatedAt: 'desc' },
-            take: 1,
-            include: { stage: true },
-          },
-          works: {
-            select: { id: true, status: true },
-          },
+          works: { select: { status: true } },
           _count: {
             select: {
               users: { where: { deletedAt: null } },
               leads: { where: { deletedAt: null } },
-              works: true,
               dataCapturePlaces: { where: { deletedAt: null } },
             },
           },
@@ -890,7 +892,7 @@ export class CustomerService {
       const userCount = c._count?.users || 0;
       const leadCount = c._count?.leads || 0;
       const sub = c.subscriptions?.[0];
-      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 5;
+      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 0;
       const storageBytes = Number(c.storageUsed || 0);
 
       totalAllocatedSeats += userCount;
@@ -906,13 +908,14 @@ export class CustomerService {
     let items = (customers as any[]).map((c) => {
       const sub = c.subscriptions?.[0];
       const users = c._count?.users || 0;
-      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? 50;
+      const maxUsers = sub?.customUserLimit ?? sub?.plan?.userLimit ?? c.userLimit ?? null;
       const leads = c._count?.leads || 0;
-      const maxLeads = sub?.customLeadLimit ?? sub?.plan?.leadLimit ?? c.leadLimit ?? 500;
+      const maxLeads = sub?.customLeadLimit ?? sub?.plan?.leadLimit ?? c.leadLimit ?? null;
       const storageBytes = Number(c.storageUsed || 0);
-      const maxStorageBytes = Number(sub?.customStorageLimit ?? sub?.plan?.storageLimit ?? c.storageLimit ?? 5368709120);
-      const seatPct = maxUsers > 0 ? Math.min(100, Math.round((users / maxUsers) * 100)) : 0;
-      const leadPct = maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : 0;
+      const rawStorageLimit = sub?.customStorageLimit ?? sub?.plan?.storageLimit ?? c.storageLimit ?? null;
+      const maxStorageBytes = rawStorageLimit === null ? null : Number(rawStorageLimit);
+      const seatPct = maxUsers !== null && maxUsers > 0 ? Math.min(100, Math.round((users / maxUsers) * 100)) : null;
+      const leadPct = maxLeads !== null && maxLeads > 0 ? Math.min(100, Math.round((leads / maxLeads) * 100)) : null;
 
       const customerStatus = computeCustomerStatus(c);
       const linkedLead = (c as any).originLead || c.leads?.[0];
@@ -949,7 +952,7 @@ export class CustomerService {
         storageBytes,
         maxStorageBytes,
         storage: formatStorage(storageBytes),
-        maxStorage: formatStorage(maxStorageBytes),
+        maxStorage: maxStorageBytes === null ? null : formatStorage(maxStorageBytes),
         worksCount: c._count?.works || 0,
         dataCapturePlacesCount: c._count?.dataCapturePlaces || 0,
         createdAt: c.createdAt,
@@ -987,10 +990,10 @@ export class CustomerService {
       },
       items,
       pagination: {
-        total: items.length,
+        total,
         page,
         limit,
-        totalPages: Math.ceil(items.length / limit) || 1,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }
@@ -1113,6 +1116,143 @@ export class CustomerService {
   }
 
   /**
+   * Resolve current subscription details for a customer using actual database records and status rules.
+   * Prevents hardcoded plan names, handles expired/inactive/unpurchased states, and detects multiple active subscriptions.
+   */
+  resolveCustomerSubscription(customer: any, now: Date = new Date()) {
+    const subs: any[] = Array.isArray(customer?.subscriptions) ? customer.subscriptions : [];
+    const nonDeletedSubs = subs.filter((s) => !s.deletedAt);
+
+    if (nonDeletedSubs.length === 0) {
+      return {
+        subscription: null,
+        subscriptionId: null,
+        planId: null,
+        planName: 'Not Purchased',
+        plan: 'Not Purchased',
+        planCode: 'NONE',
+        subscriptionStatus: 'NOT_PURCHASED',
+        subscriptionStartDate: null,
+        subscriptionEndDate: null,
+        startDate: null,
+        endDate: null,
+        billingCycle: 'MONTHLY',
+        basePrice: 0,
+        gst: 0,
+        totalAmount: 0,
+        mrr: 0,
+        isMultipleActiveDetected: false,
+      };
+    }
+
+    // Check for actively running subscriptions (status is ACTIVE, not future, not expired)
+    const activeSubs = nonDeletedSubs.filter((s) => {
+      const isStatusActive = s.status === 'ACTIVE' || (SubscriptionStatus && s.status === SubscriptionStatus.ACTIVE);
+      if (!isStatusActive) return false;
+      const startPassed = !s.startDate || new Date(s.startDate) <= now;
+      const endValid = !s.endDate || new Date(s.endDate) >= now;
+      return startPassed && endValid;
+    });
+
+    let isMultipleActiveDetected = false;
+    if (activeSubs.length > 1) {
+      isMultipleActiveDetected = true;
+      this.logger.warn(
+        `[DATA_INCONSISTENCY] Customer #${customer.id} (${customer.name}) has ${activeSubs.length} concurrent ACTIVE subscriptions: ${activeSubs
+          .map((s) => `Sub #${s.id} (Plan #${s.planId}: ${s.plan?.name || 'Unknown'})`)
+          .join(', ')}`,
+      );
+    }
+
+    let selectedSub: any = null;
+    let derivedStatus = 'ACTIVE';
+
+    if (activeSubs.length > 0) {
+      // If multiple, prioritize the one with latest startDate or createdAt
+      selectedSub = activeSubs[0];
+      derivedStatus = 'ACTIVE';
+    } else {
+      // No active subscription right now. Check latest subscription by createdAt
+      const latestSub = nonDeletedSubs[0];
+      selectedSub = latestSub;
+      const isExpiredByDate = latestSub.endDate && new Date(latestSub.endDate) < now;
+      const isFutureStart = latestSub.startDate && new Date(latestSub.startDate) > now;
+
+      if (latestSub.status === 'ACTIVE') {
+        derivedStatus = isExpiredByDate ? 'EXPIRED' : isFutureStart ? 'INACTIVE' : 'ACTIVE';
+      } else if (latestSub.status === 'EXPIRED' || isExpiredByDate) {
+        derivedStatus = 'EXPIRED';
+      } else if (latestSub.status === 'CANCELED' || latestSub.status === 'CANCELLED') {
+        derivedStatus = 'CANCELLED';
+      } else if (latestSub.status === 'TRIAL') {
+        derivedStatus = isExpiredByDate ? 'EXPIRED' : 'TRIAL';
+      } else if (latestSub.status === 'PAST_DUE') {
+        derivedStatus = 'PAST_DUE';
+      } else if (latestSub.status === 'PENDING') {
+        derivedStatus = 'PENDING';
+      } else {
+        derivedStatus = 'INACTIVE';
+      }
+    }
+
+    const actualPlanName =
+      selectedSub.plan?.name || (selectedSub.planId ? `Plan #${selectedSub.planId}` : 'Custom Plan');
+    const planCode = selectedSub.plan?.code || 'CUSTOM';
+    const billingCycle = selectedSub.billingCycle || 'MONTHLY';
+    const planMonthlyPrice = selectedSub.plan ? Number(selectedSub.plan.monthlyPrice || 0) : 0;
+    const planYearlyPrice = selectedSub.plan ? Number(selectedSub.plan.yearlyPrice || 0) : 0;
+    const basePrice =
+      selectedSub.customPrice !== null && selectedSub.customPrice !== undefined
+        ? Number(selectedSub.customPrice)
+        : billingCycle === 'YEARLY'
+        ? planYearlyPrice
+        : planMonthlyPrice;
+
+    const gst = Math.round(basePrice * 0.18);
+    const totalAmount = basePrice + gst;
+    const mrr = billingCycle === 'YEARLY' ? Math.round(planYearlyPrice / 12) : planMonthlyPrice;
+
+    return {
+      subscription: {
+        id: selectedSub.id,
+        subscriptionId: `SUB-${String(selectedSub.id).padStart(4, '0')}`,
+        customerId: customer.id,
+        planId: selectedSub.planId || selectedSub.plan?.id || null,
+        planName: actualPlanName,
+        planCode,
+        status: derivedStatus,
+        rawStatus: selectedSub.status,
+        billingCycle,
+        customPrice: selectedSub.customPrice,
+        customFeatures: selectedSub.customFeatures,
+        customUserLimit: selectedSub.customUserLimit,
+        customLeadLimit: selectedSub.customLeadLimit,
+        customStorageLimit: selectedSub.customStorageLimit,
+        startDate: selectedSub.startDate || null,
+        endDate: selectedSub.endDate || null,
+        isExpired: derivedStatus === 'EXPIRED',
+        isActive: derivedStatus === 'ACTIVE',
+      },
+      subscriptionId: selectedSub.id,
+      planId: selectedSub.planId || selectedSub.plan?.id || null,
+      planName: actualPlanName,
+      plan: actualPlanName,
+      planCode,
+      subscriptionStatus: derivedStatus,
+      subscriptionStartDate: selectedSub.startDate || null,
+      subscriptionEndDate: selectedSub.endDate || null,
+      startDate: selectedSub.startDate || null,
+      endDate: selectedSub.endDate || null,
+      billingCycle,
+      basePrice,
+      gst,
+      totalAmount,
+      mrr,
+      isMultipleActiveDetected,
+    };
+  }
+
+  /**
    * Get all customers with search, advanced filtering, sorting, and pagination
    */
   async findAll(query: {
@@ -1139,7 +1279,7 @@ export class CustomerService {
 
     const employeeId = user?.employeeId || user?.employee?.id;
     const companyId = user?.customerId || user?.employee?.customerId;
-    const isSuperAdmin = isUserSuperAdmin(user);
+    const isSuperAdmin = !user || isUserSuperAdmin(user);
     const isPrivilegedAdmin = isSuperAdmin || isUserAdmin(user);
     const wonCustomersOnly = !isSuperAdmin;
 
@@ -1278,6 +1418,7 @@ export class CustomerService {
           { phone: { contains: s, mode: 'insensitive' } },
           { city: { contains: s, mode: 'insensitive' } },
           { domain: { contains: s, mode: 'insensitive' } },
+          { assignedTeam: { name: { contains: s, mode: 'insensitive' } } },
           {
             users: {
               some: {
@@ -1713,43 +1854,16 @@ export class CustomerService {
     const visibleItems = items.filter((customer) => customerListed(customer, wonCustomersOnly));
     let formatted = visibleItems.map((c) => {
       const primaryUser = (c as any).users?.[0];
-      // Find latest valid active subscription strictly
-      const activeSub =
-        c.subscriptions.find(
-          (s) =>
-            s.status === 'ACTIVE' &&
-            (!s.endDate || new Date(s.endDate) >= now),
-        );
-
-      const isSubActive =
-        activeSub &&
-        activeSub.status === 'ACTIVE' &&
-        (!activeSub.endDate || new Date(activeSub.endDate) >= now);
-
-      const planName = activeSub?.plan?.name || 'No Active Plan';
-      const planCode = activeSub?.plan?.code || 'NONE';
-      const billingCycle = activeSub?.billingCycle || 'MONTHLY';
-      const subStatus = activeSub
-        ? isSubActive
-          ? 'ACTIVE'
-          : activeSub.status === 'ACTIVE'
-          ? 'EXPIRED'
-          : activeSub.status
-        : 'NO_PLAN';
-
-      const basePrice = activeSub?.plan
-        ? billingCycle === 'YEARLY'
-          ? Number(activeSub.plan.yearlyPrice)
-          : Number(activeSub.plan.monthlyPrice)
-        : 0;
-
-      const gst = Math.round(basePrice * 0.18);
-      const totalAmount = basePrice + gst;
-      const mrr = activeSub?.plan
-        ? billingCycle === 'YEARLY'
-          ? Math.round(Number(activeSub.plan.yearlyPrice) / 12)
-          : Math.round(Number(activeSub.plan.monthlyPrice))
-        : 0;
+      const resolvedSub = this.resolveCustomerSubscription(c, now);
+      const activeSub = resolvedSub.subscription;
+      const planName = resolvedSub.planName;
+      const planCode = resolvedSub.planCode;
+      const billingCycle = resolvedSub.billingCycle;
+      const subStatus = resolvedSub.subscriptionStatus;
+      const basePrice = resolvedSub.basePrice;
+      const gst = resolvedSub.gst;
+      const totalAmount = resolvedSub.totalAmount;
+      const mrr = resolvedSub.mrr;
 
       const resolvedAssignedName = c.assignedEmployeeRel
         ? `${c.assignedEmployeeRel.firstName} ${c.assignedEmployeeRel.lastName}`.trim()
@@ -1925,23 +2039,29 @@ export class CustomerService {
                     : null),
             }
           : null,
+        subscriptionId: resolvedSub.subscriptionId,
+        planId: resolvedSub.planId,
         plan: planName,
         planName,
         planCode,
         billingCycle,
         subscriptionStatus: subStatus,
-        subscriptionStartDate: activeSub?.startDate || null,
-        subscriptionEndDate: activeSub?.endDate || null,
+        subscriptionStartDate: resolvedSub.subscriptionStartDate,
+        subscriptionEndDate: resolvedSub.subscriptionEndDate,
+        startDate: resolvedSub.startDate,
+        endDate: resolvedSub.endDate,
+        currentSubscription: resolvedSub.subscription,
+        isMultipleActiveDetected: resolvedSub.isMultipleActiveDetected,
         subscriptionAmount: totalAmount,
         baseAmount: basePrice,
         gstAmount: gst,
         commission: commissionData,
         upcomingCommission: upcomingCommissionVal,
-        users: c._count.users || 1,
-        leads: c._count.leads || 0,
-        deals: c._count.deals || 0,
-        contacts: c._count.contacts || 0,
-        tasks: c._count.tasks || 0,
+        users: c._count?.users || 1,
+        leads: c._count?.leads || 0,
+        deals: c._count?.deals || 0,
+        contacts: c._count?.contacts || 0,
+        tasks: c._count?.tasks || 0,
         storageUsed: Number(c.storageUsed || 0),
         storage: `${(Number(c.storageUsed || 0) / (1024 * 1024)).toFixed(1)} MB`,
         mrr,
@@ -2368,29 +2488,12 @@ export class CustomerService {
     }
 
     const now = new Date();
-    const activeSub =
-      customer.subscriptions.find(
-        (s) =>
-          s.status === 'ACTIVE' &&
-          (!s.endDate || new Date(s.endDate) >= now),
-      );
-
-    const isSubActive =
-      activeSub &&
-      activeSub.status === 'ACTIVE' &&
-      (!activeSub.endDate || new Date(activeSub.endDate) >= now);
+    const resolvedSub = this.resolveCustomerSubscription(customer, now);
+    const activeSub = resolvedSub.subscription;
+    const planName = resolvedSub.planName;
+    const subStatus = resolvedSub.subscriptionStatus;
 
     const safeCustomer = this.serializeBigInt(customer);
-
-    const planName = activeSub?.plan?.name || 'No Active Plan';
-
-    const subStatus = activeSub
-      ? isSubActive
-        ? 'ACTIVE'
-        : activeSub.status === 'ACTIVE'
-        ? 'EXPIRED'
-        : activeSub.status
-      : 'NO_PLAN';
 
     const resolvedAssignedName = customer.assignedEmployeeRel
       ? `${customer.assignedEmployeeRel.firstName} ${customer.assignedEmployeeRel.lastName}`.trim()
@@ -2490,28 +2593,19 @@ export class CustomerService {
         ? `${(customer as any).createdByEmployeeRel.firstName || ''} ${(customer as any).createdByEmployeeRel.lastName || ''}`.trim() || null
         : null,
       wonAt: (customer as any).originLead?.convertedAt || customer.createdAt || null,
+      subscriptionId: resolvedSub.subscriptionId,
+      planId: resolvedSub.planId,
       plan: planName,
-      planCode: activeSub?.plan?.code || 'NONE',
-      billingCycle: activeSub?.billingCycle || 'MONTHLY',
+      planName,
+      planCode: resolvedSub.planCode,
+      billingCycle: resolvedSub.billingCycle,
       subscriptionStatus: subStatus,
-      subscriptionStartDate: activeSub?.startDate || null,
-      subscriptionEndDate: activeSub?.endDate || null,
-      currentSubscription: activeSub
-        ? {
-            id: activeSub.id,
-            planId: activeSub.planId,
-            planName: activeSub.plan.name,
-            planCode: activeSub.plan.code,
-            billingCycle: activeSub.billingCycle,
-            status: subStatus,
-            startDate: activeSub.startDate,
-            endDate: activeSub.endDate,
-            basePrice:
-              activeSub.billingCycle === 'YEARLY'
-                ? Number(activeSub.plan.yearlyPrice)
-                : Number(activeSub.plan.monthlyPrice),
-          }
-        : null,
+      subscriptionStartDate: resolvedSub.subscriptionStartDate,
+      subscriptionEndDate: resolvedSub.subscriptionEndDate,
+      startDate: resolvedSub.startDate,
+      endDate: resolvedSub.endDate,
+      currentSubscription: resolvedSub.subscription,
+      isMultipleActiveDetected: resolvedSub.isMultipleActiveDetected,
       commission: commissionData,
       upcomingCommission: upcomingCommissionVal,
       userCount: customer._count.users,
@@ -2929,6 +3023,23 @@ export class CustomerService {
         }
       : null;
 
+    const history = await (this.prisma as any).auditLog.findMany({
+      where: {
+        customerId: numericId,
+        action: 'TEAM_ASSIGNMENT',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        userName: true,
+        userRole: true,
+        action: true,
+        description: true,
+        createdAt: true,
+      },
+    }).catch(() => []);
+
     return {
       statusCode: 200,
       success: true,
@@ -2937,17 +3048,24 @@ export class CustomerService {
         customerId: numericId,
         teamId: customer.assignedTeamId,
         team: teamData,
+        history,
       },
       customerId: numericId,
       teamId: customer.assignedTeamId,
       team: teamData,
+      history,
     };
   }
 
   /**
    * Assign or reassign customer to an operating team
    */
-  async assignTeam(id: number | string, teamId?: number | null, user?: any) {
+  async assignTeam(
+    id: number | string,
+    teamId?: number | null,
+    user?: CustomerTeamAssignmentActor,
+    reassignPendingTasks: boolean = false,
+  ) {
     const numericId = this.parseCustomerId(id);
 
     // Role authorization check: only super admin or admin/staff can assign teams
@@ -2957,54 +3075,185 @@ export class CustomerService {
       );
     }
 
-    const existing = await this.prisma.customer.findUnique({
-      where: { id: numericId },
-    });
-
-    if (!existing || existing.deletedAt) {
-      throw new NotFoundException(`Customer #${id} not found.`);
+    const resolvedTeamId = teamId === undefined || teamId === null ? null : Number(teamId);
+    if (teamId !== undefined && teamId !== null && (!Number.isInteger(resolvedTeamId) || resolvedTeamId! <= 0)) {
+      throw new BadRequestException('A valid team ID is required.');
+    }
+    if (reassignPendingTasks && !resolvedTeamId) {
+      throw new BadRequestException('A team must be selected to reassign pending tasks.');
     }
 
-    const resolvedTeamId = teamId ? Number(teamId) : null;
-    if (resolvedTeamId) {
-      const team = await this.prisma.team.findUnique({
-        where: { id: resolvedTeamId },
+    const actorCustomerId = Number(user?.customerId ?? user?.employee?.customerId);
+    const tenantScoped = Boolean(
+      user && !isUserSuperAdmin(user) && Number.isInteger(actorCustomerId) && actorCustomerId > 0,
+    );
+    const actorId = Number(user?.id);
+    const performedById = Number.isInteger(actorId) && actorId > 0 ? actorId : null;
+    const performedByName = user?.name || user?.email || 'Administrator';
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.customer.findUnique({
+        where: { id: numericId },
+        include: { assignedTeam: { select: { id: true, name: true } } },
       });
-      if (!team) {
-        throw new NotFoundException(`Team #${resolvedTeamId} not found.`);
+      if (!existing || existing.deletedAt) {
+        throw new NotFoundException(`Customer #${id} not found.`);
       }
-    }
 
-    const updated = await this.prisma.customer.update({
-      where: { id: numericId },
-      data: { assignedTeamId: resolvedTeamId },
-      include: {
-        assignedTeam: {
+      let targetTeamName = '';
+      let newAssignee: { id: number; firstName: string; lastName: string } | null = null;
+      if (resolvedTeamId !== null) {
+        const team = await tx.team.findFirst({
+          where: {
+            id: resolvedTeamId,
+            ...(tenantScoped ? { customerId: actorCustomerId } : {}),
+          },
           include: {
-            leader: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+            leader: { select: { id: true, customerId: true, status: true, firstName: true, lastName: true } },
             members: {
+              where: { employee: { status: 'ACTIVE' } },
+              orderBy: { joinedAt: 'asc' },
               include: {
-                employee: {
-                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
-                },
+                employee: { select: { id: true, customerId: true, status: true, firstName: true, lastName: true } },
               },
             },
-            _count: { select: { members: true } },
+          },
+        });
+        if (!team) {
+          throw new NotFoundException(`Team #${resolvedTeamId} not found in your organization.`);
+        }
+        if (!team.isActive) {
+          throw new BadRequestException('The selected team is inactive.');
+        }
+        targetTeamName = team.name;
+
+        if (reassignPendingTasks) {
+          const eligibleLeader = team.leader?.status === 'ACTIVE' && team.leader.customerId === team.customerId
+            ? team.leader
+            : null;
+          const eligibleMember = team.members.find(
+            (member) => member.employee.status === 'ACTIVE' && member.employee.customerId === team.customerId,
+          )?.employee;
+          newAssignee = eligibleLeader || eligibleMember || null;
+          if (!newAssignee) {
+            throw new BadRequestException('The selected team has no active leader or member eligible for task assignment.');
+          }
+        }
+      }
+
+      const updated = await tx.customer.update({
+        where: { id: numericId },
+        data: { assignedTeamId: resolvedTeamId },
+        include: {
+          assignedTeam: {
+            include: {
+              leader: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+              members: {
+                include: {
+                  employee: {
+                    select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                  },
+                },
+              },
+              _count: { select: { members: true } },
+            },
           },
         },
-      },
+      });
+
+      let reassignedTaskCount = 0;
+      if (reassignPendingTasks && newAssignee) {
+        const pendingTasks = await tx.task.findMany({
+          where: {
+            customerId: numericId,
+            status: { in: [TaskStatus.PENDING, TaskStatus.IN_PROGRESS] },
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+          orderBy: { id: 'asc' },
+        });
+
+        for (const task of pendingTasks) {
+          if (task.employeeId === newAssignee.id) continue;
+          const changed = await tx.task.updateMany({
+            where: {
+              id: task.id,
+              customerId: numericId,
+              deletedAt: null,
+              status: { in: [TaskStatus.PENDING, TaskStatus.IN_PROGRESS] },
+              employeeId: task.employeeId,
+            },
+            data: { employeeId: newAssignee.id },
+          });
+          if (changed.count !== 1) continue;
+
+          const previousEmployeeName = task.employee
+            ? `${task.employee.firstName} ${task.employee.lastName}`.trim()
+            : null;
+          await tx.taskHistory.create({
+            data: {
+              taskId: task.id,
+              action: 'TASK_REALLOCATED',
+              performedById,
+              performedByName,
+              previousEmployeeId: task.employeeId,
+              previousEmployeeName,
+              newEmployeeId: newAssignee.id,
+              newEmployeeName: `${newAssignee.firstName} ${newAssignee.lastName}`.trim(),
+              comment: `Reassigned to Team "${targetTeamName}" (#${resolvedTeamId}) during customer team assignment.`,
+            },
+          });
+          reassignedTaskCount += 1;
+        }
+      }
+
+      let synchronizedWorkCount = 0;
+      if (
+        reassignPendingTasks &&
+        resolvedTeamId !== null &&
+        this.workService &&
+        typeof this.workService.syncCustomerTeamWorkAssignments === 'function'
+      ) {
+        synchronizedWorkCount = await this.workService.syncCustomerTeamWorkAssignments(
+          numericId,
+          resolvedTeamId,
+          tx,
+        );
+      }
+
+      const previousTeamName = existing.assignedTeam?.name || (existing.assignedTeamId ? `Team #${existing.assignedTeamId}` : 'None');
+      await tx.auditLog.create({
+        data: {
+          customerId: numericId,
+          userId: performedById,
+          userName: performedByName,
+          userRole: user?.role || user?.roleType || 'ADMIN',
+          action: 'TEAM_ASSIGNMENT',
+          module: 'CRM',
+          entityType: 'Customer',
+          entityId: String(numericId),
+          description: resolvedTeamId
+            ? `Customer assigned to Team "${targetTeamName}" (#${resolvedTeamId}) (previous: ${previousTeamName}); ${reassignedTaskCount} pending tasks reassigned.`
+            : `Customer unassigned from ${previousTeamName}`,
+          details: {
+            previousTeamId: existing.assignedTeamId,
+            teamId: resolvedTeamId,
+            reassignPendingTasks,
+            reassignedTaskCount,
+            synchronizedWorkCount,
+          },
+        },
+      });
+
+      return { updated, reassignedTaskCount, synchronizedWorkCount };
     });
 
-    if (resolvedTeamId && this.workService && typeof this.workService.syncCustomerTeamWorkAssignments === 'function') {
-      try {
-        await this.workService.syncCustomerTeamWorkAssignments(numericId, resolvedTeamId);
-      } catch (syncErr: any) {
-        this.logger.warn(`Failed to sync team work assignments for customer ${numericId}: ${syncErr?.message}`);
-      }
-    }
-
-    const safeUpdated = this.serializeBigInt(updated);
-    const assignedTeamObj = (updated as any).assignedTeam;
+    const safeUpdated = this.serializeBigInt(result.updated);
+    const assignedTeamObj = result.updated.assignedTeam;
     const teamData = assignedTeamObj
       ? {
           id: assignedTeamObj.id,
@@ -3037,10 +3286,14 @@ export class CustomerService {
         customerId: numericId,
         teamId: safeUpdated.assignedTeamId,
         team: teamData,
+        reassignedTaskCount: result.reassignedTaskCount,
+        synchronizedWorkCount: result.synchronizedWorkCount,
       },
       customerId: numericId,
       teamId: safeUpdated.assignedTeamId,
       team: teamData,
+      reassignedTaskCount: result.reassignedTaskCount,
+      synchronizedWorkCount: result.synchronizedWorkCount,
     };
   }
 
@@ -3841,19 +4094,20 @@ export class CustomerService {
       throw new NotFoundException(`Customer with ID ${id} not found`);
     }
 
-    const activeSub = customer.subscriptions[0];
+    const resolvedSub = this.resolveCustomerSubscription(customer, new Date());
+    const rawSub = customer.subscriptions[0];
     const availablePlans = await this.prisma.plan.findMany({
       where: { deletedAt: null, isActive: true },
       orderBy: { monthlyPrice: 'asc' },
     });
 
-    const basePlan = activeSub?.plan || availablePlans[0] || null;
-    const basePrice = basePlan ? Number(basePlan.monthlyPrice) : 0;
-    const customPrice = activeSub?.customPrice !== null && activeSub?.customPrice !== undefined
-      ? Number(activeSub.customPrice)
+    const basePlan = resolvedSub.subscriptionId ? (rawSub?.plan || null) : null;
+    const basePrice = resolvedSub.basePrice;
+    const customPrice = rawSub?.customPrice !== null && rawSub?.customPrice !== undefined
+      ? Number(rawSub.customPrice)
       : null;
 
-    const effectiveFeatures = activeSub?.customFeatures || basePlan?.features || [
+    const effectiveFeatures = rawSub?.customFeatures || basePlan?.features || [
       'Customer Management',
       'Calendar',
       'Works',
@@ -3862,24 +4116,24 @@ export class CustomerService {
       'Notifications',
     ];
 
-    const effectiveUserLimit = activeSub?.customUserLimit || customer.userLimit || basePlan?.userLimit || 10;
-    const effectiveLeadLimit = activeSub?.customLeadLimit || customer.leadLimit || basePlan?.leadLimit || 500;
-    const effectiveStorageLimit = activeSub?.customStorageLimit
-      ? Number(activeSub.customStorageLimit)
+    const effectiveUserLimit = rawSub?.customUserLimit || customer.userLimit || basePlan?.userLimit || 10;
+    const effectiveLeadLimit = rawSub?.customLeadLimit || customer.leadLimit || basePlan?.leadLimit || 500;
+    const effectiveStorageLimit = rawSub?.customStorageLimit
+      ? Number(rawSub.customStorageLimit)
       : (basePlan?.storageLimit ? Number(basePlan.storageLimit) : 10737418240);
 
     return {
       customerId: customer.id,
       customerName: customer.name,
-      subscriptionId: activeSub?.id || null,
-      planId: basePlan?.id || null,
-      planName: basePlan?.name || 'No Plan Assigned',
-      status: activeSub?.status || 'ACTIVE',
-      startDate: activeSub?.startDate || customer.createdAt,
-      endDate: activeSub?.endDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      subscriptionId: resolvedSub.subscriptionId,
+      planId: resolvedSub.planId,
+      planName: resolvedSub.planName,
+      status: resolvedSub.subscriptionStatus,
+      startDate: resolvedSub.startDate,
+      endDate: resolvedSub.endDate,
       basePrice,
       customPrice: customPrice !== null ? customPrice : basePrice,
-      isCustomized: customPrice !== null || Boolean(activeSub?.customFeatures) || Boolean(activeSub?.customUserLimit),
+      isCustomized: customPrice !== null || Boolean(rawSub?.customFeatures) || Boolean(rawSub?.customUserLimit),
       features: effectiveFeatures,
       userLimit: effectiveUserLimit,
       leadLimit: effectiveLeadLimit,
@@ -4105,10 +4359,7 @@ export class CustomerService {
       throw new NotFoundException('Customer profile not found');
     }
 
-    const activeSub =
-      customer.subscriptions.find((s) => s.status === 'ACTIVE' && (!s.endDate || new Date(s.endDate) >= new Date())) ||
-      customer.subscriptions.find((s) => s.status === 'ACTIVE') ||
-      customer.subscriptions[0];
+    const resolvedSub = this.resolveCustomerSubscription(customer, new Date());
     const qbCode = this.qbIdGenerator.generateQBUserId('CUSTOMER', customer.id);
     const customerCode = `CUST-${String(customer.id).padStart(4, '0')}`;
 
@@ -4191,11 +4442,17 @@ export class CustomerService {
         leadLimit: customer.leadLimit,
         storageUsed: Number(customer.storageUsed || 0),
         storageLimit: Number(customer.storageLimit || 0),
-        plan: activeSub?.plan?.name ?? null,
-        planCode: activeSub?.plan?.code ?? null,
-        subscriptionStatus: activeSub?.status || 'ACTIVE',
-        subscriptionStartDate: activeSub?.startDate,
-        subscriptionEndDate: activeSub?.endDate,
+        subscriptionId: resolvedSub.subscriptionId,
+        planId: resolvedSub.planId,
+        plan: resolvedSub.planName,
+        planName: resolvedSub.planName,
+        planCode: resolvedSub.planCode,
+        subscriptionStatus: resolvedSub.subscriptionStatus,
+        subscriptionStartDate: resolvedSub.subscriptionStartDate,
+        subscriptionEndDate: resolvedSub.subscriptionEndDate,
+        startDate: resolvedSub.startDate,
+        endDate: resolvedSub.endDate,
+        currentSubscription: resolvedSub.subscription,
         user: {
           id: userRecord.id,
           email: userRecord.email,
