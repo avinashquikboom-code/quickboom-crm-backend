@@ -2026,8 +2026,9 @@ status: ${item.status}`);
       const purchaseRef = w.subscriptionId
         ? `PUR-${String(w.subscriptionId).padStart(3, '0')}`
         : (w.subscription?.id ? `PUR-${String(w.subscription.id).padStart(3, '0')}` : `PUR-${String(w.customerId).padStart(3, '0')}`);
-      const startTime = w.scheduledTime || '10:00 AM';
-      const endTime = '11:00 AM';
+      const startTime = w.scheduledTime || null;
+      // Work stores only its scheduled start time; do not invent an end time.
+      const endTime = null;
       const prodName = w.entitlement?.serviceName || w.title || w.workType;
       const planName = w.subscription?.plan?.name || 'Active Plan';
 
@@ -2082,6 +2083,8 @@ status: ${item.status}`);
         serviceName: prodName,
         planName: planName,
         title: w.title,
+        description: w.description || w.notes || null,
+        priority: w.priority || null,
         scheduledDate: schedDateVal,
         scheduledAt: w.scheduledDate,
         scheduledTime: startTime,
