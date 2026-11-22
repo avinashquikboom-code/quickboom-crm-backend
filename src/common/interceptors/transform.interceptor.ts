@@ -19,7 +19,13 @@ export interface ResponseFormat<T> {
   success: boolean;
   message: string;
   data: T;
+  stats?: any;
+  counts?: any;
+  summary?: any;
+  balances?: any;
   pagination?: PaginationMeta;
+  total?: number;
+  totalPages?: number;
   meta?: any;
 }
 
@@ -41,6 +47,7 @@ export class TransformInterceptor<T>
             success: typeof data.success === 'boolean' ? data.success : true,
             message: data.message || 'Operation completed successfully',
             data: data.data,
+            stats: data.stats,
             counts: data.counts,
             summary: data.summary,
             balances: data.balances,

@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Query,
+  Headers,
   UseGuards,
   ParseIntPipe,
 } from '@nestjs/common';
@@ -45,6 +46,7 @@ export class EmailTemplateController {
   @ApiQuery({ name: 'sort', required: false })
   async findAll(
     @CurrentUser() user: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
     @Query('category') category?: string,
     @Query('isActive') isActive?: string,
     @Query('search') search?: string,
@@ -53,7 +55,18 @@ export class EmailTemplateController {
     @Query('status') status?: string,
     @Query('sort') sort?: string,
   ) {
-    return this.emailTemplateService.findAll(user?.customerId, { category, isActive, search, page, limit, status, sort });
+    const custId = headerCustomerId || user?.customerId;
+    return this.emailTemplateService.findAll(custId ? Number(custId) : null, { category, isActive, search, page, limit, status, sort });
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Get summary statistics for email templates' })
+  async getStats(
+    @CurrentUser() user: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const custId = headerCustomerId || user?.customerId;
+    return this.emailTemplateService.getTemplateStats(custId ? Number(custId) : null);
   }
 
   @Get('events')
