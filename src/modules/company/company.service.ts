@@ -64,7 +64,12 @@ export class CompanyService {
       baseWhere.customerId = effectiveCustomerId;
     }
 
-    const [total, active, newCompanies, withDeals] = await Promise.all([
+    const contactWhere: any = { companyId: { not: null }, deletedAt: null };
+    if (baseWhere.customerId) {
+      contactWhere.customerId = baseWhere.customerId;
+    }
+
+    const [total, active, newCompanies, withDeals, linkedContacts] = await Promise.all([
       this.prisma.company.count({ where: { ...baseWhere } }),
       this.prisma.company.count({ where: { ...baseWhere, status: 'ACTIVE' } }),
       this.prisma.company.count({
@@ -79,11 +84,18 @@ export class CompanyService {
           deals: { some: { isWon: false, isLost: false, deletedAt: null } },
         },
       }),
+      this.prisma.contact.count({
+        where: contactWhere,
+      }),
     ]);
+
+    const inactive = Math.max(0, total - active);
 
     return {
       total,
       active,
+      inactive,
+      linkedContacts,
       new: newCompanies,
       withOpenDeals: withDeals,
     };
@@ -170,6 +182,8 @@ export class CompanyService {
       const s = query.search.trim();
       where.OR = [
         { name: { contains: s, mode: 'insensitive' } },
+        { domain: { contains: s, mode: 'insensitive' } },
+        { website: { contains: s, mode: 'insensitive' } },
         { email: { contains: s, mode: 'insensitive' } },
         { phone: { contains: s, mode: 'insensitive' } },
         { city: { contains: s, mode: 'insensitive' } },
