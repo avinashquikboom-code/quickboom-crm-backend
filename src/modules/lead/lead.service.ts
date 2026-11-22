@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { ModuleRef } from '@nestjs/core';
 import { LeadStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { resolveCreatedFrom } from '../../common/utils/platform.util';
 import { LeadRepository } from './lead.repository';
 import { NotificationService } from '../notification/notification.service';
@@ -2606,11 +2607,10 @@ export class LeadService {
             }
           }
 
-          const defaultOnboardingPassword =
-            process.env.CUSTOMER_DEFAULT_PASSWORD ||
-            process.env.DEFAULT_ONBOARDING_PASSWORD ||
-            '123456';
-          const passwordHash = await bcrypt.hash(defaultOnboardingPassword, 10);
+          // Won-lead accounts have no customer-chosen password yet. Store a
+          // unique, undisclosed random credential; the customer sets their own
+          // password through the existing password reset/OTP flow.
+          const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('base64url'), 12);
           const firstName = updatedLead.firstName || customer?.name?.split(' ')[0] || 'Customer';
           const lastName = updatedLead.lastName || customer?.name?.split(' ').slice(1).join(' ') || '';
 

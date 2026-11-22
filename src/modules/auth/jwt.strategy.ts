@@ -164,6 +164,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User account is inactive or no longer exists.');
     }
 
+    if (user.customer && (user.customer.isActive === false || user.customer.deletedAt)) {
+      this.logger.warn(`[JWT_STRATEGY] Customer workspace for user ${userId} is inactive or deleted`);
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Customer account is inactive or no longer available.',
+        code: 'ACCOUNT_DISABLED',
+      });
+    }
+
     const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
     const isCustomerAccount =
       payloadRole === 'CUSTOMER' ||

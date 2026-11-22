@@ -79,6 +79,25 @@ describe('JwtStrategy.validate regression tests (No Employee.managerId mismatch)
     expect(result.customerId).toBe(1);
   });
 
+  it('rejects access tokens for an inactive customer workspace', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 42,
+      email: 'customer@example.test',
+      customerId: 42,
+      isActive: true,
+      deletedAt: null,
+      employee: null,
+      customer: { id: 42, isActive: false, deletedAt: null },
+      userRoles: [],
+    });
+
+    await expect(
+      strategy.validate({ sub: 42, role: 'CUSTOMER_ADMIN' }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'ACCOUNT_DISABLED' }),
+    });
+  });
+
   it('validates user linked to an Employee without querying removed managerId column', async () => {
     const mockUser = {
       id: 2,

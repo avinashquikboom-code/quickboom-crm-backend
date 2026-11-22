@@ -54,9 +54,9 @@ export class RegisterCustomerDto {
   @IsOptional()
   city?: string;
 
-  @ApiPropertyOptional({ example: 'Password123!' })
+  @ApiProperty({ example: 'Password123!' })
   @IsString()
-  @IsOptional()
+  @IsNotEmpty({ message: 'Password is required' })
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password?: string;
 
