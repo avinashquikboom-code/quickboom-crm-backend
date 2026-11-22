@@ -11,6 +11,7 @@ export interface ImageGenerationResult {
   width?: number;
   height?: number;
   mimeType?: string;
+  model?: string;
 }
 
 export interface VideoGenerationResult {
@@ -18,7 +19,7 @@ export interface VideoGenerationResult {
   url?: string;
   fileKey?: string;
   duration?: number;
-  status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: "PROCESSING" | "COMPLETED" | "FAILED";
 }
 
 export interface IAiProvider {

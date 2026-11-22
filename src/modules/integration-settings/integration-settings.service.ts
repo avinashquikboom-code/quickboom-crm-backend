@@ -4,70 +4,101 @@ import {
   BadRequestException,
   NotFoundException,
   Optional,
-} from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
-import { PrismaService } from '../../prisma/prisma.service';
+} from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
+import { PrismaService } from "../../prisma/prisma.service";
 import {
   encryptSecret,
   decryptSecret,
   maskSecret,
   sanitizeSecret,
-} from '../../common/utils/crypto.util';
+} from "../../common/utils/crypto.util";
 import {
   UpdateIntegrationDto,
   TestIntegrationDto,
-} from './dto/integration-settings.dto';
-import axios from 'axios';
-import * as crypto from 'crypto';
-import * as nodemailer from 'nodemailer';
-const Razorpay = require('razorpay');
+} from "./dto/integration-settings.dto";
+import axios from "axios";
+import * as crypto from "crypto";
+import * as nodemailer from "nodemailer";
+const Razorpay = require("razorpay");
 import {
   initializeApp as initFirebaseAdminApp,
   deleteApp as deleteFirebaseAdminApp,
   cert as firebaseAdminCert,
   getApps as getFirebaseAdminApps,
-} from 'firebase-admin/app';
-import { getMessaging as getFirebaseAdminMessaging } from 'firebase-admin/messaging';
-import { maskAccessToken, resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
-import { integrationDefinition } from './integration-registry';
+} from "firebase-admin/app";
+import { getMessaging as getFirebaseAdminMessaging } from "firebase-admin/messaging";
+import {
+  maskAccessToken,
+  resolveCleanAccessToken,
+} from "../whatsapp/whatsapp.util";
+import { integrationDefinition } from "./integration-registry";
 
 export enum IntegrationProvider {
-  RAZORPAY = 'RAZORPAY',
-  GOOGLE_MAPS = 'GOOGLE_MAPS',
-  TWILIO = 'TWILIO',
-  WHATSAPP = 'WHATSAPP',
-  SENDGRID = 'SENDGRID',
-  AWS = 'AWS',
-  MSG91 = 'MSG91',
-  SHIPROCKET = 'SHIPROCKET',
-  OPENAI = 'OPENAI',
-  GEMINI = 'GEMINI',
-  ANTHROPIC = 'ANTHROPIC',
-  SMTP = 'SMTP',
-  FIREBASE = 'FIREBASE',
-  ELEVENLABS = 'ELEVENLABS',
+  RAZORPAY = "RAZORPAY",
+  GOOGLE_MAPS = "GOOGLE_MAPS",
+  TWILIO = "TWILIO",
+  WHATSAPP = "WHATSAPP",
+  SENDGRID = "SENDGRID",
+  AWS = "AWS",
+  MSG91 = "MSG91",
+  SHIPROCKET = "SHIPROCKET",
+  OPENAI = "OPENAI",
+  GEMINI = "GEMINI",
+  ANTHROPIC = "ANTHROPIC",
+  SMTP = "SMTP",
+  FIREBASE = "FIREBASE",
+  ELEVENLABS = "ELEVENLABS",
 }
 
 export function normalizeProvider(provider: string): string {
-  const norm = (provider || '').trim().toUpperCase();
-  if (norm === 'RAZORPAY' || norm === 'RAZORPAY_PAYMENT' || norm === 'PAYMENT_RAZORPAY') {
+  const norm = (provider || "").trim().toUpperCase();
+  if (
+    norm === "RAZORPAY" ||
+    norm === "RAZORPAY_PAYMENT" ||
+    norm === "PAYMENT_RAZORPAY"
+  ) {
     return IntegrationProvider.RAZORPAY;
   }
-  if (norm === 'GOOGLE_MAPS' || norm === 'GOOGLEMAPS' || norm === 'MAPS') {
+  if (norm === "GOOGLE_MAPS" || norm === "GOOGLEMAPS" || norm === "MAPS") {
     return IntegrationProvider.GOOGLE_MAPS;
   }
-  if (norm === 'TWILIO') return IntegrationProvider.TWILIO;
-  if (norm === 'WHATSAPP') return IntegrationProvider.WHATSAPP;
-  if (norm === 'SENDGRID') return IntegrationProvider.SENDGRID;
-  if (norm === 'AWS' || norm === 'AMAZON' || norm === 'S3' || norm === 'AWS_S3' || norm === 'AMAZON_S3') return IntegrationProvider.AWS;
-  if (norm === 'MSG91' || norm === 'MSG_91' || norm === 'SMS_MSG91' || norm === 'OTP_MSG91') return IntegrationProvider.MSG91;
-  if (norm === 'SHIPROCKET') return IntegrationProvider.SHIPROCKET;
-  if (norm === 'OPENAI' || norm === 'OPEN_AI' || norm === 'CHATGPT') return IntegrationProvider.OPENAI;
-  if (norm === 'GEMINI' || norm === 'GOOGLE_GEMINI' || norm === 'GOOGLE_AI') return IntegrationProvider.GEMINI;
-  if (norm === 'ANTHROPIC' || norm === 'CLAUDE' || norm === 'ANTHROPIC_CLAUDE') return IntegrationProvider.ANTHROPIC;
-  if (norm === 'SMTP' || norm === 'EMAIL' || norm === 'MAIL' || norm === 'SMTP_EMAIL') return IntegrationProvider.SMTP;
-  if (norm === 'FIREBASE' || norm === 'FCM' || norm === 'FIREBASE_MESSAGING') return IntegrationProvider.FIREBASE;
-  if (norm === 'ELEVENLABS' || norm === 'ELEVEN_LABS') return IntegrationProvider.ELEVENLABS;
+  if (norm === "TWILIO") return IntegrationProvider.TWILIO;
+  if (norm === "WHATSAPP") return IntegrationProvider.WHATSAPP;
+  if (norm === "SENDGRID") return IntegrationProvider.SENDGRID;
+  if (
+    norm === "AWS" ||
+    norm === "AMAZON" ||
+    norm === "S3" ||
+    norm === "AWS_S3" ||
+    norm === "AMAZON_S3"
+  )
+    return IntegrationProvider.AWS;
+  if (
+    norm === "MSG91" ||
+    norm === "MSG_91" ||
+    norm === "SMS_MSG91" ||
+    norm === "OTP_MSG91"
+  )
+    return IntegrationProvider.MSG91;
+  if (norm === "SHIPROCKET") return IntegrationProvider.SHIPROCKET;
+  if (norm === "OPENAI" || norm === "OPEN_AI" || norm === "CHATGPT")
+    return IntegrationProvider.OPENAI;
+  if (norm === "GEMINI" || norm === "GOOGLE_GEMINI" || norm === "GOOGLE_AI")
+    return IntegrationProvider.GEMINI;
+  if (norm === "ANTHROPIC" || norm === "CLAUDE" || norm === "ANTHROPIC_CLAUDE")
+    return IntegrationProvider.ANTHROPIC;
+  if (
+    norm === "SMTP" ||
+    norm === "EMAIL" ||
+    norm === "MAIL" ||
+    norm === "SMTP_EMAIL"
+  )
+    return IntegrationProvider.SMTP;
+  if (norm === "FIREBASE" || norm === "FCM" || norm === "FIREBASE_MESSAGING")
+    return IntegrationProvider.FIREBASE;
+  if (norm === "ELEVENLABS" || norm === "ELEVEN_LABS")
+    return IntegrationProvider.ELEVENLABS;
   return norm;
 }
 
@@ -83,7 +114,7 @@ export interface FirebaseDynamicConfig {
   vapidKey?: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface OpenAiDynamicConfig {
@@ -92,7 +123,7 @@ export interface OpenAiDynamicConfig {
   model?: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface GeminiDynamicConfig {
@@ -100,7 +131,7 @@ export interface GeminiDynamicConfig {
   model?: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface AnthropicDynamicConfig {
@@ -111,7 +142,7 @@ export interface AnthropicDynamicConfig {
   temperature?: number;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface AwsS3DynamicConfig {
@@ -122,7 +153,7 @@ export interface AwsS3DynamicConfig {
   customDomain?: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface Msg91DynamicConfig {
@@ -132,7 +163,7 @@ export interface Msg91DynamicConfig {
   otpExpiry: number;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface RazorpayDynamicConfig {
@@ -141,31 +172,33 @@ export interface RazorpayDynamicConfig {
   webhookSecret: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  environment: 'TEST' | 'LIVE';
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  environment: "TEST" | "LIVE";
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export function maskKeyId(keyId: string): string {
-  if (!keyId) return 'none';
+  if (!keyId) return "none";
   const clean = keyId.trim();
-  if (clean.length <= 12) return clean.substring(0, 4) + '***';
-  return clean.substring(0, 8) + '***' + clean.substring(clean.length - 4);
+  if (clean.length <= 12) return clean.substring(0, 4) + "***";
+  return clean.substring(0, 8) + "***" + clean.substring(clean.length - 4);
 }
 
-export function validateRazorpayEnvironmentConfig(config: RazorpayDynamicConfig): void {
+export function validateRazorpayEnvironmentConfig(
+  config: RazorpayDynamicConfig,
+): void {
   if (!config.isConfigured || !config.keyId) return;
 
   const env = config.environment;
   const keyId = config.keyId.trim();
 
-  if (env === 'TEST') {
-    if (!keyId.startsWith('rzp_test_')) {
+  if (env === "TEST") {
+    if (!keyId.startsWith("rzp_test_")) {
       throw new BadRequestException(
         `Razorpay Environment Mismatch: Configured environment is TEST, but Key ID is "${maskKeyId(keyId)}" (expected key starting with "rzp_test_"). Please update your configuration or switch environment to LIVE.`,
       );
     }
-  } else if (env === 'LIVE') {
-    if (!keyId.startsWith('rzp_live_')) {
+  } else if (env === "LIVE") {
+    if (!keyId.startsWith("rzp_live_")) {
       throw new BadRequestException(
         `Razorpay Environment Mismatch: Configured environment is LIVE, but Key ID is "${maskKeyId(keyId)}" (expected key starting with "rzp_live_"). Please update your configuration or switch environment to TEST.`,
       );
@@ -178,52 +211,57 @@ export interface GoogleMapsDynamicConfig {
   isEnabled: boolean;
   environment: string;
   config: Record<string, any>;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 export interface SmtpDynamicConfig {
   host: string;
   port: number;
   secure: boolean;
-  security: 'SSL' | 'TLS' | 'NONE';
+  security: "SSL" | "TLS" | "NONE";
   username: string;
   password: string;
   fromEmail: string;
   fromName: string;
   isEnabled: boolean;
   isConfigured: boolean;
-  source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE';
+  source: "DATABASE" | "ENV_FALLBACK" | "NONE";
 }
 
 // Fields that must always be encrypted at rest in the database
 const SENSITIVE_FIELD_PATTERNS = [
-  'secret',
-  'keysecret',
-  'apikey',
-  'privatekey',
-  'authtoken',
-  'password',
-  'token',
+  "secret",
+  "keysecret",
+  "apikey",
+  "privatekey",
+  "authtoken",
+  "password",
+  "token",
 ];
 
 function isSensitiveKey(key: string): boolean {
-  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
   // Webhook verify tokens must be readable by admins to paste into Meta Developer Dashboard
-  if (normalized.includes('verifytoken') || normalized.includes('webhookverifytoken')) {
+  if (
+    normalized.includes("verifytoken") ||
+    normalized.includes("webhookverifytoken")
+  ) {
     return false;
   }
-  return SENSITIVE_FIELD_PATTERNS.some((pattern) => normalized.includes(pattern));
+  return SENSITIVE_FIELD_PATTERNS.some((pattern) =>
+    normalized.includes(pattern),
+  );
 }
 
 export function isMaskedSecret(val?: any): boolean {
-  if (!val || typeof val !== 'string') return true;
+  if (!val || typeof val !== "string") return true;
   const t = val.trim();
   return (
     t.length === 0 ||
-    t === '******' ||
-    t === '••••••••' ||
-    t.includes('***') ||
-    t.includes('•')
+    t === "******" ||
+    t === "••••••••" ||
+    t.includes("***") ||
+    t.includes("•")
   );
 }
 
@@ -244,7 +282,7 @@ export class IntegrationSettingsService {
     try {
       if (!this.moduleRef) return null;
       // Lazy lookup by service token name to prevent circular import
-      return this.moduleRef.get('FcmService', { strict: false });
+      return this.moduleRef.get("FcmService", { strict: false });
     } catch {
       return null;
     }
@@ -257,17 +295,24 @@ export class IntegrationSettingsService {
     if (provider) {
       const norm = normalizeProvider(provider);
       this.cache.delete(norm);
-      this.logger.log(`[INTEGRATION_CACHE_INVALIDATED] Cache cleared for provider: ${norm}`);
+      this.logger.log(
+        `[INTEGRATION_CACHE_INVALIDATED] Cache cleared for provider: ${norm}`,
+      );
     } else {
       this.cache.clear();
-      this.logger.log('[INTEGRATION_CACHE_INVALIDATED] Cache cleared for all providers');
+      this.logger.log(
+        "[INTEGRATION_CACHE_INVALIDATED] Cache cleared for all providers",
+      );
     }
   }
 
   /**
    * Retrieves raw decrypted integration settings from Database with .env fallback.
    */
-  async getIntegrationConfig(provider: string, options?: { forceFresh?: boolean }): Promise<any> {
+  async getIntegrationConfig(
+    provider: string,
+    options?: { forceFresh?: boolean },
+  ): Promise<any> {
     const normProvider = normalizeProvider(provider);
 
     // 1. Check in-memory cache unless fresh retrieval requested
@@ -284,13 +329,18 @@ export class IntegrationSettingsService {
       dbRecord = await this.prisma.integrationSetting.findUnique({
         where: { provider: normProvider },
       });
-      if (!dbRecord && typeof this.prisma.integrationSetting?.findFirst === 'function') {
+      if (
+        !dbRecord &&
+        typeof this.prisma.integrationSetting?.findFirst === "function"
+      ) {
         dbRecord = await this.prisma.integrationSetting.findFirst({
-          where: { provider: { equals: normProvider, mode: 'insensitive' } },
+          where: { provider: { equals: normProvider, mode: "insensitive" } },
         });
       }
     } catch (dbErr: any) {
-      this.logger.error(`[INTEGRATION_DB_ERROR] Failed querying DB for ${normProvider}: ${dbErr?.message}`);
+      this.logger.error(
+        `[INTEGRATION_DB_ERROR] Failed querying DB for ${normProvider}: ${dbErr?.message}`,
+      );
     }
 
     let result: any = null;
@@ -300,12 +350,12 @@ export class IntegrationSettingsService {
       const decryptedCreds: Record<string, any> = {};
 
       for (const [k, v] of Object.entries(rawCreds)) {
-        if (typeof v === 'string' && v.startsWith('enc:v1:')) {
+        if (typeof v === "string" && v.startsWith("enc:v1:")) {
           const decrypted = decryptSecret(v);
           if (!decrypted && v) {
             this.logger.warn(
               `[INTEGRATION_DECRYPT_WARN] Failed to decrypt credential field "${k}" for provider "${normProvider}". ` +
-              `This usually indicates ENCRYPTION_KEY or JWT_SECRET changed after the credential was stored.`,
+                `This usually indicates ENCRYPTION_KEY or JWT_SECRET changed after the credential was stored.`,
             );
           }
           decryptedCreds[k] = decrypted;
@@ -317,10 +367,10 @@ export class IntegrationSettingsService {
       result = {
         provider: dbRecord.provider,
         isEnabled: dbRecord.isEnabled,
-        environment: (dbRecord.environment || 'TEST').toUpperCase(),
+        environment: (dbRecord.environment || "TEST").toUpperCase(),
         credentials: decryptedCreds,
         config: (dbRecord.config as Record<string, any>) || {},
-        source: 'DATABASE',
+        source: "DATABASE",
         updatedAt: dbRecord.updatedAt,
       };
     }
@@ -348,44 +398,56 @@ export class IntegrationSettingsService {
         const envVar = (
           process.env.RAZORPAY_ENVIRONMENT ||
           process.env.RAZORPAY_ENV ||
-          'TEST'
-        ).trim().toUpperCase();
-        const activeEnv: 'TEST' | 'LIVE' = envVar === 'LIVE' ? 'LIVE' : 'TEST';
+          "TEST"
+        )
+          .trim()
+          .toUpperCase();
+        const activeEnv: "TEST" | "LIVE" = envVar === "LIVE" ? "LIVE" : "TEST";
 
-        let keyId = '';
-        let keySecret = '';
+        let keyId = "";
+        let keySecret = "";
 
-        if (activeEnv === 'TEST') {
+        if (activeEnv === "TEST") {
           keyId = (
             process.env.RAZORPAY_TEST_KEY_ID ||
-            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_ID : '') ||
-            ''
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_test_")
+              ? process.env.RAZORPAY_KEY_ID
+              : "") ||
+            ""
           ).trim();
           keySecret = (
             process.env.RAZORPAY_TEST_KEY_SECRET ||
-            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
-            ''
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_test_")
+              ? process.env.RAZORPAY_KEY_SECRET
+              : "") ||
+            ""
           ).trim();
         } else {
           keyId = (
             process.env.RAZORPAY_LIVE_KEY_ID ||
-            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_ID : '') ||
-            ''
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_")
+              ? process.env.RAZORPAY_KEY_ID
+              : "") ||
+            ""
           ).trim();
           keySecret = (
             process.env.RAZORPAY_LIVE_KEY_SECRET ||
-            (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
-            ''
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_")
+              ? process.env.RAZORPAY_KEY_SECRET
+              : "") ||
+            ""
           ).trim();
         }
 
         // Generic fallback if environment-specific is not set
         if (!keyId && process.env.RAZORPAY_KEY_ID) {
           keyId = process.env.RAZORPAY_KEY_ID.trim();
-          keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+          keySecret = (process.env.RAZORPAY_KEY_SECRET || "").trim();
         }
 
-        const webhookSecret = (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
+        const webhookSecret = (
+          process.env.RAZORPAY_WEBHOOK_SECRET || ""
+        ).trim();
 
         return {
           provider: IntegrationProvider.RAZORPAY,
@@ -394,14 +456,14 @@ export class IntegrationSettingsService {
           credentials: {
             keyId,
             keySecret,
-            testKeyId: (process.env.RAZORPAY_TEST_KEY_ID || '').trim(),
-            testKeySecret: (process.env.RAZORPAY_TEST_KEY_SECRET || '').trim(),
-            liveKeyId: (process.env.RAZORPAY_LIVE_KEY_ID || '').trim(),
-            liveKeySecret: (process.env.RAZORPAY_LIVE_KEY_SECRET || '').trim(),
+            testKeyId: (process.env.RAZORPAY_TEST_KEY_ID || "").trim(),
+            testKeySecret: (process.env.RAZORPAY_TEST_KEY_SECRET || "").trim(),
+            liveKeyId: (process.env.RAZORPAY_LIVE_KEY_ID || "").trim(),
+            liveKeySecret: (process.env.RAZORPAY_LIVE_KEY_SECRET || "").trim(),
             webhookSecret,
           },
           config: {},
-          source: 'ENV_FALLBACK',
+          source: "ENV_FALLBACK",
         };
       }
 
@@ -409,22 +471,22 @@ export class IntegrationSettingsService {
         const apiKey = (
           process.env.GOOGLE_MAPS_API_KEY ||
           process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ||
-          ''
+          ""
         ).trim();
 
         return {
           provider: IntegrationProvider.GOOGLE_MAPS,
           isEnabled: Boolean(apiKey),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: {
             apiKey,
           },
           config: {
             enableEcoRouting: true,
             enableGeocoding: true,
-            defaultCity: 'Mumbai, Maharashtra',
+            defaultCity: "Mumbai, Maharashtra",
           },
-          source: 'ENV_FALLBACK',
+          source: "ENV_FALLBACK",
         };
       }
 
@@ -432,31 +494,33 @@ export class IntegrationSettingsService {
         const apiKey = (
           process.env.WHATSAPP_API_KEY ||
           process.env.WHATSAPP_ACCESS_TOKEN ||
-          ''
+          ""
         ).trim();
-        const phoneNumberId = (process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
+        const phoneNumberId = (
+          process.env.WHATSAPP_PHONE_NUMBER_ID || ""
+        ).trim();
         const businessAccountId = (
           process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
           process.env.WHATSAPP_WABA_ID ||
-          ''
+          ""
         ).trim();
         const verifyToken = (
           process.env.WHATSAPP_VERIFY_TOKEN ||
           process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
           process.env.META_VERIFY_TOKEN ||
           process.env.META_WEBHOOK_VERIFY_TOKEN ||
-          '3f4e429cbf154b82ca819b5af5bc046110d18f336db6627a'
+          "3f4e429cbf154b82ca819b5af5bc046110d18f336db6627a"
         ).trim();
         const appSecret = (
           process.env.WHATSAPP_APP_SECRET ||
           process.env.META_APP_SECRET ||
-          ''
+          ""
         ).trim();
 
         return {
           provider: IntegrationProvider.WHATSAPP,
           isEnabled: Boolean(apiKey && phoneNumberId),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: {
             apiKey,
             accessToken: apiKey,
@@ -466,52 +530,64 @@ export class IntegrationSettingsService {
             appSecret,
           },
           config: {},
-          source: 'ENV_FALLBACK',
+          source: "ENV_FALLBACK",
         };
       }
 
       case IntegrationProvider.AWS: {
-        const accessKeyId = (process.env.AWS_ACCESS_KEY_ID || '').trim();
-        const secretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || '').trim();
-        const region = (process.env.AWS_REGION || 'ap-south-1').trim();
-        const bucket = (process.env.AWS_S3_BUCKET || '').trim();
-        const customDomain = (process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
+        const accessKeyId = (process.env.AWS_ACCESS_KEY_ID || "").trim();
+        const secretAccessKey = (
+          process.env.AWS_SECRET_ACCESS_KEY || ""
+        ).trim();
+        const region = (process.env.AWS_REGION || "ap-south-1").trim();
+        const bucket = (process.env.AWS_S3_BUCKET || "").trim();
+        const customDomain = (process.env.AWS_S3_CUSTOM_DOMAIN || "").trim();
 
         return {
           provider: IntegrationProvider.AWS,
           isEnabled: Boolean(accessKeyId && secretAccessKey && bucket),
-          environment: 'LIVE',
-          credentials: { accessKeyId, secretAccessKey, region, bucket, customDomain },
+          environment: "LIVE",
+          credentials: {
+            accessKeyId,
+            secretAccessKey,
+            region,
+            bucket,
+            customDomain,
+          },
           config: {},
-          source: 'ENV_FALLBACK',
+          source: "ENV_FALLBACK",
         };
       }
 
       case IntegrationProvider.MSG91: {
-        const authKey = (process.env.MSG91_AUTH_KEY || '').trim();
-        const templateId = (process.env.MSG91_TEMPLATE_ID || '').trim();
-        const senderId = (process.env.MSG91_SENDER_ID || 'QUIKBM').trim();
-        const otpExpiry = parseInt(process.env.MSG91_OTP_EXPIRY || '300', 10);
+        const authKey = (process.env.MSG91_AUTH_KEY || "").trim();
+        const templateId = (process.env.MSG91_TEMPLATE_ID || "").trim();
+        const senderId = (process.env.MSG91_SENDER_ID || "QUIKBM").trim();
+        const otpExpiry = parseInt(process.env.MSG91_OTP_EXPIRY || "300", 10);
 
         return {
           provider: IntegrationProvider.MSG91,
           isEnabled: Boolean(authKey && templateId),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: { authKey, templateId, senderId },
           config: { otpExpiry },
-          source: 'ENV_FALLBACK',
+          source: "ENV_FALLBACK",
         };
       }
 
       case IntegrationProvider.OPENAI: {
-        const apiKey = (process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || '').trim();
+        const apiKey = (
+          process.env.OPENAI_API_KEY ||
+          process.env.OPENAI_KEY ||
+          ""
+        ).trim();
         return {
           provider: IntegrationProvider.OPENAI,
           isEnabled: Boolean(apiKey),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: { apiKey },
           config: {},
-          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+          source: apiKey ? "ENV_FALLBACK" : "NONE",
         };
       }
 
@@ -520,42 +596,52 @@ export class IntegrationSettingsService {
           process.env.GEMINI_API_KEY ||
           process.env.GOOGLE_GEMINI_API_KEY ||
           process.env.GOOGLE_API_KEY ||
-          ''
+          ""
         ).trim();
         return {
           provider: IntegrationProvider.GEMINI,
           isEnabled: Boolean(apiKey),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: { apiKey },
           config: {},
-          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+          source: apiKey ? "ENV_FALLBACK" : "NONE",
         };
       }
 
       case IntegrationProvider.ANTHROPIC: {
-        const apiKey = (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || '').trim();
+        const apiKey = (
+          process.env.ANTHROPIC_API_KEY ||
+          process.env.CLAUDE_API_KEY ||
+          ""
+        ).trim();
         return {
           provider: IntegrationProvider.ANTHROPIC,
           isEnabled: Boolean(apiKey),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: { apiKey },
-          config: { model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5', maxTokens: Number(process.env.ANTHROPIC_MAX_TOKENS) || 1024 },
-          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+          config: {
+            model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5",
+            maxTokens: Number(process.env.ANTHROPIC_MAX_TOKENS) || 1024,
+          },
+          source: apiKey ? "ENV_FALLBACK" : "NONE",
         };
       }
 
       case IntegrationProvider.ELEVENLABS: {
-        const apiKey = (process.env.ELEVENLABS_API_KEY || '').trim();
-        const speechEngineId = (process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
-        const voiceId = (process.env.ELEVENLABS_VOICE_ID || '').trim();
-        const speechEnginePort = Number(process.env.ELEVENLABS_SPEECH_ENGINE_PORT) || 3101;
+        const apiKey = (process.env.ELEVENLABS_API_KEY || "").trim();
+        const speechEngineId = (
+          process.env.ELEVENLABS_SPEECH_ENGINE_ID || ""
+        ).trim();
+        const voiceId = (process.env.ELEVENLABS_VOICE_ID || "").trim();
+        const speechEnginePort =
+          Number(process.env.ELEVENLABS_SPEECH_ENGINE_PORT) || 3101;
         return {
           provider: IntegrationProvider.ELEVENLABS,
           isEnabled: Boolean(apiKey),
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: { apiKey },
           config: { speechEngineId, voiceId, speechEnginePort },
-          source: apiKey ? 'ENV_FALLBACK' : 'NONE',
+          source: apiKey ? "ENV_FALLBACK" : "NONE",
         };
       }
 
@@ -563,36 +649,50 @@ export class IntegrationSettingsService {
         const projectId = (
           process.env.FIREBASE_PROJECT_ID ||
           process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-          ''
+          ""
         ).trim();
-        const clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
-        const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').trim();
+        const clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || "").trim();
+        const privateKey = (process.env.FIREBASE_PRIVATE_KEY || "").trim();
         const messagingSenderId = (
           process.env.FIREBASE_MESSAGING_SENDER_ID ||
           process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
-          ''
+          ""
         ).trim();
-        const apiKey = (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '').trim();
-        const appId = (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '').trim();
-        const authDomain = (process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '').trim();
-        const storageBucket = (process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || '').trim();
-        const vapidKey = (process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '').trim();
+        const apiKey = (process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "").trim();
+        const appId = (process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "").trim();
+        const authDomain = (
+          process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || ""
+        ).trim();
+        const storageBucket = (
+          process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || ""
+        ).trim();
+        const vapidKey = (
+          process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || ""
+        ).trim();
 
         const hasAny = Boolean(
-          projectId || clientEmail || privateKey || messagingSenderId || apiKey || appId || authDomain || storageBucket || vapidKey,
+          projectId ||
+          clientEmail ||
+          privateKey ||
+          messagingSenderId ||
+          apiKey ||
+          appId ||
+          authDomain ||
+          storageBucket ||
+          vapidKey,
         );
         const isConfigured = Boolean(
           projectId &&
-            (clientEmail ||
-              privateKey ||
-              process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-              process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-              process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
+          (clientEmail ||
+            privateKey ||
+            process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+            process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+            process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
         );
         return {
           provider: IntegrationProvider.FIREBASE,
           isEnabled: isConfigured,
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: {
             projectId: projectId || undefined,
             clientEmail: clientEmail || undefined,
@@ -610,25 +710,51 @@ export class IntegrationSettingsService {
             authDomain: authDomain || undefined,
             storageBucket: storageBucket || undefined,
           },
-          source: hasAny ? 'ENV_FALLBACK' : 'NONE',
+          source: hasAny ? "ENV_FALLBACK" : "NONE",
         };
       }
 
       case IntegrationProvider.SMTP: {
-        const host = (process.env.SMTP_HOST || process.env.MAIL_HOST || '').trim();
+        const host = (
+          process.env.SMTP_HOST ||
+          process.env.MAIL_HOST ||
+          ""
+        ).trim();
         const rawPort = process.env.SMTP_PORT || process.env.MAIL_PORT || 587;
         const port = Number(rawPort) || 587;
-        const username = (process.env.SMTP_USER || process.env.SMTP_USERNAME || process.env.MAIL_USER || '').trim();
-        const password = (process.env.SMTP_PASSWORD || process.env.SMTP_PASS || process.env.MAIL_PASSWORD || '').trim();
-        const fromEmail = (process.env.SMTP_FROM_EMAIL || process.env.MAIL_FROM || '').trim();
-        const fromName = (process.env.SMTP_FROM_NAME || process.env.MAIL_FROM_NAME || 'QuickBoom CRM').trim();
-        const security = (process.env.SMTP_SECURITY || (port === 465 ? 'SSL' : 'TLS')).trim().toUpperCase();
+        const username = (
+          process.env.SMTP_USER ||
+          process.env.SMTP_USERNAME ||
+          process.env.MAIL_USER ||
+          ""
+        ).trim();
+        const password = (
+          process.env.SMTP_PASSWORD ||
+          process.env.SMTP_PASS ||
+          process.env.MAIL_PASSWORD ||
+          ""
+        ).trim();
+        const fromEmail = (
+          process.env.SMTP_FROM_EMAIL ||
+          process.env.MAIL_FROM ||
+          ""
+        ).trim();
+        const fromName = (
+          process.env.SMTP_FROM_NAME ||
+          process.env.MAIL_FROM_NAME ||
+          "QuickBoom CRM"
+        ).trim();
+        const security = (
+          process.env.SMTP_SECURITY || (port === 465 ? "SSL" : "TLS")
+        )
+          .trim()
+          .toUpperCase();
 
         const isConfigured = Boolean(host && fromEmail);
         return {
           provider: IntegrationProvider.SMTP,
           isEnabled: isConfigured,
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: {
             username,
             password,
@@ -640,7 +766,7 @@ export class IntegrationSettingsService {
             fromEmail,
             fromName,
           },
-          source: isConfigured ? 'ENV_FALLBACK' : 'NONE',
+          source: isConfigured ? "ENV_FALLBACK" : "NONE",
         };
       }
 
@@ -648,10 +774,10 @@ export class IntegrationSettingsService {
         return {
           provider: normProvider,
           isEnabled: false,
-          environment: 'LIVE',
+          environment: "LIVE",
           credentials: {},
           config: {},
-          source: 'NONE',
+          source: "NONE",
         };
     }
   }
@@ -667,73 +793,89 @@ export class IntegrationSettingsService {
       conf?.environment ||
       process.env.RAZORPAY_ENVIRONMENT ||
       process.env.RAZORPAY_ENV ||
-      'TEST'
-    ).trim().toUpperCase();
-    const environment: 'TEST' | 'LIVE' = envRaw === 'LIVE' ? 'LIVE' : 'TEST';
+      "TEST"
+    )
+      .trim()
+      .toUpperCase();
+    const environment: "TEST" | "LIVE" = envRaw === "LIVE" ? "LIVE" : "TEST";
 
-    let keyId = '';
-    let keySecret = '';
+    let keyId = "";
+    let keySecret = "";
 
-    if (environment === 'TEST') {
+    if (environment === "TEST") {
       keyId = sanitizeSecret(
         String(
           creds.testKeyId ||
-          creds.test_key_id ||
-          (creds.keyId?.startsWith?.('rzp_test_') ? creds.keyId : '') ||
-          creds.keyId ||
-          creds.apiKey ||
-          process.env.RAZORPAY_TEST_KEY_ID ||
-          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_ID : '') ||
-          '',
+            creds.test_key_id ||
+            (creds.keyId?.startsWith?.("rzp_test_") ? creds.keyId : "") ||
+            creds.keyId ||
+            creds.apiKey ||
+            process.env.RAZORPAY_TEST_KEY_ID ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_test_")
+              ? process.env.RAZORPAY_KEY_ID
+              : "") ||
+            "",
         ),
       );
       keySecret = sanitizeSecret(
         String(
           creds.testKeySecret ||
-          creds.test_key_secret ||
-          creds.keySecret ||
-          creds.key_secret ||
-          creds.apiSecret ||
-          creds.secret ||
-          process.env.RAZORPAY_TEST_KEY_SECRET ||
-          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
-          '',
+            creds.test_key_secret ||
+            creds.keySecret ||
+            creds.key_secret ||
+            creds.apiSecret ||
+            creds.secret ||
+            process.env.RAZORPAY_TEST_KEY_SECRET ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_test_")
+              ? process.env.RAZORPAY_KEY_SECRET
+              : "") ||
+            "",
         ),
       );
     } else {
       keyId = sanitizeSecret(
         String(
           creds.liveKeyId ||
-          creds.live_key_id ||
-          (creds.keyId?.startsWith?.('rzp_live_') ? creds.keyId : '') ||
-          creds.keyId ||
-          creds.apiKey ||
-          process.env.RAZORPAY_LIVE_KEY_ID ||
-          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_ID : '') ||
-          '',
+            creds.live_key_id ||
+            (creds.keyId?.startsWith?.("rzp_live_") ? creds.keyId : "") ||
+            creds.keyId ||
+            creds.apiKey ||
+            process.env.RAZORPAY_LIVE_KEY_ID ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_")
+              ? process.env.RAZORPAY_KEY_ID
+              : "") ||
+            "",
         ),
       );
       keySecret = sanitizeSecret(
         String(
           creds.liveKeySecret ||
-          creds.live_key_secret ||
-          creds.keySecret ||
-          creds.key_secret ||
-          creds.apiSecret ||
-          creds.secret ||
-          process.env.RAZORPAY_LIVE_KEY_SECRET ||
-          (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_live_') ? process.env.RAZORPAY_KEY_SECRET : '') ||
-          '',
+            creds.live_key_secret ||
+            creds.keySecret ||
+            creds.key_secret ||
+            creds.apiSecret ||
+            creds.secret ||
+            process.env.RAZORPAY_LIVE_KEY_SECRET ||
+            (process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_")
+              ? process.env.RAZORPAY_KEY_SECRET
+              : "") ||
+            "",
         ),
       );
     }
 
     const webhookSecret = sanitizeSecret(
-      String(creds.webhookSecret || creds.webhook_secret || process.env.RAZORPAY_WEBHOOK_SECRET || ''),
+      String(
+        creds.webhookSecret ||
+          creds.webhook_secret ||
+          process.env.RAZORPAY_WEBHOOK_SECRET ||
+          "",
+      ),
     );
     const isConfigured = Boolean(keyId && keySecret);
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "DATABASE" : "NONE");
 
     const config: RazorpayDynamicConfig = {
       keyId,
@@ -759,21 +901,30 @@ export class IntegrationSettingsService {
    * Typed helper for Google Maps dynamic configuration.
    */
   async getGoogleMapsConfig(): Promise<GoogleMapsDynamicConfig> {
-    const conf = await this.getIntegrationConfig(IntegrationProvider.GOOGLE_MAPS);
+    const conf = await this.getIntegrationConfig(
+      IntegrationProvider.GOOGLE_MAPS,
+    );
     const creds = conf?.credentials || {};
 
-    let apiKey = String(creds.apiKey || creds.api_key || creds.key || '').trim();
+    let apiKey = String(
+      creds.apiKey || creds.api_key || creds.key || "",
+    ).trim();
     if (!apiKey) {
-      apiKey = (process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim();
+      apiKey = (
+        process.env.GOOGLE_MAPS_API_KEY ||
+        process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ||
+        ""
+      ).trim();
     }
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? false;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "DATABASE" : "NONE");
 
     return {
       apiKey,
       isEnabled,
-      environment: conf?.environment || 'LIVE',
+      environment: conf?.environment || "LIVE",
       config: conf?.config || {},
       source,
     };
@@ -788,24 +939,57 @@ export class IntegrationSettingsService {
     const creds = conf?.credentials || {};
 
     const accessKeyId = sanitizeSecret(
-      String(creds.accessKeyId || creds.access_key_id || process.env.AWS_ACCESS_KEY_ID || ''),
+      String(
+        creds.accessKeyId ||
+          creds.access_key_id ||
+          process.env.AWS_ACCESS_KEY_ID ||
+          "",
+      ),
     );
     const secretAccessKey = sanitizeSecret(
-      String(creds.secretAccessKey || creds.secret_access_key || process.env.AWS_SECRET_ACCESS_KEY || ''),
+      String(
+        creds.secretAccessKey ||
+          creds.secret_access_key ||
+          process.env.AWS_SECRET_ACCESS_KEY ||
+          "",
+      ),
     );
-    const region = String(creds.region || process.env.AWS_REGION || 'ap-south-1').trim();
-    const bucket = String(creds.bucket || creds.bucketName || creds.bucket_name || process.env.AWS_S3_BUCKET || '').trim();
-    const customDomain = String(creds.customDomain || creds.custom_domain || process.env.AWS_S3_CUSTOM_DOMAIN || '').trim();
+    const region = String(
+      creds.region || process.env.AWS_REGION || "ap-south-1",
+    ).trim();
+    const bucket = String(
+      creds.bucket ||
+        creds.bucketName ||
+        creds.bucket_name ||
+        process.env.AWS_S3_BUCKET ||
+        "",
+    ).trim();
+    const customDomain = String(
+      creds.customDomain ||
+        creds.custom_domain ||
+        process.env.AWS_S3_CUSTOM_DOMAIN ||
+        "",
+    ).trim();
 
     const isConfigured = Boolean(accessKeyId && secretAccessKey && bucket);
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "ENV_FALLBACK" : "NONE");
 
     this.logger.log(
-      `[AWS_S3_CONFIG] Bucket: ${bucket || 'NOT_SET'} | Region: ${region} | Configured: ${isConfigured} | Source: ${source}`,
+      `[AWS_S3_CONFIG] Bucket: ${bucket || "NOT_SET"} | Region: ${region} | Configured: ${isConfigured} | Source: ${source}`,
     );
 
-    return { accessKeyId, secretAccessKey, region, bucket, customDomain, isEnabled, isConfigured, source };
+    return {
+      accessKeyId,
+      secretAccessKey,
+      region,
+      bucket,
+      customDomain,
+      isEnabled,
+      isConfigured,
+      source,
+    };
   }
 
   /**
@@ -818,24 +1002,54 @@ export class IntegrationSettingsService {
     const cfg = conf?.config || {};
 
     const authKey = sanitizeSecret(
-      String(creds.authKey || creds.auth_key || creds.apiKey || process.env.MSG91_AUTH_KEY || ''),
+      String(
+        creds.authKey ||
+          creds.auth_key ||
+          creds.apiKey ||
+          process.env.MSG91_AUTH_KEY ||
+          "",
+      ),
     );
-    const templateId = String(creds.templateId || creds.template_id || process.env.MSG91_TEMPLATE_ID || '').trim();
-    const senderId = String(creds.senderId || creds.sender_id || process.env.MSG91_SENDER_ID || 'QUIKBM').trim();
+    const templateId = String(
+      creds.templateId ||
+        creds.template_id ||
+        process.env.MSG91_TEMPLATE_ID ||
+        "",
+    ).trim();
+    const senderId = String(
+      creds.senderId ||
+        creds.sender_id ||
+        process.env.MSG91_SENDER_ID ||
+        "QUIKBM",
+    ).trim();
     const otpExpiry = parseInt(
-      String(cfg.otpExpiry || cfg.otp_expiry || process.env.MSG91_OTP_EXPIRY || '300'),
+      String(
+        cfg.otpExpiry ||
+          cfg.otp_expiry ||
+          process.env.MSG91_OTP_EXPIRY ||
+          "300",
+      ),
       10,
     );
 
     const isConfigured = Boolean(authKey && templateId);
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "ENV_FALLBACK" : "NONE");
 
     this.logger.log(
-      `[MSG91_CONFIG] TemplateId: ${templateId || 'NOT_SET'} | SenderId: ${senderId} | Configured: ${isConfigured} | Source: ${source}`,
+      `[MSG91_CONFIG] TemplateId: ${templateId || "NOT_SET"} | SenderId: ${senderId} | Configured: ${isConfigured} | Source: ${source}`,
     );
 
-    return { authKey, templateId, senderId, otpExpiry, isEnabled, isConfigured, source };
+    return {
+      authKey,
+      templateId,
+      senderId,
+      otpExpiry,
+      isEnabled,
+      isConfigured,
+      source,
+    };
   }
 
   /**
@@ -846,12 +1060,30 @@ export class IntegrationSettingsService {
     const conf = await this.getIntegrationConfig(IntegrationProvider.OPENAI);
     const creds = conf?.credentials || {};
     const cfg = conf?.config || {};
-    const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.OPENAI_API_KEY || ''));
-    const imageModel = String(cfg.imageModel || cfg.model || creds.imageModel || creds.model || process.env.OPENAI_IMAGE_MODEL || '').trim() || undefined;
-    const model = String(cfg.chatModel || cfg.model || creds.chatModel || process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+    const apiKey = sanitizeSecret(
+      String(creds.apiKey || creds.api_key || process.env.OPENAI_API_KEY || ""),
+    );
+    // Keep the image model independent from the OpenAI chat model. Older
+    // integration rows stored a chat model in `config.model`; never forward it
+    // to the Images API.
+    const imageModel =
+      String(
+        cfg.imageModel ||
+          creds.imageModel ||
+          process.env.OPENAI_IMAGE_MODEL ||
+          "",
+      ).trim() || undefined;
+    const model = String(
+      cfg.chatModel ||
+        cfg.model ||
+        creds.chatModel ||
+        process.env.OPENAI_MODEL ||
+        "gpt-4o-mini",
+    ).trim();
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "DATABASE" : "NONE");
 
     return { apiKey, imageModel, model, isEnabled, isConfigured, source };
   }
@@ -864,11 +1096,25 @@ export class IntegrationSettingsService {
     const conf = await this.getIntegrationConfig(IntegrationProvider.GEMINI);
     const creds = conf?.credentials || {};
     const cfg = conf?.config || {};
-    const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''));
-    const model = String(cfg.model || creds.model || process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+    const apiKey = sanitizeSecret(
+      String(
+        creds.apiKey ||
+          creds.api_key ||
+          process.env.GEMINI_API_KEY ||
+          process.env.GOOGLE_API_KEY ||
+          "",
+      ),
+    );
+    const model = String(
+      cfg.model ||
+        creds.model ||
+        process.env.GEMINI_MODEL ||
+        "gemini-2.5-flash",
+    ).trim();
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "DATABASE" : "NONE");
 
     return { apiKey, model, isEnabled, isConfigured, source };
   }
@@ -878,18 +1124,31 @@ export class IntegrationSettingsService {
     const conf = await this.getIntegrationConfig(IntegrationProvider.ANTHROPIC);
     const creds = conf?.credentials || {};
     const cfg = conf?.config || {};
-    const apiKey = sanitizeSecret(String(creds.apiKey || creds.api_key || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || ''));
+    const apiKey = sanitizeSecret(
+      String(
+        creds.apiKey ||
+          creds.api_key ||
+          process.env.ANTHROPIC_API_KEY ||
+          process.env.CLAUDE_API_KEY ||
+          "",
+      ),
+    );
     const isConfigured = Boolean(apiKey);
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "DATABASE" : "NONE");
     const maxTokens = Number(cfg.maxTokens || 1024);
     const temperature = Number(cfg.temperature);
     return {
       apiKey,
-      model: String(cfg.model || 'claude-sonnet-5'),
-      integrationName: String(cfg.integrationName || 'Claude AI'),
-      maxTokens: Number.isFinite(maxTokens) ? Math.max(1, Math.min(64000, Math.floor(maxTokens))) : 1024,
-      ...(Number.isFinite(temperature) ? { temperature: Math.max(0, Math.min(1, temperature)) } : {}),
+      model: String(cfg.model || "claude-sonnet-5"),
+      integrationName: String(cfg.integrationName || "Claude AI"),
+      maxTokens: Number.isFinite(maxTokens)
+        ? Math.max(1, Math.min(64000, Math.floor(maxTokens)))
+        : 1024,
+      ...(Number.isFinite(temperature)
+        ? { temperature: Math.max(0, Math.min(1, temperature)) }
+        : {}),
       isEnabled,
       isConfigured,
       source,
@@ -906,23 +1165,42 @@ export class IntegrationSettingsService {
     isConfigured: boolean;
     source: string;
   }> {
-    const conf = await this.getIntegrationConfig(IntegrationProvider.ELEVENLABS);
+    const conf = await this.getIntegrationConfig(
+      IntegrationProvider.ELEVENLABS,
+    );
     const credentials = conf?.credentials || {};
     const config = conf?.config || {};
-    const apiKey = sanitizeSecret(String(credentials.apiKey || credentials.api_key || process.env.ELEVENLABS_API_KEY || ''));
-    const speechEngineId = String(config.speechEngineId || config.engineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
-    const voiceId = String(config.voiceId || process.env.ELEVENLABS_VOICE_ID || '').trim() || undefined;
-    const speechEnginePort = Number(config.speechEnginePort || process.env.ELEVENLABS_SPEECH_ENGINE_PORT) || 3101;
+    const apiKey = sanitizeSecret(
+      String(
+        credentials.apiKey ||
+          credentials.api_key ||
+          process.env.ELEVENLABS_API_KEY ||
+          "",
+      ),
+    );
+    const speechEngineId = String(
+      config.speechEngineId ||
+        config.engineId ||
+        process.env.ELEVENLABS_SPEECH_ENGINE_ID ||
+        "",
+    ).trim();
+    const voiceId =
+      String(config.voiceId || process.env.ELEVENLABS_VOICE_ID || "").trim() ||
+      undefined;
+    const speechEnginePort =
+      Number(
+        config.speechEnginePort || process.env.ELEVENLABS_SPEECH_ENGINE_PORT,
+      ) || 3101;
     const isConfigured = Boolean(apiKey && speechEngineId);
     return {
       apiKey,
       speechEngineId,
       voiceId,
       speechEnginePort,
-      modelId: String(config.modelId || 'eleven_multilingual_v2'),
+      modelId: String(config.modelId || "eleven_multilingual_v2"),
       isEnabled: Boolean(conf?.isEnabled ?? isConfigured) && isConfigured,
       isConfigured,
-      source: conf?.source || (isConfigured ? 'ENV_FALLBACK' : 'NONE'),
+      source: conf?.source || (isConfigured ? "ENV_FALLBACK" : "NONE"),
     };
   }
 
@@ -941,19 +1219,19 @@ export class IntegrationSettingsService {
         cfg.projectId ||
         process.env.FIREBASE_PROJECT_ID ||
         process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-        '',
+        "",
     ).trim();
     const clientEmail = String(
       creds.clientEmail ||
         creds.client_email ||
         process.env.FIREBASE_CLIENT_EMAIL ||
-        '',
+        "",
     ).trim();
     const privateKey = String(
       creds.privateKey ||
         creds.private_key ||
         process.env.FIREBASE_PRIVATE_KEY ||
-        '',
+        "",
     ).trim();
     const messagingSenderId = String(
       creds.messagingSenderId ||
@@ -961,70 +1239,70 @@ export class IntegrationSettingsService {
         cfg.messagingSenderId ||
         process.env.FIREBASE_MESSAGING_SENDER_ID ||
         process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
-        '',
+        "",
     ).trim();
     const apiKey = String(
       creds.apiKey ||
         creds.api_key ||
         cfg.apiKey ||
         process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
-        '',
+        "",
     ).trim();
     const appId = String(
       creds.appId ||
         creds.app_id ||
         cfg.appId ||
         process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
-        '',
+        "",
     ).trim();
     const authDomain = String(
       creds.authDomain ||
         creds.auth_domain ||
         cfg.authDomain ||
         process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
-        '',
+        "",
     ).trim();
     const storageBucket = String(
       creds.storageBucket ||
         creds.storage_bucket ||
         cfg.storageBucket ||
         process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-        '',
+        "",
     ).trim();
     const vapidKey = String(
       creds.vapidKey ||
         creds.vapid_key ||
         cfg.vapidKey ||
         process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
-        '',
+        "",
     ).trim();
 
     const hasAnyCreds = Boolean(
       projectId ||
-        clientEmail ||
-        privateKey ||
-        messagingSenderId ||
-        apiKey ||
-        appId ||
-        authDomain ||
-        storageBucket ||
-        vapidKey,
+      clientEmail ||
+      privateKey ||
+      messagingSenderId ||
+      apiKey ||
+      appId ||
+      authDomain ||
+      storageBucket ||
+      vapidKey,
     );
 
     const isConfigured = Boolean(
       projectId &&
-        (clientEmail ||
-          privateKey ||
-          process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-          process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-          process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
+      (clientEmail ||
+        privateKey ||
+        process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+        process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+        process.env.FIREBASE_SERVICE_ACCOUNT_PATH),
     );
     const isEnabled = Boolean(conf?.isEnabled);
-    let source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' = 'NONE';
-    if (conf?.source === 'DATABASE' && hasAnyCreds) {
-      source = 'DATABASE';
+    let source: "DATABASE" | "ENV_FALLBACK" | "NONE" = "NONE";
+    if (conf?.source === "DATABASE" && hasAnyCreds) {
+      source = "DATABASE";
     } else if (hasAnyCreds) {
-      source = 'ENV_FALLBACK';
+      source = "ENV_FALLBACK";
     }
 
     return {
@@ -1052,22 +1330,28 @@ export class IntegrationSettingsService {
     const creds = conf?.credentials || {};
     const cfg = conf?.config || {};
 
-    const host = String(cfg.host || creds.host || creds.smtpHost || process.env.SMTP_HOST || '').trim();
-    const rawPort = cfg.port || creds.port || creds.smtpPort || process.env.SMTP_PORT || 587;
+    const host = String(
+      cfg.host || creds.host || creds.smtpHost || process.env.SMTP_HOST || "",
+    ).trim();
+    const rawPort =
+      cfg.port || creds.port || creds.smtpPort || process.env.SMTP_PORT || 587;
     const port = Number(rawPort) || 587;
 
     const rawSecurity = String(
-      cfg.security || creds.security || creds.smtpSecurity || (port === 465 ? 'SSL' : 'TLS'),
+      cfg.security ||
+        creds.security ||
+        creds.smtpSecurity ||
+        (port === 465 ? "SSL" : "TLS"),
     )
       .toUpperCase()
       .trim();
-    const security: 'SSL' | 'TLS' | 'NONE' =
-      rawSecurity === 'SSL' || rawSecurity === 'TLS' || rawSecurity === 'NONE'
+    const security: "SSL" | "TLS" | "NONE" =
+      rawSecurity === "SSL" || rawSecurity === "TLS" || rawSecurity === "NONE"
         ? rawSecurity
         : port === 465
-        ? 'SSL'
-        : 'TLS';
-    const secure = security === 'SSL' || port === 465;
+          ? "SSL"
+          : "TLS";
+    const secure = security === "SSL" || port === 465;
 
     const username = sanitizeSecret(
       String(
@@ -1076,7 +1360,7 @@ export class IntegrationSettingsService {
           creds.user ||
           process.env.SMTP_USER ||
           process.env.SMTP_USERNAME ||
-          '',
+          "",
       ),
     );
     const password = sanitizeSecret(
@@ -1086,7 +1370,7 @@ export class IntegrationSettingsService {
           creds.pass ||
           process.env.SMTP_PASSWORD ||
           process.env.SMTP_PASS ||
-          '',
+          "",
       ),
     );
     const fromEmail = String(
@@ -1095,20 +1379,22 @@ export class IntegrationSettingsService {
         cfg.from ||
         process.env.SMTP_FROM_EMAIL ||
         process.env.MAIL_FROM ||
-        '',
+        "",
     ).trim();
     const fromName = String(
       cfg.fromName ||
         creds.fromName ||
         process.env.SMTP_FROM_NAME ||
         process.env.MAIL_FROM_NAME ||
-        'QuickBoom CRM',
+        "QuickBoom CRM",
     ).trim();
 
-    const isConfigured = Boolean(host && port && (username ? password : true) && fromEmail);
+    const isConfigured = Boolean(
+      host && port && (username ? password : true) && fromEmail,
+    );
     const isEnabled = conf?.isEnabled ?? isConfigured;
-    const source: 'DATABASE' | 'ENV_FALLBACK' | 'NONE' =
-      conf?.source || (isConfigured ? 'DATABASE' : 'NONE');
+    const source: "DATABASE" | "ENV_FALLBACK" | "NONE" =
+      conf?.source || (isConfigured ? "DATABASE" : "NONE");
 
     return {
       host,
@@ -1141,21 +1427,47 @@ export class IntegrationSettingsService {
     const existingCreds = existing?.credentials || {};
 
     // Validate non-empty API key for AI integrations
-    if (normProvider === IntegrationProvider.OPENAI || normProvider === IntegrationProvider.GEMINI || normProvider === IntegrationProvider.ANTHROPIC || normProvider === IntegrationProvider.ELEVENLABS) {
+    if (
+      normProvider === IntegrationProvider.OPENAI ||
+      normProvider === IntegrationProvider.GEMINI ||
+      normProvider === IntegrationProvider.ANTHROPIC ||
+      normProvider === IntegrationProvider.ELEVENLABS
+    ) {
       const incomingKey = dto.credentials?.apiKey;
-      const providerLabel = normProvider === IntegrationProvider.OPENAI ? 'OpenAI' : normProvider === IntegrationProvider.GEMINI ? 'Google Gemini' : normProvider === IntegrationProvider.ANTHROPIC ? 'Anthropic' : 'ElevenLabs';
-      if (incomingKey !== undefined && typeof incomingKey === 'string' && incomingKey.trim().length === 0) {
-        throw new BadRequestException(`${providerLabel} API Key cannot be empty or whitespace-only`);
+      const providerLabel =
+        normProvider === IntegrationProvider.OPENAI
+          ? "OpenAI"
+          : normProvider === IntegrationProvider.GEMINI
+            ? "Google Gemini"
+            : normProvider === IntegrationProvider.ANTHROPIC
+              ? "Anthropic"
+              : "ElevenLabs";
+      if (
+        incomingKey !== undefined &&
+        typeof incomingKey === "string" &&
+        incomingKey.trim().length === 0
+      ) {
+        throw new BadRequestException(
+          `${providerLabel} API Key cannot be empty or whitespace-only`,
+        );
       }
-      if (!existingCreds.apiKey && (!incomingKey || typeof incomingKey !== 'string' || !incomingKey.trim())) {
+      if (
+        !existingCreds.apiKey &&
+        (!incomingKey || typeof incomingKey !== "string" || !incomingKey.trim())
+      ) {
         throw new BadRequestException(`${providerLabel} API Key is required`);
       }
     }
 
-    if (normProvider === IntegrationProvider.ELEVENLABS && dto.config?.speechEnginePort !== undefined) {
+    if (
+      normProvider === IntegrationProvider.ELEVENLABS &&
+      dto.config?.speechEnginePort !== undefined
+    ) {
       const port = Number(dto.config.speechEnginePort);
       if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-        throw new BadRequestException('ELEVENLABS_SPEECH_ENGINE_PORT must be an integer between 1024 and 65535');
+        throw new BadRequestException(
+          "ELEVENLABS_SPEECH_ENGINE_PORT must be an integer between 1024 and 65535",
+        );
       }
     }
 
@@ -1164,16 +1476,21 @@ export class IntegrationSettingsService {
 
     // 1. First populate with existing credentials preserved
     for (const [key, value] of Object.entries(existingCreds)) {
-      if (typeof value === 'string' && value.length > 0) {
+      if (typeof value === "string" && value.length > 0) {
         let valToStore = value;
-        if (normProvider === IntegrationProvider.WHATSAPP && (key === 'apiKey' || key === 'accessToken' || key === 'access_token')) {
+        if (
+          normProvider === IntegrationProvider.WHATSAPP &&
+          (key === "apiKey" || key === "accessToken" || key === "access_token")
+        ) {
           const { token: cleanTok } = resolveCleanAccessToken(valToStore);
           if (cleanTok) {
             valToStore = cleanTok;
           }
         }
         encryptedCreds[key] = isSensitiveKey(key)
-          ? (valToStore.startsWith('enc:v1:') ? valToStore : encryptSecret(valToStore))
+          ? valToStore.startsWith("enc:v1:")
+            ? valToStore
+            : encryptSecret(valToStore)
           : valToStore;
       } else {
         encryptedCreds[key] = value;
@@ -1182,18 +1499,20 @@ export class IntegrationSettingsService {
 
     // 2. Overlay incoming non-empty, non-masked credentials
     for (const [key, value] of Object.entries(incomingCreds)) {
-      if (typeof value === 'string') {
+      if (typeof value === "string") {
         let trimmed = value.trim();
 
-        if (
-          isMaskedSecret(trimmed) ||
-          trimmed.length === 0
-        ) {
+        if (isMaskedSecret(trimmed) || trimmed.length === 0) {
           // Keep existing preserved value
           continue;
         } else if (isSensitiveKey(key)) {
           // Pre-normalize WhatsApp token before encrypting to ensure clean storage
-          if (normProvider === IntegrationProvider.WHATSAPP && (key === 'apiKey' || key === 'accessToken' || key === 'access_token')) {
+          if (
+            normProvider === IntegrationProvider.WHATSAPP &&
+            (key === "apiKey" ||
+              key === "accessToken" ||
+              key === "access_token")
+          ) {
             const { token: cleanTok } = resolveCleanAccessToken(trimmed);
             if (cleanTok) {
               trimmed = cleanTok;
@@ -1218,7 +1537,10 @@ export class IntegrationSettingsService {
       }
     }
 
-    const isEnabled = dto.isEnabled !== undefined ? Boolean(dto.isEnabled) : (existing?.isEnabled ?? false);
+    const isEnabled =
+      dto.isEnabled !== undefined
+        ? Boolean(dto.isEnabled)
+        : (existing?.isEnabled ?? false);
     const mergedConfig = {
       ...(existing?.config || {}),
       ...(dto.config || {}),
@@ -1233,9 +1555,9 @@ export class IntegrationSettingsService {
         environment:
           dto.environment ||
           (normProvider === IntegrationProvider.RAZORPAY &&
-          String(encryptedCreds.keyId || '').startsWith('rzp_live')
-            ? 'LIVE'
-            : 'TEST'),
+          String(encryptedCreds.keyId || "").startsWith("rzp_live")
+            ? "LIVE"
+            : "TEST"),
         credentials: encryptedCreds,
         config: mergedConfig,
         updatedByUserId: adminUserId,
@@ -1245,9 +1567,9 @@ export class IntegrationSettingsService {
         environment:
           dto.environment ||
           (normProvider === IntegrationProvider.RAZORPAY &&
-          String(encryptedCreds.keyId || '').startsWith('rzp_live')
-            ? 'LIVE'
-            : 'TEST'),
+          String(encryptedCreds.keyId || "").startsWith("rzp_live")
+            ? "LIVE"
+            : "TEST"),
         credentials: encryptedCreds,
         config: mergedConfig,
         updatedByUserId: adminUserId,
@@ -1274,7 +1596,9 @@ export class IntegrationSettingsService {
             await fcm.invalidateFirebaseInstance();
           }
         } catch (fcmErr: any) {
-          this.logger.warn(`Failed to auto-reinitialize FCM on update: ${fcmErr?.message}`);
+          this.logger.warn(
+            `Failed to auto-reinitialize FCM on update: ${fcmErr?.message}`,
+          );
         }
       }
     }
@@ -1283,8 +1607,8 @@ export class IntegrationSettingsService {
     try {
       await this.prisma.auditLog.create({
         data: {
-          action: 'UPDATE_INTEGRATION_SETTINGS',
-          module: 'INTEGRATIONS',
+          action: "UPDATE_INTEGRATION_SETTINGS",
+          module: "INTEGRATIONS",
           userId: adminUserId,
           details: {
             provider: normProvider,
@@ -1296,7 +1620,9 @@ export class IntegrationSettingsService {
         },
       });
     } catch (auditErr: any) {
-      this.logger.warn(`[AUDIT_LOG_NOTICE] Could not log integration update: ${auditErr?.message}`);
+      this.logger.warn(
+        `[AUDIT_LOG_NOTICE] Could not log integration update: ${auditErr?.message}`,
+      );
     }
 
     this.logger.log(
@@ -1305,7 +1631,7 @@ export class IntegrationSettingsService {
 
     const maskedCreds: Record<string, any> = {};
     for (const [k, v] of Object.entries(dto.credentials || {})) {
-      if (typeof v === 'string') {
+      if (typeof v === "string") {
         if (isSensitiveKey(k)) {
           maskedCreds[k] = maskSecret(v);
         } else {
@@ -1322,7 +1648,7 @@ export class IntegrationSettingsService {
       environment: updated.environment,
       credentials: maskedCreds,
       config: (updated.config as Record<string, any>) || {},
-      source: 'DATABASE',
+      source: "DATABASE",
       updatedAt: updated.updatedAt,
     };
   }
@@ -1342,7 +1668,7 @@ export class IntegrationSettingsService {
 
     if (normProvider === IntegrationProvider.FIREBASE) {
       const fcm = this.getFcmService();
-      if (fcm && typeof fcm.invalidateFirebaseInstance === 'function') {
+      if (fcm && typeof fcm.invalidateFirebaseInstance === "function") {
         await fcm.invalidateFirebaseInstance();
       }
     }
@@ -1350,8 +1676,8 @@ export class IntegrationSettingsService {
     try {
       await this.prisma.auditLog.create({
         data: {
-          action: 'DISCONNECT_INTEGRATION',
-          module: 'INTEGRATIONS',
+          action: "DISCONNECT_INTEGRATION",
+          module: "INTEGRATIONS",
           userId: adminUserId,
           details: {
             provider: normProvider,
@@ -1363,12 +1689,14 @@ export class IntegrationSettingsService {
       // ignore
     }
 
-    this.logger.log(`[INTEGRATION_DISCONNECTED] Provider=${normProvider} by adminUserId=${adminUserId}`);
+    this.logger.log(
+      `[INTEGRATION_DISCONNECTED] Provider=${normProvider} by adminUserId=${adminUserId}`,
+    );
 
     return {
       success: true,
       provider: normProvider,
-      status: 'NOT CONFIGURED',
+      status: "NOT CONFIGURED",
       connected: false,
       isEnabled: false,
       message: `${normProvider} integration disconnected successfully.`,
@@ -1388,36 +1716,58 @@ export class IntegrationSettingsService {
     const creds = conf?.credentials || {};
     const config = conf?.config || {};
 
-    const testKeySecret = creds.testKeySecret || (conf?.environment === 'TEST' ? creds.keySecret : '');
-    const liveKeySecret = creds.liveKeySecret || (conf?.environment === 'LIVE' ? creds.keySecret : '');
+    const testKeySecret =
+      creds.testKeySecret ||
+      (conf?.environment === "TEST" ? creds.keySecret : "");
+    const liveKeySecret =
+      creds.liveKeySecret ||
+      (conf?.environment === "LIVE" ? creds.keySecret : "");
 
-    const testSecretPresent = Boolean(testKeySecret && !testKeySecret.includes('***'));
-    const liveSecretPresent = Boolean(liveKeySecret && !liveKeySecret.includes('***'));
+    const testSecretPresent = Boolean(
+      testKeySecret && !testKeySecret.includes("***"),
+    );
+    const liveSecretPresent = Boolean(
+      liveKeySecret && !liveKeySecret.includes("***"),
+    );
 
-    const offlinePaymentEnabled = psRecord?.offlinePaymentEnabled !== undefined
-      ? Boolean(psRecord.offlinePaymentEnabled)
-      : Boolean(config.enableOfflinePayment ?? true);
+    const offlinePaymentEnabled =
+      psRecord?.offlinePaymentEnabled !== undefined
+        ? Boolean(psRecord.offlinePaymentEnabled)
+        : Boolean(config.enableOfflinePayment ?? true);
 
-    const razorpayEnabled = psRecord?.razorpayEnabled !== undefined
-      ? Boolean(psRecord.razorpayEnabled)
-      : Boolean(conf?.isEnabled ?? true);
+    const razorpayEnabled =
+      psRecord?.razorpayEnabled !== undefined
+        ? Boolean(psRecord.razorpayEnabled)
+        : Boolean(conf?.isEnabled ?? true);
 
-    const paymentMode = (psRecord?.paymentMode || conf?.environment || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
+    const paymentMode =
+      (psRecord?.paymentMode || conf?.environment || "TEST").toUpperCase() ===
+      "LIVE"
+        ? "LIVE"
+        : "TEST";
 
     return {
       success: true,
       data: {
         razorpayEnabled,
-        paymentMode: paymentMode as 'TEST' | 'LIVE',
-        razorpayTestKeyId: psRecord?.razorpayTestKeyId || creds.testKeyId || (creds.keyId?.startsWith('rzp_test_') ? creds.keyId : '') || '',
-        razorpayTestKeySecret: testSecretPresent ? 'Configured' : '',
+        paymentMode: paymentMode as "TEST" | "LIVE",
+        razorpayTestKeyId:
+          psRecord?.razorpayTestKeyId ||
+          creds.testKeyId ||
+          (creds.keyId?.startsWith("rzp_test_") ? creds.keyId : "") ||
+          "",
+        razorpayTestKeySecret: testSecretPresent ? "Configured" : "",
         razorpayTestKeySecretConfigured: testSecretPresent,
-        razorpayLiveKeyId: psRecord?.razorpayLiveKeyId || creds.liveKeyId || (creds.keyId?.startsWith('rzp_live_') ? creds.keyId : '') || '',
-        razorpayLiveKeySecret: liveSecretPresent ? 'Configured' : '',
+        razorpayLiveKeyId:
+          psRecord?.razorpayLiveKeyId ||
+          creds.liveKeyId ||
+          (creds.keyId?.startsWith("rzp_live_") ? creds.keyId : "") ||
+          "",
+        razorpayLiveKeySecret: liveSecretPresent ? "Configured" : "",
         razorpayLiveKeySecretConfigured: liveSecretPresent,
         offlinePaymentEnabled,
-        webhookSecret: creds.webhookSecret || '',
-        source: 'DATABASE',
+        webhookSecret: creds.webhookSecret || "",
+        source: "DATABASE",
       },
     };
   }
@@ -1426,44 +1776,65 @@ export class IntegrationSettingsService {
    * Updates payment settings in the database, invalidating cache immediately.
    */
   async updatePaymentSettings(dto: any, adminUserId?: number) {
-    const environment = (dto.paymentMode || 'TEST').toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
-    const isEnabled = dto.razorpayEnabled !== undefined ? Boolean(dto.razorpayEnabled) : true;
+    const environment =
+      (dto.paymentMode || "TEST").toUpperCase() === "LIVE" ? "LIVE" : "TEST";
+    const isEnabled =
+      dto.razorpayEnabled !== undefined ? Boolean(dto.razorpayEnabled) : true;
     const enableOfflinePayment = Boolean(dto.offlinePaymentEnabled);
 
-    const existingConf = await this.getIntegrationConfig(IntegrationProvider.RAZORPAY);
+    const existingConf = await this.getIntegrationConfig(
+      IntegrationProvider.RAZORPAY,
+    );
     const existingCreds = existingConf?.credentials || {};
 
-    const testKeyId = dto.razorpayTestKeyId !== undefined ? dto.razorpayTestKeyId.trim() : (existingCreds.testKeyId || '');
-    const liveKeyId = dto.razorpayLiveKeyId !== undefined ? dto.razorpayLiveKeyId.trim() : (existingCreds.liveKeyId || '');
+    const testKeyId =
+      dto.razorpayTestKeyId !== undefined
+        ? dto.razorpayTestKeyId.trim()
+        : existingCreds.testKeyId || "";
+    const liveKeyId =
+      dto.razorpayLiveKeyId !== undefined
+        ? dto.razorpayLiveKeyId.trim()
+        : existingCreds.liveKeyId || "";
 
     const credentials: Record<string, any> = {
       testKeyId,
       liveKeyId,
-      keyId: environment === 'TEST' ? testKeyId : liveKeyId,
-      webhookSecret: dto.webhookSecret !== undefined ? dto.webhookSecret.trim() : (existingCreds.webhookSecret || ''),
+      keyId: environment === "TEST" ? testKeyId : liveKeyId,
+      webhookSecret:
+        dto.webhookSecret !== undefined
+          ? dto.webhookSecret.trim()
+          : existingCreds.webhookSecret || "",
     };
 
     // Only update secrets if newly provided and not placeholder 'Configured' or '***'
-    if (dto.razorpayTestKeySecret && !dto.razorpayTestKeySecret.includes('***') && dto.razorpayTestKeySecret !== 'Configured') {
+    if (
+      dto.razorpayTestKeySecret &&
+      !dto.razorpayTestKeySecret.includes("***") &&
+      dto.razorpayTestKeySecret !== "Configured"
+    ) {
       credentials.testKeySecret = dto.razorpayTestKeySecret.trim();
-      if (environment === 'TEST') {
+      if (environment === "TEST") {
         credentials.keySecret = dto.razorpayTestKeySecret.trim();
       }
     } else if (existingCreds.testKeySecret) {
       credentials.testKeySecret = existingCreds.testKeySecret;
-      if (environment === 'TEST') {
+      if (environment === "TEST") {
         credentials.keySecret = existingCreds.testKeySecret;
       }
     }
 
-    if (dto.razorpayLiveKeySecret && !dto.razorpayLiveKeySecret.includes('***') && dto.razorpayLiveKeySecret !== 'Configured') {
+    if (
+      dto.razorpayLiveKeySecret &&
+      !dto.razorpayLiveKeySecret.includes("***") &&
+      dto.razorpayLiveKeySecret !== "Configured"
+    ) {
       credentials.liveKeySecret = dto.razorpayLiveKeySecret.trim();
-      if (environment === 'LIVE') {
+      if (environment === "LIVE") {
         credentials.keySecret = dto.razorpayLiveKeySecret.trim();
       }
     } else if (existingCreds.liveKeySecret) {
       credentials.liveKeySecret = existingCreds.liveKeySecret;
-      if (environment === 'LIVE') {
+      if (environment === "LIVE") {
         credentials.keySecret = existingCreds.liveKeySecret;
       }
     }
@@ -1492,9 +1863,13 @@ export class IntegrationSettingsService {
               razorpayEnabled: isEnabled,
               paymentMode: environment,
               razorpayTestKeyId: testKeyId,
-              razorpayTestKeySecret: credentials.testKeySecret ? encryptSecret(credentials.testKeySecret) : existing.razorpayTestKeySecret,
+              razorpayTestKeySecret: credentials.testKeySecret
+                ? encryptSecret(credentials.testKeySecret)
+                : existing.razorpayTestKeySecret,
               razorpayLiveKeyId: liveKeyId,
-              razorpayLiveKeySecret: credentials.liveKeySecret ? encryptSecret(credentials.liveKeySecret) : existing.razorpayLiveKeySecret,
+              razorpayLiveKeySecret: credentials.liveKeySecret
+                ? encryptSecret(credentials.liveKeySecret)
+                : existing.razorpayLiveKeySecret,
               offlinePaymentEnabled: enableOfflinePayment,
               updatedByUserId: adminUserId,
             },
@@ -1505,9 +1880,13 @@ export class IntegrationSettingsService {
               razorpayEnabled: isEnabled,
               paymentMode: environment,
               razorpayTestKeyId: testKeyId,
-              razorpayTestKeySecret: credentials.testKeySecret ? encryptSecret(credentials.testKeySecret) : '',
+              razorpayTestKeySecret: credentials.testKeySecret
+                ? encryptSecret(credentials.testKeySecret)
+                : "",
               razorpayLiveKeyId: liveKeyId,
-              razorpayLiveKeySecret: credentials.liveKeySecret ? encryptSecret(credentials.liveKeySecret) : '',
+              razorpayLiveKeySecret: credentials.liveKeySecret
+                ? encryptSecret(credentials.liveKeySecret)
+                : "",
               offlinePaymentEnabled: enableOfflinePayment,
               updatedByUserId: adminUserId,
             },
@@ -1543,7 +1922,9 @@ export class IntegrationSettingsService {
         const masked = await this.getMaskedProviderConfig(provider);
         results.push(masked);
       } catch (err: any) {
-        this.logger.warn(`[INTEGRATIONS_MASKED_WARN] Provider ${provider} lookup warning: ${err?.message}`);
+        this.logger.warn(
+          `[INTEGRATIONS_MASKED_WARN] Provider ${provider} lookup warning: ${err?.message}`,
+        );
       }
     }
 
@@ -1562,7 +1943,7 @@ export class IntegrationSettingsService {
     const definition = integrationDefinition(norm);
     const base = {
       displayName: definition?.displayName || norm,
-      category: definition?.category || 'Other',
+      category: definition?.category || "Other",
       fields: definition?.fields || [],
     };
 
@@ -1571,33 +1952,45 @@ export class IntegrationSettingsService {
         ...base,
         provider: norm,
         isEnabled: false,
-        environment: 'TEST',
+        environment: "TEST",
         credentials: {},
         config: {},
-        source: 'NONE' as const,
+        source: "NONE" as const,
         configured: false,
         updatedAt: null,
       };
     }
 
-    if (norm === IntegrationProvider.ANTHROPIC || norm === IntegrationProvider.ELEVENLABS) {
+    if (
+      norm === IntegrationProvider.ANTHROPIC ||
+      norm === IntegrationProvider.ELEVENLABS
+    ) {
       const credentials = conf.credentials || {};
-      const apiKey = credentials.apiKey || credentials.api_key || '';
-      const isConfigured = norm === IntegrationProvider.ELEVENLABS
-        ? Boolean(apiKey && (conf.config?.speechEngineId || conf.config?.engineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID))
-        : Boolean(apiKey);
+      const apiKey = credentials.apiKey || credentials.api_key || "";
+      const isConfigured =
+        norm === IntegrationProvider.ELEVENLABS
+          ? Boolean(
+              apiKey &&
+              (conf.config?.speechEngineId ||
+                conf.config?.engineId ||
+                process.env.ELEVENLABS_SPEECH_ENGINE_ID),
+            )
+          : Boolean(apiKey);
       return {
         ...base,
         provider: norm,
         isEnabled: conf.isEnabled,
         environment: conf.environment,
-        credentials: { apiKey: apiKey ? maskSecret(String(apiKey)) : '' },
-        config: norm === IntegrationProvider.ELEVENLABS ? {
-          speechEngineId: conf.config?.speechEngineId || '',
-          voiceId: conf.config?.voiceId || '',
-          speechEnginePort: conf.config?.speechEnginePort || 3101,
-          ...(conf.config || {}),
-        } : (conf.config || {}),
+        credentials: { apiKey: apiKey ? maskSecret(String(apiKey)) : "" },
+        config:
+          norm === IntegrationProvider.ELEVENLABS
+            ? {
+                speechEngineId: conf.config?.speechEngineId || "",
+                voiceId: conf.config?.voiceId || "",
+                speechEnginePort: conf.config?.speechEnginePort || 3101,
+                ...(conf.config || {}),
+              }
+            : conf.config || {},
         source: conf.source,
         configured: isConfigured,
         updatedAt: conf.updatedAt || null,
@@ -1606,7 +1999,11 @@ export class IntegrationSettingsService {
 
     const maskedCreds: Record<string, any> = {};
     for (const [k, v] of Object.entries(conf.credentials || {})) {
-      if (typeof v === 'string' && (isSensitiveKey(k) || /token|secret|password|privatekey|apikey/i.test(k))) {
+      if (
+        typeof v === "string" &&
+        (isSensitiveKey(k) ||
+          /token|secret|password|privatekey|apikey/i.test(k))
+      ) {
         maskedCreds[k] = maskSecret(v);
       } else {
         maskedCreds[k] = v;
@@ -1628,11 +2025,15 @@ export class IntegrationSettingsService {
         environment: conf.environment,
         credentials: {
           ...maskedCreds,
-          phoneNumberId: creds.phoneNumberId || creds.phone_number_id || '',
-          businessAccountId: creds.businessAccountId || creds.business_account_id || creds.wabaId || '',
-          apiVersion: creds.apiVersion || 'v25.0',
+          phoneNumberId: creds.phoneNumberId || creds.phone_number_id || "",
+          businessAccountId:
+            creds.businessAccountId ||
+            creds.business_account_id ||
+            creds.wabaId ||
+            "",
+          apiVersion: creds.apiVersion || "v25.0",
           verifyToken: maskedCreds.verifyToken,
-          appId: creds.appId || '',
+          appId: creds.appId || "",
           hasAccessToken: hasToken,
           hasAppSecret,
           isTokenSaved: hasToken,
@@ -1640,10 +2041,14 @@ export class IntegrationSettingsService {
         },
         config: {
           ...(conf.config || {}),
-          webhookUrl: 'https://api.qbapp.online/api/v1/webhooks/whatsapp',
+          webhookUrl: "https://api.qbapp.online/api/v1/webhooks/whatsapp",
         },
         source: conf.source,
-        configured: Boolean(conf.isEnabled || (Object.keys(conf.credentials || {}).length > 0 && conf.source === 'DATABASE')),
+        configured: Boolean(
+          conf.isEnabled ||
+          (Object.keys(conf.credentials || {}).length > 0 &&
+            conf.source === "DATABASE"),
+        ),
         updatedAt: conf.updatedAt || null,
       };
     }
@@ -1656,7 +2061,11 @@ export class IntegrationSettingsService {
       credentials: maskedCreds,
       config: conf.config || {},
       source: conf.source,
-      configured: Boolean(conf.isEnabled || (Object.keys(conf.credentials || {}).length > 0 && conf.source === 'DATABASE')),
+      configured: Boolean(
+        conf.isEnabled ||
+        (Object.keys(conf.credentials || {}).length > 0 &&
+          conf.source === "DATABASE"),
+      ),
       updatedAt: conf.updatedAt || null,
     };
   }
@@ -1664,41 +2073,77 @@ export class IntegrationSettingsService {
   async getProviderModels(provider: string) {
     const norm = normalizeProvider(provider);
     if (norm !== IntegrationProvider.ANTHROPIC) {
-      throw new BadRequestException('Dynamic model discovery is not supported for this provider');
+      throw new BadRequestException(
+        "Dynamic model discovery is not supported for this provider",
+      );
     }
     const config = await this.getAnthropicConfig();
-    if (!config.apiKey) throw new BadRequestException('Configure an Anthropic API key before loading models');
+    if (!config.apiKey)
+      throw new BadRequestException(
+        "Configure an Anthropic API key before loading models",
+      );
     try {
-      const response = await axios.get('https://api.anthropic.com/v1/models', {
-        headers: { 'x-api-key': config.apiKey, 'anthropic-version': '2023-06-01' },
+      const response = await axios.get("https://api.anthropic.com/v1/models", {
+        headers: {
+          "x-api-key": config.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
         timeout: 8000,
       });
-      const models = Array.isArray(response.data?.data) ? response.data.data : [];
-      return { success: true, provider: norm, data: models.map((model: any) => ({ id: model.id, name: model.display_name || model.id, createdAt: model.created_at || null, available: true })) };
+      const models = Array.isArray(response.data?.data)
+        ? response.data.data
+        : [];
+      return {
+        success: true,
+        provider: norm,
+        data: models.map((model: any) => ({
+          id: model.id,
+          name: model.display_name || model.id,
+          createdAt: model.created_at || null,
+          available: true,
+        })),
+      };
     } catch (error: any) {
-      this.logger.warn(`[ANTHROPIC_MODELS_FAILED] HTTP ${error?.response?.status || 'network'}`);
+      this.logger.warn(
+        `[ANTHROPIC_MODELS_FAILED] HTTP ${error?.response?.status || "network"}`,
+      );
       throw new BadRequestException(this.anthropicErrorMessage(error));
     }
   }
 
   private anthropicErrorMessage(error: any): string {
     const status = Number(error?.response?.status || 0);
-    if (status === 401) return 'Anthropic API key is invalid or expired.';
-    if (status === 404) return 'The selected Claude model is unavailable to this API key.';
-    if (status === 429) return 'Anthropic rate limit reached. Wait briefly and retry.';
-    if (status >= 500) return 'Anthropic is temporarily unavailable. Retry shortly.';
-    if (error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''))) return 'Anthropic request timed out. Retry shortly.';
-    return 'Anthropic connection failed. Check the API key and selected model.';
+    if (status === 401) return "Anthropic API key is invalid or expired.";
+    if (status === 404)
+      return "The selected Claude model is unavailable to this API key.";
+    if (status === 429)
+      return "Anthropic rate limit reached. Wait briefly and retry.";
+    if (status >= 500)
+      return "Anthropic is temporarily unavailable. Retry shortly.";
+    if (
+      error?.code === "ECONNABORTED" ||
+      /timeout/i.test(String(error?.message || ""))
+    )
+      return "Anthropic request timed out. Retry shortly.";
+    return "Anthropic connection failed. Check the API key and selected model.";
   }
 
-  async toggleIntegration(provider: string, isEnabled: boolean, adminUserId?: number) {
+  async toggleIntegration(
+    provider: string,
+    isEnabled: boolean,
+    adminUserId?: number,
+  ) {
     const norm = normalizeProvider(provider);
-    if (!integrationDefinition(norm)) throw new BadRequestException('Unknown integration provider');
-    const existing = await this.prisma.integrationSetting.findUnique({ where: { provider: norm } });
+    if (!integrationDefinition(norm))
+      throw new BadRequestException("Unknown integration provider");
+    const existing = await this.prisma.integrationSetting.findUnique({
+      where: { provider: norm },
+    });
     if ((!existing || existing.deletedAt) && isEnabled) {
-      throw new BadRequestException('Save this integration before enabling it');
+      throw new BadRequestException("Save this integration before enabling it");
     }
-    if (!existing || existing.deletedAt) return this.getMaskedProviderConfig(norm);
+    if (!existing || existing.deletedAt)
+      return this.getMaskedProviderConfig(norm);
     await this.prisma.integrationSetting.update({
       where: { provider: norm },
       data: { isEnabled, updatedByUserId: adminUserId || null },
@@ -1707,8 +2152,8 @@ export class IntegrationSettingsService {
     try {
       await this.prisma.auditLog.create({
         data: {
-          action: isEnabled ? 'ENABLE_INTEGRATION' : 'DISABLE_INTEGRATION',
-          module: 'INTEGRATIONS',
+          action: isEnabled ? "ENABLE_INTEGRATION" : "DISABLE_INTEGRATION",
+          module: "INTEGRATIONS",
           userId: adminUserId,
           details: { provider: norm, isEnabled },
         },
@@ -1722,70 +2167,106 @@ export class IntegrationSettingsService {
   /**
    * Tests integration credentials live against the third-party API.
    */
-  async testIntegration(provider: string, dto?: TestIntegrationDto, adminUserId?: number): Promise<Record<string, any>> {
+  async testIntegration(
+    provider: string,
+    dto?: TestIntegrationDto,
+    adminUserId?: number,
+  ): Promise<Record<string, any>> {
     const normProvider = normalizeProvider(provider);
     try {
-      const result = await this.runProviderConnectionTest(provider, dto, adminUserId);
+      const result = await this.runProviderConnectionTest(
+        provider,
+        dto,
+        adminUserId,
+      );
       const payload = result as Record<string, any>;
-      const message = String(payload?.message || '');
+      const message = String(payload?.message || "");
       const notConfigured =
-        /not[_\s-]?configured/i.test(`${payload?.status || ''} ${message}`) ||
+        /not[_\s-]?configured/i.test(`${payload?.status || ""} ${message}`) ||
         /api key is required/i.test(message);
       const failed = payload?.success === false;
       if (!notConfigured) {
-        await this.recordConnectionTest(normProvider, failed ? 'FAILED' : 'SUCCESS', message);
+        await this.recordConnectionTest(
+          normProvider,
+          failed ? "FAILED" : "SUCCESS",
+          message,
+        );
       }
       return {
         ...payload,
-        lastTestedAt: notConfigured ? payload?.lastTestedAt || null : new Date().toISOString(),
-        lastTestResult: notConfigured ? payload?.lastTestResult || null : failed ? 'FAILED' : 'SUCCESS',
+        lastTestedAt: notConfigured
+          ? payload?.lastTestedAt || null
+          : new Date().toISOString(),
+        lastTestResult: notConfigured
+          ? payload?.lastTestResult || null
+          : failed
+            ? "FAILED"
+            : "SUCCESS",
       };
     } catch (error: any) {
-      const message = String(error?.message || 'Connection test failed');
-      const notConfigured = /required to test|is required|not fully configured|not configured|before testing/i.test(message);
-      if (!notConfigured) await this.recordConnectionTest(normProvider, 'FAILED', message);
+      const message = String(error?.message || "Connection test failed");
+      const notConfigured =
+        /required to test|is required|not fully configured|not configured|before testing/i.test(
+          message,
+        );
+      if (!notConfigured)
+        await this.recordConnectionTest(normProvider, "FAILED", message);
       throw error;
     }
   }
 
   private resolveGoogleMapsApiKey(creds: Record<string, any>): string {
-    const fromCreds = String(creds.apiKey || creds.api_key || creds.key || '').trim();
+    const fromCreds = String(
+      creds.apiKey || creds.api_key || creds.key || "",
+    ).trim();
     if (fromCreds && !isMaskedSecret(fromCreds)) return fromCreds;
-    return (process.env.GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim();
+    return (
+      process.env.GOOGLE_MAPS_API_KEY ||
+      process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ||
+      ""
+    ).trim();
   }
 
   private googleMapsTestFailureHint(googleMessage: string): string {
-    const m = (googleMessage || '').toLowerCase();
-    if (m.includes('caller does not have permission') || m.includes('permission_denied') || m.includes('api key not authorized')) {
-      return ' Confirm Places API (New) is enabled for the Google Cloud project, billing is active, and the API key restrictions allow requests from this API server.';
+    const m = (googleMessage || "").toLowerCase();
+    if (
+      m.includes("caller does not have permission") ||
+      m.includes("permission_denied") ||
+      m.includes("api key not authorized")
+    ) {
+      return " Confirm Places API (New) is enabled for the Google Cloud project, billing is active, and the API key restrictions allow requests from this API server.";
     }
     if (
-      m.includes('places api') ||
-      m.includes('not been used') ||
-      m.includes('is disabled') ||
-      m.includes('service_disabled')
+      m.includes("places api") ||
+      m.includes("not been used") ||
+      m.includes("is disabled") ||
+      m.includes("service_disabled")
     ) {
       return ' Enable "Places API (New)" in Google Cloud Console (APIs & Services → Library) and ensure billing is on.';
     }
-    if (m.includes('referer') || m.includes('referrer') || m.includes('restriction')) {
-      return ' Connection tests run from the API server — use IP restrictions or none, not website-only referrer limits.';
+    if (
+      m.includes("referer") ||
+      m.includes("referrer") ||
+      m.includes("restriction")
+    ) {
+      return " Connection tests run from the API server — use IP restrictions or none, not website-only referrer limits.";
     }
-    if (m.includes('billing') || m.includes('payment')) {
-      return ' Enable billing for the Google Cloud project linked to this API key.';
+    if (m.includes("billing") || m.includes("payment")) {
+      return " Enable billing for the Google Cloud project linked to this API key.";
     }
-    return '';
+    return "";
   }
 
   private async verifyGoogleMapsApiKeyConnection(apiKey: string) {
     const details = { apiKeyPrefix: `${apiKey.substring(0, 8)}...` };
     const response = await axios.post(
-      'https://places.googleapis.com/v1/places:searchText',
-      { textQuery: 'Mumbai', pageSize: 1 },
+      "https://places.googleapis.com/v1/places:searchText",
+      { textQuery: "Mumbai", pageSize: 1 },
       {
         headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': apiKey,
-          'X-Goog-FieldMask': 'places.id,places.displayName',
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": "places.id,places.displayName",
         },
         timeout: 12000,
         validateStatus: () => true,
@@ -1795,13 +2276,13 @@ export class IntegrationSettingsService {
     if (response.status === 200) {
       return {
         success: true,
-        provider: 'GOOGLE_MAPS',
-        status: 'CONNECTED',
-        message: 'Google Maps Places API Key verified successfully!',
+        provider: "GOOGLE_MAPS",
+        status: "CONNECTED",
+        message: "Google Maps Places API Key verified successfully!",
         details: {
           ...details,
           placesCount: response.data?.places?.length || 0,
-          verifiedWith: 'PLACES_NEW_SEARCH_TEXT',
+          verifiedWith: "PLACES_NEW_SEARCH_TEXT",
         },
       };
     }
@@ -1812,20 +2293,27 @@ export class IntegrationSettingsService {
       `Google returned HTTP ${response.status}`;
 
     if (response.status === 403 || /places/i.test(googleMsg)) {
-      const geocode = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
-        params: { address: 'Mumbai, India', key: apiKey },
-        timeout: 10000,
-        validateStatus: () => true,
-      });
-      if (geocode.data?.status === 'OK') {
+      const geocode = await axios.get(
+        "https://maps.googleapis.com/maps/api/geocode/json",
+        {
+          params: { address: "Mumbai, India", key: apiKey },
+          timeout: 10000,
+          validateStatus: () => true,
+        },
+      );
+      if (geocode.data?.status === "OK") {
         return {
           success: false,
-          provider: 'GOOGLE_MAPS',
-          status: 'ERROR',
+          provider: "GOOGLE_MAPS",
+          status: "ERROR",
           message:
             `API key is valid for Geocoding, but Places API (New) is unavailable: ${googleMsg}.` +
             ' Enable "Places API (New)" for Data Capture.',
-          details: { ...details, geocodingStatus: 'OK', placesStatus: response.status },
+          details: {
+            ...details,
+            geocodingStatus: "OK",
+            placesStatus: response.status,
+          },
         };
       }
     }
@@ -1834,20 +2322,33 @@ export class IntegrationSettingsService {
     this.logger.error(`[GOOGLE_MAPS_TEST_FAILED] ${googleMsg}${hint}`);
     return {
       success: false,
-      provider: 'GOOGLE_MAPS',
-      status: 'ERROR',
+      provider: "GOOGLE_MAPS",
+      status: "ERROR",
       message: `Google Maps connection test failed: ${googleMsg}${hint}`,
       details: { ...details, httpStatus: response.status },
     };
   }
 
-  private async recordConnectionTest(provider: string, result: 'SUCCESS' | 'FAILED', message?: string) {
+  private async recordConnectionTest(
+    provider: string,
+    result: "SUCCESS" | "FAILED",
+    message?: string,
+  ) {
     try {
       const store = this.prisma.integrationSetting;
-      if (typeof store?.findUnique !== 'function' || typeof store?.updateMany !== 'function') return;
+      if (
+        typeof store?.findUnique !== "function" ||
+        typeof store?.updateMany !== "function"
+      )
+        return;
       const existing = await store.findUnique({ where: { provider } });
       if (!existing || existing.deletedAt) return;
-      const current = existing.config && typeof existing.config === 'object' && !Array.isArray(existing.config) ? existing.config : {};
+      const current =
+        existing.config &&
+        typeof existing.config === "object" &&
+        !Array.isArray(existing.config)
+          ? existing.config
+          : {};
       await store.updateMany({
         where: { provider, deletedAt: null },
         data: {
@@ -1855,16 +2356,23 @@ export class IntegrationSettingsService {
             ...current,
             lastTestedAt: new Date().toISOString(),
             lastTestResult: result,
-            lastTestError: result === 'FAILED' ? message || 'Connection test failed' : null,
+            lastTestError:
+              result === "FAILED" ? message || "Connection test failed" : null,
           },
         },
       });
     } catch (error: any) {
-      this.logger.warn(`[INTEGRATION_TEST_RECORD] ${provider}: ${error?.message || error}`);
+      this.logger.warn(
+        `[INTEGRATION_TEST_RECORD] ${provider}: ${error?.message || error}`,
+      );
     }
   }
 
-  private async runProviderConnectionTest(provider: string, dto?: TestIntegrationDto, adminUserId?: number) {
+  private async runProviderConnectionTest(
+    provider: string,
+    dto?: TestIntegrationDto,
+    adminUserId?: number,
+  ) {
     const normProvider = normalizeProvider(provider);
 
     // Resolve credentials to test: use incoming dto if provided, else use saved/active config
@@ -1877,12 +2385,14 @@ export class IntegrationSettingsService {
     // Support flat credentials if supplied directly at top level of DTO
     if (dto?.username !== undefined) testCreds.username = dto.username;
     if (dto?.password !== undefined) testCreds.password = dto.password;
-    if (dto?.smtpUsername !== undefined) testCreds.smtpUsername = dto.smtpUsername;
-    if (dto?.smtpPassword !== undefined) testCreds.smtpPassword = dto.smtpPassword;
+    if (dto?.smtpUsername !== undefined)
+      testCreds.smtpUsername = dto.smtpUsername;
+    if (dto?.smtpPassword !== undefined)
+      testCreds.smtpPassword = dto.smtpPassword;
 
     const resolvedCreds: Record<string, any> = { ...activeCreds };
     for (const [k, v] of Object.entries(testCreds)) {
-      if (typeof v === 'string' && !isMaskedSecret(v) && v.trim().length > 0) {
+      if (typeof v === "string" && !isMaskedSecret(v) && v.trim().length > 0) {
         resolvedCreds[k] = v.trim();
       }
     }
@@ -1893,35 +2403,57 @@ export class IntegrationSettingsService {
     }
 
     if (normProvider === IntegrationProvider.ELEVENLABS) {
-      const apiKey = (resolvedCreds.apiKey || resolvedCreds.api_key || process.env.ELEVENLABS_API_KEY || '').trim();
+      const apiKey = (
+        resolvedCreds.apiKey ||
+        resolvedCreds.api_key ||
+        process.env.ELEVENLABS_API_KEY ||
+        ""
+      ).trim();
       if (!apiKey || isMaskedSecret(apiKey)) {
-        throw new BadRequestException('ElevenLabs API Key is required to test connection');
+        throw new BadRequestException(
+          "ElevenLabs API Key is required to test connection",
+        );
       }
 
-      const voiceId = String(dto?.config?.voiceId || active?.config?.voiceId || process.env.ELEVENLABS_VOICE_ID || '').trim();
-      const speechEngineId = String(dto?.config?.speechEngineId || active?.config?.speechEngineId || process.env.ELEVENLABS_SPEECH_ENGINE_ID || '').trim();
+      const voiceId = String(
+        dto?.config?.voiceId ||
+          active?.config?.voiceId ||
+          process.env.ELEVENLABS_VOICE_ID ||
+          "",
+      ).trim();
+      const speechEngineId = String(
+        dto?.config?.speechEngineId ||
+          active?.config?.speechEngineId ||
+          process.env.ELEVENLABS_SPEECH_ENGINE_ID ||
+          "",
+      ).trim();
 
       try {
         // 1. Verify API Key and user account via official ElevenLabs REST endpoint
-        const userRes = await axios.get('https://api.elevenlabs.io/v1/user', {
-          headers: { 'xi-api-key': apiKey },
+        const userRes = await axios.get("https://api.elevenlabs.io/v1/user", {
+          headers: { "xi-api-key": apiKey },
           timeout: 10000,
         });
 
         if (userRes.status !== 200) {
-          throw new Error(`Unexpected ElevenLabs response status: ${userRes.status}`);
+          throw new Error(
+            `Unexpected ElevenLabs response status: ${userRes.status}`,
+          );
         }
 
-        const tier = userRes.data?.subscription?.tier || 'active';
-        let voiceInfo = '';
+        const tier = userRes.data?.subscription?.tier || "active";
+        let voiceInfo = "";
 
         // 2. Validate configured voice ID if provided
         if (voiceId) {
           try {
-            const voiceRes = await axios.get(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`, {
-              headers: { 'xi-api-key': apiKey },
-              timeout: 8000,
-            });
+            const voiceRes = await axios.get(
+              `https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`,
+              {
+                headers: { "xi-api-key": apiKey },
+                timeout: 8000,
+              },
+            );
             if (voiceRes.status === 200 && voiceRes.data?.name) {
               voiceInfo = ` Voice "${voiceRes.data.name}" verified.`;
             }
@@ -1934,25 +2466,30 @@ export class IntegrationSettingsService {
 
         // 3. Verify speech engine / conversational agent if configured
         let agentInfo = speechEngineId
-          ? ''
-          : ' API key verified; voice sessions need ELEVENLABS_SPEECH_ENGINE_ID configured in the backend environment.';
+          ? ""
+          : " API key verified; voice sessions need ELEVENLABS_SPEECH_ENGINE_ID configured in the backend environment.";
         if (speechEngineId) {
           try {
-            const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
+            const { ElevenLabsClient } =
+              await import("@elevenlabs/elevenlabs-js");
             const client = new ElevenLabsClient({ apiKey });
-            const tokenRes = await client.conversationalAi.conversations.getWebrtcToken({ agentId: speechEngineId });
+            const tokenRes =
+              await client.conversationalAi.conversations.getWebrtcToken({
+                agentId: speechEngineId,
+              });
             if (tokenRes?.token) {
-              agentInfo = ' Speech Engine ID verified.';
+              agentInfo = " Speech Engine ID verified.";
             }
           } catch {
-            agentInfo = ' Note: Speech Engine ID could not issue a session token.';
+            agentInfo =
+              " Note: Speech Engine ID could not issue a session token.";
           }
         }
 
         return {
           success: true,
-          provider: 'ELEVENLABS',
-          status: 'CONNECTED',
+          provider: "ELEVENLABS",
+          status: "CONNECTED",
           message: `ElevenLabs connection verified successfully! (${tier} subscription tier).${voiceInfo}${agentInfo}`,
           details: {
             tier,
@@ -1965,32 +2502,41 @@ export class IntegrationSettingsService {
         const status = err?.response?.status;
         const errMsg =
           status === 401
-            ? 'Invalid ElevenLabs API key. Please check your credentials at elevenlabs.io'
+            ? "Invalid ElevenLabs API key. Please check your credentials at elevenlabs.io"
             : err?.response?.data?.detail?.message ||
               err?.response?.data?.message ||
               err?.message ||
-              'Could not authenticate with ElevenLabs API';
-        throw new BadRequestException(`ElevenLabs connection test failed: ${errMsg}`);
+              "Could not authenticate with ElevenLabs API";
+        throw new BadRequestException(
+          `ElevenLabs connection test failed: ${errMsg}`,
+        );
       }
     }
 
     switch (normProvider) {
       case IntegrationProvider.RAZORPAY: {
-        const env: 'TEST' | 'LIVE' = (
-          (dto?.environment as string) ||
-          active?.environment ||
-          (resolvedCreds.keyId?.startsWith('rzp_live') ? 'LIVE' : 'TEST')
-        ).toUpperCase() === 'LIVE' ? 'LIVE' : 'TEST';
+        const env: "TEST" | "LIVE" =
+          (
+            (dto?.environment as string) ||
+            active?.environment ||
+            (resolvedCreds.keyId?.startsWith("rzp_live") ? "LIVE" : "TEST")
+          ).toUpperCase() === "LIVE"
+            ? "LIVE"
+            : "TEST";
 
         const keyId = (
-          (env === 'TEST' ? resolvedCreds.testKeyId : resolvedCreds.liveKeyId) ||
+          (env === "TEST"
+            ? resolvedCreds.testKeyId
+            : resolvedCreds.liveKeyId) ||
           resolvedCreds.keyId ||
           resolvedCreds.key_id ||
           resolvedCreds.apiKey
         )?.trim();
 
         const keySecret = (
-          (env === 'TEST' ? resolvedCreds.testKeySecret : resolvedCreds.liveKeySecret) ||
+          (env === "TEST"
+            ? resolvedCreds.testKeySecret
+            : resolvedCreds.liveKeySecret) ||
           resolvedCreds.keySecret ||
           resolvedCreds.key_secret ||
           resolvedCreds.apiSecret ||
@@ -1998,17 +2544,19 @@ export class IntegrationSettingsService {
         )?.trim();
 
         if (!keyId || !keySecret) {
-          throw new BadRequestException(`Razorpay Key ID and Key Secret for ${env} environment are required to test connection`);
+          throw new BadRequestException(
+            `Razorpay Key ID and Key Secret for ${env} environment are required to test connection`,
+          );
         }
 
         validateRazorpayEnvironmentConfig({
           keyId,
           keySecret,
-          webhookSecret: '',
+          webhookSecret: "",
           isEnabled: true,
           isConfigured: true,
           environment: env,
-          source: 'DATABASE',
+          source: "DATABASE",
         });
 
         try {
@@ -2018,12 +2566,22 @@ export class IntegrationSettingsService {
           });
           const testOrder = await Promise.race([
             rzp.orders.all({ count: 1 }),
-            new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Razorpay request timed out'), { code: 'ETIMEDOUT' })), 10000)),
+            new Promise((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    Object.assign(new Error("Razorpay request timed out"), {
+                      code: "ETIMEDOUT",
+                    }),
+                  ),
+                10000,
+              ),
+            ),
           ]);
           return {
             success: true,
-            provider: 'RAZORPAY',
-            status: 'CONNECTED',
+            provider: "RAZORPAY",
+            status: "CONNECTED",
             message: `Razorpay API ${env} credentials verified successfully.`,
             details: {
               keyIdPrefix: maskKeyId(keyId),
@@ -2032,17 +2590,31 @@ export class IntegrationSettingsService {
             },
           };
         } catch (err: any) {
-          const statusCode = Number(err?.statusCode || err?.response?.status || 0);
-          const code = String(err?.code || '');
-          this.logger.warn(`[RAZORPAY_TEST_FAILED] environment=${env} status=${statusCode || 'none'} code=${code || 'none'}`);
-          if (code === 'ETIMEDOUT' || code === 'ECONNABORTED') {
-            throw new BadRequestException('Razorpay connection test timed out. Try again.');
+          const statusCode = Number(
+            err?.statusCode || err?.response?.status || 0,
+          );
+          const code = String(err?.code || "");
+          this.logger.warn(
+            `[RAZORPAY_TEST_FAILED] environment=${env} status=${statusCode || "none"} code=${code || "none"}`,
+          );
+          if (code === "ETIMEDOUT" || code === "ECONNABORTED") {
+            throw new BadRequestException(
+              "Razorpay connection test timed out. Try again.",
+            );
           }
-          if (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN') {
-            throw new BadRequestException('Could not reach Razorpay. Check the server network and try again.');
+          if (
+            code === "ENOTFOUND" ||
+            code === "ECONNREFUSED" ||
+            code === "EAI_AGAIN"
+          ) {
+            throw new BadRequestException(
+              "Could not reach Razorpay. Check the server network and try again.",
+            );
           }
           if (statusCode === 401 || statusCode === 400) {
-            throw new BadRequestException(`Razorpay rejected the ${env} Key ID or Key Secret.`);
+            throw new BadRequestException(
+              `Razorpay rejected the ${env} Key ID or Key Secret.`,
+            );
           }
           const description = err?.error?.description;
           throw new BadRequestException(
@@ -2058,102 +2630,126 @@ export class IntegrationSettingsService {
         if (!apiKey) {
           return {
             success: false,
-            provider: 'GOOGLE_MAPS',
-            status: 'NOT_CONFIGURED',
+            provider: "GOOGLE_MAPS",
+            status: "NOT_CONFIGURED",
             message:
-              'Google Maps API Key is required. Save it under Admin → Integrations → Google Maps, or set GOOGLE_MAPS_API_KEY on the server.',
+              "Google Maps API Key is required. Save it under Admin → Integrations → Google Maps, or set GOOGLE_MAPS_API_KEY on the server.",
           };
         }
 
         try {
           return await this.verifyGoogleMapsApiKeyConnection(apiKey);
         } catch (err: any) {
-          const errMsg = err?.message || 'Could not reach Google Maps API';
+          const errMsg = err?.message || "Could not reach Google Maps API";
           this.logger.error(`[GOOGLE_MAPS_TEST_FAILED] ${errMsg}`);
           return {
             success: false,
-            provider: 'GOOGLE_MAPS',
-            status: 'ERROR',
+            provider: "GOOGLE_MAPS",
+            status: "ERROR",
             message: `Google Maps connection test failed: ${errMsg}`,
           };
         }
       }
 
       case IntegrationProvider.WHATSAPP: {
-        const rawApiKey = resolvedCreds.apiKey || resolvedCreds.accessToken || resolvedCreds.access_token || '';
-        const { token: apiKey, error: tokenErr } = resolveCleanAccessToken(rawApiKey);
-        const phoneNumberId = (resolvedCreds.phoneNumberId || resolvedCreds.phone_number_id || '').trim();
-        const apiVersion = (resolvedCreds.apiVersion || 'v25.0').trim();
-        const testPhone = (testCreds.testPhone || testCreds.recipientPhone || testCreds.to || (dto?.credentials as any)?.testPhone || '').trim();
+        const rawApiKey =
+          resolvedCreds.apiKey ||
+          resolvedCreds.accessToken ||
+          resolvedCreds.access_token ||
+          "";
+        const { token: apiKey, error: tokenErr } =
+          resolveCleanAccessToken(rawApiKey);
+        const phoneNumberId = (
+          resolvedCreds.phoneNumberId ||
+          resolvedCreds.phone_number_id ||
+          ""
+        ).trim();
+        const apiVersion = (resolvedCreds.apiVersion || "v25.0").trim();
+        const testPhone = (
+          testCreds.testPhone ||
+          testCreds.recipientPhone ||
+          testCreds.to ||
+          (dto?.credentials as any)?.testPhone ||
+          ""
+        ).trim();
 
         this.logger.log(
-          `[WHATSAPP_CONFIG] configured=${Boolean(apiKey && phoneNumberId)} tenantId=${adminUserId || 'SYSTEM_ADMIN'} phoneNumberId=${phoneNumberId ? phoneNumberId.substring(0, 4) + '****' : 'MISSING'} tokenConfigured=${Boolean(apiKey)} tokenLength=${apiKey ? apiKey.length : 0}`
+          `[WHATSAPP_CONFIG] configured=${Boolean(apiKey && phoneNumberId)} tenantId=${adminUserId || "SYSTEM_ADMIN"} phoneNumberId=${phoneNumberId ? phoneNumberId.substring(0, 4) + "****" : "MISSING"} tokenConfigured=${Boolean(apiKey)} tokenLength=${apiKey ? apiKey.length : 0}`,
         );
 
-        if (tokenErr === 'TOKEN_DECRYPT_FAILED') {
+        if (tokenErr === "TOKEN_DECRYPT_FAILED") {
           this.logger.error(
             `[WHATSAPP DEBUG]\n` +
-            `tenant/company ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
-            `employee/user ID: ${adminUserId || 'SYSTEM_ADMIN'}\n` +
-            `integration ID: WHATSAPP\n` +
-            `Phone Number ID: ${phoneNumberId}\n` +
-            `token decryption failed: encrypted token could not be decrypted (ENCRYPTION_KEY / JWT_SECRET mismatch)\n` +
-            `token: MISSING`,
+              `tenant/company ID: ${adminUserId || "SYSTEM_ADMIN"}\n` +
+              `employee/user ID: ${adminUserId || "SYSTEM_ADMIN"}\n` +
+              `integration ID: WHATSAPP\n` +
+              `Phone Number ID: ${phoneNumberId}\n` +
+              `token decryption failed: encrypted token could not be decrypted (ENCRYPTION_KEY / JWT_SECRET mismatch)\n` +
+              `token: MISSING`,
           );
           throw new BadRequestException(
-            'WhatsApp configuration error: token decryption failed. Please re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.',
+            "WhatsApp configuration error: token decryption failed. Please re-save the WhatsApp token in Admin → Settings → Integrations → WhatsApp.",
           );
         }
 
         if (!rawApiKey) {
-          throw new BadRequestException('WhatsApp Access Token is required to test connection');
+          throw new BadRequestException(
+            "WhatsApp Access Token is required to test connection",
+          );
         }
 
         if (!apiKey) {
-          throw new BadRequestException('WhatsApp Access Token is malformed or could not be parsed');
+          throw new BadRequestException(
+            "WhatsApp Access Token is malformed or could not be parsed",
+          );
         }
 
         if (!phoneNumberId) {
-          throw new BadRequestException('WhatsApp Phone Number ID is required to test connection');
+          throw new BadRequestException(
+            "WhatsApp Phone Number ID is required to test connection",
+          );
         }
 
         if (!/^\d+$/.test(phoneNumberId)) {
-          throw new BadRequestException(`WhatsApp Phone Number ID "${phoneNumberId}" is invalid. Must contain numeric digits only.`);
+          throw new BadRequestException(
+            `WhatsApp Phone Number ID "${phoneNumberId}" is invalid. Must contain numeric digits only.`,
+          );
         }
 
         const graphUrl = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}`;
         try {
           // 1. Verify Phone Number ID & credentials against Meta Cloud API endpoint
-          const response = await axios.get(
-            graphUrl,
-            {
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-              },
-              params: {
-                fields: 'verified_name,code_verification_status,display_phone_number,quality_rating',
-              },
-              timeout: 10000,
+          const response = await axios.get(graphUrl, {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
             },
-          );
+            params: {
+              fields:
+                "verified_name,code_verification_status,display_phone_number,quality_rating",
+            },
+            timeout: 10000,
+          });
 
           this.logger.log(
-            `[WHATSAPP_META] httpStatus=200 verifiedName="${response.data?.verified_name}" status=SUCCESS`
+            `[WHATSAPP_META] httpStatus=200 verifiedName="${response.data?.verified_name}" status=SUCCESS`,
           );
 
           let testMessageResult: any = null;
           // 2. If testPhone provided, send a real test text message
           if (testPhone) {
-            const rawPhone = testPhone.replace(/\D/g, '');
-            const normalizedPhone = rawPhone.length === 10 && /^[6-9]\d{9}$/.test(rawPhone) ? `91${rawPhone}` : rawPhone;
+            const rawPhone = testPhone.replace(/\D/g, "");
+            const normalizedPhone =
+              rawPhone.length === 10 && /^[6-9]\d{9}$/.test(rawPhone)
+                ? `91${rawPhone}`
+                : rawPhone;
             const messagePayload = {
-              messaging_product: 'whatsapp',
-              recipient_type: 'individual',
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
               to: normalizedPhone,
-              type: 'text',
+              type: "text",
               text: {
                 preview_url: false,
-                body: testCreds.message || 'What can I help you with today?',
+                body: testCreds.message || "What can I help you with today?",
               },
             };
 
@@ -2163,7 +2759,7 @@ export class IntegrationSettingsService {
               {
                 headers: {
                   Authorization: `Bearer ${apiKey}`,
-                  'Content-Type': 'application/json',
+                  "Content-Type": "application/json",
                 },
                 timeout: 10000,
               },
@@ -2172,17 +2768,17 @@ export class IntegrationSettingsService {
             testMessageResult = {
               recipient: normalizedPhone,
               wamid: sendRes.data?.messages?.[0]?.id,
-              status: 'SENT',
+              status: "SENT",
             };
           }
 
           return {
             success: true,
-            provider: 'WHATSAPP',
-            status: 'CONNECTED',
+            provider: "WHATSAPP",
+            status: "CONNECTED",
             message: testMessageResult
               ? `WhatsApp configuration verified & test message sent to ${testPhone} (wamid: ${testMessageResult.wamid})!`
-              : 'WhatsApp Business API configuration verified with Meta!',
+              : "WhatsApp Business API configuration verified with Meta!",
             details: {
               phoneNumberId,
               apiVersion,
@@ -2195,34 +2791,51 @@ export class IntegrationSettingsService {
           };
         } catch (err: any) {
           const fbError = err?.response?.data?.error;
-          const errorCode = fbError?.code || err?.code || 'UNKNOWN';
+          const errorCode = fbError?.code || err?.code || "UNKNOWN";
           const errorType = fbError?.type;
           const errorSubcode = fbError?.error_subcode;
           const fbtraceId = fbError?.fbtrace_id;
-          const rawErrMsg = fbError?.message || err?.message || 'Verification failed';
+          const rawErrMsg =
+            fbError?.message || err?.message || "Verification failed";
           const httpStatus = err?.response?.status as number | undefined;
 
           this.logger.error(
-            `[WHATSAPP_META] httpStatus=${httpStatus || 'N/A'} metaErrorCode=${errorCode} metaErrorMessage="${rawErrMsg}"`
+            `[WHATSAPP_META] httpStatus=${httpStatus || "N/A"} metaErrorCode=${errorCode} metaErrorMessage="${rawErrMsg}"`,
           );
 
           // 1. 24-hour service window closed (code 131047)
-          if (String(errorCode) === '131047' || rawErrMsg.toLowerCase().includes('re-engagement message') || rawErrMsg.toLowerCase().includes('24 hours')) {
+          if (
+            String(errorCode) === "131047" ||
+            rawErrMsg.toLowerCase().includes("re-engagement message") ||
+            rawErrMsg.toLowerCase().includes("24 hours")
+          ) {
             throw new BadRequestException(
               `WhatsApp 24-hour service window restriction (Meta Error 131047): Token and Phone Number ID are valid, but WhatsApp free-form text can only be sent within 24 hours of a customer message. Outside this window, you must use an approved Message Template.`,
             );
           }
 
           // 2. Test recipient not in allowlist (code 131030 / 131026)
-          if (String(errorCode) === '131030' || String(errorCode) === '131026' || rawErrMsg.toLowerCase().includes('recipient phone number not in allowed list')) {
+          if (
+            String(errorCode) === "131030" ||
+            String(errorCode) === "131026" ||
+            rawErrMsg
+              .toLowerCase()
+              .includes("recipient phone number not in allowed list")
+          ) {
             throw new BadRequestException(
               `WhatsApp recipient rejected (Meta Error ${errorCode}): Token and Phone Number ID are valid, but recipient "${testPhone}" is not allowed. In development mode, add this number to the allowed list in Meta Developer Portal: ${rawErrMsg}`,
             );
           }
 
           // 3. True Token / Authentication Error (code 190 or HTTP 401)
-          if (String(errorCode) === '190' || httpStatus === 401 || rawErrMsg.toLowerCase().includes('error validating access token')) {
-            const isCannotParse = rawErrMsg.toLowerCase().includes('cannot parse') || rawErrMsg.toLowerCase().includes('malformed');
+          if (
+            String(errorCode) === "190" ||
+            httpStatus === 401 ||
+            rawErrMsg.toLowerCase().includes("error validating access token")
+          ) {
+            const isCannotParse =
+              rawErrMsg.toLowerCase().includes("cannot parse") ||
+              rawErrMsg.toLowerCase().includes("malformed");
             const reasonDetail = isCannotParse
               ? `Meta rejected the access token format: ${rawErrMsg}`
               : `Meta access token is invalid or expired: ${rawErrMsg}`;
@@ -2231,7 +2844,11 @@ export class IntegrationSettingsService {
             );
           }
 
-          if (httpStatus === 403 || String(errorCode) === '200' || String(errorCode) === '10') {
+          if (
+            httpStatus === 403 ||
+            String(errorCode) === "200" ||
+            String(errorCode) === "10"
+          ) {
             throw new BadRequestException(
               `WhatsApp access is not permitted for this account (HTTP ${httpStatus || 403}, Code ${errorCode}): ${rawErrMsg}. Check your Meta App permissions (whatsapp_business_messaging, whatsapp_business_management).`,
             );
@@ -2250,33 +2867,49 @@ export class IntegrationSettingsService {
       }
 
       case IntegrationProvider.AWS: {
-        const accessKeyId = resolvedCreds.accessKeyId || resolvedCreds.access_key_id;
-        const secretAccessKey = resolvedCreds.secretAccessKey || resolvedCreds.secret_access_key;
-        const region = resolvedCreds.region || 'ap-south-1';
-        const bucket = resolvedCreds.bucket || resolvedCreds.bucketName || resolvedCreds.bucket_name;
+        const accessKeyId =
+          resolvedCreds.accessKeyId || resolvedCreds.access_key_id;
+        const secretAccessKey =
+          resolvedCreds.secretAccessKey || resolvedCreds.secret_access_key;
+        const region = resolvedCreds.region || "ap-south-1";
+        const bucket =
+          resolvedCreds.bucket ||
+          resolvedCreds.bucketName ||
+          resolvedCreds.bucket_name;
 
         if (!accessKeyId || !secretAccessKey || !bucket) {
-          throw new BadRequestException('AWS Access Key ID, Secret Access Key, and Bucket Name are required to test connection');
+          throw new BadRequestException(
+            "AWS Access Key ID, Secret Access Key, and Bucket Name are required to test connection",
+          );
         }
 
         try {
-          const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+          const { S3Client, ListObjectsV2Command } =
+            await import("@aws-sdk/client-s3");
           const s3Client = new S3Client({
             region,
             credentials: { accessKeyId, secretAccessKey },
           });
-          await s3Client.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }));
+          await s3Client.send(
+            new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }),
+          );
           return {
             success: true,
-            provider: 'AWS',
-            status: 'CONNECTED',
-            message: 'Amazon S3 bucket access verified successfully!',
-            details: { bucket, region, keyPrefix: accessKeyId.substring(0, 8) + '...' },
+            provider: "AWS",
+            status: "CONNECTED",
+            message: "Amazon S3 bucket access verified successfully!",
+            details: {
+              bucket,
+              region,
+              keyPrefix: accessKeyId.substring(0, 8) + "...",
+            },
           };
         } catch (err: any) {
           this.logger.error(`[AWS_S3_TEST_FAILED] ${err?.message}`);
-          const errMsg = err?.message || 'Could not connect to Amazon S3';
-          throw new BadRequestException(`AWS S3 connection test failed: ${errMsg}`);
+          const errMsg = err?.message || "Could not connect to Amazon S3";
+          throw new BadRequestException(
+            `AWS S3 connection test failed: ${errMsg}`,
+          );
         }
       }
 
@@ -2286,64 +2919,72 @@ export class IntegrationSettingsService {
           resolvedCreds.auth_key ||
           resolvedCreds.apiKey ||
           process.env.MSG91_AUTH_KEY ||
-          ''
+          ""
         ).trim();
         const templateId = (
           resolvedCreds.templateId ||
           resolvedCreds.template_id ||
           process.env.MSG91_TEMPLATE_ID ||
-          ''
+          ""
         ).trim();
 
         if (!authKey) {
-          throw new BadRequestException('MSG91 Auth Key is required to test connection');
+          throw new BadRequestException(
+            "MSG91 Auth Key is required to test connection",
+          );
         }
 
         if (!templateId) {
-          throw new BadRequestException('MSG91 Template ID is required to test connection');
+          throw new BadRequestException(
+            "MSG91 Template ID is required to test connection",
+          );
         }
 
         // Validate credentials live against MSG91 API without dispatching SMS or consuming credits
         try {
           let isAuthenticated = false;
-          let failureReason = '';
+          let failureReason = "";
 
           try {
-            const response = await axios.get('https://control.msg91.com/api/v5/widget/getTemplate', {
-              headers: {
-                authkey: authKey,
-                'Content-Type': 'application/json',
+            const response = await axios.get(
+              "https://control.msg91.com/api/v5/widget/getTemplate",
+              {
+                headers: {
+                  authkey: authKey,
+                  "Content-Type": "application/json",
+                },
+                timeout: 8000,
               },
-              timeout: 8000,
-            });
+            );
 
             const data = response.data;
             if (
-              data?.code === '201' ||
+              data?.code === "201" ||
               data?.code === 201 ||
-              data?.message === 'AuthenticationFailure' ||
-              (data?.type === 'error' && data?.message?.toLowerCase()?.includes('auth'))
+              data?.message === "AuthenticationFailure" ||
+              (data?.type === "error" &&
+                data?.message?.toLowerCase()?.includes("auth"))
             ) {
               isAuthenticated = false;
-              failureReason = data?.message || 'Invalid Auth Key';
+              failureReason = data?.message || "Invalid Auth Key";
             } else if (response.status === 200) {
               isAuthenticated = true;
             }
           } catch (templateErr: any) {
             const errData = templateErr?.response?.data;
             if (
-              errData?.code === '201' ||
+              errData?.code === "201" ||
               errData?.code === 201 ||
-              errData?.message === 'AuthenticationFailure' ||
-              errData?.message === 'Invalid authkey'
+              errData?.message === "AuthenticationFailure" ||
+              errData?.message === "Invalid authkey"
             ) {
               isAuthenticated = false;
-              failureReason = errData?.message || 'Invalid Auth Key';
+              failureReason = errData?.message || "Invalid Auth Key";
             } else {
               // Secondary fallback check using OTP verify endpoint with dummy OTP (does not send SMS)
               try {
                 const otpCheck = await axios.get(
-                  'https://control.msg91.com/api/v5/otp/verify?otp=000000&mobile=919999999999',
+                  "https://control.msg91.com/api/v5/otp/verify?otp=000000&mobile=919999999999",
                   {
                     headers: { authkey: authKey },
                     timeout: 8000,
@@ -2351,28 +2992,31 @@ export class IntegrationSettingsService {
                 );
                 const otpData = otpCheck.data;
                 if (
-                  otpData?.code === '201' ||
+                  otpData?.code === "201" ||
                   otpData?.code === 201 ||
-                  otpData?.message === 'Invalid authkey' ||
-                  otpData?.message === 'AuthenticationFailure'
+                  otpData?.message === "Invalid authkey" ||
+                  otpData?.message === "AuthenticationFailure"
                 ) {
                   isAuthenticated = false;
-                  failureReason = otpData?.message || 'Invalid Auth Key';
+                  failureReason = otpData?.message || "Invalid Auth Key";
                 } else {
                   isAuthenticated = true;
                 }
               } catch (otpErr: any) {
                 const otpErrData = otpErr?.response?.data;
                 if (
-                  otpErrData?.code === '201' ||
+                  otpErrData?.code === "201" ||
                   otpErrData?.code === 201 ||
-                  otpErrData?.message === 'Invalid authkey' ||
-                  otpErrData?.message === 'AuthenticationFailure'
+                  otpErrData?.message === "Invalid authkey" ||
+                  otpErrData?.message === "AuthenticationFailure"
                 ) {
                   isAuthenticated = false;
-                  failureReason = otpErrData?.message || 'Invalid Auth Key';
+                  failureReason = otpErrData?.message || "Invalid Auth Key";
                 } else {
-                  failureReason = otpErrData?.message || otpErr?.message || 'Could not verify MSG91 credentials';
+                  failureReason =
+                    otpErrData?.message ||
+                    otpErr?.message ||
+                    "Could not verify MSG91 credentials";
                 }
               }
             }
@@ -2380,18 +3024,19 @@ export class IntegrationSettingsService {
 
           if (!isAuthenticated) {
             throw new BadRequestException(
-              `MSG91 authentication failed: ${failureReason || 'Invalid Auth Key'}`,
+              `MSG91 authentication failed: ${failureReason || "Invalid Auth Key"}`,
             );
           }
 
           return {
             success: true,
-            provider: 'MSG91',
-            status: 'CONNECTED',
-            message: 'MSG91 credentials verified successfully!',
+            provider: "MSG91",
+            status: "CONNECTED",
+            message: "MSG91 credentials verified successfully!",
             details: {
               templateId,
-              authKeyPrefix: authKey.substring(0, Math.min(6, authKey.length)) + '...',
+              authKeyPrefix:
+                authKey.substring(0, Math.min(6, authKey.length)) + "...",
             },
           };
         } catch (err: any) {
@@ -2404,19 +3049,23 @@ export class IntegrationSettingsService {
             err?.response?.data?.msg ||
             err?.response?.data?.error ||
             err?.message ||
-            'Could not authenticate with MSG91';
-          throw new BadRequestException(`MSG91 connection test failed: ${errMsg}`);
+            "Could not authenticate with MSG91";
+          throw new BadRequestException(
+            `MSG91 connection test failed: ${errMsg}`,
+          );
         }
       }
 
       case IntegrationProvider.OPENAI: {
         const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
-        if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
-          throw new BadRequestException('OpenAI API Key is required to test connection');
+        if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
+          throw new BadRequestException(
+            "OpenAI API Key is required to test connection",
+          );
         }
 
         try {
-          const response = await axios.get('https://api.openai.com/v1/models', {
+          const response = await axios.get("https://api.openai.com/v1/models", {
             headers: {
               Authorization: `Bearer ${apiKey.trim()}`,
             },
@@ -2426,11 +3075,14 @@ export class IntegrationSettingsService {
           if (response.status === 200) {
             return {
               success: true,
-              provider: 'OPENAI',
-              status: 'CONNECTED',
-              message: 'OpenAI API Key verified successfully!',
+              provider: "OPENAI",
+              status: "CONNECTED",
+              message: "OpenAI API Key verified successfully!",
               details: {
-                keyPrefix: apiKey.trim().substring(0, Math.min(7, apiKey.trim().length)) + '...',
+                keyPrefix:
+                  apiKey
+                    .trim()
+                    .substring(0, Math.min(7, apiKey.trim().length)) + "...",
                 modelsCount: response.data?.data?.length || 0,
               },
             };
@@ -2441,15 +3093,19 @@ export class IntegrationSettingsService {
           const errMsg =
             err?.response?.data?.error?.message ||
             err?.message ||
-            'Could not authenticate with OpenAI API';
-          throw new BadRequestException(`OpenAI connection test failed: ${errMsg}`);
+            "Could not authenticate with OpenAI API";
+          throw new BadRequestException(
+            `OpenAI connection test failed: ${errMsg}`,
+          );
         }
       }
 
       case IntegrationProvider.GEMINI: {
         const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
-        if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
-          throw new BadRequestException('Google Gemini API Key is required to test connection');
+        if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
+          throw new BadRequestException(
+            "Google Gemini API Key is required to test connection",
+          );
         }
 
         try {
@@ -2463,11 +3119,14 @@ export class IntegrationSettingsService {
           if (response.status === 200) {
             return {
               success: true,
-              provider: 'GEMINI',
-              status: 'CONNECTED',
-              message: 'Google Gemini API Key verified successfully!',
+              provider: "GEMINI",
+              status: "CONNECTED",
+              message: "Google Gemini API Key verified successfully!",
               details: {
-                keyPrefix: apiKey.trim().substring(0, Math.min(8, apiKey.trim().length)) + '...',
+                keyPrefix:
+                  apiKey
+                    .trim()
+                    .substring(0, Math.min(8, apiKey.trim().length)) + "...",
                 modelsCount: response.data?.models?.length || 0,
               },
             };
@@ -2478,42 +3137,59 @@ export class IntegrationSettingsService {
           const errMsg =
             err?.response?.data?.error?.message ||
             err?.message ||
-            'Could not authenticate with Google Gemini API';
-          throw new BadRequestException(`Google Gemini connection test failed: ${errMsg}`);
+            "Could not authenticate with Google Gemini API";
+          throw new BadRequestException(
+            `Google Gemini connection test failed: ${errMsg}`,
+          );
         }
       }
 
       case IntegrationProvider.ANTHROPIC: {
         const apiKey = resolvedCreds.apiKey || resolvedCreds.api_key;
-        if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
-          throw new BadRequestException('Anthropic API Key is required to test connection');
+        if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
+          throw new BadRequestException(
+            "Anthropic API Key is required to test connection",
+          );
         }
 
-        const model = String(dto?.config?.model || active?.config?.model || 'claude-sonnet-5').trim();
-        const maxTokens = Math.max(1, Math.min(32, Number(dto?.config?.maxTokens || 16) || 16));
+        const model = String(
+          dto?.config?.model || active?.config?.model || "claude-sonnet-5",
+        ).trim();
+        const maxTokens = Math.max(
+          1,
+          Math.min(32, Number(dto?.config?.maxTokens || 16) || 16),
+        );
         const temperature = Number(dto?.config?.temperature);
         const request: Record<string, any> = {
           model,
           max_tokens: maxTokens,
-          system: 'Reply with the single word OK.',
-          messages: [{ role: 'user', content: 'Connection check.' }],
+          system: "Reply with the single word OK.",
+          messages: [{ role: "user", content: "Connection check." }],
         };
         // New Opus 4.7+ and Mythos models reject non-default temperature. Omit unless explicitly configured.
-        if (Number.isFinite(temperature) && temperature !== 1 && !/(opus-4-7|mythos)/i.test(model)) {
+        if (
+          Number.isFinite(temperature) &&
+          temperature !== 1 &&
+          !/(opus-4-7|mythos)/i.test(model)
+        ) {
           request.temperature = Math.max(0, Math.min(1, temperature));
         }
         let response: any;
         try {
           for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-              response = await axios.post('https://api.anthropic.com/v1/messages', request, {
-                headers: {
-                  'x-api-key': apiKey.trim(),
-                  'anthropic-version': '2023-06-01',
-                  'content-type': 'application/json',
+              response = await axios.post(
+                "https://api.anthropic.com/v1/messages",
+                request,
+                {
+                  headers: {
+                    "x-api-key": apiKey.trim(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                  },
+                  timeout: 10000,
                 },
-                timeout: 10000,
-              });
+              );
               break;
             } catch (error: any) {
               const status = Number(error?.response?.status || 0);
@@ -2525,19 +3201,26 @@ export class IntegrationSettingsService {
             }
           }
         } catch (error: any) {
-          this.logger.warn(`[ANTHROPIC_TEST_FAILED] HTTP ${error?.response?.status || 'network'}`);
+          this.logger.warn(
+            `[ANTHROPIC_TEST_FAILED] HTTP ${error?.response?.status || "network"}`,
+          );
           throw new BadRequestException(this.anthropicErrorMessage(error));
         }
         if (response?.status === 200 && response.data?.model) {
           return {
             success: true,
-            provider: 'ANTHROPIC',
-            status: 'CONNECTED',
-            message: 'Claude model connection verified successfully.',
-            details: { model: response.data.model, usage: response.data.usage || null },
+            provider: "ANTHROPIC",
+            status: "CONNECTED",
+            message: "Claude model connection verified successfully.",
+            details: {
+              model: response.data.model,
+              usage: response.data.usage || null,
+            },
           };
         }
-        throw new BadRequestException('Anthropic did not return a valid model response.');
+        throw new BadRequestException(
+          "Anthropic did not return a valid model response.",
+        );
       }
 
       case IntegrationProvider.SMTP: {
@@ -2552,14 +3235,19 @@ export class IntegrationSettingsService {
             resolvedCreds.host ||
             resolvedCreds.smtpHost ||
             process.env.SMTP_HOST ||
-            '',
+            "",
         ).trim();
 
         // Strip any protocol prefix (e.g. smtp:// or ssl://)
-        host = host.replace(/^smtp(s)?:\/\//i, '').replace(/^ssl:\/\//i, '').trim();
+        host = host
+          .replace(/^smtp(s)?:\/\//i, "")
+          .replace(/^ssl:\/\//i, "")
+          .trim();
 
         if (!host) {
-          throw new BadRequestException('SMTP Host is required to test connection');
+          throw new BadRequestException(
+            "SMTP Host is required to test connection",
+          );
         }
 
         // 2. Resolve port
@@ -2577,7 +3265,9 @@ export class IntegrationSettingsService {
 
         const port = Number(rawPort);
         if (!port || isNaN(port) || port < 1 || port > 65535) {
-          throw new BadRequestException('SMTP Port must be a valid port number between 1 and 65535');
+          throw new BadRequestException(
+            "SMTP Port must be a valid port number between 1 and 65535",
+          );
         }
 
         // 3. Resolve security / encryption enum
@@ -2593,19 +3283,19 @@ export class IntegrationSettingsService {
             active?.config?.security ||
             active?.config?.encryption ||
             resolvedCreds.security ||
-            (port === 465 ? 'SSL' : 'TLS'),
+            (port === 465 ? "SSL" : "TLS"),
         )
           .toUpperCase()
           .trim();
 
-        const security: 'SSL' | 'TLS' | 'NONE' =
-          rawSecurity === 'SSL' || rawSecurity === 'SMTPS'
-            ? 'SSL'
-            : rawSecurity === 'NONE' || rawSecurity === 'PLAIN'
-            ? 'NONE'
-            : 'TLS';
+        const security: "SSL" | "TLS" | "NONE" =
+          rawSecurity === "SSL" || rawSecurity === "SMTPS"
+            ? "SSL"
+            : rawSecurity === "NONE" || rawSecurity === "PLAIN"
+              ? "NONE"
+              : "TLS";
 
-        const secure = security === 'SSL' || port === 465;
+        const secure = security === "SSL" || port === 465;
 
         // 4. Resolve username
         const rawUsername =
@@ -2618,21 +3308,24 @@ export class IntegrationSettingsService {
           resolvedCreds.user ??
           process.env.SMTP_USER ??
           process.env.SMTP_USERNAME ??
-          '';
+          "";
 
-        const username = sanitizeSecret(String(rawUsername || '').trim());
+        const username = sanitizeSecret(String(rawUsername || "").trim());
 
         // 5. Resolve password
         // If a new unmasked password is provided in dto or testCreds, use it.
         // Otherwise, use existing stored decrypted password from database.
-        let password = '';
+        let password = "";
         const incomingPassword =
           dto?.password ??
           dto?.smtpPassword ??
           testCreds.password ??
           testCreds.smtpPassword;
 
-        if (incomingPassword !== undefined && !isMaskedSecret(incomingPassword)) {
+        if (
+          incomingPassword !== undefined &&
+          !isMaskedSecret(incomingPassword)
+        ) {
           password = sanitizeSecret(String(incomingPassword).trim());
         } else {
           password = sanitizeSecret(
@@ -2645,7 +3338,7 @@ export class IntegrationSettingsService {
                 activeCreds.pass ||
                 process.env.SMTP_PASSWORD ||
                 process.env.SMTP_PASS ||
-                '',
+                "",
             ).trim(),
           );
         }
@@ -2653,7 +3346,7 @@ export class IntegrationSettingsService {
         // Validate: if username is given, password must not be empty
         if (username && !password) {
           throw new BadRequestException(
-            'SMTP Password is required when SMTP Username is provided. Please enter your SMTP password or app password.',
+            "SMTP Password is required when SMTP Username is provided. Please enter your SMTP password or app password.",
           );
         }
 
@@ -2667,11 +3360,13 @@ export class IntegrationSettingsService {
             resolvedCreds.fromEmail ||
             process.env.SMTP_FROM_EMAIL ||
             process.env.MAIL_FROM ||
-            '',
+            "",
         ).trim();
 
         if (fromEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
-          throw new BadRequestException(`Invalid From Email format: "${fromEmail}"`);
+          throw new BadRequestException(
+            `Invalid From Email format: "${fromEmail}"`,
+          );
         }
 
         // 7. Resolve fromName
@@ -2683,7 +3378,7 @@ export class IntegrationSettingsService {
             active?.config?.fromName ||
             resolvedCreds.fromName ||
             process.env.SMTP_FROM_NAME ||
-            'QuickBoom CRM',
+            "QuickBoom CRM",
         ).trim();
 
         try {
@@ -2703,7 +3398,7 @@ export class IntegrationSettingsService {
             };
           }
 
-          if (!secure && security === 'TLS') {
+          if (!secure && security === "TLS") {
             transportOptions.requireTLS = true;
           }
 
@@ -2718,14 +3413,14 @@ export class IntegrationSettingsService {
 
           return {
             success: true,
-            provider: 'SMTP',
-            status: 'CONNECTED',
+            provider: "SMTP",
+            status: "CONNECTED",
             message: `SMTP connection established and verified successfully on ${host}:${port}`,
             details: {
               host,
               port,
-              security: secure ? 'SSL' : security === 'NONE' ? 'NONE' : 'TLS',
-              user: username ? username : 'Anonymous',
+              security: secure ? "SSL" : security === "NONE" ? "NONE" : "TLS",
+              user: username ? username : "Anonymous",
               fromEmail: fromEmail || undefined,
               fromName: fromName || undefined,
             },
@@ -2735,46 +3430,55 @@ export class IntegrationSettingsService {
             `[SMTP_TEST_FAILED] ${err?.message} (code: ${err?.code}, responseCode: ${err?.responseCode})`,
           );
 
-          let descriptiveMsg = err?.message || 'Failed to establish connection with SMTP server';
+          let descriptiveMsg =
+            err?.message || "Failed to establish connection with SMTP server";
 
-          if (err?.code === 'EAUTH' || err?.responseCode === 535) {
+          if (err?.code === "EAUTH" || err?.responseCode === 535) {
             descriptiveMsg = `SMTP authentication failed (535): Invalid username or password. If using Gmail, ensure 2-Step Verification is enabled and use a 16-character App Password (not your Gmail account password).`;
-          } else if (err?.code === 'ECONNREFUSED') {
+          } else if (err?.code === "ECONNREFUSED") {
             descriptiveMsg = `Connection refused by server at ${host}:${port}. Please verify the SMTP host and port numbers.`;
-          } else if (err?.code === 'ETIMEDOUT' || err?.code === 'ESOCKETTIMEDOUT') {
+          } else if (
+            err?.code === "ETIMEDOUT" ||
+            err?.code === "ESOCKETTIMEDOUT"
+          ) {
             descriptiveMsg = `Connection to SMTP server at ${host}:${port} timed out after 10 seconds. Check firewall or try alternative port (587 or 465).`;
-          } else if (err?.code === 'ENOTFOUND') {
+          } else if (err?.code === "ENOTFOUND") {
             descriptiveMsg = `SMTP Host "${host}" could not be resolved (DNS lookup failure). Please verify the hostname.`;
-          } else if (err?.responseCode === 530 || String(err?.message || '').includes('STARTTLS')) {
+          } else if (
+            err?.responseCode === 530 ||
+            String(err?.message || "").includes("STARTTLS")
+          ) {
             descriptiveMsg = `SMTP server requires TLS/STARTTLS encryption. Please select Security as "STARTTLS / TLS" and use port 587.`;
           }
 
-          throw new BadRequestException(`SMTP connection test failed: ${descriptiveMsg}`);
+          throw new BadRequestException(
+            `SMTP connection test failed: ${descriptiveMsg}`,
+          );
         }
       }
 
       case IntegrationProvider.FIREBASE: {
         let rawPrivateKey = String(
-          dto?.credentials?.privateKey || dto?.credentials?.private_key || '',
+          dto?.credentials?.privateKey || dto?.credentials?.private_key || "",
         ).trim();
         if (!rawPrivateKey || isMaskedSecret(rawPrivateKey)) {
           rawPrivateKey = String(
             resolvedCreds.privateKey ||
               resolvedCreds.private_key ||
               process.env.FIREBASE_PRIVATE_KEY ||
-              '',
+              "",
           ).trim();
         }
 
         let clientEmail = String(
-          dto?.credentials?.clientEmail || dto?.credentials?.client_email || '',
+          dto?.credentials?.clientEmail || dto?.credentials?.client_email || "",
         ).trim();
         if (!clientEmail || isMaskedSecret(clientEmail)) {
           clientEmail = String(
             resolvedCreds.clientEmail ||
               resolvedCreds.client_email ||
               process.env.FIREBASE_CLIENT_EMAIL ||
-              '',
+              "",
           ).trim();
         }
 
@@ -2785,28 +3489,31 @@ export class IntegrationSettingsService {
             resolvedCreds.project_id ||
             process.env.FIREBASE_PROJECT_ID ||
             process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-            '',
+            "",
         ).trim();
 
         const hasEnvCreds = Boolean(
           process.env.GOOGLE_APPLICATION_CREDENTIALS ||
           process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-          process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+          process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
         );
-        const hasExplicitKey = Boolean(rawPrivateKey && !isMaskedSecret(rawPrivateKey));
+        const hasExplicitKey = Boolean(
+          rawPrivateKey && !isMaskedSecret(rawPrivateKey),
+        );
 
         this.logger.log(
-          `[FIREBASE_TEST_DEBUG] Provider: FIREBASE | ProjectId: ${projectId || 'NONE'} | ClientEmail: ${clientEmail || 'NONE'} | HasKey: ${hasExplicitKey} | AppsCount: ${getFirebaseAdminApps().length}`,
+          `[FIREBASE_TEST_DEBUG] Provider: FIREBASE | ProjectId: ${projectId || "NONE"} | ClientEmail: ${clientEmail || "NONE"} | HasKey: ${hasExplicitKey} | AppsCount: ${getFirebaseAdminApps().length}`,
         );
 
         if (!projectId || (!hasEnvCreds && (!clientEmail || !hasExplicitKey))) {
           return {
             connected: false,
             success: false,
-            provider: 'FIREBASE',
-            status: 'NOT CONFIGURED',
+            provider: "FIREBASE",
+            status: "NOT CONFIGURED",
             projectId: projectId || undefined,
-            message: 'FCM is not fully configured. Please add the required Firebase credentials to test the connection.',
+            message:
+              "FCM is not fully configured. Please add the required Firebase credentials to test the connection.",
           };
         }
 
@@ -2815,7 +3522,7 @@ export class IntegrationSettingsService {
 
           // 1. If explicit credentials provided or resolved from database, test with dedicated app instance
           if (clientEmail && hasExplicitKey) {
-            const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
+            const privateKey = rawPrivateKey.replace(/\\n/g, "\n");
             const testAppName = `test-firebase-${Date.now()}`;
             const testApp = initFirebaseAdminApp(
               {
@@ -2848,10 +3555,11 @@ export class IntegrationSettingsService {
               return {
                 connected: false,
                 success: false,
-                provider: 'FIREBASE',
-                status: 'NOT CONFIGURED',
+                provider: "FIREBASE",
+                status: "NOT CONFIGURED",
                 projectId: projectId || undefined,
-                message: 'FCM is not fully configured. Please add the required Firebase credentials to test the connection.',
+                message:
+                  "FCM is not fully configured. Please add the required Firebase credentials to test the connection.",
               };
             }
           }
@@ -2859,32 +3567,35 @@ export class IntegrationSettingsService {
           return {
             connected: true,
             success: true,
-            provider: 'FIREBASE',
-            status: 'CONNECTED',
+            provider: "FIREBASE",
+            status: "CONNECTED",
             projectId,
             lastTestedAt: now.toISOString(),
-            lastTestResult: 'SUCCESS',
-            message: 'Connection check successful',
+            lastTestResult: "SUCCESS",
+            message: "Connection check successful",
           };
         } catch (err: any) {
           this.logger.error(`[FIREBASE_TEST_FAILED] ${err?.message}`);
-          const errMsg = err?.message || 'Could not authenticate with Firebase Admin SDK';
+          const errMsg =
+            err?.message || "Could not authenticate with Firebase Admin SDK";
 
           return {
             connected: false,
             success: false,
-            provider: 'FIREBASE',
-            status: 'CONNECTION ERROR',
+            provider: "FIREBASE",
+            status: "CONNECTION ERROR",
             projectId,
             lastTestedAt: new Date().toISOString(),
-            lastTestResult: 'FAILED',
+            lastTestResult: "FAILED",
             message: `Connection failed: ${errMsg}`,
           };
         }
       }
 
       default:
-        throw new BadRequestException(`Unsupported integration provider: ${provider}`);
+        throw new BadRequestException(
+          `Unsupported integration provider: ${provider}`,
+        );
     }
   }
 
@@ -2895,13 +3606,20 @@ export class IntegrationSettingsService {
   async subscribeWhatsappWebhook(credentials?: any) {
     const conf = await this.getIntegrationConfig(IntegrationProvider.WHATSAPP);
     const creds = { ...(conf?.credentials || {}), ...(credentials || {}) };
-    const rawApiKey = creds.apiKey || creds.accessToken || creds.access_token || '';
+    const rawApiKey =
+      creds.apiKey || creds.accessToken || creds.access_token || "";
     const { token: accessToken } = resolveCleanAccessToken(rawApiKey);
-    const businessAccountId = (creds.businessAccountId || creds.wabaId || '').trim();
-    const apiVersion = (creds.apiVersion || 'v25.0').trim();
+    const businessAccountId = (
+      creds.businessAccountId ||
+      creds.wabaId ||
+      ""
+    ).trim();
+    const apiVersion = (creds.apiVersion || "v25.0").trim();
 
     if (!accessToken || !businessAccountId) {
-      throw new BadRequestException('Meta Access Token and WhatsApp Business Account ID are required to subscribe webhook');
+      throw new BadRequestException(
+        "Meta Access Token and WhatsApp Business Account ID are required to subscribe webhook",
+      );
     }
 
     try {
@@ -2918,12 +3636,16 @@ export class IntegrationSettingsService {
 
       return {
         success: true,
-        message: 'Successfully subscribed to WhatsApp webhook messages with Meta!',
+        message:
+          "Successfully subscribed to WhatsApp webhook messages with Meta!",
         details: response.data,
       };
     } catch (err: any) {
       const fbError = err?.response?.data?.error;
-      const msg = fbError?.message || err?.message || 'Failed to auto-subscribe webhook with Meta';
+      const msg =
+        fbError?.message ||
+        err?.message ||
+        "Failed to auto-subscribe webhook with Meta";
       this.logger.error(`[WHATSAPP_SUBSCRIBE_FAILED] ${msg}`);
       throw new BadRequestException(`Meta webhook subscription failed: ${msg}`);
     }
@@ -2943,12 +3665,18 @@ export class IntegrationSettingsService {
     },
     currentAdminId?: number,
   ) {
-    const title = (dto.title || 'QuikBoom Test Notification').trim();
-    const body = (dto.message || dto.body || 'Firebase Cloud Messaging is working correctly.').trim();
-    const recipientType = (dto.recipientType || (currentAdminId ? 'CURRENT_ADMIN' : 'ALL_ADMINS')).toUpperCase();
+    const title = (dto.title || "QuikBoom Test Notification").trim();
+    const body = (
+      dto.message ||
+      dto.body ||
+      "Firebase Cloud Messaging is working correctly."
+    ).trim();
+    const recipientType = (
+      dto.recipientType || (currentAdminId ? "CURRENT_ADMIN" : "ALL_ADMINS")
+    ).toUpperCase();
 
     this.logger.log(
-      `[FCM_TEST_NOTIFICATION] Request from adminId=${currentAdminId || 'NONE'}, recipientType=${recipientType}, title="${title}"`,
+      `[FCM_TEST_NOTIFICATION] Request from adminId=${currentAdminId || "NONE"}, recipientType=${recipientType}, title="${title}"`,
     );
 
     // 1. Verify that Firebase integration is configured
@@ -2957,12 +3685,12 @@ export class IntegrationSettingsService {
     const hasEnvCreds = Boolean(
       process.env.GOOGLE_APPLICATION_CREDENTIALS ||
       process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-      process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+      process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
     );
     const hasEnoughConfig = Boolean(
       conf.projectId &&
       (conf.clientEmail || hasEnvCreds) &&
-      (conf.privateKey || hasEnvCreds)
+      (conf.privateKey || hasEnvCreds),
     );
 
     if (!hasEnoughConfig && appsInitial.length === 0) {
@@ -2970,7 +3698,8 @@ export class IntegrationSettingsService {
         success: false,
         connected: false,
         deviceCount: 0,
-        message: 'FCM is not configured. Please configure Firebase credentials before sending a test notification.',
+        message:
+          "FCM is not configured. Please configure Firebase credentials before sending a test notification.",
       };
     }
 
@@ -2980,7 +3709,7 @@ export class IntegrationSettingsService {
         connected: false,
         deviceCount: 0,
         message:
-          'Firebase Cloud Messaging integration is currently disabled. Please enable it in Settings -> Integrations.',
+          "Firebase Cloud Messaging integration is currently disabled. Please enable it in Settings -> Integrations.",
       };
     }
 
@@ -3003,7 +3732,8 @@ export class IntegrationSettingsService {
         success: false,
         connected: false,
         deviceCount: 0,
-        message: 'FCM is not configured. Please configure Firebase credentials before sending a test notification.',
+        message:
+          "FCM is not configured. Please configure Firebase credentials before sending a test notification.",
       };
     }
 
@@ -3013,7 +3743,7 @@ export class IntegrationSettingsService {
 
     if (dto.deviceToken && dto.deviceToken.trim()) {
       tokens = [dto.deviceToken.trim()];
-    } else if (recipientType === 'CURRENT_ADMIN' && currentAdminId) {
+    } else if (recipientType === "CURRENT_ADMIN" && currentAdminId) {
       const adminTokens = await this.prisma.userDeviceToken.findMany({
         where: {
           userId: currentAdminId,
@@ -3021,16 +3751,18 @@ export class IntegrationSettingsService {
         },
         select: { token: true },
       });
-      tokens = Array.from(new Set(adminTokens.map((t) => t.token.trim()).filter(Boolean)));
+      tokens = Array.from(
+        new Set(adminTokens.map((t) => t.token.trim()).filter(Boolean)),
+      );
       if (tokens.length === 0) {
         return {
           success: false,
           connected: true,
           deviceCount: 0,
-          message: 'No FCM device token registered for this account.',
+          message: "No FCM device token registered for this account.",
         };
       }
-    } else if (recipientType === 'ALL_ADMINS') {
+    } else if (recipientType === "ALL_ADMINS") {
       // First check if current admin has active tokens
       if (currentAdminId) {
         const myTokens = await this.prisma.userDeviceToken.findMany({
@@ -3038,7 +3770,9 @@ export class IntegrationSettingsService {
           select: { token: true },
         });
         if (myTokens.length > 0) {
-          tokens = Array.from(new Set(myTokens.map((t) => t.token.trim()).filter(Boolean)));
+          tokens = Array.from(
+            new Set(myTokens.map((t) => t.token.trim()).filter(Boolean)),
+          );
         }
       }
 
@@ -3053,7 +3787,9 @@ export class IntegrationSettingsService {
                 userRoles: {
                   some: {
                     role: {
-                      name: { in: ['SUPER_ADMIN', 'ADMIN', 'Super Admin', 'Admin'] },
+                      name: {
+                        in: ["SUPER_ADMIN", "ADMIN", "Super Admin", "Admin"],
+                      },
                     },
                   },
                 },
@@ -3072,9 +3808,11 @@ export class IntegrationSettingsService {
           },
           select: { token: true },
         });
-        tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+        tokens = Array.from(
+          new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)),
+        );
       }
-    } else if (recipientType === 'CUSTOMER' && dto.recipientId) {
+    } else if (recipientType === "CUSTOMER" && dto.recipientId) {
       targetCustomerId = Number(dto.recipientId);
       const customerUsers = await this.prisma.user.findMany({
         where: {
@@ -3094,8 +3832,10 @@ export class IntegrationSettingsService {
         },
         select: { token: true },
       });
-      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
-    } else if (recipientType === 'EMPLOYEE' && dto.recipientId) {
+      tokens = Array.from(
+        new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)),
+      );
+    } else if (recipientType === "EMPLOYEE" && dto.recipientId) {
       targetUserId = Number(dto.recipientId);
       const deviceTokens = await this.prisma.userDeviceToken.findMany({
         where: {
@@ -3104,7 +3844,9 @@ export class IntegrationSettingsService {
         },
         select: { token: true },
       });
-      tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+      tokens = Array.from(
+        new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)),
+      );
     } else {
       // Default: check current admin, then all active tokens
       if (currentAdminId) {
@@ -3113,7 +3855,9 @@ export class IntegrationSettingsService {
           select: { token: true },
         });
         if (myTokens.length > 0) {
-          tokens = Array.from(new Set(myTokens.map((t) => t.token.trim()).filter(Boolean)));
+          tokens = Array.from(
+            new Set(myTokens.map((t) => t.token.trim()).filter(Boolean)),
+          );
         }
       }
 
@@ -3123,7 +3867,9 @@ export class IntegrationSettingsService {
           take: 50,
           select: { token: true, userId: true },
         });
-        tokens = Array.from(new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)));
+        tokens = Array.from(
+          new Set(deviceTokens.map((t) => t.token.trim()).filter(Boolean)),
+        );
         targetUserId = deviceTokens[0]?.userId || currentAdminId || null;
       }
     }
@@ -3133,14 +3879,16 @@ export class IntegrationSettingsService {
         success: false,
         connected: true,
         deviceCount: 0,
-        message: 'No FCM device token registered for this account.',
+        message: "No FCM device token registered for this account.",
       };
     }
 
     // 3. Create in-app notification record
     try {
       if (!targetCustomerId) {
-        const firstCust = await this.prisma.customer.findFirst({ select: { id: true } });
+        const firstCust = await this.prisma.customer.findFirst({
+          select: { id: true },
+        });
         targetCustomerId = firstCust?.id || 1;
       }
       await this.prisma.notification.create({
@@ -3149,7 +3897,7 @@ export class IntegrationSettingsService {
           userId: targetUserId,
           title,
           message: body,
-          type: 'TEST_NOTIFICATION',
+          type: "TEST_NOTIFICATION",
         },
       });
     } catch (_) {}
@@ -3163,32 +3911,32 @@ export class IntegrationSettingsService {
         body,
       },
       data: {
-        type: 'TEST_NOTIFICATION',
-        source: 'ADMIN_PANEL',
-        route: '/notifications',
+        type: "TEST_NOTIFICATION",
+        source: "ADMIN_PANEL",
+        route: "/notifications",
       },
       android: {
-        priority: 'high' as const,
+        priority: "high" as const,
         notification: {
-          sound: 'default',
-          channelId: 'high_importance_channel',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-          icon: 'ic_notification',
-          color: '#23C45E',
+          sound: "default",
+          channelId: "high_importance_channel",
+          clickAction: "FLUTTER_NOTIFICATION_CLICK",
+          icon: "ic_notification",
+          color: "#23C45E",
           defaultSound: true,
           defaultVibrateTimings: true,
-          visibility: 'public' as const,
+          visibility: "public" as const,
         },
       },
       webpush: {
-        headers: { Urgency: 'high' },
+        headers: { Urgency: "high" },
         notification: {
           title,
           body,
-          icon: '/logo.png',
+          icon: "/logo.png",
           requireInteraction: true,
         },
-        fcmOptions: { link: '/notifications' },
+        fcmOptions: { link: "/notifications" },
       },
     };
 
@@ -3204,8 +3952,8 @@ export class IntegrationSettingsService {
         if (!resp.success && resp.error) {
           const code = resp.error.code;
           if (
-            code === 'messaging/invalid-registration-token' ||
-            code === 'messaging/registration-token-not-registered'
+            code === "messaging/invalid-registration-token" ||
+            code === "messaging/registration-token-not-registered"
           ) {
             invalidTokens.push(tokens[idx]);
           }
@@ -3216,7 +3964,9 @@ export class IntegrationSettingsService {
           where: { token: { in: invalidTokens } },
           data: { isActive: false },
         });
-        this.logger.log(`[FCM] Deactivated ${invalidTokens.length} stale/invalid tokens during test.`);
+        this.logger.log(
+          `[FCM] Deactivated ${invalidTokens.length} stale/invalid tokens during test.`,
+        );
       }
 
       return {
@@ -3225,7 +3975,7 @@ export class IntegrationSettingsService {
         deviceCount: tokens.length,
         successCount: response.successCount,
         failureCount: response.failureCount,
-        message: 'Test notification sent successfully!',
+        message: "Test notification sent successfully!",
       };
     } catch (err: any) {
       this.logger.error(`[FCM] Test notification failed: ${err?.message}`);
@@ -3233,7 +3983,7 @@ export class IntegrationSettingsService {
         success: false,
         connected: true,
         deviceCount: tokens.length,
-        message: `Failed to send test notification: ${err?.message || 'Firebase dispatch error'}`,
+        message: `Failed to send test notification: ${err?.message || "Firebase dispatch error"}`,
       };
     }
   }

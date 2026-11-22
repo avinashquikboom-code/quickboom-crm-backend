@@ -1,13 +1,22 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  BadGatewayException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+  HttpException,
+  HttpStatus,
+} from "@nestjs/common";
 import {
   IAiProvider,
   TextGenerationResult,
   ImageGenerationResult,
   VideoGenerationResult,
-} from './ai-provider.interface';
-import { S3Service } from '../s3/s3.service';
-import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
-import * as crypto from 'crypto';
+} from "./ai-provider.interface";
+import { S3Service } from "../s3/s3.service";
+import { IntegrationSettingsService } from "../integration-settings/integration-settings.service";
+import * as crypto from "crypto";
 
 @Injectable()
 export class AiProviderService implements IAiProvider {
@@ -54,8 +63,10 @@ export class AiProviderService implements IAiProvider {
   }
 
   private resolveGeminiModel(model?: string): string {
-    const configuredModel = String(model || '').trim();
-    return /^gemini-[a-z0-9.-]+$/i.test(configuredModel) ? configuredModel : 'gemini-2.5-flash';
+    const configuredModel = String(model || "").trim();
+    return /^gemini-[a-z0-9.-]+$/i.test(configuredModel)
+      ? configuredModel
+      : "gemini-2.5-flash";
   }
 
   async getAssistantProviderStatus() {
@@ -64,24 +75,32 @@ export class AiProviderService implements IAiProvider {
       this.integrationSettingsService?.getGeminiConfig().catch(() => null),
     ]);
     return {
-      OPENAI: { configured: Boolean(openai?.apiKey), enabled: Boolean(openai?.apiKey && openai?.isEnabled !== false), model: 'gpt-4o-mini' },
-      GEMINI: { configured: Boolean(gemini?.apiKey), enabled: Boolean(gemini?.apiKey && gemini?.isEnabled !== false), model: this.resolveGeminiModel(gemini?.model) },
+      OPENAI: {
+        configured: Boolean(openai?.apiKey),
+        enabled: Boolean(openai?.apiKey && openai?.isEnabled !== false),
+        model: "gpt-4o-mini",
+      },
+      GEMINI: {
+        configured: Boolean(gemini?.apiKey),
+        enabled: Boolean(gemini?.apiKey && gemini?.isEnabled !== false),
+        model: this.resolveGeminiModel(gemini?.model),
+      },
     };
   }
 
   async answerAssistant(
     question: string,
     authorizedContext: Record<string, any>,
-    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    history: Array<{ role: "user" | "assistant"; content: string }> = [],
     policy: { primaryProvider?: string; fallbackProvider?: string } = {},
-  ): Promise<{ answer: string; provider: 'OPENAI' | 'GEMINI' }> {
+  ): Promise<{ answer: string; provider: "OPENAI" | "GEMINI" }> {
     const system = [
-      'You are QB Nexus, the QB Suite business assistant.',
-      'Answer concisely using only the authorized business data provided below and the conversation history.',
-      'Treat permission denials in the data as final. If the data does not contain the answer, say you cannot access that information yet.',
-      'Never invent counts, records, permissions, actions, or business facts. You are read-only and must not claim you executed an action.',
+      "You are QB Nexus, the QB Suite business assistant.",
+      "Answer concisely using only the authorized business data provided below and the conversation history.",
+      "Treat permission denials in the data as final. If the data does not contain the answer, say you cannot access that information yet.",
+      "Never invent counts, records, permissions, actions, or business facts. You are read-only and must not claim you executed an action.",
       `Authorized data: ${JSON.stringify(authorizedContext)}`,
-    ].join('\n');
+    ].join("\n");
     const [openai, gemini] = await Promise.all([
       this.integrationSettingsService?.getOpenAiConfig().catch(() => null),
       this.integrationSettingsService?.getGeminiConfig().catch(() => null),
@@ -90,44 +109,96 @@ export class AiProviderService implements IAiProvider {
       OPENAI: openai?.apiKey && openai.isEnabled !== false ? openai : null,
       GEMINI: gemini?.apiKey && gemini.isEnabled !== false ? gemini : null,
     };
-    const primary = policy.primaryProvider === 'GEMINI' ? 'GEMINI' : 'OPENAI';
-    const fallback = policy.fallbackProvider === 'DISABLED' ? null : policy.fallbackProvider === 'OPENAI' || policy.fallbackProvider === 'GEMINI' ? policy.fallbackProvider : (primary === 'OPENAI' ? 'GEMINI' : 'OPENAI');
-    const order = [primary, ...(fallback && fallback !== primary ? [fallback] : [])] as Array<'OPENAI' | 'GEMINI'>;
-    const safeHistory = history.slice(-12).map((item) => ({ role: item.role, content: item.content.slice(0, 1600) }));
+    const primary = policy.primaryProvider === "GEMINI" ? "GEMINI" : "OPENAI";
+    const fallback =
+      policy.fallbackProvider === "DISABLED"
+        ? null
+        : policy.fallbackProvider === "OPENAI" ||
+            policy.fallbackProvider === "GEMINI"
+          ? policy.fallbackProvider
+          : primary === "OPENAI"
+            ? "GEMINI"
+            : "OPENAI";
+    const order = [
+      primary,
+      ...(fallback && fallback !== primary ? [fallback] : []),
+    ] as Array<"OPENAI" | "GEMINI">;
+    const safeHistory = history
+      .slice(-12)
+      .map((item) => ({
+        role: item.role,
+        content: item.content.slice(0, 1600),
+      }));
     for (const provider of order) {
       const config = configs[provider];
       if (!config) continue;
       try {
-        const response = provider === 'OPENAI'
-          ? await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-            body: JSON.stringify({ model: 'gpt-4o-mini', messages: [
-              { role: 'system', content: system },
-              ...safeHistory.map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: item.content })),
-              { role: 'user', content: question },
-            ] }), signal: AbortSignal.timeout(20000),
-          })
-          : await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${this.resolveGeminiModel(gemini?.model)}:generateContent`, {
-            method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
-            body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [
-              ...safeHistory.map((item) => ({ role: item.role === 'assistant' ? 'model' : 'user', parts: [{ text: item.content }] })),
-              { role: 'user', parts: [{ text: question }] },
-            ] }), signal: AbortSignal.timeout(20000),
-          });
+        const response =
+          provider === "OPENAI"
+            ? await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${config.apiKey}`,
+                },
+                body: JSON.stringify({
+                  model: "gpt-4o-mini",
+                  messages: [
+                    { role: "system", content: system },
+                    ...safeHistory.map((item) => ({
+                      role: item.role === "assistant" ? "assistant" : "user",
+                      content: item.content,
+                    })),
+                    { role: "user", content: question },
+                  ],
+                }),
+                signal: AbortSignal.timeout(20000),
+              })
+            : await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${this.resolveGeminiModel(gemini?.model)}:generateContent`,
+                {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    "x-goog-api-key": config.apiKey,
+                  },
+                  body: JSON.stringify({
+                    systemInstruction: { parts: [{ text: system }] },
+                    contents: [
+                      ...safeHistory.map((item) => ({
+                        role: item.role === "assistant" ? "model" : "user",
+                        parts: [{ text: item.content }],
+                      })),
+                      { role: "user", parts: [{ text: question }] },
+                    ],
+                  }),
+                  signal: AbortSignal.timeout(20000),
+                },
+              );
         if (!response.ok) {
-          this.logger.warn(`[QB_NEXUS_PROVIDER] ${provider} request failed with HTTP ${response.status}`);
+          this.logger.warn(
+            `[QB_NEXUS_PROVIDER] ${provider} request failed with HTTP ${response.status}`,
+          );
           continue;
         }
-        const data = await response.json() as any;
-        const answer = provider === 'OPENAI'
-          ? data?.choices?.[0]?.message?.content?.trim()
-          : data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('').trim();
+        const data = (await response.json()) as any;
+        const answer =
+          provider === "OPENAI"
+            ? data?.choices?.[0]?.message?.content?.trim()
+            : data?.candidates?.[0]?.content?.parts
+                ?.map((part: any) => part.text || "")
+                .join("")
+                .trim();
         if (answer) return { answer, provider };
       } catch (error: any) {
-        this.logger.warn(`[QB_NEXUS_PROVIDER] ${provider} request failed: ${error?.name || 'provider error'}`);
+        this.logger.warn(
+          `[QB_NEXUS_PROVIDER] ${provider} request failed: ${error?.name || "provider error"}`,
+        );
       }
     }
-    throw new BadRequestException('QB Nexus could not reach the selected AI provider or its configured fallback.');
+    throw new BadRequestException(
+      "QB Nexus could not reach the selected AI provider or its configured fallback.",
+    );
   }
 
   async transcribeAssistantAudio(
@@ -143,46 +214,106 @@ export class AiProviderService implements IAiProvider {
       OPENAI: openai?.apiKey && openai.isEnabled !== false ? openai : null,
       GEMINI: gemini?.apiKey && gemini.isEnabled !== false ? gemini : null,
     };
-    const primary = policy.primaryProvider === 'GEMINI' ? 'GEMINI' : 'OPENAI';
-    const fallback = policy.fallbackProvider === 'DISABLED' ? null : policy.fallbackProvider === 'OPENAI' || policy.fallbackProvider === 'GEMINI' ? policy.fallbackProvider : (primary === 'OPENAI' ? 'GEMINI' : 'OPENAI');
-    const providers = [primary, ...(fallback && fallback !== primary ? [fallback] : [])] as Array<'OPENAI' | 'GEMINI'>;
+    const primary = policy.primaryProvider === "GEMINI" ? "GEMINI" : "OPENAI";
+    const fallback =
+      policy.fallbackProvider === "DISABLED"
+        ? null
+        : policy.fallbackProvider === "OPENAI" ||
+            policy.fallbackProvider === "GEMINI"
+          ? policy.fallbackProvider
+          : primary === "OPENAI"
+            ? "GEMINI"
+            : "OPENAI";
+    const providers = [
+      primary,
+      ...(fallback && fallback !== primary ? [fallback] : []),
+    ] as Array<"OPENAI" | "GEMINI">;
 
     for (const provider of providers) {
       const config = configs[provider];
       if (!config) continue;
       try {
-        let transcript = '';
-        if (provider === 'OPENAI') {
+        let transcript = "";
+        if (provider === "OPENAI") {
           const audioBytes = new Uint8Array(audio.length);
           audioBytes.set(audio);
           const form = new FormData();
-          form.append('file', new Blob([audioBytes.buffer], { type: mimeType }), 'nexus-voice.webm');
-          form.append('model', 'gpt-4o-mini-transcribe');
-          const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-            method: 'POST', headers: { authorization: `Bearer ${config.apiKey}` }, body: form,
-            signal: AbortSignal.timeout(30_000),
-          });
-          if (!response.ok) { this.logger.warn(`[QB_NEXUS_TRANSCRIPTION] ${provider} returned HTTP ${response.status}`); continue; }
-          const result = await response.json() as { text?: string };
-          transcript = String(result?.text || '').trim();
+          form.append(
+            "file",
+            new Blob([audioBytes.buffer], { type: mimeType }),
+            "nexus-voice.webm",
+          );
+          form.append("model", "gpt-4o-mini-transcribe");
+          const response = await fetch(
+            "https://api.openai.com/v1/audio/transcriptions",
+            {
+              method: "POST",
+              headers: { authorization: `Bearer ${config.apiKey}` },
+              body: form,
+              signal: AbortSignal.timeout(30_000),
+            },
+          );
+          if (!response.ok) {
+            this.logger.warn(
+              `[QB_NEXUS_TRANSCRIPTION] ${provider} returned HTTP ${response.status}`,
+            );
+            continue;
+          }
+          const result = (await response.json()) as { text?: string };
+          transcript = String(result?.text || "").trim();
         } else {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${this.resolveGeminiModel(gemini?.model)}:generateContent`, {
-            method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
-            body: JSON.stringify({ contents: [{ role: 'user', parts: [
-              { text: 'Transcribe the user speech in this audio clip. Return only the words spoken. Do not answer the request.' },
-              { inlineData: { mimeType, data: audio.toString('base64') } },
-            ] }] }), signal: AbortSignal.timeout(30_000),
-          });
-          if (!response.ok) { this.logger.warn(`[QB_NEXUS_TRANSCRIPTION] ${provider} returned HTTP ${response.status}`); continue; }
-          const result = await response.json() as any;
-          transcript = result?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('').trim() || '';
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${this.resolveGeminiModel(gemini?.model)}:generateContent`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-goog-api-key": config.apiKey,
+              },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    role: "user",
+                    parts: [
+                      {
+                        text: "Transcribe the user speech in this audio clip. Return only the words spoken. Do not answer the request.",
+                      },
+                      {
+                        inlineData: {
+                          mimeType,
+                          data: audio.toString("base64"),
+                        },
+                      },
+                    ],
+                  },
+                ],
+              }),
+              signal: AbortSignal.timeout(30_000),
+            },
+          );
+          if (!response.ok) {
+            this.logger.warn(
+              `[QB_NEXUS_TRANSCRIPTION] ${provider} returned HTTP ${response.status}`,
+            );
+            continue;
+          }
+          const result = (await response.json()) as any;
+          transcript =
+            result?.candidates?.[0]?.content?.parts
+              ?.map((part: any) => part.text || "")
+              .join("")
+              .trim() || "";
         }
         if (transcript) return transcript.slice(0, 1200);
       } catch (error: any) {
-        this.logger.warn(`[QB_NEXUS_TRANSCRIPTION] ${provider} failed: ${error?.name || 'provider error'}`);
+        this.logger.warn(
+          `[QB_NEXUS_TRANSCRIPTION] ${provider} failed: ${error?.name || "provider error"}`,
+        );
       }
     }
-    throw new BadRequestException('The configured voice transcription providers could not process that recording.');
+    throw new BadRequestException(
+      "The configured voice transcription providers could not process that recording.",
+    );
   }
 
   /**
@@ -199,31 +330,44 @@ export class AiProviderService implements IAiProvider {
     cta?: string;
     instructions?: string;
   }): Promise<TextGenerationResult> {
-    const { product, type, objective, platform, language, tone, cta, instructions } = params;
+    const {
+      product,
+      type,
+      objective,
+      platform,
+      language,
+      tone,
+      cta,
+      instructions,
+    } = params;
 
-    const plat = (platform || 'INSTAGRAM').toUpperCase();
-    const resolvedTone = tone || 'Professional & Engaging';
-    const resolvedCta = cta || 'Learn More';
-    const lang = language || 'English';
+    const plat = (platform || "INSTAGRAM").toUpperCase();
+    const resolvedTone = tone || "Professional & Engaging";
+    const resolvedCta = cta || "Learn More";
+    const lang = language || "English";
 
-    let promptSystem = 'You are an elite, highly creative marketing and social media copywriter. Output strictly a single JSON object with three keys: "caption" (string with engaging copy, line breaks, and emojis), "hashtags" (array of 6 to 12 strings, each starting with #), and "cta" (string with clear call to action).';
+    let promptSystem =
+      'You are an elite, highly creative marketing and social media copywriter. Output strictly a single JSON object with three keys: "caption" (string with engaging copy, line breaks, and emojis), "hashtags" (array of 6 to 12 strings, each starting with #), and "cta" (string with clear call to action).';
 
     let promptUser = `Create high-converting social media content for: "${product}".
-Campaign Objective: ${objective || 'Engagement and Conversions'}
+Campaign Objective: ${objective || "Engagement and Conversions"}
 Platform: ${plat}
 Language: ${lang}
 Tone of Voice: ${resolvedTone}
 Call to Action: ${resolvedCta}
-Special Instructions: ${instructions || 'None'}`;
+Special Instructions: ${instructions || "None"}`;
 
-    if (type === 'CAPTION') {
-      promptSystem = 'You are a social media specialist. Output strictly a JSON object with keys: "caption" (concise, catchy post caption with emojis), "hashtags" (array of 8 to 15 relevant hashtags starting with #), and "cta" (short action phrase).';
+    if (type === "CAPTION") {
+      promptSystem =
+        'You are a social media specialist. Output strictly a JSON object with keys: "caption" (concise, catchy post caption with emojis), "hashtags" (array of 8 to 15 relevant hashtags starting with #), and "cta" (short action phrase).';
       promptUser = `Write an engaging caption and trending hashtags for: "${product}". Platform: ${plat}. Tone: ${resolvedTone}. Language: ${lang}. CTA: ${resolvedCta}.`;
-    } else if (type === 'HASHTAGS') {
-      promptSystem = 'You are an SEO and hashtag researcher. Output strictly a JSON object with keys: "caption" (short 1-line intro), "hashtags" (array of 15 to 20 trending high-traffic hashtags starting with #), and "cta" (short CTA).';
+    } else if (type === "HASHTAGS") {
+      promptSystem =
+        'You are an SEO and hashtag researcher. Output strictly a JSON object with keys: "caption" (short 1-line intro), "hashtags" (array of 15 to 20 trending high-traffic hashtags starting with #), and "cta" (short CTA).';
       promptUser = `Generate trending and targeted hashtags for: "${product}" on ${plat}. Language: ${lang}.`;
-    } else if (type === 'VIDEO') {
-      promptSystem = 'You are a video scriptwriter for short-form video reels. Output strictly a JSON object with keys: "caption" (detailed script breakdown with Hook, Scene-by-Scene Visuals, Voiceover/Dialogue, and Outro/CTA), "hashtags" (array of 8 to 12 hashtags), and "cta" (call to action).';
+    } else if (type === "VIDEO") {
+      promptSystem =
+        'You are a video scriptwriter for short-form video reels. Output strictly a JSON object with keys: "caption" (detailed script breakdown with Hook, Scene-by-Scene Visuals, Voiceover/Dialogue, and Outro/CTA), "hashtags" (array of 8 to 12 hashtags), and "cta" (call to action).';
       promptUser = `Write a viral, high-energy 15-30 second video script for: "${product}". Platform: ${plat}. Tone: ${resolvedTone}. Language: ${lang}. CTA: ${resolvedCta}.`;
     }
 
@@ -237,8 +381,8 @@ Special Instructions: ${instructions || 'None'}`;
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(geminiKey)}`,
           {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               contents: [
                 {
@@ -249,14 +393,16 @@ Special Instructions: ${instructions || 'None'}`;
                   ],
                 },
               ],
-              generationConfig: { responseMimeType: 'application/json' },
+              generationConfig: { responseMimeType: "application/json" },
             }),
           },
         );
 
         if (response.ok) {
           const data = (await response.json()) as any;
-          this.logger.log(`[AI_RESPONSE_RECEIVED] Gemini responded successfully.`);
+          this.logger.log(
+            `[AI_RESPONSE_RECEIVED] Gemini responded successfully.`,
+          );
           const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (textOutput) {
             const parsed = this.parseJsonSafely(textOutput);
@@ -274,10 +420,14 @@ Special Instructions: ${instructions || 'None'}`;
           }
         } else {
           const errBody = await response.text();
-          this.logger.warn(`[AI_PROVIDER_ERROR] Gemini API error HTTP ${response.status}: ${errBody}`);
+          this.logger.warn(
+            `[AI_PROVIDER_ERROR] Gemini API error HTTP ${response.status}: ${errBody}`,
+          );
         }
       } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_ERROR] Gemini API network/execution error: ${err?.message}`);
+        this.logger.warn(
+          `[AI_PROVIDER_ERROR] Gemini API network/execution error: ${err?.message}`,
+        );
       }
     }
 
@@ -288,25 +438,30 @@ Special Instructions: ${instructions || 'None'}`;
         `[AI_REQUEST_SENT] Calling OpenAI gpt-4o-mini: product="${product}", type="${type}"`,
       );
       try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${openAiKey}`,
+        const response = await fetch(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${openAiKey}`,
+            },
+            body: JSON.stringify({
+              model: "gpt-4o-mini",
+              messages: [
+                { role: "system", content: promptSystem },
+                { role: "user", content: promptUser },
+              ],
+              response_format: { type: "json_object" },
+            }),
           },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: promptSystem },
-              { role: 'user', content: promptUser },
-            ],
-            response_format: { type: 'json_object' },
-          }),
-        });
+        );
 
         if (response.ok) {
           const data = (await response.json()) as any;
-          this.logger.log(`[AI_RESPONSE_RECEIVED] OpenAI responded successfully.`);
+          this.logger.log(
+            `[AI_RESPONSE_RECEIVED] OpenAI responded successfully.`,
+          );
           const content = data?.choices?.[0]?.message?.content;
           if (content) {
             const parsed = this.parseJsonSafely(content);
@@ -324,10 +479,14 @@ Special Instructions: ${instructions || 'None'}`;
           }
         } else {
           const errBody = await response.text();
-          this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status}: ${errBody}`);
+          this.logger.warn(
+            `[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status}: ${errBody}`,
+          );
         }
       } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_ERROR] OpenAI API execution error: ${err?.message}`);
+        this.logger.warn(
+          `[AI_PROVIDER_ERROR] OpenAI API execution error: ${err?.message}`,
+        );
       }
     }
 
@@ -335,33 +494,56 @@ Special Instructions: ${instructions || 'None'}`;
     const anthropic = await this.getAnthropicConfig();
     if (anthropic) {
       try {
-        const model = anthropic.model || 'claude-sonnet-5';
+        const model = anthropic.model || "claude-sonnet-5";
         const request: Record<string, any> = {
           model,
           max_tokens: anthropic.maxTokens || 1024,
           system: promptSystem,
-          messages: [{ role: 'user', content: promptUser }],
+          messages: [{ role: "user", content: promptUser }],
         };
         const temperature = Number(anthropic.temperature);
-        if (Number.isFinite(temperature) && temperature !== 1 && !/(opus-4-7|mythos)/i.test(model)) request.temperature = temperature;
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-api-key': anthropic.apiKey, 'anthropic-version': '2023-06-01' },
+        if (
+          Number.isFinite(temperature) &&
+          temperature !== 1 &&
+          !/(opus-4-7|mythos)/i.test(model)
+        )
+          request.temperature = temperature;
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": anthropic.apiKey,
+            "anthropic-version": "2023-06-01",
+          },
           body: JSON.stringify(request),
           signal: AbortSignal.timeout(30000),
         });
         if (response.ok) {
           const data = (await response.json()) as any;
-          const textOutput = Array.isArray(data?.content) ? data.content.filter((item: any) => item.type === 'text').map((item: any) => item.text).join('\n') : '';
+          const textOutput = Array.isArray(data?.content)
+            ? data.content
+                .filter((item: any) => item.type === "text")
+                .map((item: any) => item.text)
+                .join("\n")
+            : "";
           if (textOutput) {
             const parsed = this.parseJsonSafely(textOutput);
-            if (parsed?.caption) return { caption: parsed.caption, hashtags: this.normalizeHashtags(parsed.hashtags), cta: parsed.cta || resolvedCta };
+            if (parsed?.caption)
+              return {
+                caption: parsed.caption,
+                hashtags: this.normalizeHashtags(parsed.hashtags),
+                cta: parsed.cta || resolvedCta,
+              };
           }
         } else {
-          this.logger.warn(`[AI_PROVIDER_ERROR] Anthropic API error HTTP ${response.status}`);
+          this.logger.warn(
+            `[AI_PROVIDER_ERROR] Anthropic API error HTTP ${response.status}`,
+          );
         }
       } catch (err: any) {
-        this.logger.warn(`[AI_PROVIDER_ERROR] Anthropic request failed: ${err?.name === 'TimeoutError' ? 'timeout' : 'request error'}`);
+        this.logger.warn(
+          `[AI_PROVIDER_ERROR] Anthropic request failed: ${err?.name === "TimeoutError" ? "timeout" : "request error"}`,
+        );
       }
     }
 
@@ -370,13 +552,13 @@ Special Instructions: ${instructions || 'None'}`;
       `[AI_REQUEST_SENT] Calling Pollinations live AI LLM: product="${product}", type="${type}"`,
     );
     try {
-      const response = await fetch('https://text.pollinations.ai/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("https://text.pollinations.ai/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [
-            { role: 'system', content: promptSystem },
-            { role: 'user', content: promptUser },
+            { role: "system", content: promptSystem },
+            { role: "user", content: promptUser },
           ],
           jsonMode: true,
         }),
@@ -384,7 +566,9 @@ Special Instructions: ${instructions || 'None'}`;
 
       if (response.ok) {
         const text = await response.text();
-        this.logger.log(`[AI_RESPONSE_RECEIVED] Pollinations AI responded (${text.length} chars).`);
+        this.logger.log(
+          `[AI_RESPONSE_RECEIVED] Pollinations AI responded (${text.length} chars).`,
+        );
         const parsed = this.parseJsonSafely(text);
         if (parsed?.caption) {
           const rawTags = this.normalizeHashtags(parsed.hashtags);
@@ -399,13 +583,19 @@ Special Instructions: ${instructions || 'None'}`;
         }
       } else {
         const errText = await response.text();
-        this.logger.warn(`[AI_PROVIDER_ERROR] Pollinations AI error HTTP ${response.status}: ${errText}`);
+        this.logger.warn(
+          `[AI_PROVIDER_ERROR] Pollinations AI error HTTP ${response.status}: ${errText}`,
+        );
       }
     } catch (err: any) {
-      this.logger.error(`[AI_PROVIDER_ERROR] Pollinations AI error: ${err?.message}`);
+      this.logger.error(
+        `[AI_PROVIDER_ERROR] Pollinations AI error: ${err?.message}`,
+      );
     }
 
-    throw new Error('AI text generation failed: Could not receive content from AI providers.');
+    throw new Error(
+      "AI text generation failed: Could not receive content from AI providers.",
+    );
   }
 
   /**
@@ -424,106 +614,125 @@ Special Instructions: ${instructions || 'None'}`;
     const { product, objective, tone, instructions } = params;
 
     if (!this.integrationSettingsService) {
-      throw new BadRequestException('Integration settings service is not available');
+      throw new BadRequestException(
+        "Integration settings service is not available",
+      );
     }
 
     // Retrieve OpenAI configuration from Admin Integration
-    const openAiConfig = await this.integrationSettingsService.getOpenAiConfig();
+    const openAiConfig =
+      await this.integrationSettingsService.getOpenAiConfig();
 
     if (!openAiConfig?.isConfigured || !openAiConfig.apiKey) {
       throw new BadRequestException(
-        'OpenAI is not configured. Please configure your OpenAI API Key in Admin Panel -> Integrations.',
+        "OpenAI is not configured. Please configure your OpenAI API Key in Admin Panel -> Integrations.",
       );
     }
 
     if (!openAiConfig.isEnabled) {
       throw new BadRequestException(
-        'OpenAI integration is currently disabled in Admin Panel -> Integrations.',
+        "OpenAI integration is currently disabled in Admin Panel -> Integrations.",
       );
     }
 
     const openAiKey = openAiConfig.apiKey.trim();
-    const fullPrompt = `Professional commercial advertising photo of ${product}. ${
-      objective ? `Campaign: ${objective}. ` : ''
-    }${tone ? `Aesthetic: ${tone}. ` : ''}High quality studio lighting, 4K product photography, sharp focus, vibrant colors. ${
-      instructions || ''
-    }`.trim();
+    const fullPrompt =
+      `Professional commercial advertising photo of ${product}. ${
+        objective ? `Campaign: ${objective}. ` : ""
+      }${tone ? `Aesthetic: ${tone}. ` : ""}High quality studio lighting, 4K product photography, sharp focus, vibrant colors. ${
+        instructions || ""
+      }`.trim();
 
-    const requestedModel = openAiConfig.imageModel || 'dall-e-3';
+    const requestedModel = String(
+      openAiConfig.imageModel || "gpt-image-2.6-flare",
+    ).trim();
+    const supportedModels = new Set([
+      "gpt-image-2.6-sunburst",
+      "gpt-image-2.6-flare",
+      "gpt-image-2.5-sunburst",
+      "gpt-image-2.5-flare",
+      "gpt-image-2",
+      "gpt-image-1.5",
+    ]);
+    if (!supportedModels.has(requestedModel)) {
+      throw new BadRequestException(
+        `Unsupported OpenAI image model "${requestedModel}". Select a GPT Image model in Admin Panel -> Settings -> Integrations.`,
+      );
+    }
+    const requestBody = {
+      model: requestedModel,
+      prompt: fullPrompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "auto",
+      output_format: "png",
+    };
     this.logger.log(
-      `[AI_REQUEST_SENT] Calling OpenAI Images API (${requestedModel}): prompt="${product}"`,
+      `[AI_REQUEST_SENT] OpenAI Images API model=${requestedModel}, size=${requestBody.size}, quality=${requestBody.quality}, output_format=${requestBody.output_format}`,
     );
 
-    async function callOpenAiImages(modelName: string): Promise<Response> {
-      return fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
+    let response: Response;
+    try {
+      response = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${openAiKey}`,
         },
-        body: JSON.stringify({
-          model: modelName,
-          prompt: fullPrompt,
-          n: 1,
-          size: '1024x1024',
-        }),
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(120000),
       });
-    }
-
-    let response: Response;
-    let activeModel = requestedModel;
-
-    try {
-      response = await callOpenAiImages(activeModel);
     } catch (netErr: any) {
-      this.logger.error(`[AI_PROVIDER_ERROR] OpenAI connection failed: ${netErr?.message}`);
-      throw new BadRequestException(`OpenAI connection failed: ${netErr?.message}`);
-    }
-
-    // If dall-e-3 is not enabled or available for this API key/tier, automatically fallback to dall-e-2
-    if (!response.ok && activeModel === 'dall-e-3') {
-      let errDetail = '';
-      try {
-        const cloned = response.clone();
-        const errJson = await cloned.json();
-        errDetail = errJson?.error?.message || JSON.stringify(errJson);
-      } catch {
-        try {
-          const cloned = response.clone();
-          errDetail = await cloned.text();
-        } catch {
-          errDetail = '';
-        }
-      }
-
-      if (errDetail.toLowerCase().includes('does not exist') || errDetail.toLowerCase().includes('not found') || errDetail.toLowerCase().includes('model')) {
-        this.logger.warn(`[AI_PROVIDER_FALLBACK] '${activeModel}' is not enabled for this OpenAI account (${errDetail}). Retrying with 'dall-e-2'...`);
-        try {
-          const fallbackRes = await callOpenAiImages('dall-e-2');
-          if (fallbackRes.ok) {
-            response = fallbackRes;
-            activeModel = 'dall-e-2';
-            this.logger.log(`[AI_PROVIDER_FALLBACK] Successfully generated image using fallback model 'dall-e-2'`);
-          } else {
-            // Keep original or fallback response
-            response = fallbackRes;
-          }
-        } catch (fallbackErr: any) {
-          this.logger.warn(`[AI_PROVIDER_FALLBACK] Fallback to dall-e-2 failed: ${fallbackErr?.message}`);
-        }
-      }
+      this.logger.warn(
+        `[AI_PROVIDER_ERROR] OpenAI Images network failure (${netErr?.name || "network error"})`,
+      );
+      throw new ServiceUnavailableException(
+        "OpenAI image generation is temporarily unavailable. Please try again.",
+      );
     }
 
     if (!response.ok) {
-      let errDetail = '';
+      let providerCode = "";
+      let providerMessage = "";
       try {
-        const errJson = await response.json();
-        errDetail = errJson?.error?.message || JSON.stringify(errJson);
+        const errorBody = (await response.json()) as any;
+        providerCode = String(
+          errorBody?.error?.code || errorBody?.error?.type || "",
+        );
+        providerMessage = String(errorBody?.error?.message || "");
       } catch {
-        errDetail = await response.text();
+        /* response body may not be JSON */
       }
-      this.logger.error(`[AI_PROVIDER_ERROR] OpenAI API error HTTP ${response.status} (model=${activeModel}): ${errDetail}`);
-      throw new BadRequestException(`OpenAI image generation failed: ${errDetail}`);
+      this.logger.warn(
+        `[AI_PROVIDER_ERROR] OpenAI Images API HTTP ${response.status}, model=${requestedModel}, code=${providerCode || "unknown"}`,
+      );
+      if (response.status === 401 || response.status === 403) {
+        throw new UnauthorizedException(
+          "OpenAI rejected the configured API key or this account is not authorized to use image generation. Check Admin Panel -> Settings -> Integrations.",
+        );
+      }
+      if (response.status === 429) {
+        throw new HttpException(
+          "OpenAI image generation is rate limited or the account has insufficient quota. Please try again later or check OpenAI billing.",
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (
+        response.status === 400 &&
+        /model/i.test(providerCode + providerMessage)
+      ) {
+        throw new BadRequestException(
+          "OpenAI rejected the configured image model or its settings. Select a supported GPT Image model in Admin Panel -> Settings -> Integrations.",
+        );
+      }
+      if (response.status >= 500) {
+        throw new BadGatewayException(
+          "OpenAI image generation encountered a provider error. Please try again later.",
+        );
+      }
+      throw new BadRequestException(
+        "OpenAI image generation request was rejected. Check the prompt and image model settings.",
+      );
     }
 
     const data = (await response.json()) as any;
@@ -532,34 +741,45 @@ Special Instructions: ${instructions || 'None'}`;
     const imageUrl = item?.url;
 
     if (!b64 && !imageUrl) {
-      throw new BadRequestException('OpenAI returned invalid or empty image data.');
+      throw new BadRequestException(
+        "OpenAI returned invalid or empty image data.",
+      );
     }
 
     let buffer: Buffer;
-    let mimeType = 'image/png';
+    let mimeType = "image/png";
 
     if (b64) {
-      buffer = Buffer.from(b64, 'base64');
+      buffer = Buffer.from(b64, "base64");
     } else {
       // If OpenAI returned a downloadable image URL, fetch the image buffer to upload to existing S3
-      this.logger.log(`[AI_RESPONSE_RECEIVED] OpenAI returned image URL, downloading to buffer for S3 upload...`);
+      this.logger.log(
+        `[AI_RESPONSE_RECEIVED] OpenAI returned image URL, downloading to buffer for S3 upload...`,
+      );
       try {
         const fetchImgRes = await fetch(imageUrl);
         if (!fetchImgRes.ok) {
-          throw new Error(`Failed to fetch image from OpenAI URL: HTTP ${fetchImgRes.status}`);
+          throw new Error(
+            `Failed to fetch image from OpenAI URL: HTTP ${fetchImgRes.status}`,
+          );
         }
         const arrayBuf = await fetchImgRes.arrayBuffer();
         buffer = Buffer.from(arrayBuf);
-        const ct = fetchImgRes.headers.get('content-type');
+        const ct = fetchImgRes.headers.get("content-type");
         if (ct) mimeType = ct;
       } catch (dlErr: any) {
-        this.logger.error(`[AI_PROVIDER_ERROR] Failed downloading image from OpenAI URL: ${dlErr?.message}`);
-        throw new BadRequestException(`Failed downloading OpenAI image: ${dlErr?.message}`);
+        this.logger.error(
+          `[AI_PROVIDER_ERROR] Failed downloading image from OpenAI URL: ${dlErr?.message}`,
+        );
+        throw new BadRequestException(
+          `Failed downloading OpenAI image: ${dlErr?.message}`,
+        );
       }
     }
 
-    const uniqueId = crypto.randomBytes(8).toString('hex');
-    const extension = mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'png';
+    const uniqueId = crypto.randomBytes(8).toString("hex");
+    const extension =
+      mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
     const filename = `ai-poster-${Date.now()}-${uniqueId}.${extension}`;
 
     this.logger.log(
@@ -577,15 +797,23 @@ Special Instructions: ${instructions || 'None'}`;
         buffer,
         mimeType,
         filename,
-        'marketing/banners',
+        "marketing/banners",
       );
       fileKey = uploadResult.imageKey;
-      const presigned = await this.s3Service.getPresignedUrl(uploadResult.imageKey);
+      const presigned = await this.s3Service.getPresignedUrl(
+        uploadResult.imageKey,
+      );
       mediaUrl = presigned || uploadResult.imageUrl;
-      this.logger.log(`[AI_STORAGE_UPLOAD] Stored OpenAI image in S3: ${mediaUrl}`);
+      this.logger.log(
+        `[AI_STORAGE_UPLOAD] Stored OpenAI image in S3: ${mediaUrl}`,
+      );
     } catch (storageErr: any) {
-      this.logger.error(`[AI_STORAGE_UPLOAD] S3 upload error: ${storageErr?.message}`);
-      throw new BadRequestException(`Image storage failed: ${storageErr?.message}`);
+      this.logger.error(
+        `[AI_STORAGE_UPLOAD] S3 upload error: ${storageErr?.message}`,
+      );
+      throw new BadRequestException(
+        `Image storage failed: ${storageErr?.message}`,
+      );
     }
 
     return {
@@ -595,6 +823,7 @@ Special Instructions: ${instructions || 'None'}`;
       fileKey,
       width: 1024,
       height: 1024,
+      model: requestedModel,
     };
   }
 
@@ -611,31 +840,34 @@ Special Instructions: ${instructions || 'None'}`;
     cta?: string;
     duration?: number;
   }): Promise<VideoGenerationResult> {
-    const jobId = `VIDJOB_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const jobId = `VIDJOB_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 
     if (!this.integrationSettingsService) {
-      throw new BadRequestException('Integration settings service is not available');
+      throw new BadRequestException(
+        "Integration settings service is not available",
+      );
     }
 
     // Retrieve Gemini configuration from Admin Integration
-    const geminiConfig = await this.integrationSettingsService.getGeminiConfig();
+    const geminiConfig =
+      await this.integrationSettingsService.getGeminiConfig();
 
     if (!geminiConfig?.isConfigured || !geminiConfig.apiKey) {
       throw new BadRequestException(
-        'Google Gemini is not configured. Please configure your Gemini API Key in Admin Panel -> Integrations.',
+        "Google Gemini is not configured. Please configure your Gemini API Key in Admin Panel -> Integrations.",
       );
     }
 
     if (!geminiConfig.isEnabled) {
       throw new BadRequestException(
-        'Google Gemini integration is currently disabled in Admin Panel -> Integrations.',
+        "Google Gemini integration is currently disabled in Admin Panel -> Integrations.",
       );
     }
 
     const geminiKey = geminiConfig.apiKey.trim();
     const fullPrompt = `${params.product}. ${
-      params.objective ? `Goal: ${params.objective}. ` : ''
-    }${params.tone ? `Style: ${params.tone}. ` : ''}High production quality, commercial video advertising clip.`.trim();
+      params.objective ? `Goal: ${params.objective}. ` : ""
+    }${params.tone ? `Style: ${params.tone}. ` : ""}High production quality, commercial video advertising clip.`.trim();
 
     this.logger.log(
       `[AI_REQUEST_SENT] Calling Google Gemini video generation: prompt="${params.product}"`,
@@ -643,23 +875,23 @@ Special Instructions: ${instructions || 'None'}`;
 
     // Call Google Gemini long-running video generation endpoint (Veo models on Generative Language API)
     const candidateModels = [
-      'veo-2.0-generate-001',
-      'veo-3.1-generate-preview',
-      'veo-2.0',
+      "veo-2.0-generate-001",
+      "veo-3.1-generate-preview",
+      "veo-2.0",
     ];
 
     let operationName: string | null = null;
     let usedModel = candidateModels[0];
-    let lastError: string = '';
+    let lastError: string = "";
 
     for (const model of candidateModels) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`;
         const res = await fetch(endpoint, {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': geminiKey,
+            "Content-Type": "application/json",
+            "x-goog-api-key": geminiKey,
           },
           body: JSON.stringify({
             instances: [
@@ -669,7 +901,7 @@ Special Instructions: ${instructions || 'None'}`;
             ],
             parameters: {
               sampleCount: 1,
-              aspectRatio: '9:16',
+              aspectRatio: "9:16",
               durationSeconds: params.duration || 8,
             },
           }),
@@ -680,19 +912,23 @@ Special Instructions: ${instructions || 'None'}`;
           if (data.name) {
             operationName = data.name;
             usedModel = model;
-            this.logger.log(`[AI_RESPONSE_RECEIVED] Gemini video generation started: operation=${operationName}`);
+            this.logger.log(
+              `[AI_RESPONSE_RECEIVED] Gemini video generation started: operation=${operationName}`,
+            );
             break;
           }
         } else {
           const errText = await res.text();
           lastError = errText;
-          this.logger.warn(`[AI_PROVIDER_WARN] Gemini model ${model} returned HTTP ${res.status}: ${errText}`);
+          this.logger.warn(
+            `[AI_PROVIDER_WARN] Gemini model ${model} returned HTTP ${res.status}: ${errText}`,
+          );
           if (res.status === 404) continue;
           throw new Error(errText);
         }
       } catch (err: any) {
         lastError = err?.message || lastError;
-        if (!err?.message?.includes('404')) {
+        if (!err?.message?.includes("404")) {
           break;
         }
       }
@@ -704,8 +940,12 @@ Special Instructions: ${instructions || 'None'}`;
         const p = JSON.parse(lastError);
         parsedMsg = p?.error?.message || lastError;
       } catch {}
-      this.logger.error(`[AI_PROVIDER_ERROR] Gemini video generation failed: ${parsedMsg}`);
-      throw new BadRequestException(`Gemini video generation failed: ${parsedMsg || 'Could not initiate video operation'}`);
+      this.logger.error(
+        `[AI_PROVIDER_ERROR] Gemini video generation failed: ${parsedMsg}`,
+      );
+      throw new BadRequestException(
+        `Gemini video generation failed: ${parsedMsg || "Could not initiate video operation"}`,
+      );
     }
 
     const jobResult: VideoGenerationResult = {
@@ -713,7 +953,7 @@ Special Instructions: ${instructions || 'None'}`;
       url: undefined,
       fileKey: undefined,
       duration: params.duration || 8,
-      status: 'PROCESSING',
+      status: "PROCESSING",
     };
 
     (jobResult as any).operationName = operationName;
@@ -732,11 +972,11 @@ Special Instructions: ${instructions || 'None'}`;
     if (!job) {
       return {
         jobId,
-        status: 'FAILED',
+        status: "FAILED",
       };
     }
 
-    if (job.status === 'COMPLETED' || job.status === 'FAILED') {
+    if (job.status === "COMPLETED" || job.status === "FAILED") {
       return job;
     }
 
@@ -744,7 +984,7 @@ Special Instructions: ${instructions || 'None'}`;
     const geminiKey = (job as any).geminiApiKey;
 
     if (!operationName || !geminiKey) {
-      job.status = 'FAILED';
+      job.status = "FAILED";
       return job;
     }
 
@@ -752,43 +992,53 @@ Special Instructions: ${instructions || 'None'}`;
       const opUrl = `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${encodeURIComponent(geminiKey)}`;
       const opRes = await fetch(opUrl, {
         headers: {
-          'x-goog-api-key': geminiKey,
+          "x-goog-api-key": geminiKey,
         },
       });
 
       if (!opRes.ok) {
         const errBody = await opRes.text();
-        this.logger.warn(`[AI_GENERATION_STATUS] Gemini operation check returned HTTP ${opRes.status}: ${errBody}`);
+        this.logger.warn(
+          `[AI_GENERATION_STATUS] Gemini operation check returned HTTP ${opRes.status}: ${errBody}`,
+        );
         return job;
       }
 
       const opData = (await opRes.json()) as any;
       if (!opData.done) {
-        this.logger.log(`[AI_GENERATION_STATUS] Gemini video operation ${operationName} still processing...`);
+        this.logger.log(
+          `[AI_GENERATION_STATUS] Gemini video operation ${operationName} still processing...`,
+        );
         return job;
       }
 
       if (opData.error) {
-        this.logger.error(`[AI_PROVIDER_ERROR] Gemini video operation failed: ${opData.error?.message}`);
-        job.status = 'FAILED';
+        this.logger.error(
+          `[AI_PROVIDER_ERROR] Gemini video operation failed: ${opData.error?.message}`,
+        );
+        job.status = "FAILED";
         return job;
       }
 
       const videoUri =
-        opData.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ||
-        opData.response?.generatedSamples?.[0]?.video?.uri;
+        opData.response?.generateVideoResponse?.generatedSamples?.[0]?.video
+          ?.uri || opData.response?.generatedSamples?.[0]?.video?.uri;
 
       if (!videoUri) {
-        this.logger.error('[AI_PROVIDER_ERROR] Gemini video operation completed without video URI');
-        job.status = 'FAILED';
+        this.logger.error(
+          "[AI_PROVIDER_ERROR] Gemini video operation completed without video URI",
+        );
+        job.status = "FAILED";
         return job;
       }
 
-      this.logger.log(`[AI_RESPONSE_RECEIVED] Gemini video completed. Downloading video from: ${videoUri}`);
+      this.logger.log(
+        `[AI_RESPONSE_RECEIVED] Gemini video completed. Downloading video from: ${videoUri}`,
+      );
 
       const vRes = await fetch(videoUri, {
         headers: {
-          'x-goog-api-key': geminiKey,
+          "x-goog-api-key": geminiKey,
         },
       });
 
@@ -798,7 +1048,7 @@ Special Instructions: ${instructions || 'None'}`;
 
       const ab = await vRes.arrayBuffer();
       const videoBuffer = Buffer.from(ab);
-      const filename = `ai-video-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.mp4`;
+      const filename = `ai-video-${Date.now()}-${crypto.randomBytes(6).toString("hex")}.mp4`;
 
       this.logger.log(
         `[AI_STORAGE_UPLOAD] Uploading Gemini video (${videoBuffer.length} bytes) to existing S3 storage`,
@@ -807,23 +1057,27 @@ Special Instructions: ${instructions || 'None'}`;
         {
           buffer: videoBuffer,
           originalname: filename,
-          mimetype: 'video/mp4',
+          mimetype: "video/mp4",
           size: videoBuffer.length,
         } as any,
-        'marketing/videos',
-        'VIDEO',
+        "marketing/videos",
+        "VIDEO",
       );
 
       const finalUrl = s3Res.imageUrl;
-      job.status = 'COMPLETED';
+      job.status = "COMPLETED";
       job.url = finalUrl;
       job.fileKey = filename;
       this.videoJobs.set(jobId, job);
 
-      this.logger.log(`[AI_STORAGE_UPLOAD] Stored Gemini video in S3: ${finalUrl}`);
+      this.logger.log(
+        `[AI_STORAGE_UPLOAD] Stored Gemini video in S3: ${finalUrl}`,
+      );
       return job;
     } catch (err: any) {
-      this.logger.error(`[AI_PROVIDER_ERROR] Gemini video polling error: ${err?.message}`);
+      this.logger.error(
+        `[AI_PROVIDER_ERROR] Gemini video polling error: ${err?.message}`,
+      );
       return job;
     }
   }
@@ -834,8 +1088,8 @@ Special Instructions: ${instructions || 'None'}`;
     } catch {
       try {
         const cleaned = text
-          .replace(/```json/gi, '')
-          .replace(/```/g, '')
+          .replace(/```json/gi, "")
+          .replace(/```/g, "")
           .trim();
         return JSON.parse(cleaned);
       } catch {
@@ -855,6 +1109,6 @@ Special Instructions: ${instructions || 'None'}`;
     return raw
       .map((h) => String(h).trim())
       .filter((h) => h.length > 0)
-      .map((h) => (h.startsWith('#') ? h : `#${h}`));
+      .map((h) => (h.startsWith("#") ? h : `#${h}`));
   }
 }

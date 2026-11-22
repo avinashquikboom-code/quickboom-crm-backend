@@ -4,13 +4,13 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
-} from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { AiProviderService } from './ai-provider.service';
-import { AiCreditService } from './ai-credit.service';
-import { GenerateContentDto, UpdateGenerationDto } from './dto/ai-studio.dto';
-import { S3Service } from '../s3/s3.service';
-import { isUserAdmin } from '../../common/utils/role.util';
+} from "@nestjs/common";
+import { PrismaService } from "../../prisma/prisma.service";
+import { AiProviderService } from "./ai-provider.service";
+import { AiCreditService } from "./ai-credit.service";
+import { GenerateContentDto, UpdateGenerationDto } from "./dto/ai-studio.dto";
+import { S3Service } from "../s3/s3.service";
+import { isUserAdmin } from "../../common/utils/role.util";
 
 @Injectable()
 export class AiGenerationService {
@@ -27,113 +27,360 @@ export class AiGenerationService {
   async answerNexusQuestion(
     user: any,
     rawQuestion: string,
-    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
-    providerPolicy: { primaryProvider?: string; fallbackProvider?: string } = {},
-  ): Promise<{ answer: string; provider: 'OPENAI' | 'GEMINI' }> {
-    const question = String(rawQuestion || '').trim().slice(0, 1200);
-    if (!question) throw new BadRequestException('Ask QB Nexus a question first.');
+    history: Array<{ role: "user" | "assistant"; content: string }> = [],
+    providerPolicy: {
+      primaryProvider?: string;
+      fallbackProvider?: string;
+    } = {},
+  ): Promise<{ answer: string; provider: "OPENAI" | "GEMINI" }> {
+    const question = String(rawQuestion || "")
+      .trim()
+      .slice(0, 1200);
+    if (!question)
+      throw new BadRequestException("Ask QB Nexus a question first.");
     const customerId = Number(user?.customerId);
     const userId = Number(user?.id);
-    if (!Number.isInteger(customerId) || customerId <= 0 || !Number.isInteger(userId) || userId <= 0) {
-      throw new ForbiddenException('Your account is not scoped to a QB Suite business.');
+    if (
+      !Number.isInteger(customerId) ||
+      customerId <= 0 ||
+      !Number.isInteger(userId) ||
+      userId <= 0
+    ) {
+      throw new ForbiddenException(
+        "Your account is not scoped to a QB Suite business.",
+      );
     }
     this.assertNexusRateLimit(userId);
 
-    const context: Record<string, any> = { scope: 'Current user business only', availableData: [], permissions: [] };
+    const context: Record<string, any> = {
+      scope: "Current user business only",
+      availableData: [],
+      permissions: [],
+    };
     const isAdmin = isUserAdmin(user);
     const { start: dayStart, end: dayEnd, now } = this.getNexusTodayRange();
-    const employee = isAdmin ? null : await this.prisma.employee.findFirst({ where: { customerId, userId }, select: { id: true, firstName: true, lastName: true, employeeCode: true, status: true } });
-    const employeeScope = employee ? { employeeId: employee.id } : { employeeId: -1 };
+    const employee = isAdmin
+      ? null
+      : await this.prisma.employee.findFirst({
+          where: { customerId, userId },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            status: true,
+          },
+        });
+    const employeeScope = employee
+      ? { employeeId: employee.id }
+      : { employeeId: -1 };
 
     if (/\b(lead|leads|pipeline|prospect|crm)\b/i.test(question)) {
       const accessScope = isAdmin ? {} : { assignedToId: userId };
-      const openStatuses = { notIn: ['WON', 'LOST', 'CANCELLED', 'CONVERTED'] };
-      const baseWhere: any = { customerId, deletedAt: null, status: openStatuses, ...accessScope };
-      const [pendingCount, totalCount, convertedCount, todayCount] = await Promise.all([
-        this.prisma.lead.count({ where: baseWhere }),
-        this.prisma.lead.count({ where: { customerId, deletedAt: null, ...accessScope } }),
-        this.prisma.lead.count({ where: { customerId, deletedAt: null, status: { in: ['WON', 'CONVERTED'] }, ...accessScope } }),
-        this.prisma.lead.count({ where: { ...baseWhere, createdAt: { gte: dayStart, lt: dayEnd } } }),
-      ]);
-      const leadData: Record<string, any> = { source: 'CRM leads', totalCount, pendingCount, convertedCount, createdTodayPendingCount: todayCount, asOf: now.toISOString(), definition: 'Pending means status is not WON, LOST, CANCELLED, or CONVERTED.' };
-      if (/\b(list|show|details|names|who|follow.?ups?|assigned)\b/i.test(question)) {
+      const openStatuses = { notIn: ["WON", "LOST", "CANCELLED", "CONVERTED"] };
+      const baseWhere: any = {
+        customerId,
+        deletedAt: null,
+        status: openStatuses,
+        ...accessScope,
+      };
+      const [pendingCount, totalCount, convertedCount, todayCount] =
+        await Promise.all([
+          this.prisma.lead.count({ where: baseWhere }),
+          this.prisma.lead.count({
+            where: { customerId, deletedAt: null, ...accessScope },
+          }),
+          this.prisma.lead.count({
+            where: {
+              customerId,
+              deletedAt: null,
+              status: { in: ["WON", "CONVERTED"] },
+              ...accessScope,
+            },
+          }),
+          this.prisma.lead.count({
+            where: { ...baseWhere, createdAt: { gte: dayStart, lt: dayEnd } },
+          }),
+        ]);
+      const leadData: Record<string, any> = {
+        source: "CRM leads",
+        totalCount,
+        pendingCount,
+        convertedCount,
+        createdTodayPendingCount: todayCount,
+        asOf: now.toISOString(),
+        definition:
+          "Pending means status is not WON, LOST, CANCELLED, or CONVERTED.",
+      };
+      if (
+        /\b(list|show|details|names|who|follow.?ups?|assigned)\b/i.test(
+          question,
+        )
+      ) {
         const leads = await this.prisma.lead.findMany({
-          where: { ...baseWhere, ...(/follow.?ups?/i.test(question) ? { nextFollowUpDate: { gte: now } } : {}) },
-          select: { id: true, firstName: true, lastName: true, companyName: true, status: true, assignedToId: true, nextFollowUpDate: true },
-          orderBy: [{ nextFollowUpDate: 'asc' }, { createdAt: 'desc' }], take: 8,
+          where: {
+            ...baseWhere,
+            ...(/follow.?ups?/i.test(question)
+              ? { nextFollowUpDate: { gte: now } }
+              : {}),
+          },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            companyName: true,
+            status: true,
+            assignedToId: true,
+            nextFollowUpDate: true,
+          },
+          orderBy: [{ nextFollowUpDate: "asc" }, { createdAt: "desc" }],
+          take: 8,
         });
-        leadData.records = leads.map((lead: any) => ({ id: lead.id, name: `${lead.firstName || ''} ${lead.lastName || ''}`.trim(), company: lead.companyName, status: lead.status, assignedToId: lead.assignedToId, nextFollowUpDate: lead.nextFollowUpDate }));
+        leadData.records = leads.map((lead: any) => ({
+          id: lead.id,
+          name: `${lead.firstName || ""} ${lead.lastName || ""}`.trim(),
+          company: lead.companyName,
+          status: lead.status,
+          assignedToId: lead.assignedToId,
+          nextFollowUpDate: lead.nextFollowUpDate,
+        }));
       }
       context.availableData.push(leadData);
     }
 
-    if (/\b(employee|employees|staff|attendance|absent|present|leave|payroll|salary|hrm|hr)\b/i.test(question)) {
+    if (
+      /\b(employee|employees|staff|attendance|absent|present|leave|payroll|salary|hrm|hr)\b/i.test(
+        question,
+      )
+    ) {
       if (isAdmin) {
-        const [employeeCount, activeEmployees, presentToday, absentToday, pendingLeaves] = await Promise.all([
+        const [
+          employeeCount,
+          activeEmployees,
+          presentToday,
+          absentToday,
+          pendingLeaves,
+        ] = await Promise.all([
           this.prisma.employee.count({ where: { customerId } }),
-          this.prisma.employee.count({ where: { customerId, status: 'ACTIVE' } }),
-          this.prisma.attendance.count({ where: { customerId, date: { gte: dayStart, lt: dayEnd }, status: 'PRESENT' } }),
-          this.prisma.attendance.count({ where: { customerId, date: { gte: dayStart, lt: dayEnd }, status: 'ABSENT' } }),
-          this.prisma.leaveRequest.count({ where: { customerId, status: 'PENDING' } }),
+          this.prisma.employee.count({
+            where: { customerId, status: "ACTIVE" },
+          }),
+          this.prisma.attendance.count({
+            where: {
+              customerId,
+              date: { gte: dayStart, lt: dayEnd },
+              status: "PRESENT",
+            },
+          }),
+          this.prisma.attendance.count({
+            where: {
+              customerId,
+              date: { gte: dayStart, lt: dayEnd },
+              status: "ABSENT",
+            },
+          }),
+          this.prisma.leaveRequest.count({
+            where: { customerId, status: "PENDING" },
+          }),
         ]);
-        context.availableData.push({ source: 'HRM', employeeCount, activeEmployeeCount: activeEmployees, presentTodayCount: presentToday, absentTodayCount: absentToday, pendingLeaveRequestCount: pendingLeaves, asOf: now.toISOString() });
-        if (/\b(list|show|directory|names|who)\b.*\b(employee|employees|staff)\b/i.test(question)) {
-          const directory = await this.prisma.employee.findMany({ where: { customerId }, select: { firstName: true, lastName: true, employeeCode: true, status: true }, orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }], take: 50 });
-          context.availableData.push({ source: 'Employee directory', employees: directory.map((person: any) => ({ name: `${person.firstName} ${person.lastName}`, employeeCode: person.employeeCode, status: person.status })) });
+        context.availableData.push({
+          source: "HRM",
+          employeeCount,
+          activeEmployeeCount: activeEmployees,
+          presentTodayCount: presentToday,
+          absentTodayCount: absentToday,
+          pendingLeaveRequestCount: pendingLeaves,
+          asOf: now.toISOString(),
+        });
+        if (
+          /\b(list|show|directory|names|who)\b.*\b(employee|employees|staff)\b/i.test(
+            question,
+          )
+        ) {
+          const directory = await this.prisma.employee.findMany({
+            where: { customerId },
+            select: {
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              status: true,
+            },
+            orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+            take: 50,
+          });
+          context.availableData.push({
+            source: "Employee directory",
+            employees: directory.map((person: any) => ({
+              name: `${person.firstName} ${person.lastName}`,
+              employeeCode: person.employeeCode,
+              status: person.status,
+            })),
+          });
         }
         if (/\b(payroll|salary)\b/i.test(question)) {
-          const payroll = await this.prisma.payroll.aggregate({ where: { customerId, status: { notIn: ['CANCELLED', 'FAILED'] } }, _sum: { grossSalary: true, netSalary: true }, _count: { _all: true } });
-          context.availableData.push({ source: 'Payroll summary', payrollCount: payroll._count?._all || 0, grossSalaryTotal: payroll._sum?.grossSalary || 0, netSalaryTotal: payroll._sum?.netSalary || 0 });
+          const payroll = await this.prisma.payroll.aggregate({
+            where: { customerId, status: { notIn: ["CANCELLED", "FAILED"] } },
+            _sum: { grossSalary: true, netSalary: true },
+            _count: { _all: true },
+          });
+          context.availableData.push({
+            source: "Payroll summary",
+            payrollCount: payroll._count?._all || 0,
+            grossSalaryTotal: payroll._sum?.grossSalary || 0,
+            netSalaryTotal: payroll._sum?.netSalary || 0,
+          });
         }
-        if (/\b(absent|who.*(attendance|present)|list.*employee)\b/i.test(question)) {
-          const absentees = await this.prisma.attendance.findMany({ where: { customerId, date: { gte: dayStart, lt: dayEnd }, status: 'ABSENT' }, select: { employee: { select: { firstName: true, lastName: true, employeeCode: true } } }, take: 50 });
-          context.availableData.push({ source: 'Absent employees today', employees: absentees.map((row: any) => ({ name: `${row.employee.firstName} ${row.employee.lastName}`, employeeCode: row.employee.employeeCode })) });
+        if (
+          /\b(absent|who.*(attendance|present)|list.*employee)\b/i.test(
+            question,
+          )
+        ) {
+          const absentees = await this.prisma.attendance.findMany({
+            where: {
+              customerId,
+              date: { gte: dayStart, lt: dayEnd },
+              status: "ABSENT",
+            },
+            select: {
+              employee: {
+                select: { firstName: true, lastName: true, employeeCode: true },
+              },
+            },
+            take: 50,
+          });
+          context.availableData.push({
+            source: "Absent employees today",
+            employees: absentees.map((row: any) => ({
+              name: `${row.employee.firstName} ${row.employee.lastName}`,
+              employeeCode: row.employee.employeeCode,
+            })),
+          });
         }
       } else {
-        context.permissions.push('Organization-wide HR and payroll records are restricted to administrators. Only the authenticated employee’s own attendance and leave data is available.');
+        context.permissions.push(
+          "Organization-wide HR and payroll records are restricted to administrators. Only the authenticated employee’s own attendance and leave data is available.",
+        );
         if (employee) {
           const [attendance, pendingLeaves] = await Promise.all([
-            this.prisma.attendance.findFirst({ where: { customerId, ...employeeScope, date: { gte: dayStart, lt: dayEnd } }, select: { status: true, punchIn: true, punchOut: true } }),
-            this.prisma.leaveRequest.count({ where: { customerId, ...employeeScope, status: 'PENDING' } }),
+            this.prisma.attendance.findFirst({
+              where: {
+                customerId,
+                ...employeeScope,
+                date: { gte: dayStart, lt: dayEnd },
+              },
+              select: { status: true, punchIn: true, punchOut: true },
+            }),
+            this.prisma.leaveRequest.count({
+              where: { customerId, ...employeeScope, status: "PENDING" },
+            }),
           ]);
-          context.availableData.push({ source: 'Current employee self-service', profile: { name: `${employee.firstName} ${employee.lastName}`, employeeCode: employee.employeeCode, status: employee.status }, attendanceToday: attendance || 'No attendance entry recorded today.', ownPendingLeaveRequestCount: pendingLeaves });
-        } else context.availableData.push({ source: 'Current employee self-service', status: 'No employee profile is linked to this login.' });
+          context.availableData.push({
+            source: "Current employee self-service",
+            profile: {
+              name: `${employee.firstName} ${employee.lastName}`,
+              employeeCode: employee.employeeCode,
+              status: employee.status,
+            },
+            attendanceToday:
+              attendance || "No attendance entry recorded today.",
+            ownPendingLeaveRequestCount: pendingLeaves,
+          });
+        } else
+          context.availableData.push({
+            source: "Current employee self-service",
+            status: "No employee profile is linked to this login.",
+          });
       }
     }
 
     if (/\b(task|tasks|project|projects|work schedule)\b/i.test(question)) {
-      const taskWhere: any = { customerId, deletedAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } };
-      if (!isAdmin) taskWhere.OR = [{ assignedToId: userId }, ...(employee ? [{ employeeId: employee.id }] : [])];
-      const pendingTaskCount = await this.prisma.task.count({ where: taskWhere });
-      const workWhere: any = { customerId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] }, scheduledDate: { gte: now } };
+      const taskWhere: any = {
+        customerId,
+        deletedAt: null,
+        status: { notIn: ["COMPLETED", "CANCELLED"] },
+      };
+      if (!isAdmin)
+        taskWhere.OR = [
+          { assignedToId: userId },
+          ...(employee ? [{ employeeId: employee.id }] : []),
+        ];
+      const pendingTaskCount = await this.prisma.task.count({
+        where: taskWhere,
+      });
+      const workWhere: any = {
+        customerId,
+        status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+        scheduledDate: { gte: now },
+      };
       if (!isAdmin) workWhere.assignedToId = employee?.id || -1;
-      const upcomingWorkCount = await this.prisma.work.count({ where: workWhere });
-      context.availableData.push({ source: 'Tasks and work schedule', pendingTaskCount, upcomingWorkCount });
+      const upcomingWorkCount = await this.prisma.work.count({
+        where: workWhere,
+      });
+      context.availableData.push({
+        source: "Tasks and work schedule",
+        pendingTaskCount,
+        upcomingWorkCount,
+      });
     }
 
-    if (/\b(revenue|income|sales report|business performance|invoice|invoices)\b/i.test(question)) {
+    if (
+      /\b(revenue|income|sales report|business performance|invoice|invoices)\b/i.test(
+        question,
+      )
+    ) {
       if (isAdmin) {
-        const invoiceSummary = await this.prisma.invoice.aggregate({ where: { customerId, deletedAt: null, status: 'PAID' }, _sum: { totalAmount: true }, _count: { _all: true } });
-        context.availableData.push({ source: 'Paid invoice summary', paidInvoiceCount: invoiceSummary._count?._all || 0, paidInvoiceTotal: invoiceSummary._sum?.totalAmount || 0 });
-      } else context.permissions.push('Business-wide revenue and invoice records are restricted to administrators.');
+        const invoiceSummary = await this.prisma.invoice.aggregate({
+          where: { customerId, deletedAt: null, status: "PAID" },
+          _sum: { totalAmount: true },
+          _count: { _all: true },
+        });
+        context.availableData.push({
+          source: "Paid invoice summary",
+          paidInvoiceCount: invoiceSummary._count?._all || 0,
+          paidInvoiceTotal: invoiceSummary._sum?.totalAmount || 0,
+        });
+      } else
+        context.permissions.push(
+          "Business-wide revenue and invoice records are restricted to administrators.",
+        );
     }
 
     if (/\b(data capture|captured leads|capture searches)\b/i.test(question)) {
-      const where: any = { customerId, searchedAt: { gte: dayStart, lt: dayEnd } };
+      const where: any = {
+        customerId,
+        searchedAt: { gte: dayStart, lt: dayEnd },
+      };
       if (!isAdmin) where.employeeId = employee?.id || -1;
-      const searchesToday = await this.prisma.dataCaptureSearch.count({ where });
-      context.availableData.push({ source: 'Data Capture', searchesToday });
+      const searchesToday = await this.prisma.dataCaptureSearch.count({
+        where,
+      });
+      context.availableData.push({ source: "Data Capture", searchesToday });
     }
 
-    const res: any = await this.aiProvider.answerAssistant(question, context, history, providerPolicy);
-    return typeof res === 'string' ? { answer: res, provider: 'OPENAI' as const } : res;
+    const res: any = await this.aiProvider.answerAssistant(
+      question,
+      context,
+      history,
+      providerPolicy,
+    );
+    return typeof res === "string"
+      ? { answer: res, provider: "OPENAI" as const }
+      : res;
   }
 
   private getNexusTodayRange() {
     const now = new Date();
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-    const part = (type: string) => Number(parts.find((entry) => entry.type === type)?.value);
-    const start = new Date(Date.UTC(part('year'), part('month') - 1, part('day')) - 330 * 60 * 1000);
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const part = (type: string) =>
+      Number(parts.find((entry) => entry.type === type)?.value);
+    const start = new Date(
+      Date.UTC(part("year"), part("month") - 1, part("day")) - 330 * 60 * 1000,
+    );
     return { now, start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
   }
 
@@ -142,8 +389,13 @@ export class AiGenerationService {
   }
 
   private assertNexusRateLimit(userId: number) {
-    const recent = (this.nexusRequests.get(userId) || []).filter((timestamp) => Date.now() - timestamp < 60_000);
-    if (recent.length >= 20) throw new BadRequestException('QB Nexus is receiving requests too quickly. Wait a minute and retry.');
+    const recent = (this.nexusRequests.get(userId) || []).filter(
+      (timestamp) => Date.now() - timestamp < 60_000,
+    );
+    if (recent.length >= 20)
+      throw new BadRequestException(
+        "QB Nexus is receiving requests too quickly. Wait a minute and retry.",
+      );
     recent.push(Date.now());
     this.nexusRequests.set(userId, recent);
   }
@@ -151,23 +403,37 @@ export class AiGenerationService {
   async transcribeNexusAudio(
     user: any,
     file?: Express.Multer.File,
-    providerPolicy: { primaryProvider?: string; fallbackProvider?: string } = {},
+    providerPolicy: {
+      primaryProvider?: string;
+      fallbackProvider?: string;
+    } = {},
   ): Promise<string> {
     const customerId = Number(user?.customerId);
     const userId = Number(user?.id);
-    if (!Number.isInteger(customerId) || customerId <= 0 || !Number.isInteger(userId) || userId <= 0) {
-      throw new ForbiddenException('Your account is not scoped to a QB Suite business.');
+    if (
+      !Number.isInteger(customerId) ||
+      customerId <= 0 ||
+      !Number.isInteger(userId) ||
+      userId <= 0
+    ) {
+      throw new ForbiddenException(
+        "Your account is not scoped to a QB Suite business.",
+      );
     }
     if (!file?.buffer?.length || file.buffer.length > 10 * 1024 * 1024) {
-      throw new BadRequestException('Record a short audio clip up to 10 MB.');
+      throw new BadRequestException("Record a short audio clip up to 10 MB.");
     }
     this.assertNexusRateLimit(userId);
-    const mimeType = String(file.mimetype || '');
+    const mimeType = String(file.mimetype || "");
     if (!/^audio\/(webm|ogg|mp4|mpeg|wav|x-wav|mp3)/i.test(mimeType)) {
-      throw new BadRequestException('This audio format is not supported.');
+      throw new BadRequestException("This audio format is not supported.");
     }
     return Object.keys(providerPolicy || {}).length
-      ? this.aiProvider.transcribeAssistantAudio(file.buffer, mimeType, providerPolicy)
+      ? this.aiProvider.transcribeAssistantAudio(
+          file.buffer,
+          mimeType,
+          providerPolicy,
+        )
       : this.aiProvider.transcribeAssistantAudio(file.buffer, mimeType);
   }
 
@@ -175,27 +441,34 @@ export class AiGenerationService {
    * Generates AI Content based on customer selection (Post, Poster, Video, Caption, Hashtags)
    * Credit deduction happens STRICTLY AFTER successful generation and database storage.
    */
-  async generate(customerId: number, dto: GenerateContentDto, file?: Express.Multer.File) {
-    const rawInput = (dto.product || dto.prompt || '').trim();
+  async generate(
+    customerId: number,
+    dto: GenerateContentDto,
+    file?: Express.Multer.File,
+  ) {
+    const rawInput = (dto.product || dto.prompt || "").trim();
     if (!rawInput) {
-      throw new BadRequestException('Product or prompt description is required');
+      throw new BadRequestException(
+        "Product or prompt description is required",
+      );
     }
     dto.product = rawInput;
 
     const serviceCode = `AI_${dto.type.toUpperCase()}`;
 
     this.logger.log(
-      `[AI_REQUEST_RECEIVED] Customer #${customerId} initiated generation: type="${dto.type}", product="${dto.product}"`,
+      `[AI_REQUEST_RECEIVED] Customer #${customerId} initiated generation: type="${dto.type}"`,
     );
 
     // 1. Validate Available Credits BEFORE starting AI generation (No deduction occurs here)
-    const { requiredCredits, walletId } = await this.aiCredit.validateCreditAvailability(customerId, serviceCode);
+    const { requiredCredits, walletId } =
+      await this.aiCredit.validateCreditAvailability(customerId, serviceCode);
 
     // 2. Generate unique generation ID
     const now = new Date();
     const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
     const rand = Math.floor(1000 + Math.random() * 9000);
     const generationId = `AIGEN-${y}${m}${d}-${rand}`;
 
@@ -205,13 +478,18 @@ export class AiGenerationService {
     let mediaFileKey: string | null = null;
     let mediaWidth: number | null = null;
     let mediaHeight: number | null = null;
-    let mediaType = 'TEXT';
-    let status = 'COMPLETED';
+    let mediaType = "TEXT";
+    let status = "COMPLETED";
     let videoJobId: string | null = null;
+    let imageModel: string | null = null;
 
     try {
       // 3. Generate Content via Real AI Provider
-      if (dto.type === 'CAPTION' || dto.type === 'HASHTAGS' || dto.type === 'POST') {
+      if (
+        dto.type === "CAPTION" ||
+        dto.type === "HASHTAGS" ||
+        dto.type === "POST"
+      ) {
         this.logger.log(
           `[AI_REQUEST_SENT] Text generation requested for type="${dto.type}", product="${dto.product}"`,
         );
@@ -226,7 +504,9 @@ export class AiGenerationService {
           instructions: dto.instructions,
         });
 
-        this.logger.log(`[AI_RESPONSE_RECEIVED] Real text response received from AI provider`);
+        this.logger.log(
+          `[AI_RESPONSE_RECEIVED] Real text response received from AI provider`,
+        );
         caption = textResult.caption;
         hashtags = textResult.hashtags;
 
@@ -235,8 +515,8 @@ export class AiGenerationService {
         );
       }
 
-      if (dto.type === 'POST' || dto.type === 'POSTER') {
-        mediaType = 'IMAGE';
+      if (dto.type === "POST" || dto.type === "POSTER") {
+        mediaType = "IMAGE";
 
         this.logger.log(
           `[AI_REQUEST_SENT] Image generation requested for product="${dto.product}"`,
@@ -250,31 +530,37 @@ export class AiGenerationService {
           instructions: dto.instructions,
           referenceImageUrl: dto.referenceImageUrl,
         });
+        imageModel = imgResult.model || null;
 
         if (!imgResult || (!imgResult.url && !imgResult.buffer)) {
-          throw new Error('AI provider failed to generate poster image.');
+          throw new Error("AI provider failed to generate poster image.");
         }
 
         this.logger.log(
-          `[AI_RESPONSE_RECEIVED] Real image result received from AI provider (bufferSize=${imgResult.buffer?.length || 0}, url=${imgResult.url || 'none'})`,
+          `[AI_RESPONSE_RECEIVED] Real image result received from AI provider (bufferSize=${imgResult.buffer?.length || 0}, url=${imgResult.url || "none"})`,
         );
 
         let imageBuffer = imgResult.buffer;
-        const mimeType = imgResult.mimeType || 'image/jpeg';
-        const filename = imgResult.fileKey || `ai-poster-${Date.now()}-${generationId}.jpg`;
+        const mimeType = imgResult.mimeType || "image/jpeg";
+        const filename =
+          imgResult.fileKey || `ai-poster-${Date.now()}-${generationId}.jpg`;
 
-        if (!imageBuffer && imgResult.url && imgResult.url.startsWith('http')) {
+        if (!imageBuffer && imgResult.url && imgResult.url.startsWith("http")) {
           try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 35000);
-            const fetchRes = await fetch(imgResult.url, { signal: controller.signal });
+            const fetchRes = await fetch(imgResult.url, {
+              signal: controller.signal,
+            });
             clearTimeout(timeout);
             if (fetchRes.ok) {
               const ab = await fetchRes.arrayBuffer();
               imageBuffer = Buffer.from(ab);
             }
           } catch (fetchErr: any) {
-            this.logger.warn(`Could not fetch image buffer from provider URL: ${fetchErr?.message}`);
+            this.logger.warn(
+              `Could not fetch image buffer from provider URL: ${fetchErr?.message}`,
+            );
           }
         }
 
@@ -287,11 +573,13 @@ export class AiGenerationService {
               imageBuffer,
               mimeType,
               filename,
-              'marketing/banners',
+              "marketing/banners",
             );
             mediaFileKey = uploadResult.imageKey;
 
-            const presigned = await this.s3Service.getPresignedUrl(uploadResult.imageKey);
+            const presigned = await this.s3Service.getPresignedUrl(
+              uploadResult.imageKey,
+            );
             mediaUrl = presigned || uploadResult.imageUrl;
 
             this.logger.log(
@@ -301,11 +589,13 @@ export class AiGenerationService {
             this.logger.error(
               `[AI_STORAGE_UPLOAD] Existing storage upload failed: ${storageErr?.message}. Falling back to direct URL.`,
             );
-            if (imgResult.url && !imgResult.url.startsWith('data:')) {
+            if (imgResult.url && !imgResult.url.startsWith("data:")) {
               mediaUrl = imgResult.url;
               mediaFileKey = filename;
             } else {
-              throw new Error(`Image storage failed: ${storageErr?.message || storageErr}`);
+              throw new Error(
+                `Image storage failed: ${storageErr?.message || storageErr}`,
+              );
             }
           }
         } else if (imgResult.url) {
@@ -314,7 +604,9 @@ export class AiGenerationService {
         }
 
         if (!mediaUrl) {
-          throw new Error('AI poster generation did not produce a valid output URL.');
+          throw new Error(
+            "AI poster generation did not produce a valid output URL.",
+          );
         }
 
         mediaWidth = imgResult.width || 1024;
@@ -325,8 +617,8 @@ export class AiGenerationService {
         );
       }
 
-      if (dto.type === 'VIDEO') {
-        mediaType = 'VIDEO';
+      if (dto.type === "VIDEO") {
+        mediaType = "VIDEO";
         this.logger.log(
           `[AI_REQUEST_SENT] Video generation job requested for Customer #${customerId}, product="${dto.product}"`,
         );
@@ -352,23 +644,24 @@ export class AiGenerationService {
         while (!isDone && attempts < maxAttempts) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           attempts++;
-          const currentJob = await this.aiProvider.checkVideoJobStatus(videoJobId);
-          if (currentJob.status === 'COMPLETED') {
+          const currentJob =
+            await this.aiProvider.checkVideoJobStatus(videoJobId);
+          if (currentJob.status === "COMPLETED") {
             isDone = true;
-            status = 'COMPLETED';
+            status = "COMPLETED";
             mediaUrl = currentJob.url || null;
             mediaFileKey = currentJob.fileKey || null;
             this.logger.log(
               `[AI_RESPONSE_PARSED] Video job ${videoJobId} finished with playable URL: ${mediaUrl}`,
             );
-          } else if (currentJob.status === 'FAILED') {
+          } else if (currentJob.status === "FAILED") {
             throw new Error(`Video generation job ${videoJobId} failed`);
           }
         }
 
         if (!isDone) {
           // Asynchronous rendering: mark as PROCESSING for client polling
-          status = 'PROCESSING';
+          status = "PROCESSING";
           this.logger.log(
             `[AI_RESPONSE_PARSED] Video job ${videoJobId} still PROCESSING after ${maxAttempts * 500}ms. Handing over for asynchronous polling.`,
           );
@@ -376,7 +669,7 @@ export class AiGenerationService {
 
         const textResult = await this.aiProvider.generateText({
           product: dto.product,
-          type: 'POST',
+          type: "POST",
           objective: dto.objective,
           platform: dto.platform,
           language: dto.language,
@@ -388,17 +681,21 @@ export class AiGenerationService {
       }
 
       // Output Validation: Verify that generation produced actual content
-      if (dto.type === 'POST' && !caption && !mediaUrl) {
-        throw new Error('AI provider returned empty post content.');
+      if (dto.type === "POST" && !caption && !mediaUrl) {
+        throw new Error("AI provider returned empty post content.");
       }
-      if (dto.type === 'POSTER' && !mediaUrl) {
-        throw new Error('AI provider failed to generate poster image.');
+      if (dto.type === "POSTER" && !mediaUrl) {
+        throw new Error("AI provider failed to generate poster image.");
       }
-      if ((dto.type === 'CAPTION' || dto.type === 'HASHTAGS') && !caption && hashtags.length === 0) {
-        throw new Error('AI provider returned empty text content.');
+      if (
+        (dto.type === "CAPTION" || dto.type === "HASHTAGS") &&
+        !caption &&
+        hashtags.length === 0
+      ) {
+        throw new Error("AI provider returned empty text content.");
       }
-      if (dto.type === 'VIDEO' && status === 'COMPLETED' && !mediaUrl) {
-        throw new Error('AI provider failed to generate playable video URL.');
+      if (dto.type === "VIDEO" && status === "COMPLETED" && !mediaUrl) {
+        throw new Error("AI provider failed to generate playable video URL.");
       }
     } catch (err: any) {
       this.logger.error(
@@ -411,7 +708,9 @@ export class AiGenerationService {
       if (err instanceof BadRequestException) {
         throw err;
       }
-      throw new BadRequestException(`AI Generation failed: ${err?.message || 'Provider error'}`);
+      throw new BadRequestException(
+        `AI Generation failed: ${err?.message || "Provider error"}`,
+      );
     }
 
     // 4. Save Record in Database
@@ -427,17 +726,23 @@ export class AiGenerationService {
         product: dto.product,
         objective: dto.objective,
         targetAudience: dto.targetAudience,
-        platform: dto.platform || 'INSTAGRAM',
-        language: dto.language || 'English',
-        tone: dto.tone || 'Premium',
-        cta: dto.cta || 'Order Now',
+        platform: dto.platform || "INSTAGRAM",
+        language: dto.language || "English",
+        tone: dto.tone || "Premium",
+        cta: dto.cta || "Order Now",
         instructions: dto.instructions,
         creditsSpent: 0,
         caption,
         hashtags,
         mediaUrl,
         mediaType,
-        metadata: videoJobId ? { videoJobId } : undefined,
+        metadata:
+          videoJobId || imageModel
+            ? {
+                ...(videoJobId ? { videoJobId } : {}),
+                ...(imageModel ? { imageModel } : {}),
+              }
+            : undefined,
       },
     });
 
@@ -453,11 +758,13 @@ export class AiGenerationService {
         },
       });
     }
-    this.logger.log(`[AI_DATABASE_SAVE] Generation #${generation.id} saved in database.`);
+    this.logger.log(
+      `[AI_DATABASE_SAVE] Generation #${generation.id} saved in database.`,
+    );
 
     // 5. Atomically & Idempotently Deduct Credits ONLY IF status is COMPLETED
     let deduction = { creditsSpent: 0, newBalance: 0 };
-    if (status === 'COMPLETED') {
+    if (status === "COMPLETED") {
       deduction = await this.aiCredit.deductCreditsOnSuccess({
         customerId,
         serviceCode,
@@ -468,7 +775,7 @@ export class AiGenerationService {
     }
 
     this.logger.log(
-      `[AI_API_RESPONSE] Returning generation #${generation.id} (${generationId}) to Customer #${customerId}: status="${status}", mediaUrl="${mediaUrl || 'none'}", creditsSpent=${deduction.creditsSpent}`,
+      `[AI_API_RESPONSE] Returning generation #${generation.id} (${generationId}) to Customer #${customerId}: status="${status}", mediaUrl="${mediaUrl || "none"}", creditsSpent=${deduction.creditsSpent}`,
     );
 
     return {
@@ -499,18 +806,19 @@ export class AiGenerationService {
       throw new NotFoundException(`Generation #${generationId} not found`);
     }
 
-    if (generation.status === 'PROCESSING' && generation.metadata) {
+    if (generation.status === "PROCESSING" && generation.metadata) {
       const meta = generation.metadata as any;
       if (meta.videoJobId) {
         const job = await this.aiProvider.checkVideoJobStatus(meta.videoJobId);
-        if (job.status === 'COMPLETED') {
+        if (job.status === "COMPLETED") {
           let spent = generation.creditsSpent;
           if (spent === 0) {
             const serviceCode = `AI_${generation.type.toUpperCase()}`;
-            const { requiredCredits } = await this.aiCredit.validateCreditAvailability(
-              customerId,
-              serviceCode,
-            );
+            const { requiredCredits } =
+              await this.aiCredit.validateCreditAvailability(
+                customerId,
+                serviceCode,
+              );
             const deduction = await this.aiCredit.deductCreditsOnSuccess({
               customerId,
               serviceCode,
@@ -524,26 +832,27 @@ export class AiGenerationService {
           await this.prisma.aiGeneration.update({
             where: { id: generation.id },
             data: {
-              status: 'COMPLETED',
+              status: "COMPLETED",
               creditsSpent: spent,
               ...(job.url && { mediaUrl: job.url }),
             },
           });
-          generation.status = 'COMPLETED';
+          generation.status = "COMPLETED";
           generation.creditsSpent = spent;
           if (job.url) generation.mediaUrl = job.url;
-        } else if (job.status === 'FAILED') {
+        } else if (job.status === "FAILED") {
           await this.prisma.aiGeneration.update({
             where: { id: generation.id },
-            data: { status: 'FAILED' },
+            data: { status: "FAILED" },
           });
-          generation.status = 'FAILED';
+          generation.status = "FAILED";
         }
       }
     }
 
-    if (generation.mediaUrl && !generation.mediaUrl.startsWith('data:')) {
-      const fileKey = (generation as any).assets?.[0]?.fileKey || generation.mediaUrl;
+    if (generation.mediaUrl && !generation.mediaUrl.startsWith("data:")) {
+      const fileKey =
+        (generation as any).assets?.[0]?.fileKey || generation.mediaUrl;
       const resolved = await this.s3Service.getPresignedUrl(fileKey, 604800);
       if (resolved) {
         generation.mediaUrl = resolved;
@@ -556,7 +865,11 @@ export class AiGenerationService {
   /**
    * Allows customer to update captions or hashtags before publishing
    */
-  async updateGeneration(customerId: number, generationId: string, dto: UpdateGenerationDto) {
+  async updateGeneration(
+    customerId: number,
+    generationId: string,
+    dto: UpdateGenerationDto,
+  ) {
     const generation = await this.prisma.aiGeneration.findFirst({
       where: {
         OR: [{ generationId }, { id: parseInt(generationId, 10) || -1 }],
@@ -587,22 +900,25 @@ export class AiGenerationService {
       deletedAt: null,
     };
 
-    if (type && type.toUpperCase() !== 'ALL') {
+    if (type && type.toUpperCase() !== "ALL") {
       where.type = type.toUpperCase();
     }
 
     const items = await this.prisma.aiGeneration.findMany({
       where,
       include: { assets: true },
-      orderBy: { id: 'desc' },
+      orderBy: { id: "desc" },
       take: 50,
     });
 
     return Promise.all(
       items.map(async (item) => {
-        if (item.mediaUrl && !item.mediaUrl.startsWith('data:')) {
+        if (item.mediaUrl && !item.mediaUrl.startsWith("data:")) {
           const keyOrUrl = item.assets?.[0]?.fileKey || item.mediaUrl;
-          const resolved = await this.s3Service.getPresignedUrl(keyOrUrl, 604800);
+          const resolved = await this.s3Service.getPresignedUrl(
+            keyOrUrl,
+            604800,
+          );
           if (resolved) {
             return {
               ...item,
@@ -622,11 +938,11 @@ export class AiGenerationService {
   async getAllGenerationsAdmin(query?: any) {
     const where: any = { deletedAt: null };
 
-    if (query?.type && query.type !== 'ALL') {
+    if (query?.type && query.type !== "ALL") {
       where.type = query.type;
     }
 
-    if (query?.status && query.status !== 'ALL') {
+    if (query?.status && query.status !== "ALL") {
       where.status = query.status;
     }
 
@@ -635,11 +951,17 @@ export class AiGenerationService {
         where,
         include: {
           customer: {
-            select: { id: true, name: true, email: true, phone: true, companyName: true },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              companyName: true,
+            },
           },
           assets: true,
         },
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         take: query?.limit ? parseInt(query.limit, 10) : 50,
         skip: query?.offset ? parseInt(query.offset, 10) : 0,
       }),
@@ -648,9 +970,12 @@ export class AiGenerationService {
 
     const resolvedItems = await Promise.all(
       items.map(async (item) => {
-        if (item.mediaUrl && !item.mediaUrl.startsWith('data:')) {
+        if (item.mediaUrl && !item.mediaUrl.startsWith("data:")) {
           const keyOrUrl = item.assets?.[0]?.fileKey || item.mediaUrl;
-          const resolved = await this.s3Service.getPresignedUrl(keyOrUrl, 604800);
+          const resolved = await this.s3Service.getPresignedUrl(
+            keyOrUrl,
+            604800,
+          );
           if (resolved) {
             return {
               ...item,
