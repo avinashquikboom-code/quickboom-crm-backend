@@ -305,14 +305,16 @@ describe('CustomerService - Resource Consumption', () => {
       const res = await service.assignTeam(23, 2);
       expect(res.success).toBe(true);
       expect(res.data.teamId).toBe(2);
-      expect(res.data.team).toEqual({
-        id: 2,
-        name: 'Social Media Team',
-        description: 'Team for marketing',
-        leader: 'Alice Smith',
-        memberCount: 3,
-        members: [],
-      });
+      expect(res.data.team).toEqual(
+        expect.objectContaining({
+          id: 2,
+          name: 'Social Media Team',
+          description: 'Team for marketing',
+          leader: 'Alice Smith',
+          memberCount: 3,
+          members: [],
+        }),
+      );
       expect(prisma.customer.update).toHaveBeenCalledWith({
         where: { id: 23 },
         data: { assignedTeamId: 2 },
@@ -345,18 +347,18 @@ describe('CustomerService - Resource Consumption', () => {
       await expect(service.assignTeam(23, 999)).rejects.toThrow('Team #999 not found in your organization.');
     });
 
-    it('scopes a non-super-admin team lookup to the authenticated tenant', async () => {
+    it('scopes a tenant administrator team lookup to their organization', async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: 23, deletedAt: null, assignedTeamId: null });
       prisma.team.findFirst.mockResolvedValue(null);
 
-      await expect(service.assignTeam(23, 2, { id: 4, role: 'EMPLOYEE', customerId: 44 }))
+      await expect(service.assignTeam(23, 2, { id: 4, role: 'COMPANY_ADMIN', customerId: 44 }))
         .rejects.toThrow('Team #2 not found in your organization.');
       expect(prisma.team.findFirst).toHaveBeenCalledWith(expect.objectContaining({
         where: { id: 2, customerId: 44 },
       }));
     });
 
-    it('does not change the customer when reassignment is requested without an eligible active team member', async () => {
+    it('does not change the customer when no active team employee can receive pending tasks', async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: 23, deletedAt: null, assignedTeamId: null });
       prisma.team.findFirst.mockResolvedValue({
         id: 2,
@@ -484,6 +486,51 @@ describe('CustomerService - Resource Consumption', () => {
       );
       expect(res.data[0].teamId).toBe(2);
       expect(res.data[0].team.name).toBe('Social Media Team');
+    });
+
+    it('findAll returns assigned team id, name, code, leader and members', async () => {
+      const customerWithTeam = {
+        id: 77,
+        name: 'Pod Customer',
+        email: 'pod@customer.com',
+        isActive: true,
+        assignedTeamId: 5,
+        assignedTeam: {
+          id: 5,
+          name: 'Sales Pod',
+          description: '[SALES-01][CAP:12] Primary sales pod',
+          leader: { id: 2, firstName: 'Sarah', lastName: 'Connor', email: 'sarah@pod.com', phone: '9998887770' },
+          members: [
+            {
+              id: 201,
+              role: 'MEMBER',
+              employeeId: 14,
+              employee: { id: 14, firstName: 'John', lastName: 'Doe', email: 'john@pod.com', phone: '9998887771' },
+            },
+          ],
+          _count: { members: 1 },
+        },
+        subscriptions: [],
+        users: [],
+        _count: { users: 1, leads: 0, deals: 0, contacts: 0, tasks: 0 },
+      };
+
+      prisma.customer.findMany.mockResolvedValue([customerWithTeam]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      expect(res.data).toHaveLength(1);
+      const row = res.data[0];
+
+      expect(row.assignedTeamId).toBe(5);
+      expect(row.teamId).toBe(5);
+      expect(row.assignedTeamName).toBe('Sales Pod');
+      expect(row.assignedTeamCode).toBe('SALES-01');
+      expect(row.team.name).toBe('Sales Pod');
+      expect(row.team.code).toBe('SALES-01');
+      expect(row.team.leader).toBe('Sarah Connor');
+      expect(row.team.members).toHaveLength(1);
+      expect(row.team.members[0].name).toBe('John Doe');
     });
 
     it('findAll excludes Super Admin and Admin accounts by default at database query level', async () => {
