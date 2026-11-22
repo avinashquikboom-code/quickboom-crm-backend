@@ -1116,6 +1116,26 @@ export class CustomerService {
   }
 
   /**
+   * Extract HRM Team Pod code and metadata from description [CODE][CAP:xx] or id
+   */
+  private extractTeamMeta(team: any) {
+    if (!team) return { code: null, capacity: 10, cleanDescription: '' };
+    let code = (team as any).code;
+    let capacity = (team as any).capacity;
+    let cleanDescription = team.description || '';
+
+    const metaMatch = String(team.description || '').match(/^\[([A-Z0-9_-]+)\](?:\[CAP:(\d+)\])?\s*(.*)$/is);
+    if (metaMatch) {
+      if (!code) code = metaMatch[1];
+      if (!capacity && metaMatch[2]) capacity = parseInt(metaMatch[2], 10);
+      cleanDescription = metaMatch[3] || '';
+    }
+
+    if (!code) code = `POD-${String(team.id).padStart(3, '0')}`;
+    return { code, capacity: capacity ? Number(capacity) : 10, cleanDescription };
+  }
+
+  /**
    * Resolve current subscription details for a customer using actual database records and status rules.
    * Prevents hardcoded plan names, handles expired/inactive/unpurchased states, and detects multiple active subscriptions.
    */
@@ -1970,17 +1990,55 @@ export class CustomerService {
         industry: c.industry || 'General',
         source: c.source || linkedLead?.source || 'DIRECT',
         teamId: c.assignedTeamId,
+        assignedTeamId: c.assignedTeamId,
+        assignedTeamName: (c as any).assignedTeam?.name || null,
+        assignedTeamCode: (c as any).assignedTeam ? this.extractTeamMeta((c as any).assignedTeam).code : null,
+        assignedTeam: (c as any).assignedTeam
+          ? {
+              id: (c as any).assignedTeam.id,
+              name: (c as any).assignedTeam.name,
+              code: this.extractTeamMeta((c as any).assignedTeam).code,
+              description: this.extractTeamMeta((c as any).assignedTeam).cleanDescription || (c as any).assignedTeam.description,
+              leader: (c as any).assignedTeam.leader
+                ? `${(c as any).assignedTeam.leader.firstName || ''} ${(c as any).assignedTeam.leader.lastName || ''}`.trim()
+                : null,
+              leaderId: (c as any).assignedTeam.leader?.id || null,
+              memberCount:
+                (c as any).assignedTeam._count?.members ||
+                ((c as any).assignedTeam.members || []).length,
+              members: ((c as any).assignedTeam.members || []).map((m: any) => ({
+                id: m.employee?.id || m.employeeId,
+                name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+                firstName: m.employee?.firstName,
+                lastName: m.employee?.lastName,
+                email: m.employee?.email,
+                phone: m.employee?.phone,
+                role: m.role || 'MEMBER',
+              })),
+            }
+          : null,
         team: (c as any).assignedTeam
           ? {
               id: (c as any).assignedTeam.id,
               name: (c as any).assignedTeam.name,
-              description: (c as any).assignedTeam.description,
+              code: this.extractTeamMeta((c as any).assignedTeam).code,
+              description: this.extractTeamMeta((c as any).assignedTeam).cleanDescription || (c as any).assignedTeam.description,
               leader: (c as any).assignedTeam.leader
                 ? `${(c as any).assignedTeam.leader.firstName || ''} ${(c as any).assignedTeam.leader.lastName || ''}`.trim()
                 : null,
+              leaderId: (c as any).assignedTeam.leader?.id || null,
               memberCount:
                 (c as any).assignedTeam._count?.members ||
                 ((c as any).assignedTeam.members || []).length,
+              members: ((c as any).assignedTeam.members || []).map((m: any) => ({
+                id: m.employee?.id || m.employeeId,
+                name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+                firstName: m.employee?.firstName,
+                lastName: m.employee?.lastName,
+                email: m.employee?.email,
+                phone: m.employee?.phone,
+                role: m.role || 'MEMBER',
+              })),
             }
           : null,
         assignedEmployeeId: c.assignedEmployeeId,
@@ -2552,14 +2610,41 @@ export class CustomerService {
           }
         : null,
       teamId: customer.assignedTeamId,
+      assignedTeamId: customer.assignedTeamId,
+      assignedTeamName: assignedTeamObj?.name || null,
+      assignedTeamCode: assignedTeamObj ? this.extractTeamMeta(assignedTeamObj).code : null,
+      assignedTeam: assignedTeamObj
+        ? {
+            id: assignedTeamObj.id,
+            name: assignedTeamObj.name,
+            code: this.extractTeamMeta(assignedTeamObj).code,
+            description: this.extractTeamMeta(assignedTeamObj).cleanDescription || assignedTeamObj.description,
+            leader: assignedTeamObj.leader
+              ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
+              : null,
+            leaderId: assignedTeamObj.leader?.id || null,
+            memberCount:
+              assignedTeamObj._count?.members ||
+              (assignedTeamObj.members || []).length,
+            members: (assignedTeamObj.members || []).map((m: any) => ({
+              id: m.employee?.id || m.employeeId,
+              name: `${m.employee?.firstName || ''} ${m.employee?.lastName || ''}`.trim() || 'Team Member',
+              email: m.employee?.email,
+              phone: m.employee?.phone,
+              role: m.role,
+            })),
+          }
+        : null,
       team: assignedTeamObj
         ? {
             id: assignedTeamObj.id,
             name: assignedTeamObj.name,
-            description: assignedTeamObj.description,
+            code: this.extractTeamMeta(assignedTeamObj).code,
+            description: this.extractTeamMeta(assignedTeamObj).cleanDescription || assignedTeamObj.description,
             leader: assignedTeamObj.leader
               ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
               : null,
+            leaderId: assignedTeamObj.leader?.id || null,
             memberCount:
               assignedTeamObj._count?.members ||
               (assignedTeamObj.members || []).length,
@@ -3002,14 +3087,17 @@ export class CustomerService {
     }
 
     const assignedTeamObj = (customer as any).assignedTeam;
+    const meta = this.extractTeamMeta(assignedTeamObj);
     const teamData = assignedTeamObj
       ? {
           id: assignedTeamObj.id,
           name: assignedTeamObj.name,
-          description: assignedTeamObj.description,
+          code: meta.code,
+          description: meta.cleanDescription || assignedTeamObj.description,
           leader: assignedTeamObj.leader
             ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
             : null,
+          leaderId: assignedTeamObj.leader?.id || null,
           memberCount:
             assignedTeamObj._count?.members ||
             (assignedTeamObj.members || []).length,
@@ -3047,12 +3135,20 @@ export class CustomerService {
       data: {
         customerId: numericId,
         teamId: customer.assignedTeamId,
+        assignedTeamId: customer.assignedTeamId,
+        assignedTeamName: teamData?.name || null,
+        assignedTeamCode: teamData?.code || null,
         team: teamData,
+        assignedTeam: teamData,
         history,
       },
       customerId: numericId,
       teamId: customer.assignedTeamId,
+      assignedTeamId: customer.assignedTeamId,
+      assignedTeamName: teamData?.name || null,
+      assignedTeamCode: teamData?.code || null,
       team: teamData,
+      assignedTeam: teamData,
       history,
     };
   }
@@ -3064,7 +3160,7 @@ export class CustomerService {
     id: number | string,
     teamId?: number | null,
     user?: CustomerTeamAssignmentActor,
-    reassignPendingTasks: boolean = false,
+    reassignPendingTasks = false,
   ) {
     const numericId = this.parseCustomerId(id);
 
@@ -3084,9 +3180,17 @@ export class CustomerService {
     }
 
     const actorCustomerId = Number(user?.customerId ?? user?.employee?.customerId);
-    const tenantScoped = Boolean(
-      user && !isUserSuperAdmin(user) && Number.isInteger(actorCustomerId) && actorCustomerId > 0,
-    );
+    const actorRoleNames = [user?.role, user?.roleType, ...(user?.roles || [])]
+      .map((role) => typeof role === 'string' ? role : role?.type || role?.name || '')
+      .map((role) => String(role).toUpperCase().replace(/[\s_-]+/g, ''));
+    const isGlobalAdmin = isUserSuperAdmin(user) || actorRoleNames.includes('ADMIN');
+    const tenantScoped = Boolean(user && !isGlobalAdmin);
+    if (tenantScoped && (!Number.isInteger(actorCustomerId) || actorCustomerId <= 0)) {
+      throw new ForbiddenException('Your account is missing its tenant context.');
+    }
+    if (user && !isGlobalAdmin && !isUserAdmin(user)) {
+      await this.findOne(numericId, user);
+    }
     const actorId = Number(user?.id);
     const performedById = Number.isInteger(actorId) && actorId > 0 ? actorId : null;
     const performedByName = user?.name || user?.email || 'Administrator';
@@ -3254,14 +3358,17 @@ export class CustomerService {
 
     const safeUpdated = this.serializeBigInt(result.updated);
     const assignedTeamObj = result.updated.assignedTeam;
+    const meta = this.extractTeamMeta(assignedTeamObj);
     const teamData = assignedTeamObj
       ? {
           id: assignedTeamObj.id,
           name: assignedTeamObj.name,
-          description: assignedTeamObj.description,
+          code: meta.code,
+          description: meta.cleanDescription || assignedTeamObj.description,
           leader: assignedTeamObj.leader
             ? `${assignedTeamObj.leader.firstName || ''} ${assignedTeamObj.leader.lastName || ''}`.trim()
             : null,
+          leaderId: assignedTeamObj.leader?.id || null,
           memberCount:
             assignedTeamObj._count?.members ||
             (assignedTeamObj.members || []).length,
@@ -3285,13 +3392,21 @@ export class CustomerService {
         ...safeUpdated,
         customerId: numericId,
         teamId: safeUpdated.assignedTeamId,
+        assignedTeamId: safeUpdated.assignedTeamId,
+        assignedTeamName: teamData?.name || null,
+        assignedTeamCode: teamData?.code || null,
         team: teamData,
+        assignedTeam: teamData,
         reassignedTaskCount: result.reassignedTaskCount,
         synchronizedWorkCount: result.synchronizedWorkCount,
       },
       customerId: numericId,
       teamId: safeUpdated.assignedTeamId,
+      assignedTeamId: safeUpdated.assignedTeamId,
+      assignedTeamName: teamData?.name || null,
+      assignedTeamCode: teamData?.code || null,
       team: teamData,
+      assignedTeam: teamData,
       reassignedTaskCount: result.reassignedTaskCount,
       synchronizedWorkCount: result.synchronizedWorkCount,
     };
