@@ -87,7 +87,8 @@ export class NotificationService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const unreadWhere = { ...where, isRead: false };
+    const [items, total, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -95,6 +96,7 @@ export class NotificationService {
         take: numLimit,
       }),
       this.prisma.notification.count({ where }),
+      this.prisma.notification.count({ where: unreadWhere }),
     ]);
 
     const totalPages = Math.ceil(total / numLimit) || 1;
@@ -102,6 +104,7 @@ export class NotificationService {
     return {
       data: items,
       items,
+      unreadCount,
       pagination: {
         page: numPage,
         pageSize: numLimit,
@@ -115,6 +118,19 @@ export class NotificationService {
         totalPages,
       },
     };
+  }
+
+  async getUnreadCount(customerId?: number | string, userId?: number | string) {
+    const numCustomerId = customerId !== undefined && customerId !== null ? Number(customerId) : NaN;
+    const where: any = { isRead: false };
+    if (!isNaN(numCustomerId)) {
+      where.customerId = numCustomerId;
+    }
+    if (userId && !isNaN(Number(userId))) {
+      where.userId = Number(userId);
+    }
+    const count = await this.prisma.notification.count({ where });
+    return { count, unreadCount: count };
   }
 
   async markAsRead(
