@@ -47,6 +47,7 @@ export class VisitController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'employeeId', required: false })
   @ApiQuery({ name: 'companyId', required: false })
+  @ApiQuery({ name: 'date', required: false })
   async findAll(
     @CurrentCustomer() customerId: number | string | undefined,
     @CurrentUser() user: any,
@@ -56,6 +57,7 @@ export class VisitController {
     @Query('search') search?: string,
     @Query('employeeId') employeeId?: string,
     @Query('companyId') companyId?: string,
+    @Query('date') date?: string,
   ) {
     return this.visitService.findAll(
       customerId,
@@ -66,6 +68,7 @@ export class VisitController {
       employeeId,
       companyId,
       user,
+      date,
     );
   }
 
