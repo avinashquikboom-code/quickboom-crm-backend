@@ -4,7 +4,7 @@ import { classifyCrmEmployee, CrmEmployeeCategory } from './crm-employee-categor
 export const CRM_APP_ACCESS_RESTRICTED_TITLE = 'Access Restricted';
 
 export const CRM_APP_ACCESS_RESTRICTED_MESSAGE =
-  'Your account is not authorized to access the QB Suite CRM application.\n\nCRM access is available exclusively to BPO and Visitor team employees. Your account does not belong to an eligible team.\n\nPlease contact your administrator if you believe this is a mistake.';
+  'Your account is not authorized to access the QB Suite CRM application.\n\nField Sales Executive employees use the QB Suite Visitor app. CRM access is available to Sales employees.\n\nPlease contact your administrator if you believe this is a mistake.';
 
 export const CRM_APP_ACCESS_DENIED = CRM_APP_ACCESS_RESTRICTED_MESSAGE;
 
@@ -60,14 +60,14 @@ export async function assertCrmAppEmployee(prisma: any, user: any): Promise<CrmE
   const active = employee?.status === 'ACTIVE' && employee?.mobileLoginEnabled !== false;
   const designationAccess = employee?.designation?.crmMobileAccess === true;
   const configuredModuleAccess = hasExplicitLeadView(user) || hasExplicitDataCaptureView(user);
-  if (!employee || !active || (category !== 'VISITOR' && !designationAccess && !configuredModuleAccess)) {
+  if (!employee || !active || (category !== 'VISITOR' && category !== 'FIELD_SALES_EXECUTIVE' && !designationAccess && !configuredModuleAccess)) {
     throw new ForbiddenException({
       statusCode: 403,
       error: CRM_APP_ACCESS_RESTRICTED_TITLE,
       message: CRM_APP_ACCESS_RESTRICTED_MESSAGE,
     });
   }
-  return category === 'VISITOR' ? 'VISITOR' : 'SALES';
+  return category === 'FIELD_SALES_EXECUTIVE' || category === 'VISITOR' ? 'FIELD_SALES_EXECUTIVE' : 'SALES';
 }
 
 export function hasExplicitLeadView(user: any): boolean {

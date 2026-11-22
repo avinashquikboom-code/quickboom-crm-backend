@@ -1873,6 +1873,7 @@ export class LeadRepository {
       ...lead,
       visitStatus: latestVisit?.status ?? null,
       visitScheduledAt: latestVisit?.date ?? null,
+      assignedFieldSalesExecutiveId: latestVisit?.employeeId ?? null,
       assignedVisitorId: latestVisit?.employeeId ?? null,
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
@@ -2924,7 +2925,7 @@ export class LeadRepository {
         visit.status !== VisitStatus.COMPLETED || !visit.employeeId ||
         visit.completedById !== visit.employeeId || !visit.completedAt ||
         !Number.isFinite(+new Date(visit.completedAt))) {
-      throw new ForbiddenException('Visit Done requires the latest assigned visit to be completed by its assigned visitor through the visit-completion workflow.');
+      throw new ForbiddenException('Visit Done requires the latest assigned visit to be completed by its assigned Field Sales Executive through the visit-completion workflow.');
     }
     return visit;
   }
@@ -3123,7 +3124,7 @@ export class LeadRepository {
         : null;
 
       if (!visit || !employee || visit.employeeId !== employee.id || !['SCHEDULED', 'IN_PROGRESS'].includes(visit.status)) {
-        throw new ForbiddenException('Only the assigned visitor can complete the latest active visit.');
+        throw new ForbiddenException('Only the assigned Field Sales Executive can complete the latest active visit.');
       }
       if (visit) {
         await this.prisma.visit.update({
@@ -3134,7 +3135,7 @@ export class LeadRepository {
             notes: dto.notes || dto.summary || visit.notes,
             outcome: dto.customerResponse || dto.summary || visit.outcome,
             completedById: employee?.id || null,
-            completedBy: actingEmpName || 'Visitor',
+            completedBy: actingEmpName || 'Field Sales Executive',
           },
         });
       }
@@ -3922,12 +3923,20 @@ export class LeadRepository {
       .map((r: any) => String(r).trim().toUpperCase());
 
     return (
+      desigName.includes('FIELD_SALES_EXECUTIVE') ||
+      desigName.includes('FIELD SALES') ||
+      desigCode.includes('FIELD_SALES') ||
       desigName.includes('VISITOR') ||
       desigCode.includes('VISITOR') ||
       desigName.includes('FIELD VISIT') ||
       desigName === 'VISIT' ||
       desigCode === 'VISIT' ||
-      allRoles.some((r: string) => r.includes('VISITOR') || r === 'VISIT')
+      allRoles.some((r: string) =>
+        r.includes('FIELD_SALES_EXECUTIVE') ||
+        r.includes('FIELD SALES') ||
+        r.includes('VISITOR') ||
+        r === 'VISIT'
+      )
     );
   }
 
@@ -3946,6 +3955,9 @@ export class LeadRepository {
           const dName = (emp.designation.name || '').trim().toUpperCase();
           const dCode = (emp.designation.code || '').trim().toUpperCase();
           if (
+            dName.includes('FIELD_SALES_EXECUTIVE') ||
+            dName.includes('FIELD SALES') ||
+            dCode.includes('FIELD_SALES') ||
             dName.includes('VISITOR') ||
             dCode.includes('VISITOR') ||
             dName.includes('FIELD VISIT') ||
@@ -3968,6 +3980,9 @@ export class LeadRepository {
           const dName = (emp.designation.name || '').trim().toUpperCase();
           const dCode = (emp.designation.code || '').trim().toUpperCase();
           if (
+            dName.includes('FIELD_SALES_EXECUTIVE') ||
+            dName.includes('FIELD SALES') ||
+            dCode.includes('FIELD_SALES') ||
             dName.includes('VISITOR') ||
             dCode.includes('VISITOR') ||
             dName.includes('FIELD VISIT') ||

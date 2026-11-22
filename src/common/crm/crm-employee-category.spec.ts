@@ -14,7 +14,7 @@ describe('classifyCrmEmployee', () => {
       departmentName: 'Field',
       designationName: 'Visitor Executive',
       roles: ['EMPLOYEE'],
-    })).toBe('VISITOR');
+    })).toBe('FIELD_SALES_EXECUTIVE');
   });
 
   it('keeps a Lead Visitor in a BPO Call Center department as Visitor', () => {
@@ -24,7 +24,7 @@ describe('classifyCrmEmployee', () => {
       designationName: 'Lead Visitor',
       designationCode: 'LEAD_VISITOR',
       roles: ['EMPLOYEE'],
-    })).toBe('VISITOR');
+    })).toBe('FIELD_SALES_EXECUTIVE');
   });
 
   it('classifies a visitor team even when the department name is different', () => {
@@ -32,7 +32,7 @@ describe('classifyCrmEmployee', () => {
       departmentName: 'Operations',
       designationName: 'Executive',
       roles: ['Visitor Team'],
-    })).toBe('VISITOR');
+    })).toBe('FIELD_SALES_EXECUTIVE');
   });
 
   it('does not classify other departments as CRM staff', () => {

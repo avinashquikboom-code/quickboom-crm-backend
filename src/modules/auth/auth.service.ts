@@ -584,6 +584,35 @@ export class AuthService {
     return Array.from(variants);
   }
 
+  public isFieldSalesEmployee(user: any): boolean {
+    if (!user) return false;
+    const cat = user.employee ? this.crmCategoryFor(user.employee) : null;
+    if (cat === 'FIELD_SALES_EXECUTIVE' || cat === 'VISITOR') return true;
+    const desigName = String(user.employee?.designation?.name || user.designation || '').toUpperCase();
+    const desigCode = String(user.employee?.designation?.code || user.designationCode || '').toUpperCase();
+    if (
+      desigName.includes('FIELD SALES') ||
+      desigName.includes('FIELD_SALES') ||
+      desigCode.includes('FIELD_SALES') ||
+      desigName.includes('VISITOR') ||
+      desigName === 'VISIT' ||
+      desigCode === 'VISITOR' ||
+      desigCode === 'VISIT'
+    ) {
+      return true;
+    }
+    const roles = [
+      user.role,
+      user.roleType,
+      ...(user.userRoles?.map((ur: any) => ur.role?.name || ur.role?.type) || []),
+      ...(Array.isArray(user.roles) ? user.roles : []),
+    ];
+    return roles.some((r: any) => {
+      const n = String(r || '').toUpperCase().replace(/[\s_]+/g, '');
+      return n.includes('FIELDSALES') || n.includes('VISITOR');
+    });
+  }
+
   async login(
     emailOrDto: string | LoginDto,
     passwordOrApp?: string,
@@ -1033,11 +1062,19 @@ export class AuthService {
     }
 
     // 2. Strict Target App / Expected Role Login Validation (Must precede generic suspension checks)
+    const isFieldSalesUser = this.isFieldSalesEmployee(user);
+
     if (upperExpectedRole === 'SUPER_ADMIN' || upperExpectedRole === 'ADMIN') {
+      if (isFieldSalesUser) {
+        throw new ForbiddenException('Field Sales Executive accounts are not permitted to access the Admin Panel. Please use the Visitor App.');
+      }
       if (userRole !== 'SUPER_ADMIN' && !isSuperAdminRole) {
         throw new ForbiddenException('These credentials are not registered as an Admin account.');
       }
     } else if (['COMPANY_ADMIN', 'COMPANY_ADMIN_MOBILE'].includes(upperExpectedRole)) {
+      if (isFieldSalesUser) {
+        throw new ForbiddenException('Field Sales Executive accounts are not permitted to log in as Company Admin. Please use the Visitor App.');
+      }
       if (userRole !== 'COMPANY_ADMIN') {
         throw new ForbiddenException('These credentials are not registered as a Company Admin account.');
       }
@@ -1045,6 +1082,9 @@ export class AuthService {
         throw new UnauthorizedException('Your company account is suspended.');
       }
     } else if (['CUSTOMER', 'CUSTOMER_MOBILE', 'CUSTOMER_ADMIN'].includes(upperExpectedRole)) {
+      if (isFieldSalesUser) {
+        throw new ForbiddenException('Field Sales Executive accounts cannot log in through the customer mobile portal. Please use the Visitor App.');
+      }
       if (userRole === 'EMPLOYEE' || isEmployeeRole) {
         throw new ForbiddenException('Employee accounts cannot log in through the customer mobile portal. Please use the employee login.');
       }
@@ -1255,6 +1295,9 @@ export class AuthService {
     }
 
     if (crmApp) {
+      if (this.isFieldSalesEmployee(user)) {
+        throw new ForbiddenException('Field Sales Executive accounts must use the QB Suite Visitor App. Access to the CRM mobile app is not permitted.');
+      }
       await assertCrmAppEmployee(this.prisma, user);
     }
 
@@ -1581,6 +1624,9 @@ export class AuthService {
     const roleId = primaryRole?.id || ((user as any).userRoles?.[0]?.roleId ?? null);
 
     if (crmApp) {
+      if (this.isFieldSalesEmployee(user)) {
+        throw new ForbiddenException('Field Sales Executive accounts must use the QB Suite Visitor App. Access to the CRM mobile app is not permitted.');
+      }
       await assertCrmAppEmployee(this.prisma, user);
     }
 
@@ -1820,6 +1866,9 @@ export class AuthService {
     this.logger.log(`[AUTH_OTP_VERIFIED_SUCCESS] User ${user.id} logged in via mobile ${maskedMobile}`);
 
     if (crmApp) {
+      if (this.isFieldSalesEmployee(user)) {
+        throw new ForbiddenException('Field Sales Executive accounts must use the QB Suite Visitor App. Access to the CRM mobile app is not permitted.');
+      }
       await assertCrmAppEmployee(this.prisma, user);
     }
     if (customerApp) {
@@ -2136,6 +2185,9 @@ export class AuthService {
     this.logger.log(`[AUTH_EMAIL_OTP_VERIFIED] User ${user.id} (${user.email}) successfully logged in via email OTP`);
 
     if (crmApp) {
+      if (this.isFieldSalesEmployee(user)) {
+        throw new ForbiddenException('Field Sales Executive accounts must use the QB Suite Visitor App. Access to the CRM mobile app is not permitted.');
+      }
       await assertCrmAppEmployee(this.prisma, user);
     }
 
@@ -2624,8 +2676,8 @@ export class AuthService {
           let matchedKey: string | null = null;
           if (ROLE_PERMISSION_DEFAULTS[upper]) {
             matchedKey = upper;
-          } else if (upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
-            matchedKey = 'VISITOR';
+          } else if (upper.includes('FIELD_SALES_EXECUTIVE') || upper.includes('FIELD_SALES') || upper.includes('VISITOR') || upper === 'VISIT' || upper.includes('FIELD_VISIT') || upper.includes('FIELD_OFFICER')) {
+            matchedKey = 'FIELD_SALES_EXECUTIVE';
           } else if (upper.includes('TELECALL') || upper.includes('TELESALES') || upper.includes('TELESELL') || upper.includes('BPO')) {
             matchedKey = 'TELECALLER';
           } else if (upper.includes('SALES')) {
@@ -2665,12 +2717,22 @@ export class AuthService {
     const roleNamesUpper = roleNames.map((name) => String(name || '').trim().toUpperCase());
     const isVisitorDesignation = Boolean(
       desigUpper && (
+        desigUpper.includes('FIELD_SALES_EXECUTIVE') ||
+        desigUpper.includes('FIELD SALES EXECUTIVE') ||
+        desigUpper.includes('FIELD_SALES') ||
+        desigUpper.includes('FIELD SALES') ||
         desigUpper.includes('VISITOR') ||
         desigUpper === 'VISIT' ||
         desigUpper.includes('FIELD VISIT') ||
+        desigUpper.includes('FIELD_VISIT') ||
         desigUpper.includes('FIELD OFFICER')
       )
-    ) || roleNamesUpper.some((name) => name.includes('VISITOR') || name === 'VISIT');
+    ) || roleNamesUpper.some((name) =>
+      name.includes('FIELD_SALES_EXECUTIVE') ||
+      name.includes('FIELD SALES') ||
+      name.includes('VISITOR') ||
+      name === 'VISIT'
+    );
 
     if (isVisitorDesignation) {
       // Visitors only view, start (check-in), and complete assigned visits.
@@ -2881,12 +2943,15 @@ export class AuthService {
         user.employee?.designation?.name ||
         'TELECALLER';
       specificRoleName = candidate.toUpperCase().replace(/\s+/g, '_');
+      if (specificRoleName === 'VISITOR' || specificRoleName === 'FIELD_VISITOR') {
+        specificRoleName = 'FIELD_SALES_EXECUTIVE';
+      }
     }
 
     const permissionKeys = permissions.map((p) => toPermissionKey(p.module, p.action));
     const employeeCategory = this.crmCategoryFor(user.employee);
     const crmCategory = isVisitorDesignation
-      ? 'VISITOR'
+      ? 'FIELD_SALES_EXECUTIVE'
       : employeeCategory !== 'NONE'
         ? employeeCategory
         : classifyCrmEmployee({
@@ -2924,6 +2989,7 @@ export class AuthService {
     const clean = name.trim();
     if (clean.toUpperCase() === 'SUPER_ADMIN') return 'Super Admin';
     if (clean.toUpperCase() === 'COMPANY_ADMIN') return 'Company Admin';
+    if (clean.toUpperCase() === 'FIELD_SALES_EXECUTIVE' || clean.toUpperCase() === 'VISITOR' || clean.toUpperCase() === 'FIELD_VISITOR') return 'Field Sales Executive';
     if (clean.toUpperCase() === 'HR') return 'HR';
     if (clean.toUpperCase() === 'BPO_CALLER') return 'BPO Caller';
     if (clean.toUpperCase() === 'SALES_EXECUTIVE') return 'Sales Executive';

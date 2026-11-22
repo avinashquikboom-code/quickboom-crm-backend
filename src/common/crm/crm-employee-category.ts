@@ -1,4 +1,4 @@
-export type CrmEmployeeCategory = 'SALES' | 'VISITOR' | 'NONE';
+export type CrmEmployeeCategory = 'SALES' | 'FIELD_SALES_EXECUTIVE' | 'VISITOR' | 'NONE';
 
 export interface CrmEmployeeSignals {
   departmentName?: string | null;
@@ -29,12 +29,10 @@ export function isSalesDepartmentEmployee(employee: any): boolean {
   const designation = employee?.designation;
   const departmentSignals = [department?.name, department?.code].map(text);
   const designationSignals = [designation?.name, designation?.code].map(text);
-  const isVisitor = designationSignals.some((value) =>
-    value.includes('VISITOR') || value === 'VISIT' || value.includes('FIELD VISIT') || value.includes('FIELD_VISIT') || value.includes('FIELD OFFICER'),
-  );
+  const isFieldSales = designationSignals.some((value) => isVisitor(value));
   return employee?.status === 'ACTIVE' &&
     employee?.mobileLoginEnabled !== false &&
-    !isVisitor &&
+    !isFieldSales &&
     departmentSignals.some((value) => value.includes('SALES'));
 }
 
@@ -49,6 +47,8 @@ function isBpo(value?: string | null): boolean {
 function isVisitor(value?: string | null): boolean {
   const valueText = text(value);
   return (
+    valueText.includes('FIELD_SALES_EXECUTIVE') ||
+    valueText.includes('FIELD SALES EXECUTIVE') ||
     valueText.includes('VISITOR') ||
     valueText === 'VISIT' ||
     valueText.includes('FIELD VISIT') ||
@@ -94,7 +94,7 @@ export function classifyCrmEmployee(signals: CrmEmployeeSignals): CrmEmployeeCat
   const sales = values.some((value) => isSales(value));
 
   if ((designationVisitor || roleVisitor) && !designationBpo && !telesales) {
-    return 'VISITOR';
+    return 'FIELD_SALES_EXECUTIVE';
   }
   if (departmentBpo || designationBpo || roleBpo || telesales) {
     return 'SALES';
@@ -103,7 +103,7 @@ export function classifyCrmEmployee(signals: CrmEmployeeSignals): CrmEmployeeCat
     return 'SALES';
   }
   if (designationVisitor || roleVisitor) {
-    return 'VISITOR';
+    return 'FIELD_SALES_EXECUTIVE';
   }
   return 'NONE';
 }

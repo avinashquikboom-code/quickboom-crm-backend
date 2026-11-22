@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { DataCaptureService } from '../data-capture/data-capture.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { CustomerMobilePermissionService } from '../customer/customer-mobile-permission.service';
+import { S3Service } from '../s3/s3.service';
 import { VisitStatus } from '@prisma/client';
 
 describe('BPO Visitor Assignment & Visit Done Workflow Suite', () => {
@@ -19,6 +20,8 @@ describe('BPO Visitor Assignment & Visit Done Workflow Suite', () => {
   let mobileVisitController: MobileVisitController;
 
   const mockPrisma: any = {
+    $transaction: jest.fn((cb) => cb(mockPrisma)),
+    $queryRaw: jest.fn().mockResolvedValue([]),
     lead: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
@@ -64,6 +67,7 @@ describe('BPO Visitor Assignment & Visit Done Workflow Suite', () => {
         LeadRepository,
         { provide: VisitService, useValue: mockVisitService },
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: S3Service, useValue: { uploadFile: jest.fn(), getSignedUrl: jest.fn() } },
         { provide: EmailService, useValue: { sendMail: jest.fn() } },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
         { provide: DataCaptureService, useValue: {} },
@@ -88,6 +92,8 @@ describe('BPO Visitor Assignment & Visit Done Workflow Suite', () => {
     lastName: 'Alpha',
     status: 'ACTIVE',
     customerId: 1,
+    mobileLoginEnabled: true,
+    user: { isActive: true },
     designation: { id: 11, name: 'Field Visitor', code: 'VISITOR' },
   };
 
@@ -98,6 +104,8 @@ describe('BPO Visitor Assignment & Visit Done Workflow Suite', () => {
     lastName: 'Beta',
     status: 'ACTIVE',
     customerId: 1,
+    mobileLoginEnabled: true,
+    user: { isActive: true },
     designation: { id: 11, name: 'Field Visitor', code: 'VISITOR' },
   };
 
@@ -139,7 +147,7 @@ describe('BPO Visitor Assignment & Visit Done Workflow Suite', () => {
         assignedToId: 10,
       });
       mockPrisma.employee.findUnique.mockResolvedValue(visitorAEmp);
-      mockPrisma.employee.findFirst.mockResolvedValue(null);
+      mockPrisma.employee.findFirst.mockResolvedValue(visitorAEmp);
       mockPrisma.user.findUnique.mockResolvedValue({ id: 10, firstName: 'BPO', lastName: 'User' });
       mockPrisma.employee.create.mockResolvedValue({ id: 99, firstName: 'BPO', lastName: 'User' });
       mockPrisma.visit.findFirst.mockResolvedValue(null);

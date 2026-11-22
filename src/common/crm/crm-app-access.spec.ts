@@ -30,7 +30,7 @@ describe('assertCrmAppEmployee', () => {
     }), { id: 11, permissions: [{ module: 'LEADS', action: 'VIEW' }] })).resolves.toBe('SALES');
   });
 
-  it('allows an active Visitor employee from the team record', async () => {
+  it('allows an active Visitor / Field Sales Executive employee from the team record', async () => {
     await expect(assertCrmAppEmployee(prismaFor({
       id: 5,
       status: 'ACTIVE',
@@ -38,7 +38,7 @@ describe('assertCrmAppEmployee', () => {
       designation: { name: 'Executive', code: 'EXE' },
       teamMembers: [{ team: { name: 'Visitor Team', code: 'VISITOR' } }],
       ledTeams: [],
-    }), { id: 10 })).resolves.toBe('VISITOR');
+    }), { id: 10 })).resolves.toBe('FIELD_SALES_EXECUTIVE');
   });
 
   it.each([

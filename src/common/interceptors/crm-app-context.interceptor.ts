@@ -23,7 +23,7 @@ export class CrmAppContextInterceptor implements NestInterceptor {
       await assertCrmAppEmployee(this.prisma, request.user);
     } catch (error) {
       if (error instanceof ForbiddenException) throw error;
-      throw new ForbiddenException('Access Denied. The CRM application is available only to BPO and Visitor employees. Please contact your administrator.');
+      throw new ForbiddenException('Access Denied. The CRM application is available only to Sales employees. Field Sales Executives must use the Visitor App.');
     }
     return next.handle();
   }
