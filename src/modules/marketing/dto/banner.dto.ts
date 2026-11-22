@@ -10,6 +10,17 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
+function parseBooleanQueryValue({ value, key, obj }: { value: unknown; key: string; obj?: Record<string, unknown> }) {
+  // Read the raw query value because implicit conversion may already have turned "false" into true.
+  const rawValue = obj?.[key] ?? value;
+  if (typeof rawValue === 'boolean') return rawValue;
+  if (typeof rawValue !== 'string') return rawValue;
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return rawValue;
+}
+
 export class CreateMarketingBannerDto {
   @ApiPropertyOptional({ example: 'Festival Super Sale 50% Off' })
   @IsString()
@@ -61,6 +72,7 @@ export class CreateMarketingBannerDto {
   @IsInt()
   @IsOptional()
   @Type(() => Number)
+  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? 0 : Number(value)))
   priority?: number;
 
   @ApiPropertyOptional({ example: true, default: true })
@@ -88,14 +100,14 @@ export class CreateMarketingBannerDto {
   @ApiPropertyOptional({ example: '2026-08-20T00:00:00.000Z' })
   @IsDateString()
   @IsOptional()
-  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? undefined : value))
-  startAt?: string;
+  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? null : value))
+  startAt?: string | null;
 
   @ApiPropertyOptional({ example: '2026-09-20T23:59:59.000Z' })
   @IsDateString()
   @IsOptional()
-  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? undefined : value))
-  endAt?: string;
+  @Transform(({ value }) => (value === '' || value === 'null' || value === null || value === undefined ? null : value))
+  endAt?: string | null;
 
   @ApiPropertyOptional({ example: 'QBSUITE50', description: 'Coupon code for redemption' })
   @IsString()
@@ -143,13 +155,13 @@ export class QueryMarketingBannerDto {
   @ApiPropertyOptional()
   @IsBoolean()
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(parseBooleanQueryValue)
   isActive?: boolean;
 
   @ApiPropertyOptional()
   @IsBoolean()
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(parseBooleanQueryValue)
   isPublished?: boolean;
 
   @ApiPropertyOptional({ default: 1 })

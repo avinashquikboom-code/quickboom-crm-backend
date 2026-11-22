@@ -104,15 +104,15 @@ export class BannerService {
       banner = await this.prisma.marketingBanner.create({
         data: {
           customerId,
-          title: dto.title?.trim() || 'Home Banner',
-          subtitle: dto.subtitle?.trim() || null,
-          description: dto.description?.trim() || null,
+          title: dto.title ? dto.title.trim() : '',
+          subtitle: dto.subtitle ? dto.subtitle.trim() : null,
+          description: dto.description ? dto.description.trim() : null,
           imageUrl,
           imagePublicId: cleanKey,
           imageKey: cleanKey,
-          ctaText: dto.ctaText?.trim() || null,
-          ctaUrl: dto.ctaUrl?.trim() || null,
-          priority: dto.priority !== undefined ? Number(dto.priority) : 0,
+          ctaText: dto.ctaText ? dto.ctaText.trim() : null,
+          ctaUrl: dto.ctaUrl ? dto.ctaUrl.trim() : null,
+          priority: dto.priority !== undefined && dto.priority !== null && !isNaN(Number(dto.priority)) ? Number(dto.priority) : 0,
           isActive: dto.isActive !== undefined ? Boolean(dto.isActive) : true,
           isPublished: dto.isPublished !== undefined ? Boolean(dto.isPublished) : true,
           startAt,
@@ -371,7 +371,7 @@ export class BannerService {
     const updated = await this.prisma.marketingBanner.update({
       where: { id },
       data: {
-        ...(dto.title !== undefined && { title: dto.title?.trim() || 'Home Banner' }),
+        ...(dto.title !== undefined && { title: dto.title ? dto.title.trim() : '' }),
         ...(dto.subtitle !== undefined && {
           subtitle: dto.subtitle ? dto.subtitle.trim() : null,
         }),
@@ -389,7 +389,9 @@ export class BannerService {
         ...(dto.ctaUrl !== undefined && {
           ctaUrl: dto.ctaUrl ? dto.ctaUrl.trim() : null,
         }),
-        ...(dto.priority !== undefined && { priority: Number(dto.priority) }),
+        ...(dto.priority !== undefined && {
+          priority: dto.priority !== null && !isNaN(Number(dto.priority)) ? Number(dto.priority) : 0,
+        }),
         ...(dto.isActive !== undefined && { isActive: Boolean(dto.isActive) }),
         ...(dto.isPublished !== undefined && {
           isPublished: Boolean(dto.isPublished),

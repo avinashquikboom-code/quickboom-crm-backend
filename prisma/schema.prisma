@@ -3102,7 +3102,7 @@ model MarketingBanner {
   id             Int       @id @default(autoincrement())
   customerId     Int?
   customer       Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  title          String
+  title          String    @default("")
   subtitle       String?
   description    String?
   imageUrl       String
