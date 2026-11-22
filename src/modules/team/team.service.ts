@@ -55,15 +55,31 @@ export class TeamService {
 
   private formatTeam(team: any) {
     if (!team) return null;
+    let code = (team as any).code;
+    let capacity = (team as any).capacity;
+    let desc = team.description || '';
+    const metaMatch = desc.match(/^\[([A-Z0-9_-]+)\](?:\[CAP:(\d+)\])?\s*(.*)$/is);
+    if (metaMatch) {
+      if (!code) code = metaMatch[1];
+      if (!capacity && metaMatch[2]) capacity = parseInt(metaMatch[2], 10);
+      desc = metaMatch[3] || '';
+    }
+    if (!code) code = `POD-${String(team.id).padStart(3, '0')}`;
+    const memberCount = team.members?.length || (team as any)._count?.members || 0;
+    if (!capacity) capacity = Math.max(10, memberCount + 2);
+
     return {
       ...team,
+      code,
+      capacity,
+      cleanDescription: desc,
       status: team.isActive ? 'ACTIVE' : 'INACTIVE',
       leader: this.formatEmployee(team.leader),
       members: (team.members || []).map((m: any) => ({
         ...m,
         employee: this.formatEmployee(m.employee),
       })),
-      memberCount: team.members?.length || 0,
+      memberCount,
     };
   }
 
@@ -168,6 +184,40 @@ export class TeamService {
     };
   }
 
+  async getStats(customerId?: number | string) {
+    const where: any = {};
+    if (customerId !== undefined && customerId !== null && String(customerId).trim() !== '') {
+      const numCustomerId = Number(customerId);
+      if (!isNaN(numCustomerId) && numCustomerId > 0) {
+        where.customerId = numCustomerId;
+      }
+    }
+
+    const [total, active, inactive, memberRows, latestTeam] = await Promise.all([
+      this.prisma.team.count({ where }),
+      this.prisma.team.count({ where: { ...where, isActive: true } }),
+      this.prisma.team.count({ where: { ...where, isActive: false } }),
+      this.prisma.teamMember.findMany({
+        where: where.customerId ? { team: { customerId: where.customerId } } : {},
+        select: { employeeId: true },
+        distinct: ['employeeId'],
+      }),
+      this.prisma.team.findFirst({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        select: { updatedAt: true },
+      }),
+    ]);
+
+    return {
+      total,
+      active,
+      inactive,
+      totalMembers: memberRows.length,
+      lastUpdated: latestTeam?.updatedAt || null,
+    };
+  }
+
   async findOne(customerId: number | string | undefined, id: number | string) {
     const numId = Number(id);
     if (isNaN(numId) || numId <= 0) {
@@ -251,12 +301,36 @@ export class TeamService {
       }
     }
 
+    if (dto.code && dto.code.trim()) {
+      const codePattern = `[${dto.code.trim().toUpperCase()}]`;
+      const duplicate = await this.prisma.team.findFirst({
+        where: {
+          customerId: numCustomerId,
+          description: { startsWith: codePattern },
+        },
+      });
+      if (duplicate) {
+        throw new BadRequestException(`Team pod code "${dto.code.trim().toUpperCase()}" is already assigned to "${duplicate.name}".`);
+      }
+    }
+
+    const capacity = dto.capacity ? Math.max(1, Number(dto.capacity)) : 10;
+    if (uniqueMemberIds.length > capacity) {
+      throw new BadRequestException(`Assigned members (${uniqueMemberIds.length}) exceed maximum capacity (${capacity}).`);
+    }
+
+    let finalDescription = dto.description?.trim() || null;
+    if (dto.code || dto.capacity) {
+      const code = (dto.code || `POD`).trim().toUpperCase();
+      finalDescription = `[${code}][CAP:${capacity}] ${finalDescription || ''}`.trim();
+    }
+
     const created = await this.prisma.$transaction(async (tx) => {
       const team = await tx.team.create({
         data: {
           customerId: numCustomerId,
           name: dto.name.trim(),
-          description: dto.description?.trim() || null,
+          description: finalDescription,
           leaderId: dto.leaderId ? Number(dto.leaderId) : null,
           isActive: dto.isActive !== undefined ? dto.isActive : true,
         },
@@ -315,6 +389,20 @@ export class TeamService {
       }
     }
 
+    if (dto.code && dto.code.trim()) {
+      const codePattern = `[${dto.code.trim().toUpperCase()}]`;
+      const duplicate = await this.prisma.team.findFirst({
+        where: {
+          customerId: targetCustomerId,
+          id: { not: numId },
+          description: { startsWith: codePattern },
+        },
+      });
+      if (duplicate) {
+        throw new BadRequestException(`Team pod code "${dto.code.trim().toUpperCase()}" is already assigned to "${duplicate.name}".`);
+      }
+    }
+
     // 3. Validate Members if changing
     let uniqueMemberIds: number[] | null = null;
     if (dto.memberIds !== undefined) {
@@ -334,10 +422,32 @@ export class TeamService {
       }
     }
 
+    // Determine current/new capacity and validate
+    let currentCapacity = 10;
+    let currentCode = `POD-${String(existing.id).padStart(3, '0')}`;
+    let baseDesc = existing.description || '';
+    const existingMeta = baseDesc.match(/^\[([A-Z0-9_-]+)\](?:\[CAP:(\d+)\])?\s*(.*)$/is);
+    if (existingMeta) {
+      if (existingMeta[1]) currentCode = existingMeta[1];
+      if (existingMeta[2]) currentCapacity = parseInt(existingMeta[2], 10);
+      baseDesc = existingMeta[3] || '';
+    }
+
+    const effectiveCode = (dto.code !== undefined && dto.code !== null && dto.code.trim()) ? dto.code.trim().toUpperCase() : currentCode;
+    const effectiveCapacity = (dto.capacity !== undefined && dto.capacity !== null) ? Math.max(1, Number(dto.capacity)) : currentCapacity;
+
+    const countToCheck = uniqueMemberIds !== null ? uniqueMemberIds.length : (await this.prisma.teamMember.count({ where: { teamId: numId } }));
+    if (countToCheck > effectiveCapacity) {
+      throw new BadRequestException(`Assigned members (${countToCheck}) exceed maximum capacity (${effectiveCapacity}).`);
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
       const updateData: any = {};
       if (dto.name !== undefined) updateData.name = dto.name.trim();
-      if (dto.description !== undefined) updateData.description = dto.description?.trim() || null;
+
+      const userDesc = dto.description !== undefined ? (dto.description?.trim() || '') : baseDesc;
+      updateData.description = `[${effectiveCode}][CAP:${effectiveCapacity}] ${userDesc}`.trim();
+
       if (dto.leaderId !== undefined) updateData.leaderId = dto.leaderId ? Number(dto.leaderId) : null;
       if (dto.isActive !== undefined) updateData.isActive = dto.isActive;
 
