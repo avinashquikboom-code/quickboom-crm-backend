@@ -13,7 +13,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
-import { CustomerService } from './customer.service';
+import { CustomerService, CustomerTeamAssignmentActor } from './customer.service';
 import {
   CreateCustomerDto,
   UpdateCustomerDto,
@@ -338,7 +338,7 @@ export class CustomerController {
   async assignTeam(
     @Param('id') id: string,
     @Body() dto: AssignCustomerTeamDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: CustomerTeamAssignmentActor,
   ) {
     const targetTeamId = dto.teamId !== undefined ? dto.teamId : dto.assignedTeamId;
     return this.customerService.assignTeam(id, targetTeamId, user, dto.reassignPendingTasks);

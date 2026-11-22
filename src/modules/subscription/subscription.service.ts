@@ -1471,7 +1471,7 @@ export class SubscriptionService {
         customerEmail: s.customer?.email || 'N/A',
         assignedEmployee: s.customer?.assignedEmployee || 'Unassigned',
         planId: s.planId,
-        planName: s.plan?.name || 'Starter Plan',
+        planName: s.plan?.name || (s.planId ? `Plan #${s.planId}` : 'Not Purchased'),
         startDate: s.startDate,
         purchaseDate: s.startDate,
         expiryDate: s.endDate,
@@ -1556,7 +1556,7 @@ export class SubscriptionService {
         customerEmail: s.customer?.email || 'N/A',
         assignedEmployee: s.customer?.assignedEmployee || 'Unassigned',
         planId: s.planId,
-        planName: s.plan?.name || 'Starter Plan',
+        planName: s.plan?.name || (s.planId ? `Plan #${s.planId}` : 'Not Purchased'),
         startDate: s.startDate,
         expiryDate: s.endDate,
         daysRemaining,
@@ -1595,7 +1595,7 @@ export class SubscriptionService {
         customerEmail: s.customer?.email || 'N/A',
         assignedEmployee: s.customer?.assignedEmployee || 'Unassigned',
         planId: s.planId,
-        planName: s.plan?.name || 'Starter Plan',
+        planName: s.plan?.name || (s.planId ? `Plan #${s.planId}` : 'Not Purchased'),
         startDate: s.startDate,
         expiryDate: s.endDate,
         daysRemaining,
@@ -1767,9 +1767,7 @@ export class SubscriptionService {
       );
 
       const planType = isCustomPlan ? 'CUSTOM' : 'STANDARD';
-      const planName = isCustomPlan
-        ? (sub.plan?.name === 'Custom Plan' ? 'Custom Plan' : (sub.plan?.name || 'Custom Marketing Plan'))
-        : (sub.plan?.name || 'Starter Plan');
+      const planName = sub.plan?.name || (isCustomPlan ? 'Custom Plan' : (sub.planId ? `Plan #${sub.planId}` : 'Not Purchased'));
 
       const planMonthlyPrice = sub.plan ? Number(sub.plan.monthlyPrice) : 0;
       const planYearlyPrice = sub.plan ? Number(sub.plan.yearlyPrice) : 0;

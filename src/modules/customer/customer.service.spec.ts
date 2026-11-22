@@ -94,6 +94,7 @@ describe('CustomerService - Resource Consumption', () => {
       },
       team: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({}),
@@ -102,10 +103,12 @@ describe('CustomerService - Resource Consumption', () => {
       task: {
         findMany: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        update: jest.fn(),
       },
       taskHistory: {
         create: jest.fn().mockResolvedValue({}),
       },
+      $transaction: jest.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -276,9 +279,13 @@ describe('CustomerService - Resource Consumption', () => {
         deletedAt: null,
       });
 
-      prisma.team.findUnique.mockResolvedValue({
+      prisma.team.findFirst.mockResolvedValue({
         id: 2,
+        customerId: 23,
         name: 'Social Media Team',
+        isActive: true,
+        leader: null,
+        members: [],
       });
 
       prisma.customer.update.mockResolvedValue({
@@ -311,6 +318,7 @@ describe('CustomerService - Resource Consumption', () => {
         data: { assignedTeamId: 2 },
         include: expect.any(Object),
       });
+      expect(prisma.task.findMany).not.toHaveBeenCalled();
     });
 
     it('assignTeam throws ForbiddenException if user lacks permission', async () => {
@@ -332,9 +340,83 @@ describe('CustomerService - Resource Consumption', () => {
         deletedAt: null,
       });
 
-      prisma.team.findUnique.mockResolvedValue(null);
+      prisma.team.findFirst.mockResolvedValue(null);
 
-      await expect(service.assignTeam(23, 999)).rejects.toThrow('Team #999 not found.');
+      await expect(service.assignTeam(23, 999)).rejects.toThrow('Team #999 not found in your organization.');
+    });
+
+    it('scopes a non-super-admin team lookup to the authenticated tenant', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 23, deletedAt: null, assignedTeamId: null });
+      prisma.team.findFirst.mockResolvedValue(null);
+
+      await expect(service.assignTeam(23, 2, { id: 4, role: 'EMPLOYEE', customerId: 44 }))
+        .rejects.toThrow('Team #2 not found in your organization.');
+      expect(prisma.team.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 2, customerId: 44 },
+      }));
+    });
+
+    it('does not change the customer when reassignment is requested without an eligible active team member', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 23, deletedAt: null, assignedTeamId: null });
+      prisma.team.findFirst.mockResolvedValue({
+        id: 2,
+        customerId: 23,
+        name: 'Social Media Team',
+        isActive: true,
+        leader: { id: 7, customerId: 23, status: 'INACTIVE', firstName: 'Inactive', lastName: 'Lead' },
+        members: [],
+      });
+
+      await expect(service.assignTeam(23, 2, { id: 4, role: 'ADMIN' }, true))
+        .rejects.toThrow('The selected team has no active leader or member eligible for task assignment.');
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+
+    it('reassigns eligible pending tasks and records task history atomically when requested', async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: 23, deletedAt: null, assignedTeamId: null });
+      prisma.team.findFirst.mockResolvedValue({
+        id: 2,
+        customerId: 23,
+        name: 'Social Media Team',
+        isActive: true,
+        leader: { id: 7, customerId: 23, status: 'ACTIVE', firstName: 'Ari', lastName: 'Lead' },
+        members: [],
+      });
+      prisma.customer.update.mockResolvedValue({
+        id: 23,
+        assignedTeamId: 2,
+        assignedTeam: { id: 2, name: 'Social Media Team', members: [], _count: { members: 0 } },
+      });
+      prisma.task.findMany.mockResolvedValue([
+        { id: 501, employeeId: 9, employee: { firstName: 'Old', lastName: 'Owner' } },
+        { id: 502, employeeId: 7, employee: { firstName: 'Ari', lastName: 'Lead' } },
+      ]);
+      prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.assignTeam(23, 2, { id: 4, role: 'ADMIN' }, true);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          customerId: 23,
+          status: { in: ['PENDING', 'IN_PROGRESS'] },
+          deletedAt: null,
+        }),
+      }));
+      expect(prisma.task.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ id: 501, customerId: 23 }),
+        data: { employeeId: 7 },
+      }));
+      expect(prisma.taskHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          taskId: 501,
+          action: 'TASK_REALLOCATED',
+          previousEmployeeId: 9,
+          newEmployeeId: 7,
+        }),
+      }));
+      expect(prisma.taskHistory.create).toHaveBeenCalledTimes(1);
+      expect(result.reassignedTaskCount).toBe(1);
     });
 
     it('getAssignedTeam returns assigned team data with leader and members', async () => {
@@ -519,6 +601,219 @@ describe('CustomerService - Resource Consumption', () => {
       const invalidErrors = await validate(invalidDto, { whitelist: true, forbidNonWhitelisted: true });
       expect(invalidErrors.length).toBeGreaterThan(0);
       expect(invalidErrors[0].property).toBe('nonExistentProp');
+    });
+  });
+
+  describe('Customer Plan Name and Subscription Resolution', () => {
+    it('returns actual plan name and ACTIVE status for customer with active plan', async () => {
+      const activeCustomer = {
+        id: 101,
+        name: 'Active Corp',
+        email: 'active@corp.com',
+        isActive: true,
+        subscriptions: [
+          {
+            id: 501,
+            planId: 2,
+            status: 'ACTIVE',
+            billingCycle: 'YEARLY',
+            startDate: new Date(Date.now() - 30 * 86400000),
+            endDate: new Date(Date.now() + 335 * 86400000),
+            plan: {
+              id: 2,
+              name: 'Enterprise Growth Plan',
+              code: 'GROWTH_ENT',
+            },
+          },
+        ],
+      };
+
+      prisma.customer.findMany.mockResolvedValue([activeCustomer]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      expect(res.data).toHaveLength(1);
+      const customer = res.data[0];
+
+      expect(customer.planName).toBe('Enterprise Growth Plan');
+      expect(customer.plan).toBe('Enterprise Growth Plan');
+      expect(customer.planId).toBe(2);
+      expect(customer.subscriptionId).toBe(501);
+      expect(customer.subscriptionStatus).toBe('ACTIVE');
+      expect(customer.isMultipleActiveDetected).toBe(false);
+    });
+
+    it('returns Not Purchased and NOT_PURCHASED for customer without any subscriptions', async () => {
+      const noSubCustomer = {
+        id: 102,
+        name: 'New Lead Customer',
+        email: 'lead@corp.com',
+        isActive: true,
+        subscriptions: [],
+      };
+
+      prisma.customer.findMany.mockResolvedValue([noSubCustomer]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      const customer = res.data[0];
+
+      expect(customer.planName).toBe('Not Purchased');
+      expect(customer.plan).toBe('Not Purchased');
+      expect(customer.planId).toBeNull();
+      expect(customer.subscriptionId).toBeNull();
+      expect(customer.subscriptionStatus).toBe('NOT_PURCHASED');
+      expect(customer.isMultipleActiveDetected).toBe(false);
+    });
+
+    it('returns actual plan name and EXPIRED status with correct dates for expired subscription', async () => {
+      const pastDate = new Date(Date.now() - 40 * 86400000);
+      const expiredDate = new Date(Date.now() - 10 * 86400000);
+      const expiredCustomer = {
+        id: 103,
+        name: 'Expired Tenant',
+        email: 'expired@corp.com',
+        isActive: true,
+        subscriptions: [
+          {
+            id: 503,
+            planId: 5,
+            status: 'ACTIVE', // status string might still say ACTIVE in DB but endDate is past
+            billingCycle: 'MONTHLY',
+            startDate: pastDate,
+            endDate: expiredDate,
+            plan: {
+              id: 5,
+              name: 'Professional Pro Plan',
+              code: 'PRO_PLAN',
+            },
+          },
+        ],
+      };
+
+      prisma.customer.findMany.mockResolvedValue([expiredCustomer]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      const customer = res.data[0];
+
+      expect(customer.planName).toBe('Professional Pro Plan');
+      expect(customer.subscriptionStatus).toBe('EXPIRED');
+      expect(customer.subscriptionEndDate).toEqual(expiredDate);
+      expect(customer.isMultipleActiveDetected).toBe(false);
+    });
+
+    it('returns actual plan name and CANCELLED status for cancelled subscription', async () => {
+      const cancelledCustomer = {
+        id: 104,
+        name: 'Cancelled Tenant',
+        email: 'cancelled@corp.com',
+        isActive: true,
+        subscriptions: [
+          {
+            id: 504,
+            planId: 4,
+            status: 'CANCELLED',
+            billingCycle: 'MONTHLY',
+            startDate: new Date(Date.now() - 60 * 86400000),
+            endDate: new Date(Date.now() + 10 * 86400000),
+            plan: {
+              id: 4,
+              name: 'Starter Business Plan',
+              code: 'STARTER',
+            },
+          },
+        ],
+      };
+
+      prisma.customer.findMany.mockResolvedValue([cancelledCustomer]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      const customer = res.data[0];
+
+      expect(customer.planName).toBe('Starter Business Plan');
+      expect(customer.subscriptionStatus).toBe('CANCELLED');
+    });
+
+    it('selects the active subscription over historical expired subscriptions', async () => {
+      const multiHistoryCustomer = {
+        id: 105,
+        name: 'Renewed Tenant',
+        email: 'renewed@corp.com',
+        isActive: true,
+        subscriptions: [
+          {
+            id: 505,
+            planId: 1,
+            status: 'EXPIRED',
+            startDate: new Date('2025-01-01'),
+            endDate: new Date('2025-12-31'),
+            plan: { id: 1, name: 'Old Basic Plan' },
+          },
+          {
+            id: 506,
+            planId: 3,
+            status: 'ACTIVE',
+            startDate: new Date(Date.now() - 10 * 86400000),
+            endDate: new Date(Date.now() + 350 * 86400000),
+            plan: { id: 3, name: 'Premium Cloud Plan' },
+          },
+        ],
+      };
+
+      prisma.customer.findMany.mockResolvedValue([multiHistoryCustomer]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      const customer = res.data[0];
+
+      expect(customer.planName).toBe('Premium Cloud Plan');
+      expect(customer.planId).toBe(3);
+      expect(customer.subscriptionId).toBe(506);
+      expect(customer.subscriptionStatus).toBe('ACTIVE');
+      expect(customer.isMultipleActiveDetected).toBe(false);
+    });
+
+    it('detects multiple active subscriptions, flags data inconsistency, and logs warning', async () => {
+      const warnSpy = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+
+      const inconsistentCustomer = {
+        id: 106,
+        name: 'Double Active Tenant',
+        email: 'double@corp.com',
+        isActive: true,
+        subscriptions: [
+          {
+            id: 601,
+            planId: 1,
+            status: 'ACTIVE',
+            startDate: new Date(Date.now() - 20 * 86400000),
+            endDate: new Date(Date.now() + 200 * 86400000),
+            plan: { id: 1, name: 'Basic Tier' },
+          },
+          {
+            id: 602,
+            planId: 2,
+            status: 'ACTIVE',
+            startDate: new Date(Date.now() - 5 * 86400000),
+            endDate: new Date(Date.now() + 360 * 86400000),
+            plan: { id: 2, name: 'Ultimate Tier' },
+          },
+        ],
+      };
+
+      prisma.customer.findMany.mockResolvedValue([inconsistentCustomer]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const res = await service.findAll({});
+      const customer = res.data[0];
+
+      expect(customer.isMultipleActiveDetected).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[DATA_INCONSISTENCY] Customer #106'),
+      );
+      warnSpy.mockRestore();
     });
   });
 });
