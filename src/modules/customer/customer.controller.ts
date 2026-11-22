@@ -154,9 +154,16 @@ export class CustomerController {
   }
 
   @Get('metrics')
-  @ApiOperation({ summary: 'Get Customer KPI summary metrics' })
-  async getMetrics() {
-    return this.customerService.getMetrics();
+  @ApiOperation({ summary: 'Get Customer KPI summary metrics and monthly growth' })
+  @ApiQuery({ name: 'dateFrom', required: false })
+  @ApiQuery({ name: 'dateTo', required: false })
+  @ApiQuery({ name: 'status', required: false })
+  async getMetrics(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.customerService.getMetrics({ dateFrom, dateTo, status });
   }
 
   @Get('resource-consumption')

@@ -73,6 +73,18 @@ export class NotificationController {
     );
   }
 
+  @Get('unread-count')
+  @ApiOperation({ summary: 'Get unread notification count for authenticated user' })
+  async getUnreadCount(
+    @CurrentCustomer() customerId: number | string | undefined,
+    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = customerId || (isSuperAdmin ? undefined : 1);
+    return this.notificationService.getUnreadCount(targetCustomerId, userId);
+  }
+
   @Post('device-token')
   @ApiOperation({ summary: 'Register or update FCM device token for authenticated user' })
   @ApiBody({ type: RegisterDeviceTokenDto })

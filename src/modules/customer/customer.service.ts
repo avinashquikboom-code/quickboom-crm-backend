@@ -996,9 +996,9 @@ export class CustomerService {
   }
 
   /**
-   * Get KPI Summary metrics for Customer screen
+   * Get KPI Summary metrics and monthly growth for Customer screen
    */
-  async getMetrics() {
+  async getMetrics(filters?: { dateFrom?: string; dateTo?: string; status?: string }) {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -1007,7 +1007,23 @@ export class CustomerService {
       NOT: SYSTEM_CUSTOMER_EXCLUSIONS,
     };
 
-    const [totalCustomers, activeCustomers, inactiveCustomers, newCustomers, customersWithDeals] =
+    if (filters?.status === 'ACTIVE') {
+      baseWhere.isActive = true;
+    } else if (filters?.status === 'INACTIVE') {
+      baseWhere.isActive = false;
+    }
+
+    if (filters?.dateFrom || filters?.dateTo) {
+      baseWhere.createdAt = {};
+      if (filters.dateFrom) baseWhere.createdAt.gte = new Date(filters.dateFrom);
+      if (filters.dateTo) {
+        const to = new Date(filters.dateTo);
+        to.setHours(23, 59, 59, 999);
+        baseWhere.createdAt.lte = to;
+      }
+    }
+
+    const [totalCustomers, activeCustomers, inactiveCustomers, newCustomers, customersWithDeals, allCustomersForGrowth] =
       await Promise.all([
         this.prisma.customer.count({ where: { ...baseWhere } }),
         this.prisma.customer.count({ where: { ...baseWhere, isActive: true } }),
@@ -1024,7 +1040,67 @@ export class CustomerService {
             deals: { some: { deletedAt: null, isWon: false, isLost: false } },
           },
         }),
+        this.prisma.customer.findMany({
+          where: {
+            deletedAt: null,
+            NOT: SYSTEM_CUSTOMER_EXCLUSIONS,
+            ...(filters?.status === 'ACTIVE' ? { isActive: true } : filters?.status === 'INACTIVE' ? { isActive: false } : {}),
+          },
+          select: {
+            id: true,
+            createdAt: true,
+            isActive: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        }),
       ]);
+
+    // Compute monthly growth distribution
+    const now = new Date();
+    const monthsMap = new Map<string, { label: string; shortLabel: string; count: number; cumulative: number }>();
+
+    let startMonthDate: Date;
+    let endMonthDate: Date = filters?.dateTo ? new Date(filters.dateTo) : new Date(now.getFullYear(), now.getMonth(), 1);
+
+    if (filters?.dateFrom) {
+      startMonthDate = new Date(filters.dateFrom);
+    } else {
+      startMonthDate = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    }
+
+    const cursor = new Date(startMonthDate.getFullYear(), startMonthDate.getMonth(), 1);
+    const endCursor = new Date(endMonthDate.getFullYear(), endMonthDate.getMonth(), 1);
+
+    while (cursor <= endCursor) {
+      const year = cursor.getFullYear();
+      const monthIdx = cursor.getMonth();
+      const key = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+      const shortLabel = cursor.toLocaleString('en-US', { month: 'short' });
+      const label = `${shortLabel} ${year}`;
+      monthsMap.set(key, { label, shortLabel, count: 0, cumulative: 0 });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    allCustomersForGrowth.forEach((c) => {
+      if (!c.createdAt) return;
+      const cDate = new Date(c.createdAt);
+      const key = `${cDate.getFullYear()}-${String(cDate.getMonth() + 1).padStart(2, '0')}`;
+      if (monthsMap.has(key)) {
+        monthsMap.get(key)!.count += 1;
+      }
+    });
+
+    let runningCumulative = 0;
+    const monthlyGrowth = Array.from(monthsMap.entries()).map(([key, data]) => {
+      runningCumulative += data.count;
+      return {
+        month: key,
+        label: data.label,
+        shortLabel: data.shortLabel,
+        count: data.count,
+        cumulative: runningCumulative,
+      };
+    });
 
     return {
       totalCustomers,
@@ -1032,6 +1108,7 @@ export class CustomerService {
       inactiveCustomers,
       newCustomers,
       customersWithOpenDeals: customersWithDeals,
+      monthlyGrowth,
     };
   }
 
