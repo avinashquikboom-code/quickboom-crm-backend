@@ -328,7 +328,7 @@ export class CustomerController {
     @CurrentUser() user: any,
   ) {
     const targetTeamId = dto.teamId !== undefined ? dto.teamId : dto.assignedTeamId;
-    return this.customerService.assignTeam(id, targetTeamId, user);
+    return this.customerService.assignTeam(id, targetTeamId, user, dto.reassignPendingTasks);
   }
 
   @Delete(NUMERIC_CUSTOMER_ID)

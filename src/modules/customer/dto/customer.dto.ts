@@ -317,4 +317,9 @@ export class AssignCustomerTeamDto {
   @IsNumber()
   @IsOptional()
   assignedTeamId?: number | null;
+
+  @ApiPropertyOptional({ example: false, description: 'Whether to reassign pending customer tasks to the new team' })
+  @IsBoolean()
+  @IsOptional()
+  reassignPendingTasks?: boolean;
 }
