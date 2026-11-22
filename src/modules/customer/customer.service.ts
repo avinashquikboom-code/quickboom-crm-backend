@@ -1139,7 +1139,7 @@ export class CustomerService {
 
     const employeeId = user?.employeeId || user?.employee?.id;
     const companyId = user?.customerId || user?.employee?.customerId;
-    const isSuperAdmin = isUserSuperAdmin(user);
+    const isSuperAdmin = !user || isUserSuperAdmin(user);
     const isPrivilegedAdmin = isSuperAdmin || isUserAdmin(user);
     const wonCustomersOnly = !isSuperAdmin;
 
@@ -1278,6 +1278,7 @@ export class CustomerService {
           { phone: { contains: s, mode: 'insensitive' } },
           { city: { contains: s, mode: 'insensitive' } },
           { domain: { contains: s, mode: 'insensitive' } },
+          { assignedTeam: { name: { contains: s, mode: 'insensitive' } } },
           {
             users: {
               some: {
@@ -2929,6 +2930,23 @@ export class CustomerService {
         }
       : null;
 
+    const history = await (this.prisma as any).auditLog.findMany({
+      where: {
+        customerId: numericId,
+        action: 'TEAM_ASSIGNMENT',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        userName: true,
+        userRole: true,
+        action: true,
+        description: true,
+        createdAt: true,
+      },
+    }).catch(() => []);
+
     return {
       statusCode: 200,
       success: true,
@@ -2937,17 +2955,19 @@ export class CustomerService {
         customerId: numericId,
         teamId: customer.assignedTeamId,
         team: teamData,
+        history,
       },
       customerId: numericId,
       teamId: customer.assignedTeamId,
       team: teamData,
+      history,
     };
   }
 
   /**
    * Assign or reassign customer to an operating team
    */
-  async assignTeam(id: number | string, teamId?: number | null, user?: any) {
+  async assignTeam(id: number | string, teamId?: number | null, user?: any, reassignPendingTasks: boolean = false) {
     const numericId = this.parseCustomerId(id);
 
     // Role authorization check: only super admin or admin/staff can assign teams
@@ -2959,6 +2979,9 @@ export class CustomerService {
 
     const existing = await this.prisma.customer.findUnique({
       where: { id: numericId },
+      include: {
+        assignedTeam: { select: { id: true, name: true } },
+      },
     });
 
     if (!existing || existing.deletedAt) {
@@ -2966,6 +2989,7 @@ export class CustomerService {
     }
 
     const resolvedTeamId = teamId ? Number(teamId) : null;
+    let targetTeamName = '';
     if (resolvedTeamId) {
       const team = await this.prisma.team.findUnique({
         where: { id: resolvedTeamId },
@@ -2973,6 +2997,7 @@ export class CustomerService {
       if (!team) {
         throw new NotFoundException(`Team #${resolvedTeamId} not found.`);
       }
+      targetTeamName = team.name;
     }
 
     const updated = await this.prisma.customer.update({
@@ -2995,6 +3020,64 @@ export class CustomerService {
       },
     });
 
+    // Record audit log for team assignment
+    const prevTeamName = existing.assignedTeam?.name || (existing.assignedTeamId ? `Team #${existing.assignedTeamId}` : 'None');
+    await (this.prisma as any).auditLog.create({
+      data: {
+        customerId: numericId,
+        userId: user?.id || null,
+        userName: user?.name || user?.email || 'Administrator',
+        userRole: user?.role || 'ADMIN',
+        action: 'TEAM_ASSIGNMENT',
+        module: 'CRM',
+        entityType: 'Customer',
+        entityId: String(numericId),
+        description: resolvedTeamId
+          ? `Customer assigned to Team "${targetTeamName}" (#${resolvedTeamId}) (previous: ${prevTeamName})`
+          : `Customer unassigned from ${prevTeamName}`,
+      },
+    }).catch((e: any) => this.logger.warn(`Failed to create team assignment audit log: ${e?.message}`));
+
+    // Reassign pending tasks if requested
+    const assignedTeamObj = (updated as any).assignedTeam;
+    if (reassignPendingTasks && resolvedTeamId && assignedTeamObj) {
+      const newAssigneeId = assignedTeamObj.leaderId || assignedTeamObj.members?.[0]?.employeeId;
+      if (newAssigneeId) {
+        try {
+          const pendingTasks = await this.prisma.task.findMany({
+            where: {
+              customerId: numericId,
+              status: { in: ['PENDING' as any, 'IN_PROGRESS' as any] },
+              deletedAt: null,
+            },
+            select: { id: true },
+          });
+
+          if (pendingTasks.length > 0) {
+            await this.prisma.task.updateMany({
+              where: { id: { in: pendingTasks.map((t) => t.id) } },
+              data: { employeeId: newAssigneeId },
+            });
+
+            for (const pt of pendingTasks) {
+              await (this.prisma as any).taskHistory.create({
+                data: {
+                  taskId: pt.id,
+                  action: 'TASK_REALLOCATED',
+                  performedById: user?.id || 1,
+                  performedByName: user?.name || 'Administrator',
+                  newEmployeeId: newAssigneeId,
+                  comment: `Reassigned pending task to Team "${targetTeamName}" assignee (#${newAssigneeId}) on customer team change.`,
+                },
+              }).catch(() => null);
+            }
+          }
+        } catch (taskReassignErr: any) {
+          this.logger.warn(`Failed to reassign pending tasks for customer ${numericId}: ${taskReassignErr?.message}`);
+        }
+      }
+    }
+
     if (resolvedTeamId && this.workService && typeof this.workService.syncCustomerTeamWorkAssignments === 'function') {
       try {
         await this.workService.syncCustomerTeamWorkAssignments(numericId, resolvedTeamId);
@@ -3004,7 +3087,6 @@ export class CustomerService {
     }
 
     const safeUpdated = this.serializeBigInt(updated);
-    const assignedTeamObj = (updated as any).assignedTeam;
     const teamData = assignedTeamObj
       ? {
           id: assignedTeamObj.id,

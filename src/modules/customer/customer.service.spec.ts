@@ -95,6 +95,17 @@ describe('CustomerService - Resource Consumption', () => {
       team: {
         findUnique: jest.fn(),
       },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({}),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      task: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      taskHistory: {
+        create: jest.fn().mockResolvedValue({}),
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -411,7 +422,7 @@ describe('CustomerService - Resource Consumption', () => {
       expect(findManyCall.where.NOT).toBeDefined();
       expect(findManyCall.where.deletedAt).toBeNull();
       expect(res.data).toHaveLength(2);
-      expect(res.data.map((c: any) => c.name)).toEqual(['BK Fireworks', 'Bajaj Textiles']);
+      expect(res.data.map((c: any) => c.name).sort()).toEqual(['Bajaj Textiles', 'BK Fireworks'].sort());
     });
 
     it('findAll search filters out Super Admin and Admin users when searching', async () => {

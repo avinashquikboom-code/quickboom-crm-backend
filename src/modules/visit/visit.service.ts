@@ -500,6 +500,13 @@ export class VisitService {
       this.logger.warn(`Non-fatal: Calendar appointment communications notice: ${commErr?.message}`);
     }
 
+    // Sync Calendar Activity to Customer Team Member Task
+    try {
+      await this.syncVisitTeamTask(visit);
+    } catch (taskErr: any) {
+      this.logger.warn(`Non-fatal: Visit team task sync notice: ${taskErr?.message}`);
+    }
+
     return linkedLead ? { ...visit, lead: linkedLead, leadStageSynced: syncResult === 'MOVED' } : visit;
   }
 
@@ -727,6 +734,13 @@ export class VisitService {
       }
     }
 
+    // Sync updated visit status / time to customer team task
+    try {
+      await this.syncVisitTeamTask(updated);
+    } catch (taskErr: any) {
+      this.logger.warn(`Non-fatal: Visit team task sync notice: ${taskErr?.message}`);
+    }
+
     return {
       ...updated,
       completedBy: finalVisitedByName,
@@ -760,5 +774,165 @@ export class VisitService {
     return this.prisma.visit.delete({
       where: { id: numId },
     });
+  }
+
+  /**
+   * Synchronize calendar activity / visit with team member tasks.
+   * If customer is assigned to a team, auto-assigns task to eligible team member
+   * (lead, selected member, or round-robin) and tracks status & schedule changes.
+   */
+  async syncVisitTeamTask(visit: any) {
+    if (!visit || !visit.customerId) return;
+
+    try {
+      const numCustomerId = Number(visit.customerId);
+      const visitTag = `[VISIT-#${visit.id}]`;
+
+      // 1. Check for existing linked task
+      const existingTask = await this.prisma.task.findFirst({
+        where: {
+          customerId: numCustomerId,
+          notes: { contains: visitTag },
+          deletedAt: null,
+        },
+      });
+
+      // Handle visit status updates / rescheduling on existing task
+      if (existingTask) {
+        const updateData: any = {};
+        if (visit.date) {
+          updateData.dueDate = new Date(visit.date);
+          updateData.dueAt = new Date(visit.date);
+        }
+        if (visit.time) {
+          updateData.dueTime = visit.time;
+        }
+        if (visit.status === 'COMPLETED' && existingTask.status !== ('COMPLETED' as any)) {
+          updateData.status = 'COMPLETED' as any;
+          updateData.completedAt = new Date();
+        } else if (visit.status === 'CANCELLED' && existingTask.status !== ('CANCELLED' as any)) {
+          updateData.status = 'CANCELLED' as any;
+        }
+
+        if (Object.keys(updateData).length > 0) {
+          await this.prisma.task.update({
+            where: { id: existingTask.id },
+            data: updateData,
+          });
+        }
+        return existingTask;
+      }
+
+      // If visit is cancelled, do not create a new task
+      if (visit.status === 'CANCELLED') return;
+
+      // 2. Identify customer and customer's assigned team
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: numCustomerId },
+        include: {
+          assignedTeam: {
+            include: {
+              leader: { select: { id: true, firstName: true, lastName: true } },
+              members: {
+                include: {
+                  employee: { select: { id: true, firstName: true, lastName: true, status: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!customer || !customer.assignedTeam) {
+        // Customer has no team assigned yet
+        return;
+      }
+
+      const team = customer.assignedTeam;
+      const activeMembers = (team.members || [])
+        .map((m: any) => m.employee)
+        .filter((emp: any) => emp && emp.status !== 'INACTIVE');
+
+      // 3. Determine task assignee
+      let targetEmployeeId = visit.employeeId ? Number(visit.employeeId) : null;
+      const isEmployeeInTeam = activeMembers.some((m: any) => m.id === targetEmployeeId);
+
+      if (!targetEmployeeId || !isEmployeeInTeam) {
+        if (team.leaderId) {
+          targetEmployeeId = team.leaderId;
+        } else if (activeMembers.length > 0) {
+          // Round-robin / lowest active task count
+          const memberIds = activeMembers.map((m: any) => m.id);
+          const taskCounts = await this.prisma.task.groupBy({
+            by: ['employeeId'],
+            where: {
+              employeeId: { in: memberIds },
+              status: { in: ['PENDING' as any, 'IN_PROGRESS' as any] },
+              deletedAt: null,
+            },
+            _count: true,
+          });
+
+          const countMap = new Map<number, number>();
+          memberIds.forEach((id: number) => countMap.set(id, 0));
+          taskCounts.forEach((tc: any) => {
+            if (tc.employeeId) countMap.set(tc.employeeId, tc._count);
+          });
+
+          let minCount = Infinity;
+          let chosenId = memberIds[0];
+          for (const [empId, cnt] of countMap.entries()) {
+            if (cnt < minCount) {
+              minCount = cnt;
+              chosenId = empId;
+            }
+          }
+          targetEmployeeId = chosenId;
+        }
+      }
+
+      // 4. Create Task Number & Task Record
+      const count = await this.prisma.task.count({ where: { customerId: numCustomerId } });
+      const taskNumber = `TSK-${(count + 1001).toString()}`;
+      const activityLabel = visit.visitType ? visit.visitType.replace(/_/g, ' ') : 'Client Meeting';
+      const taskTitle = `${activityLabel}: ${visit.customerName || customer.name || 'Customer'}`;
+      const taskDesc = `Scheduled calendar activity: ${visit.purpose || 'Client Consultation'}\nLocation: ${visit.location || 'HQ / On-site'}\nCustomer: ${visit.customerName || customer.name}\nAssigned Team: ${team.name}`;
+      const dueDate = visit.date ? new Date(visit.date) : new Date();
+
+      const created = await this.prisma.task.create({
+        data: {
+          customerId: numCustomerId,
+          createdById: visit.scheduledById ? Number(visit.scheduledById) : 1,
+          taskNumber,
+          title: taskTitle,
+          description: taskDesc,
+          priority: 'MEDIUM' as any,
+          status: 'PENDING' as any,
+          dueDate,
+          dueTime: visit.time || '10:00 AM',
+          dueAt: dueDate,
+          category: 'Calendar Activity',
+          employeeId: targetEmployeeId || undefined,
+          notes: `${visitTag}[TEAM-#${team.id}] ${visit.notes || ''}`.trim(),
+        },
+      });
+
+      // 5. Audit history for task creation
+      await (this.prisma as any).taskHistory.create({
+        data: {
+          taskId: created.id,
+          action: 'TASK_CREATED',
+          performedById: visit.scheduledById ? Number(visit.scheduledById) : 1,
+          performedByName: 'Calendar Sync',
+          newStatus: 'PENDING',
+          newEmployeeId: targetEmployeeId,
+          comment: `Task generated from calendar activity (${activityLabel}) and distributed to Team "${team.name}".`,
+        },
+      }).catch(() => null);
+
+      return created;
+    } catch (err: any) {
+      this.logger.warn(`Failed to sync calendar visit with team tasks: ${err?.message}`);
+    }
   }
 }
