@@ -113,6 +113,7 @@ model Customer {
   influencerReviews        InfluencerReview[]
   aiWallet                 AiCreditWallet?
   aiTransactions           AiCreditTransaction[]
+  couponRedemptions        CouponRedemption[]
   aiGenerations            AiGeneration[]
   socialAccounts           SocialAccount[]
   socialPublishes          SocialPublish[]
@@ -175,6 +176,8 @@ model Plan {
   monthlySchedules MonthlySchedule[]
   commissions      Commission[]
   leadPlanProposals LeadPlanProposal[]
+  couponPlans      CouponPlan[]
+  couponRedemptions CouponRedemption[]
 
   @@index([deletedAt])
 }
@@ -192,6 +195,10 @@ model CustomerSubscription {
   trialEndsAt        DateTime?
   autoRenew          Boolean                   @default(true)
   couponId           Int?
+  couponCode         String?
+  originalAmount     Float?
+  discountAmount     Float?
+  paidAmount         Float?
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
   deletedAt          DateTime?
@@ -206,6 +213,7 @@ model CustomerSubscription {
   works              Work[]
   installments       SubscriptionInstallment[]
   coupon             Coupon?                   @relation(fields: [couponId], references: [id])
+  couponRedemptions  CouponRedemption[]
   customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   plan               Plan                      @relation(fields: [planId], references: [id])
 
@@ -217,19 +225,64 @@ model CustomerSubscription {
 }
 
 model Coupon {
-  id             Int                    @id @default(autoincrement())
-  code           String                 @unique
-  discountPct    Float
-  maxRedemptions Int                    @default(100)
-  timesRedeemed  Int                    @default(0)
-  expiresAt      DateTime?
-  isActive       Boolean                @default(true)
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  deletedAt      DateTime?
-  subscriptions  CustomerSubscription[]
+  id                    Int                    @id @default(autoincrement())
+  code                  String                 @unique
+  name                  String?
+  description           String?
+  discountPct           Float
+  discountType          String                 @default("PERCENTAGE")
+  discountValue         Float?
+  minimumAmount         Float?
+  maximumDiscountAmount Float?
+  startsAt              DateTime?
+  maxRedemptions        Int                    @default(100)
+  timesRedeemed         Int                    @default(0)
+  perCustomerLimit      Int                    @default(1)
+  appliesToAllPlans     Boolean                @default(true)
+  expiresAt             DateTime?
+  isActive              Boolean                @default(true)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  deletedAt             DateTime?
+  subscriptions         CustomerSubscription[]
+  plans                 CouponPlan[]
+  redemptions           CouponRedemption[]
+  payments              PaymentHistory[]
 
   @@index([code])
+  @@index([deletedAt])
+}
+
+model CouponPlan {
+  couponId Int
+  planId   Int
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, planId])
+  @@map("coupon_plans")
+}
+
+model CouponRedemption {
+  id               Int                   @id @default(autoincrement())
+  couponId         Int
+  customerId       Int
+  planId           Int
+  subscriptionId   Int?
+  paymentId        Int?                  @unique
+  couponCode       String
+  originalAmount   Float
+  discountAmount   Float
+  finalAmount      Float
+  redeemedAt       DateTime              @default(now())
+  coupon           Coupon                @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan             Plan                  @relation(fields: [planId], references: [id], onDelete: Restrict)
+  subscription     CustomerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  payment          PaymentHistory?       @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([couponId, customerId])
+  @@map("coupon_redemptions")
 }
 
 model PaymentHistory {
@@ -250,11 +303,17 @@ model PaymentHistory {
   taxAmount      Float?
   totalAmount    Float?
   transactionId  String?
+  couponId       Int?
+  couponCode     String?
+  originalAmount Float?
+  discountAmount Float?
   createdAt      DateTime                  @default(now())
   updatedAt      DateTime                  @updatedAt
   deletedAt      DateTime?
   customer       Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   subscription   CustomerSubscription?     @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  coupon         Coupon?                   @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponRedemption CouponRedemption?
   installments   SubscriptionInstallment[]
   commission     Commission?
 

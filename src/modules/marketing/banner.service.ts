@@ -151,6 +151,34 @@ export class BannerService {
   }
 
   /**
+   * Get summary statistics for marketing banners (Company Admin)
+   */
+  async getStats(user: { id: number; customerId?: number | null; role?: string }) {
+    const where: any = { deletedAt: null };
+    if (user.customerId) {
+      where.OR = [{ customerId: user.customerId }, { customerId: null }];
+    }
+
+    const [total, active, inactive, latest] = await Promise.all([
+      this.prisma.marketingBanner.count({ where }),
+      this.prisma.marketingBanner.count({ where: { ...where, isActive: true } }),
+      this.prisma.marketingBanner.count({ where: { ...where, isActive: false } }),
+      this.prisma.marketingBanner.findFirst({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        select: { updatedAt: true },
+      }),
+    ]);
+
+    return {
+      total,
+      active,
+      inactive,
+      lastUpdated: latest?.updatedAt ? latest.updatedAt.toISOString() : null,
+    };
+  }
+
+  /**
    * List banners for Company Admin with search, filters, pagination
    */
   async findAllAdmin(
@@ -187,6 +215,7 @@ export class BannerService {
             { subtitle: { contains: s, mode: 'insensitive' } },
             { description: { contains: s, mode: 'insensitive' } },
             { ctaText: { contains: s, mode: 'insensitive' } },
+            { imageUrl: { contains: s, mode: 'insensitive' } },
           ],
         },
       ];

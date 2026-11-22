@@ -117,6 +117,19 @@ export class BannerController {
     return this.bannerService.create(dto, context, file);
   }
 
+  @Get('admin/marketing/banners/stats')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiOperation({ summary: 'Get banner statistics (Total, Active, Inactive, Last Updated)' })
+  async getStats(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+  ) {
+    this.checkCompanyAdminAccess(user);
+    const context = this.resolveCustomerContext(customerId, user);
+    return this.bannerService.getStats(context);
+  }
+
   @Get('admin/marketing/banners')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
