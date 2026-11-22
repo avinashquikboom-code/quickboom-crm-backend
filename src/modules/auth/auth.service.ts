@@ -128,7 +128,10 @@ export class AuthService {
     if (!firstName) firstName = companyOrCustomerName.split(/\s+/)[0] || 'Customer';
     if (!lastName) lastName = '';
 
-    const rawPassword = dto.password || '123456';
+    const rawPassword = dto.password?.trim();
+    if (!rawPassword) {
+      throw new BadRequestException('Password is required');
+    }
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
     let createdResult: any;
@@ -855,6 +858,13 @@ export class AuthService {
     if (!user.isActive) {
       // Never auto-reactivate a credential during login. In particular, removed
       // employees retain a disabled User row so old credentials stay revoked.
+      if (['CUSTOMER', 'CUSTOMER_MOBILE', 'CUSTOMER_ADMIN'].includes(upperExpectedRole)) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          message: 'Your customer account has been deactivated.',
+          code: 'ACCOUNT_DEACTIVATED',
+        });
+      }
       throw new UnauthorizedException(
         user.employee || isEmployeeLogin ? inactiveEmployeeMessage : 'Your account has been deactivated',
       );
@@ -1103,19 +1113,26 @@ export class AuthService {
           ? await this.prisma.customer.findUnique({ where: { id: user.customerId } })
           : null);
       if (!customerRecord) {
-        throw new UnauthorizedException({
-          statusCode: 401,
+        throw new ForbiddenException({
+          statusCode: 403,
           message: 'Customer workspace is missing for this account.',
           code: 'WORKSPACE_NOT_FOUND',
           error: 'Unauthorized',
         });
       }
       if (!customerRecord.isActive || customerRecord.deletedAt) {
-        throw new UnauthorizedException({
-          statusCode: 401,
+        throw new ForbiddenException({
+          statusCode: 403,
           message: 'Your customer workspace has been suspended. Please contact support.',
           code: 'WORKSPACE_SUSPENDED',
           error: 'Unauthorized',
+        });
+      }
+      if (!user.isVerified) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          message: 'Your customer account has not been verified. Please complete account verification.',
+          code: 'ACCOUNT_NOT_VERIFIED',
         });
       }
 
@@ -1156,14 +1173,6 @@ export class AuthService {
         }
       }
 
-      const origin = String(customerRecord.source || '').trim().toUpperCase();
-      const fromMobileRegistration = origin === 'APP_REGISTRATION';
-      const fromLead = customerRecord.leadId != null || origin.includes('LEAD');
-      if (upperExpectedRole === 'CUSTOMER_MOBILE' && !fromMobileRegistration && !fromLead) {
-        throw new ForbiddenException(
-          'This app is only for customers registered on mobile or created from a lead.',
-        );
-      }
     } else if (['EMPLOYEE', 'EMPLOYEE_MOBILE', 'MOBILE_EMPLOYEE'].includes(upperExpectedRole)) {
       if (userRole === 'SUPER_ADMIN' || isSuperAdminRole) {
         throw new ForbiddenException('Super Admin accounts must use the Admin Panel login.');
@@ -1233,8 +1242,8 @@ export class AuthService {
       }
     } else if (userRole === 'CUSTOMER' || userRole === 'CUSTOMER_ADMIN') {
       if (!user.isActive) {
-        throw new UnauthorizedException({
-          statusCode: 401,
+        throw new ForbiddenException({
+          statusCode: 403,
           message: 'Your customer account has been deactivated.',
           code: 'ACCOUNT_DEACTIVATED',
           error: 'Unauthorized',
@@ -1246,8 +1255,8 @@ export class AuthService {
           ? await this.prisma.customer.findUnique({ where: { id: user.customerId } })
           : null);
       if (customerRecord && (!customerRecord.isActive || customerRecord.deletedAt)) {
-        throw new UnauthorizedException({
-          statusCode: 401,
+        throw new ForbiddenException({
+          statusCode: 403,
           message: 'Your customer workspace has been suspended. Please contact support.',
           code: 'WORKSPACE_SUSPENDED',
           error: 'Unauthorized',
@@ -1514,7 +1523,25 @@ export class AuthService {
         },
       }));
 
-    if (!user || !user.isActive || user.deletedAt) {
+    if (!user || user.deletedAt) {
+      throw new UnauthorizedException('Account is inactive, suspended, or does not exist.');
+    }
+
+    if (user.customer && (user.customer.isActive === false || user.customer.deletedAt)) {
+      if (existingToken) {
+        await this.prisma.refreshToken.update({
+          where: { id: existingToken.id },
+          data: { isRevoked: true },
+        }).catch(() => null);
+      }
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Customer account is inactive or no longer available.',
+        code: 'ACCOUNT_DISABLED',
+      });
+    }
+
+    if (!user.isActive) {
       throw new UnauthorizedException('Account is inactive, suspended, or does not exist.');
     }
 

@@ -128,6 +128,36 @@ describe('AuthService - Token Refresh Flow', () => {
     expect(res.accessToken).toBe('mock-jwt-token');
   });
 
+  it('rejects and revokes refresh for a disabled customer workspace', async () => {
+    jwtService.verify.mockReturnValue({ sub: 30, role: 'CUSTOMER_ADMIN' });
+    prisma.refreshToken.findUnique.mockResolvedValue({
+      id: 30,
+      isRevoked: false,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 30,
+      isActive: true,
+      deletedAt: null,
+      customerId: 30,
+      customer: { id: 30, isActive: false, deletedAt: null },
+      employee: null,
+      userRoles: [
+        { role: { id: 30, type: RoleType.CUSTOMER_ADMIN, name: 'Customer Administrator' } },
+      ],
+    });
+
+    await expect(
+      authService.refreshToken({ refreshToken: 'disabled-customer-refresh-token' }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'ACCOUNT_DISABLED' }),
+    });
+    expect(prisma.refreshToken.update).toHaveBeenCalledWith({
+      where: { id: 30 },
+      data: { isRevoked: true },
+    });
+  });
+
   it('3. Rejects token refresh if user account is deactivated', async () => {
     jwtService.verify.mockReturnValue({ sub: 1, email: 'admin@quickboom.com' });
 
