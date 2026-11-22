@@ -117,6 +117,7 @@ export class VisitService {
     employeeId?: string,
     companyId?: string,
     user?: any,
+    date?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const numCustomerId = await this.resolveCustomerId(customerId);
@@ -141,12 +142,23 @@ export class VisitService {
     if (employeeId && employeeId !== 'ALL') where.employeeId = Number(employeeId);
     if (companyId && companyId !== 'ALL') where.companyId = Number(companyId);
 
+    if (date && date.trim()) {
+      const startOfDay = new Date(date);
+      if (!isNaN(startOfDay.getTime())) {
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(startOfDay);
+        endOfDay.setHours(23, 59, 59, 999);
+        where.date = { gte: startOfDay, lte: endOfDay };
+      }
+    }
+
     if (search && search.trim()) {
       const s = search.trim();
       where.OR = [
         { customerName: { contains: s, mode: 'insensitive' } },
         { purpose: { contains: s, mode: 'insensitive' } },
         { location: { contains: s, mode: 'insensitive' } },
+        { company: { name: { contains: s, mode: 'insensitive' } } },
       ];
     }
 

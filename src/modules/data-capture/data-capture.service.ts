@@ -1933,6 +1933,7 @@ export class DataCaptureService implements OnModuleInit {
             { address: { contains: search, mode: 'insensitive' } },
             { category: { contains: search, mode: 'insensitive' } },
             { googlePlaceId: { contains: search, mode: 'insensitive' } },
+            { website: { contains: search, mode: 'insensitive' } },
           ],
         });
       }
