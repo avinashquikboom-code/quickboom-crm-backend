@@ -334,7 +334,7 @@ export function evaluateLatePunch(input: {
   const policy = input.policy;
   const enabled = policy?.isEnabled !== false;
   const rate = Math.max(0, Number(policy?.deductionRatePerMin ?? 1));
-  const grace = Math.max(0, Number(input.shift?.gracePeriodMinutes ?? policy?.gracePeriodMinutes ?? 0) || 0);
+  const grace = 0;
   const startRaw = input.shift?.startTime || null;
   const startMins = parseTimeStringToMinutes(startRaw);
   const endMins = parseTimeStringToMinutes(input.shift?.endTime);

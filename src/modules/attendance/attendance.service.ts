@@ -1259,7 +1259,7 @@ result: SUCCESS`);
             startTime: assignedShift.startTime,
             endTime: assignedShift.endTime,
             durationHours: assignedShift.durationHours,
-            gracePeriodMinutes: assignedShift.gracePeriodMinutes,
+            gracePeriodMinutes: 0,
             breakDurationMinutes: assignedShift.breakDurationMinutes,
           }
         : null,
@@ -1538,7 +1538,7 @@ result: SUCCESS`);
       policy: latePolicy || {
         isEnabled: true,
         deductionRatePerMin: 1,
-        gracePeriodMinutes: employee.shift?.gracePeriodMinutes ?? attendancePolicy?.gracePeriodMinutes ?? 0,
+        gracePeriodMinutes: 0,
         currency: 'INR',
       },
       isHoliday,

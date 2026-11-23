@@ -1569,13 +1569,13 @@ model LeaveAdjustmentHistory {
 }
 
 model AttendancePolicy {
+  legacyPunchInGraceMinutes Int @default(0)
   id                         Int             @id @default(autoincrement())
   customerId                 Int
   officeId                   Int?
   name                       String          @default("Standard Attendance Policy")
   workingDaysPerWeek         Int             @default(5)
   workingHoursPerDay         Float           @default(8.0)
-  gracePeriodMinutes         Int             @default(0)
   lateArrivalThresholdMins   Int             @default(30)
   earlyCheckoutThresholdMins Int             @default(30)
   fullDayAbsenceDeductionPct Float           @default(100.0)
@@ -1747,6 +1747,7 @@ model RemoteRequest {
 }
 
 model Shift {
+  legacyPunchInGraceMinutes Int @default(0)
   id                       Int                      @id @default(autoincrement())
   customerId               Int
   name                     String
@@ -1754,7 +1755,6 @@ model Shift {
   startTime                String                   @default("09:30 AM")
   endTime                  String                   @default("06:30 PM")
   durationHours            Float                    @default(9.0)
-  gracePeriodMinutes       Int                      @default(0)
   halfDayThresholdHours    Float                    @default(4.5)
   breakDurationMinutes     Int                      @default(60)
   isNightShift             Boolean                  @default(false)
@@ -2219,12 +2219,12 @@ model LateMarkReportDelivery {
 }
 
 model LateMarkPolicy {
+  legacyPunchInGraceMinutes Int @default(0)
   id                  Int      @id @default(autoincrement())
   customerId          Int      @unique
   isEnabled           Boolean  @default(true)
   deductionRatePerMin Float    @default(1.0)
   currency            String   @default("INR")
-  gracePeriodMinutes  Int      @default(0)
   calculationMethod   String   @default("PER_MINUTE")
   applyTo             String   @default("ALL")
   applicableRoles     String[] @default([])

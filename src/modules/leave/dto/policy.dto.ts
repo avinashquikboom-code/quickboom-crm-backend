@@ -54,11 +54,6 @@ export class UpsertAttendancePolicyDto {
   @IsOptional()
   multiplePunchInAllowed?: boolean;
 
-  @ApiPropertyOptional({ example: 15 })
-  @IsNumber()
-  @IsOptional()
-  gracePeriodMinutes?: number;
-
   @ApiPropertyOptional({ example: 30 })
   @IsNumber()
   @IsOptional()

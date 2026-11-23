@@ -657,7 +657,7 @@ export class EmployeeService {
             startTime: employee.shift.startTime,
             endTime: employee.shift.endTime,
             durationHours: employee.shift.durationHours,
-            gracePeriodMinutes: employee.shift.gracePeriodMinutes,
+            gracePeriodMinutes: 0,
             breakDurationMinutes: employee.shift.breakDurationMinutes,
             isNightShift: employee.shift.isNightShift,
             status: employee.shift.status,

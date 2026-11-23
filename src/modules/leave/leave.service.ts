@@ -1912,7 +1912,6 @@ export class LeaveService {
       punchInRequired: dto.punchInRequired ?? true,
       earlyPunchInAllowed: dto.earlyPunchInAllowed ?? true,
       multiplePunchInAllowed: dto.multiplePunchInAllowed ?? false,
-      gracePeriodMinutes: dto.gracePeriodMinutes ?? 0,
       lateArrivalThresholdMins: dto.lateArrivalThresholdMins ?? 30,
       lateRuleAction: dto.lateRuleAction?.trim() || 'MARK_LATE',
       punchOutRequired: dto.punchOutRequired ?? true,
