@@ -167,8 +167,7 @@ export class CustomerController {
     return this.customerService.getMetrics({ dateFrom, dateTo, status });
   }
 
-  @Get('resource-consumption')
-  @Get('usage')
+  @Get(['resource-consumption', 'usage', 'admin/customers/usage', 'admin/customer/usage'])
   @ApiOperation({ summary: 'Get Customer Resource Consumption analytics, breakdown, and KPI metrics' })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
