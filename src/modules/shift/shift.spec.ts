@@ -66,6 +66,13 @@ describe('ShiftService (HRM Shifts & Guidance)', () => {
       employee: {
         count: jest.fn(),
         updateMany: jest.fn(),
+        update: jest.fn(),
+        findMany: jest.fn(),
+      },
+      shiftAssignmentHistory: {
+        create: jest.fn(),
+        count: jest.fn(),
+        findMany: jest.fn(),
       },
       $transaction: jest.fn((callback) => callback(prisma)),
     };
@@ -212,22 +219,71 @@ describe('ShiftService (HRM Shifts & Guidance)', () => {
   });
 
   describe('assignEmployees', () => {
-    it('assigns specific employees and department to shift', async () => {
+    it('assigns specific employees and records shift history', async () => {
       prisma.shift.findFirst.mockResolvedValue(mockShift);
+      prisma.employee.findMany
+        .mockResolvedValueOnce([{ id: 20 }]) // for departmentId
+        .mockResolvedValueOnce([
+          { id: 10, shiftId: null },
+          { id: 11, shiftId: 2 },
+          { id: 20, shiftId: 1 },
+        ]);
 
-      await service.assignEmployees(3, 1, {
-        employeeIds: [10, 11],
-        departmentId: 2,
-      });
+      await service.assignEmployees(
+        3,
+        1,
+        {
+          employeeIds: [10, 11],
+          departmentId: 2,
+          reason: 'Team reorganization',
+        },
+        { id: 99, firstName: 'HR', lastName: 'Manager' },
+      );
 
-      expect(prisma.employee.updateMany).toHaveBeenCalledWith({
-        where: { customerId: 3, id: { in: [10, 11] } },
+      expect(prisma.employee.update).toHaveBeenCalledWith({
+        where: { id: 10 },
         data: { shiftId: 1 },
       });
-      expect(prisma.employee.updateMany).toHaveBeenCalledWith({
-        where: { customerId: 3, departmentId: 2 },
+      expect(prisma.employee.update).toHaveBeenCalledWith({
+        where: { id: 11 },
         data: { shiftId: 1 },
       });
+      expect(prisma.shiftAssignmentHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            customerId: 3,
+            employeeId: 10,
+            shiftId: 1,
+            previousShiftId: null,
+            newShiftId: 1,
+            changedById: 99,
+            changedByName: 'HR Manager',
+            reason: 'Team reorganization',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('getShiftHistory', () => {
+    it('returns paginated shift history records', async () => {
+      prisma.shiftAssignmentHistory.count.mockResolvedValue(1);
+      prisma.shiftAssignmentHistory.findMany.mockResolvedValue([
+        {
+          id: 1,
+          customerId: 3,
+          employeeId: 10,
+          shiftId: 1,
+          previousShiftId: null,
+          newShiftId: 1,
+          changedByName: 'HR Manager',
+          employee: { id: 10, firstName: 'John', lastName: 'Doe' },
+        },
+      ]);
+
+      const result = await service.getShiftHistory(3, { page: 1, limit: 10 });
+      expect(result.pagination.total).toBe(1);
+      expect(result.data).toHaveLength(1);
     });
   });
 

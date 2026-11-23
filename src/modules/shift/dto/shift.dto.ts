@@ -143,4 +143,58 @@ export class AssignEmployeesToShiftDto {
   @IsOptional()
   @IsNumber()
   departmentId?: number;
+
+  @ApiPropertyOptional({ example: '2026-11-23' })
+  @IsOptional()
+  @IsString()
+  effectiveFrom?: string;
+
+  @ApiPropertyOptional({ example: 'Shift rotation' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class UnassignEmployeesDto {
+  @ApiProperty({ example: [1, 2, 3] })
+  @IsArray()
+  employeeIds: number[];
+
+  @ApiPropertyOptional({ example: 'Project completed' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class QueryShiftHistoryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  employeeId?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  shiftId?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  page?: number;
+
+  @ApiPropertyOptional({ default: 20 })
+  @IsOptional()
+  limit?: number;
 }

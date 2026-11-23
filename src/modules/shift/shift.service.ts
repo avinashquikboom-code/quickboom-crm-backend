@@ -10,6 +10,8 @@ import {
   UpdateShiftDto,
   UpdateShiftGuidanceDto,
   AssignEmployeesToShiftDto,
+  UnassignEmployeesDto,
+  QueryShiftHistoryDto,
 } from './dto/shift.dto';
 
 @Injectable()
@@ -267,32 +269,288 @@ export class ShiftService {
     });
   }
 
-  async assignEmployees(customerId: number | string | null, id: number | string, dto: AssignEmployeesToShiftDto, isSuperAdmin = false) {
+  async assignEmployees(
+    customerId: number | string | null,
+    id: number | string,
+    dto: AssignEmployeesToShiftDto,
+    user?: any,
+    isSuperAdmin = false,
+  ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
     const numId = Number(id);
     await this.findOne(numCustomerId, numId, isSuperAdmin);
 
-    if (dto.employeeIds && dto.employeeIds.length > 0) {
-      await this.prisma.employee.updateMany({
-        where: {
-          customerId: numCustomerId,
-          id: { in: dto.employeeIds.map(Number) },
-        },
-        data: { shiftId: numId },
-      });
+    const changedById = user?.id || null;
+    const changedByName = user
+      ? [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+        user.name ||
+        user.email ||
+        'Admin'
+      : 'Admin';
+
+    // Collect all employee IDs to assign
+    const targetEmployeeIds = new Set<number>();
+    if (dto.employeeIds && Array.isArray(dto.employeeIds)) {
+      dto.employeeIds.map(Number).filter((n) => !isNaN(n) && n > 0).forEach((id) => targetEmployeeIds.add(id));
     }
 
     if (dto.departmentId) {
-      await this.prisma.employee.updateMany({
-        where: {
-          customerId: numCustomerId,
-          departmentId: Number(dto.departmentId),
-        },
-        data: { shiftId: numId },
+      const deptEmployees = await this.prisma.employee.findMany({
+        where: { customerId: numCustomerId, departmentId: Number(dto.departmentId) },
+        select: { id: true },
       });
+      deptEmployees.forEach((e) => targetEmployeeIds.add(e.id));
     }
 
+    const employeeIdList = Array.from(targetEmployeeIds);
+    if (employeeIdList.length === 0) {
+      return this.findOne(numCustomerId, numId, isSuperAdmin);
+    }
+
+    // Fetch existing employee records to track previous shifts
+    const existingEmployees = await this.prisma.employee.findMany({
+      where: { customerId: numCustomerId, id: { in: employeeIdList } },
+      select: { id: true, shiftId: true },
+    });
+
+    const effectiveDate = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
+    const reasonText = dto.reason?.trim() || null;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const emp of existingEmployees) {
+        if (emp.shiftId !== numId) {
+          // Update employee shift
+          await tx.employee.update({
+            where: { id: emp.id },
+            data: { shiftId: numId },
+          });
+
+          // Create history record
+          await tx.shiftAssignmentHistory.create({
+            data: {
+              customerId: numCustomerId,
+              employeeId: emp.id,
+              shiftId: numId,
+              previousShiftId: emp.shiftId,
+              newShiftId: numId,
+              changedById,
+              changedByName,
+              effectiveFrom: effectiveDate,
+              reason: reasonText || (emp.shiftId ? 'Shift changed by administrator' : 'Initial shift assignment'),
+            },
+          });
+        }
+      }
+    });
+
     return this.findOne(numCustomerId, numId, isSuperAdmin);
+  }
+
+  async unassignEmployees(
+    customerId: number | string | null,
+    id: number | string | null,
+    dto: UnassignEmployeesDto,
+    user?: any,
+    isSuperAdmin = false,
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const numId = id ? Number(id) : null;
+    if (numId) {
+      await this.findOne(numCustomerId, numId, isSuperAdmin);
+    }
+
+    const changedById = user?.id || null;
+    const changedByName = user
+      ? [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+        user.name ||
+        user.email ||
+        'Admin'
+      : 'Admin';
+
+    const employeeIds = (dto.employeeIds || []).map(Number).filter((n) => !isNaN(n) && n > 0);
+    if (employeeIds.length === 0) {
+      return { count: 0 };
+    }
+
+    const where: any = { customerId: numCustomerId, id: { in: employeeIds } };
+    if (numId) {
+      where.shiftId = numId;
+    }
+
+    const existingEmployees = await this.prisma.employee.findMany({
+      where,
+      select: { id: true, shiftId: true },
+    });
+
+    const reasonText = dto.reason?.trim() || 'Unassigned from shift';
+    const effectiveDate = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const emp of existingEmployees) {
+        if (emp.shiftId !== null) {
+          await tx.employee.update({
+            where: { id: emp.id },
+            data: { shiftId: null },
+          });
+
+          await tx.shiftAssignmentHistory.create({
+            data: {
+              customerId: numCustomerId,
+              employeeId: emp.id,
+              shiftId: null,
+              previousShiftId: emp.shiftId,
+              newShiftId: null,
+              changedById,
+              changedByName,
+              effectiveFrom: effectiveDate,
+              reason: reasonText,
+            },
+          });
+        }
+      }
+    });
+
+    return { count: existingEmployees.length };
+  }
+
+  async getShiftHistory(
+    customerId: number | string | null,
+    query: QueryShiftHistoryDto = {},
+    isSuperAdmin = false,
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const where: any = { customerId: numCustomerId };
+
+    if (query.employeeId) {
+      where.employeeId = Number(query.employeeId);
+    }
+
+    if (query.shiftId) {
+      const sId = Number(query.shiftId);
+      where.OR = [
+        { shiftId: sId },
+        { previousShiftId: sId },
+        { newShiftId: sId },
+      ];
+    }
+
+    if (query.startDate || query.endDate) {
+      where.effectiveFrom = {};
+      if (query.startDate) {
+        where.effectiveFrom.gte = new Date(query.startDate);
+      }
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        end.setHours(23, 59, 59, 999);
+        where.effectiveFrom.lte = end;
+      }
+    }
+
+    if (query.search && query.search.trim()) {
+      const q = query.search.trim();
+      const searchConditions: any[] = [
+        { reason: { contains: q, mode: 'insensitive' } },
+        { changedByName: { contains: q, mode: 'insensitive' } },
+        { employee: { firstName: { contains: q, mode: 'insensitive' } } },
+        { employee: { lastName: { contains: q, mode: 'insensitive' } } },
+        { employee: { employeeCode: { contains: q, mode: 'insensitive' } } },
+        { previousShift: { name: { contains: q, mode: 'insensitive' } } },
+        { previousShift: { code: { contains: q, mode: 'insensitive' } } },
+        { newShift: { name: { contains: q, mode: 'insensitive' } } },
+        { newShift: { code: { contains: q, mode: 'insensitive' } } },
+      ];
+
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+        delete where.OR;
+      } else {
+        where.OR = searchConditions;
+      }
+    }
+
+    const [total, records] = await Promise.all([
+      this.prisma.shiftAssignmentHistory.count({ where }),
+      this.prisma.shiftAssignmentHistory.findMany({
+        where,
+        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+        skip,
+        take: limit,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              department: { select: { id: true, name: true } },
+              designation: { select: { id: true, name: true } },
+            },
+          },
+          previousShift: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              startTime: true,
+              endTime: true,
+              durationHours: true,
+              isNightShift: true,
+            },
+          },
+          newShift: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              startTime: true,
+              endTime: true,
+              durationHours: true,
+              isNightShift: true,
+            },
+          },
+          shift: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              startTime: true,
+              endTime: true,
+              durationHours: true,
+              isNightShift: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      data: records,
+      rows: records, // For convenience / backward compatibility
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getEmployeeShiftHistory(
+    customerId: number | string | null,
+    employeeId: number | string,
+    isSuperAdmin = false,
+  ) {
+    return this.getShiftHistory(
+      customerId,
+      { employeeId: Number(employeeId), limit: 100 },
+      isSuperAdmin,
+    );
   }
 
   async delete(customerId: number | string | null, id: number | string, isSuperAdmin = false) {
