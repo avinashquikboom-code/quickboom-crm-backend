@@ -2968,21 +2968,24 @@ assignedEmployee: ${item.assignedEmployee}`);
     }
 
     const reason = (dto.reason || '').trim();
+    if (!reason) throw new BadRequestException('A reason is required for rework.');
     const revisionNumber = (existing.revisionCount || 0) + 1;
 
     this.logger.log(
       `[REWORK_REQUEST] customerId: ${numCustomerId} activityId: ${numId} title: "${existing.title}" type: ${existing.workType} revision: ${revisionNumber} reason: "${reason}"`,
     );
 
+    const notifications: Array<{ id: number; userId: number; customerId: number; title: string; message: string; workId: number }> = [];
     const reworkItem = await this.prisma.$transaction(async (tx) => {
       // 1. Update original item with feedback/notes
-      await tx.work.update({
-        where: { id: numId },
+      const claimed = await tx.work.updateMany({
+        where: { id: numId, customerId: numCustomerId, revisionCount: existing.revisionCount, status: existing.status },
         data: {
           feedback: reason || 'Rework requested by client',
           revisionCount: revisionNumber,
         },
       });
+      if (claimed.count !== 1) throw new BadRequestException('This work was already updated. Please refresh and try again.');
 
       // 2. Create new linked rework activity
       const newWork = await tx.work.create({
@@ -3021,22 +3024,30 @@ assignedEmployee: ${item.assignedEmployee}`);
         ],
       });
 
+      for (const uid of new Set([newWork.assignedTo?.userId, newWork.editor?.userId].filter((id): id is number => Boolean(id)))) {
+        const recipient = await tx.user.findUnique({ where: { id: uid }, select: { customerId: true, isActive: true, deletedAt: true } });
+        if (!recipient?.customerId || !recipient.isActive || recipient.deletedAt) continue;
+        const notification = await tx.notification.create({ data: {
+          customerId: recipient.customerId, userId: uid,
+          title: 'Rework Requested by Customer',
+          message: `Customer requested changes for ${existing.title}. Please review and resubmit.`,
+          type: 'REWORK_REQUESTED',
+          data: { workId: newWork.id, originalWorkId: existing.id },
+        } });
+        notifications.push({ id: notification.id, userId: uid, customerId: recipient.customerId, title: notification.title, message: notification.message, workId: newWork.id });
+      }
+
       return newWork;
     });
 
-    // Notify assigned staff
-    const staffUserIds = [reworkItem.assignedToId, reworkItem.editorId].filter(Boolean) as number[];
-    for (const uid of staffUserIds) {
-      await this.prisma.notification.create({
-        data: {
-          customerId: numCustomerId,
-          userId: uid,
-          title: 'Rework Requested by Customer',
-          message: `Customer requested rework for "${existing.title}": ${reason || 'See details in task.'}`,
-          type: 'REWORK_REQUESTED',
-          data: { workId: reworkItem.id, originalWorkId: existing.id, reason },
-        },
-      });
+    for (const notification of notifications) {
+      if (!this.notificationService) continue;
+      try {
+        const delivery = await this.notificationService.sendPushNotification({ existingNotificationId: notification.id, userId: notification.userId, customerId: notification.customerId, title: notification.title, body: notification.message, type: 'REWORK_REQUESTED', data: { workId: String(notification.workId), originalWorkId: String(existing.id) } });
+        if (!delivery.delivered) this.logger.warn(`[REWORK_PUSH_FAILED] workId=${notification.workId} notificationId=${notification.id} status=${delivery.status}`);
+      } catch (error: any) {
+        this.logger.warn(`[REWORK_PUSH_FAILED] workId=${notification.workId} notificationId=${notification.id} error=${error?.message}`);
+      }
     }
 
     this.emitRealtimeScheduleEvent(numCustomerId, 'PLAN_SCHEDULE_CREATED', {
