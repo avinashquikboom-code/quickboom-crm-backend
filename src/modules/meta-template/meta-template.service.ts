@@ -991,7 +991,9 @@ export class MetaTemplateService {
         if (!remote) return 'ALREADY_ABSENT';
 
         const selectors = [
-          remote.id ? { hsm_id: String(remote.id) } : null,
+          // Meta requires name together with hsm_id when targeting a specific
+          // template. Keep both in the retry, matching the Graph API contract.
+          remote.id ? { hsm_id: String(remote.id), name: String(remote.name || item.templateName) } : null,
           { name: item.templateName },
         ].filter(Boolean);
         let lastError = error;
