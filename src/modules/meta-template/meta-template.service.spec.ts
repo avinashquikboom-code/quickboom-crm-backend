@@ -426,6 +426,28 @@ describe('MetaTemplateService', () => {
       expect(del).not.toHaveBeenCalled();
       expect(record.deletedAt).toBeNull();
     });
+
+    it('bulk deletes multiple eligible Meta templates with detailed report', async () => {
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      const res = await service.bulkRemove({ ids: [40, 40], reason: 'Bulk delete test' }, admin);
+      expect(res.total).toBe(1); // deduplicated
+      expect(res.deletedCount).toBe(1);
+      expect(res.deletedIds).toEqual([40]);
+      expect(res.failedCount).toBe(0);
+    });
+
+    it('handles partial failures gracefully in bulk delete', async () => {
+      mockPrisma.metaTemplate.findFirst.mockImplementation(({ where }: any) => {
+        if (where.id === 40) return Promise.resolve(record);
+        return Promise.resolve(null);
+      });
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      const res = await service.bulkRemove({ ids: [40, 999] }, admin);
+      expect(res.total).toBe(2);
+      expect(res.deletedCount).toBe(1);
+      expect(res.failedCount).toBe(1);
+      expect(res.failed[0].id).toBe(999);
+    });
   });
 
   describe('preview', () => {

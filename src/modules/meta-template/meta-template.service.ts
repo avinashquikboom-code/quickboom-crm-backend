@@ -15,6 +15,7 @@ import {
   PreviewMetaTemplateDto,
   TestSendMetaTemplateDto,
   DeleteMetaTemplateDto,
+  BulkDeleteMetaTemplatesDto,
 } from './dto/meta-template.dto';
 import { LEAD_STAGE_WHATSAPP_TEMPLATES, WhatsappService } from '../whatsapp/whatsapp.service';
 import { isLocalPlaceholderTemplate, isSendableMetaTemplate, resolveCleanAccessToken } from '../whatsapp/whatsapp.util';
@@ -716,6 +717,22 @@ export class MetaTemplateService {
       throw new BadRequestException(`Template cannot be deleted: ${references.blockers.join(' ')}`);
     }
 
+    // Check active campaigns
+    if (this.prisma.whatsAppCampaign?.findFirst) {
+      const activeCampaign = await this.prisma.whatsAppCampaign.findFirst({
+        where: {
+          metaTemplateId: item.id,
+          status: { in: ['RUNNING', 'SCHEDULED', 'DRAFT', 'PAUSED'] },
+        },
+        select: { id: true, name: true, status: true },
+      });
+      if (activeCampaign) {
+        throw new BadRequestException(
+          `Template cannot be deleted because it is linked to an active WhatsApp campaign: "${activeCampaign.name}" (${activeCampaign.status}). Cancel or delete the campaign first.`,
+        );
+      }
+    }
+
     const actor = this.actorLabel(user);
     let metaResult: 'NOT_REQUIRED' | 'DELETED' | 'ALREADY_ABSENT';
     const syncedToMeta = Boolean(item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_'));
@@ -756,7 +773,7 @@ export class MetaTemplateService {
       return {
         success: false,
         deletionPending: true,
-        message: `The template was ${metaResult === 'ALREADY_ABSENT' ? 'already absent from' : 'deleted from'} Meta, but the local record could not be archived: ${message}. Use Retry to finish the local cleanup.`,
+        message: `The template was ${metaResult === 'ALREADY_ABSENT' ? 'already absent from' : 'deleted from'} Meta, but the local record could not be permanently deleted: ${message}. Use Retry to finish the local cleanup.`,
         metaResult,
         templateId: item.id,
       };
@@ -765,9 +782,120 @@ export class MetaTemplateService {
     await this.writeDeletionAudit(item, user, actor, metaResult, references, dto?.reason);
     return {
       success: true,
-      message: `Template deleted successfully. Removed from ${metaResult === 'NOT_REQUIRED' ? 'QB Suite (template was not synced to Meta)' : 'Meta and QB Suite'}.`,
+      message: `Template deleted successfully. Permanently removed from ${metaResult === 'NOT_REQUIRED' ? 'QB Suite (template was not synced to Meta)' : 'Meta and QB Suite'}.`,
       metaResult,
       templateId: item.id,
+      deletedIds: [item.id],
+    };
+  }
+
+  /**
+   * Bulk permanently deletes multiple Meta message templates.
+   */
+  async bulkRemove(dto: BulkDeleteMetaTemplatesDto, user: any) {
+    const rawIds = Array.isArray(dto?.ids) ? dto.ids : [];
+    const uniqueIds = Array.from(new Set(rawIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+
+    if (!uniqueIds.length) {
+      throw new BadRequestException('At least one valid template ID must be provided.');
+    }
+
+    const customerId = user?.customerId !== undefined && user?.customerId !== null ? Number(user.customerId) : null;
+    const deletedIds: number[] = [];
+    const failed: Array<{ id: number; name?: string; reason: string }> = [];
+
+    for (const id of uniqueIds) {
+      let item: any;
+      try {
+        item = await this.findTemplateForUser(id, customerId, user);
+        this.assertTemplateAccess(item, user);
+      } catch (err: any) {
+        failed.push({
+          id,
+          name: `ID #${id}`,
+          reason: err?.message || 'Template not found or access denied.',
+        });
+        continue;
+      }
+
+      if (item.isSystem) {
+        failed.push({
+          id,
+          name: item.name || item.templateName,
+          reason: 'System templates cannot be deleted.',
+        });
+        continue;
+      }
+
+      const references = await this.findTemplateReferences(item);
+      if (references.blockers.length) {
+        failed.push({
+          id,
+          name: item.name || item.templateName,
+          reason: `Template cannot be deleted: ${references.blockers.join(' ')}`,
+        });
+        continue;
+      }
+
+      // Check active campaigns
+      if (this.prisma.whatsAppCampaign?.findFirst) {
+        const activeCampaign = await this.prisma.whatsAppCampaign.findFirst({
+          where: {
+            metaTemplateId: item.id,
+            status: { in: ['RUNNING', 'SCHEDULED', 'DRAFT', 'PAUSED'] },
+          },
+          select: { id: true, name: true, status: true },
+        });
+        if (activeCampaign) {
+          failed.push({
+            id,
+            name: item.name || item.templateName,
+            reason: `Linked to active WhatsApp campaign "${activeCampaign.name}" (${activeCampaign.status}). Cancel or delete the campaign first.`,
+          });
+          continue;
+        }
+      }
+
+      const actor = this.actorLabel(user);
+      let metaResult: 'NOT_REQUIRED' | 'DELETED' | 'ALREADY_ABSENT' = 'NOT_REQUIRED';
+      const syncedToMeta = Boolean(item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_'));
+
+      if (syncedToMeta && item.deletionState !== 'META_DELETED' && item.deletionState !== 'LOCAL_DELETED') {
+        try {
+          metaResult = await this.deleteFromMeta(item, customerId);
+        } catch (metaErr: any) {
+          failed.push({
+            id,
+            name: item.name || item.templateName,
+            reason: metaErr?.message || 'Failed to delete template from Meta API.',
+          });
+          continue;
+        }
+      }
+
+      try {
+        await this.completeLocalDeletion(item, user, dto?.reason);
+        await this.writeDeletionAudit(item, user, actor, metaResult, references, dto?.reason);
+        deletedIds.push(item.id);
+      } catch (localErr: any) {
+        failed.push({
+          id,
+          name: item.name || item.templateName,
+          reason: localErr?.message || 'Failed to permanently delete local template record.',
+        });
+      }
+    }
+
+    return {
+      success: deletedIds.length > 0,
+      message: deletedIds.length === uniqueIds.length
+        ? `Successfully permanently deleted ${deletedIds.length} Meta template(s).`
+        : `Permanently deleted ${deletedIds.length} Meta template(s). ${failed.length} failed.`,
+      total: uniqueIds.length,
+      deletedCount: deletedIds.length,
+      failedCount: failed.length,
+      deletedIds,
+      failed,
     };
   }
 
@@ -830,21 +958,27 @@ export class MetaTemplateService {
       }
       if (tx.whatsAppCampaign) {
         await tx.whatsAppCampaign.updateMany({
-          where: { metaTemplateId: item.id, status: { notIn: ['COMPLETED', 'FAILED', 'CANCELLED'] } },
-          data: { status: 'CANCELLED', lastError: 'Cancelled because the WhatsApp template was deleted.', completedAt: now },
+          where: { metaTemplateId: item.id },
+          data: { metaTemplateId: null },
         });
       }
-      await tx.metaTemplate.update({
-        where: { id: item.id },
-        data: {
-          deletedAt: now,
-          isLocalActive: false,
-          deletionState: 'LOCAL_DELETED',
-          deletionError: null,
-          deletedByUserId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
-          deletedByName: actor,
-        },
-      });
+      if (tx.metaTemplate?.delete) {
+        await tx.metaTemplate.delete({
+          where: { id: item.id },
+        });
+      } else {
+        await tx.metaTemplate.update({
+          where: { id: item.id },
+          data: {
+            deletedAt: now,
+            isLocalActive: false,
+            deletionState: 'LOCAL_DELETED',
+            deletionError: null,
+            deletedByUserId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+            deletedByName: actor,
+          },
+        });
+      }
     });
     return { deletedAt: now, reason };
   }

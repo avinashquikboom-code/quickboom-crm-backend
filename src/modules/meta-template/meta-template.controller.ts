@@ -28,6 +28,7 @@ import {
   PreviewMetaTemplateDto,
   TestSendMetaTemplateDto,
   DeleteMetaTemplateDto,
+  BulkDeleteMetaTemplatesDto,
 } from './dto/meta-template.dto';
 import { CreateWhatsAppCampaignDto, QueryWhatsAppCampaignDto } from './dto/whatsapp-campaign.dto';
 
@@ -160,10 +161,32 @@ export class MetaTemplateController {
     return this.metaTemplateService.toggleActive(id, user?.customerId);
   }
 
+  @Delete('bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleType.SUPER_ADMIN, RoleType.TENANT_ADMIN, RoleType.CUSTOMER_ADMIN)
+  @ApiOperation({ summary: 'Permanently delete multiple Meta templates in bulk' })
+  async bulkRemove(
+    @Body() dto: BulkDeleteMetaTemplatesDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.metaTemplateService.bulkRemove(dto, user);
+  }
+
+  @Post('bulk-delete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleType.SUPER_ADMIN, RoleType.TENANT_ADMIN, RoleType.CUSTOMER_ADMIN)
+  @ApiOperation({ summary: 'Permanently delete multiple Meta templates in bulk (POST fallback)' })
+  async bulkRemovePost(
+    @Body() dto: BulkDeleteMetaTemplatesDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.metaTemplateService.bulkRemove(dto, user);
+  }
+
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleType.SUPER_ADMIN, RoleType.TENANT_ADMIN, RoleType.CUSTOMER_ADMIN)
-  @ApiOperation({ summary: 'Delete a Meta template from Meta and archive the local record (two-system workflow)' })
+  @ApiOperation({ summary: 'Permanently delete a Meta template from Meta and QB Suite database' })
   async remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,

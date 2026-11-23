@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max, ArrayNotEmpty } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateMetaTemplateDto {
@@ -406,3 +406,19 @@ export class DeleteMetaTemplateDto {
   @IsString()
   confirmation?: string;
 }
+
+export class BulkDeleteMetaTemplatesDto {
+  @ApiProperty({ description: 'Array of Meta template IDs to delete', type: [Number], example: [1, 2, 3] })
+  @IsArray()
+  @ArrayNotEmpty({ message: 'ids array cannot be empty' })
+  @IsInt({ each: true, message: 'Each id must be an integer' })
+  @Type(() => Number)
+  ids: number[];
+
+  @ApiPropertyOptional({ description: 'Reason recorded in the audit log', example: 'Bulk cleanup of obsolete templates' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().slice(0, 500) : value))
+  reason?: string;
+}
+

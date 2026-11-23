@@ -3902,7 +3902,7 @@ model WhatsAppCampaign {
   customerId       Int
   name             String
   status           String    @default("DRAFT") // DRAFT | SCHEDULED | RUNNING | COMPLETED | FAILED | CANCELLED | PAUSED
-  metaTemplateId   Int
+  metaTemplateId   Int?
   variableMapping  Json?
   audienceType     String    @default("LEAD_FILTER") // LEAD_FILTER | MANUAL
   audienceFilter   Json?
@@ -3920,7 +3920,7 @@ model WhatsAppCampaign {
   updatedAt        DateTime  @updatedAt
 
   customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  metaTemplate     MetaTemplate   @relation(fields: [metaTemplateId], references: [id], onDelete: Restrict)
+  metaTemplate     MetaTemplate?   @relation(fields: [metaTemplateId], references: [id], onDelete: SetNull)
   recipients       WhatsAppCampaignRecipient[]
 
   @@index([customerId])
