@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, Logger, Optional, Inject, forwardRef, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateVisitDto, UpdateVisitDto } from './dto/visit.dto';
 import { VisitStatus } from '@prisma/client';
@@ -14,6 +14,20 @@ import { LeadService } from '../lead/lead.service';
 @Injectable()
 export class VisitService {
   private readonly logger = new Logger(VisitService.name);
+
+  private async requireActiveFieldSalesExecutive(customerId: number, employeeId: number) {
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+      throw new BadRequestException('Select an active Field Sales Executive employee.');
+    }
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: employeeId, customerId, status: 'ACTIVE', mobileLoginEnabled: true },
+      include: { designation: true, user: { select: { isActive: true } } },
+    });
+    if (!employee || employee.user?.isActive === false || employee.designation?.name !== 'Field Sales Executive') {
+      throw new BadRequestException('Selected employee must be an active Field Sales Executive belonging to this company.');
+    }
+    return employee;
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -335,7 +349,7 @@ export class VisitService {
   ) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
-    // Fallback employee if not specified
+    // Preserve legacy assignments when possible, then validate before creating.
     let employeeId = dto.employeeId ? Number(dto.employeeId) : undefined;
     if (!employeeId && dto.leadId) {
       const lead = await this.prisma.lead.findUnique({
@@ -346,23 +360,8 @@ export class VisitService {
         employeeId = Number(lead.employeeId);
       }
     }
-    if (!employeeId) {
-      const emp = await this.prisma.employee.findFirst({ where: { customerId: numCustomerId } });
-      employeeId = emp?.id;
-    }
-
-    if (!employeeId) {
-      const emp = await this.prisma.employee.create({
-        data: {
-          customerId: numCustomerId,
-          employeeCode: `EMP-${Date.now().toString().slice(-4)}`,
-          firstName: 'CRM',
-          lastName: 'Executive',
-          email: `rep_${Date.now()}@quikboom.com`,
-        },
-      });
-      employeeId = emp.id;
-    }
+    if (!employeeId) throw new BadRequestException('Select an active Field Sales Executive employee.');
+    await this.requireActiveFieldSalesExecutive(numCustomerId, employeeId);
 
     const visitData = {
       customerId: numCustomerId,
@@ -643,7 +642,11 @@ export class VisitService {
     const wasCompleted = existingVisit?.status === VisitStatus.COMPLETED;
 
     const data: any = {};
-    if (dto.employeeId) data.employeeId = Number(dto.employeeId);
+    if (dto.employeeId !== undefined) {
+      const employeeId = Number(dto.employeeId);
+      await this.requireActiveFieldSalesExecutive(numCustomerId, employeeId);
+      data.employeeId = employeeId;
+    }
     if (dto.customerName) data.customerName = dto.customerName;
     if (dto.purpose) data.purpose = dto.purpose;
     if (dto.date) data.date = new Date(dto.date);

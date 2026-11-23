@@ -4001,8 +4001,8 @@ export class LeadService {
         where: { id: employeeId, customerId: lead.customerId, status: 'ACTIVE', mobileLoginEnabled: true },
         include: { designation: true, user: {select: {isActive:true}} },
       });
-      if (!visitor || visitor.user?.isActive === false || !this.leadRepository.isVisitorEmployee(visitor)) {
-        throw new BadRequestException('Selected Visitor must be active, authorized and belong to this company.');
+      if (!visitor || visitor.user?.isActive === false || visitor.designation?.name !== 'Field Sales Executive') {
+        throw new BadRequestException('Selected employee must be an active Field Sales Executive belonging to this company.');
       }
     }
 
