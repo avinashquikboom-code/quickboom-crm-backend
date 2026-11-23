@@ -1,4 +1,3 @@
--- Preserve previous configuration values while removing punch-in grace from the active schema.
-ALTER TABLE "Shift" RENAME COLUMN "gracePeriodMinutes" TO "legacyPunchInGraceMinutes";
-ALTER TABLE "AttendancePolicy" RENAME COLUMN "gracePeriodMinutes" TO "legacyPunchInGraceMinutes";
-ALTER TABLE "LateMarkPolicy" RENAME COLUMN "gracePeriodMinutes" TO "legacyPunchInGraceMinutes";
+-- Preserve existing columns and values; Prisma maps the legacy fields to their
+-- original database names. Punch-in calculation no longer applies grace.
+SELECT 1;

@@ -1569,7 +1569,7 @@ model LeaveAdjustmentHistory {
 }
 
 model AttendancePolicy {
-  legacyPunchInGraceMinutes Int @default(0)
+  legacyPunchInGraceMinutes Int @default(0) @map("gracePeriodMinutes")
   id                         Int             @id @default(autoincrement())
   customerId                 Int
   officeId                   Int?
@@ -1747,7 +1747,7 @@ model RemoteRequest {
 }
 
 model Shift {
-  legacyPunchInGraceMinutes Int @default(0)
+  legacyPunchInGraceMinutes Int @default(0) @map("gracePeriodMinutes")
   id                       Int                      @id @default(autoincrement())
   customerId               Int
   name                     String
@@ -2219,7 +2219,7 @@ model LateMarkReportDelivery {
 }
 
 model LateMarkPolicy {
-  legacyPunchInGraceMinutes Int @default(0)
+  legacyPunchInGraceMinutes Int @default(0) @map("gracePeriodMinutes")
   id                  Int      @id @default(autoincrement())
   customerId          Int      @unique
   isEnabled           Boolean  @default(true)

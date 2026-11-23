@@ -8,6 +8,7 @@ import { S3Service } from '../s3/s3.service';
 import { RegisterDeviceTokenDto, TestTokenDto, AdminOfferNotificationDto } from './dto/device-token.dto';
 
 export interface SendPushOptions {
+  existingNotificationId?: number;
   userId?: number;
   customerId?: number;
   title: string;
@@ -353,7 +354,10 @@ export class NotificationService {
 
     // 1. Create in-app Notification database record
     let dbNotification: any = null;
-    if (targetUserId && targetCustomerId) {
+    if (options.existingNotificationId) {
+      dbNotification = await this.prisma.notification.findFirst({ where: { id: options.existingNotificationId, userId: targetUserId, customerId: targetCustomerId } });
+      if (!dbNotification) throw new NotFoundException('Notification recipient mismatch.');
+    } else if (targetUserId && targetCustomerId) {
       dbNotification = await this.prisma.notification.create({
         data: {
           customerId: targetCustomerId,

@@ -626,6 +626,7 @@ export class WorkService {
       }
     }
 
+    let submissionNotification: { id: number; userId: number; customerId: number; title: string; message: string; workId: number } | undefined;
     const result = await this.prisma.$transaction(async (tx) => {
       if (employeeId && dto.status === WorkStatus.COMPLETED) {
         await tx.$queryRaw`SELECT id FROM "Work" WHERE id = ${numId} FOR UPDATE`;
@@ -637,16 +638,22 @@ export class WorkService {
           throw new BadRequestException('Start the task before submitting it.');
         }
         const recipient = await tx.user.findFirst({ where: { customerId: current.customerId, isActive: true, deletedAt: null, employee: null }, orderBy: { id: 'asc' }, select: { id: true } });
-        if (!recipient) throw new BadRequestException('No customer account is available to review this work.');
         updateData.status = WorkStatus.CUSTOMER_REVIEW;
         updateData.submittedAt = new Date();
         delete updateData.completedAt;
         const work = await tx.work.update({ where: { id: numId }, data: updateData, include: { customer: true, assignedTo: true, editor: true, entitlement: true, tasks: true } });
-        await tx.notification.create({ data: { customerId: current.customerId, userId: recipient.id,
+        if (!recipient) {
+          this.logger.error(`[CUSTOMER_RESOLUTION_FAILED] workId=${current.id} customerId=${current.customerId} no_active_customer_user`);
+          return work;
+        }
+        const submittingEmployee = await tx.employee.findUnique({ where: { id: employeeId }, select: { firstName: true, lastName: true } });
+        const employeeName = [submittingEmployee?.firstName, submittingEmployee?.lastName].filter(Boolean).join(' ') || 'your assigned employee';
+        const notification = await tx.notification.create({ data: { customerId: current.customerId, userId: recipient.id,
           title: current.revisionCount > 0 ? 'Revised Task Submitted' : 'Task Completed – Ready for Review',
-          message: `Your task ${current.title} has been completed. Please review the submitted work.`,
-          type: 'WORK_SUBMITTED', data: { workId: current.id },
+          message: `Your task ${current.title} has been completed by ${employeeName}. Please review the submitted work and approve it or request changes.`,
+          type: 'WORK_SUBMITTED', data: { workId: current.id, submittedAt: work.submittedAt?.toISOString() },
         } });
+        submissionNotification = { id: notification.id, userId: recipient.id, customerId: current.customerId, title: notification.title, message: notification.message, workId: current.id };
         return work;
       }
       // Handle quota transition if status changed to COMPLETED or CANCELLED
@@ -682,6 +689,20 @@ export class WorkService {
       });
     });
 
+    if (submissionNotification) {
+      const notification = submissionNotification;
+      this.logger.log(`[TASK_SUBMISSION_SAVED] workId=${notification.workId} customerId=${notification.customerId} userId=${notification.userId} notificationId=${notification.id}`);
+      if (this.notificationService) {
+        try {
+          this.logger.log(`[PUSH_DELIVERY_ATTEMPTED] workId=${notification.workId} notificationId=${notification.id}`);
+          const delivery = await this.notificationService.sendPushNotification({ existingNotificationId: notification.id, userId: notification.userId, customerId: notification.customerId, title: notification.title, body: notification.message, type: 'WORK_SUBMITTED', data: { workId: String(notification.workId) } });
+          if (delivery.delivered) this.logger.log(`[PUSH_DELIVERY_SUCCESS] workId=${notification.workId} notificationId=${notification.id}`);
+          else this.logger.warn(`[PUSH_DELIVERY_FAILED] workId=${notification.workId} notificationId=${notification.id} status=${delivery.status}`);
+        } catch (error: any) {
+          this.logger.error(`[PUSH_DELIVERY_FAILED] workId=${notification.workId} notificationId=${notification.id} error=${error?.message}`);
+        }
+      } else this.logger.warn(`[PUSH_DELIVERY_FAILED] workId=${notification.workId} notificationId=${notification.id} service_unavailable`);
+    }
     this.emitRealtimeScheduleEvent(result.customerId, 'PLAN_SCHEDULE_UPDATED', {
       scheduleId: result.id,
       planId: result.subscriptionId,
