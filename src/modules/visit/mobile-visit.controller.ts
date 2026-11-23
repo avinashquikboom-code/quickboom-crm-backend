@@ -7,6 +7,7 @@ import {
   Post,
   Query,
   UploadedFile,
+  Optional,
   UseGuards,
   UseInterceptors,
   NotFoundException,
@@ -28,6 +29,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { LeadRepository } from '../lead/lead.repository';
+import { NotificationService } from '../notification/notification.service';
 import {
   isLeadEligibleForVisitorVisitDoneTransition,
   visitScheduledStageWhere,
@@ -47,6 +49,7 @@ export class MobileVisitController {
     private readonly visitService: VisitService,
     private readonly prisma: PrismaService,
     private readonly s3Service: S3Service,
+    @Optional() private readonly notificationService?: NotificationService,
   ) {}
 
   private isVisitorEmployee(employee: any, user: any): boolean {
@@ -846,7 +849,14 @@ export class MobileVisitController {
   ) {
     const numId = Number(id);
     if (!Number.isSafeInteger(numId) || numId <= 0 || !Number(customerId)) throw new BadRequestException('Invalid visit or tenant.');
-    return this.prisma.$transaction(async (tx) => {
+    let newlyCompleted = false;
+    let completionNotification: {
+      customerId: number;
+      visitId: number;
+      leadId: number;
+      visitorName: string | null;
+    } | null = null;
+    const updated = await this.prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Visit" WHERE id = ${numId} AND "customerId" = ${Number(customerId)} FOR UPDATE`;
     const visit = await tx.visit.findUnique({
       where: { id: numId },
@@ -1012,9 +1022,26 @@ export class MobileVisitController {
           });
       }
 
+      if (visit.leadId) {
+        newlyCompleted = true;
+        completionNotification = {
+          customerId: numCustomerId,
+          visitId: visit.id,
+          leadId: visit.leadId,
+          visitorName: actingEmpName,
+        };
+      }
+
       return savedVisit;
     })();
 
+    if (newlyCompleted && completionNotification && this.notificationService) {
+      try {
+        await this.notificationService.sendVisitCompletedNotification(completionNotification);
+      } catch (error: any) {
+        console.error(`[VISIT_COMPLETED_NOTIFICATION] visitId=${updated.id} failed: ${error?.message || 'dispatch error'}`);
+      }
+    }
     return updated;
     });
   }

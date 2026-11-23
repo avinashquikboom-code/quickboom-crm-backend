@@ -31,8 +31,9 @@ export function visitDoneStageCandidateWhere(): Record<string, unknown> {
     deletedAt: null,
     isActive: true,
     OR: [
-      { key: 'VISIT_DONE' },
-      { name: { equals: 'Visit Done', mode: 'insensitive' } },
+      { key: { in: ['VISIT_DONE', 'VISIT_COMPLETED'], mode: 'insensitive' } },
+      { name: { contains: 'Visit Done', mode: 'insensitive' } },
+      { name: { contains: 'Visit Completed', mode: 'insensitive' } },
     ],
   };
 }
