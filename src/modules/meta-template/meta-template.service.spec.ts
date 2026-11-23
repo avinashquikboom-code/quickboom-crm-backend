@@ -350,7 +350,7 @@ describe('MetaTemplateService', () => {
       expect(result.success).toBe(true);
       expect(del).toHaveBeenNthCalledWith(2,
         'https://graph.facebook.com/v21.0/987654321/message_templates',
-        expect.objectContaining({ params: { hsm_id: 'remote-template-40' } }),
+        expect.objectContaining({ params: { hsm_id: 'remote-template-40', name: 'welcome_lead' } }),
       );
       expect(record.deletedAt).toBeTruthy();
     });

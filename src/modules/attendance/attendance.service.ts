@@ -1427,7 +1427,11 @@ result: SUCCESS`);
     const evaluation = await this.evaluatePunchLateness(employeeWithShift, attendancePolicy, punchIn);
 
     if (!evaluation.applicable || !evaluation.isLate || evaluation.lateMinutes <= 0) {
-      return empty(evaluation.reason || 'not_late');
+      return {
+        ...empty(evaluation.reason || 'not_late'),
+        lateRatePerMinute: evaluation.applicable ? evaluation.ratePerMinute : 0,
+        lateGraceMinutes: evaluation.gracePeriodMinutes,
+      };
     }
 
     const storedDeduction = Number((todayAtt as any)?.lateDeduction) || 0;
