@@ -325,7 +325,7 @@ export class AttendanceService {
     const actualWorkingHours = Math.round((netWorkingMinutes / 60) * 100) / 100;
 
     // Status Determination:
-    // IMPORTANT: Keep Late Arrival Grace Period ONLY for late punch in.
+    // Preserve the recorded late classification when auto-checking out.
     // If employee punched in on time, missing punch-out must NOT trigger a late mark.
     const wasPunchInLate = Boolean(attendance.isLate || attendance.status === AttendanceStatus.LATE);
     const { status: finalStatus } = classifyPunchOut({
@@ -508,7 +508,8 @@ isRemoteActive: ${isRemoteActive}`);
       });
     }
 
-    const lateEvaluation = await this.evaluatePunchLateness(employee, policy, now);
+    const assignedShift = await this.resolveShiftAtPunch(employee, now);
+    const lateEvaluation = await this.evaluatePunchLateness({ ...employee, shift: assignedShift }, policy, now);
     const isLatePunchIn = lateEvaluation.isLate;
     const lateMinutesCount = lateEvaluation.lateMinutes;
     // A new punch has no completed working duration yet. Lateness is stored
@@ -1168,15 +1169,9 @@ result: SUCCESS`);
 
     // Never substitute a tenant-default shift: deductions must only be
     // computed against the employee's own assigned shift.
-    let assignedShift = employee.shift;
-    if (todayAtt?.punchIn && this.prisma.shiftAssignmentHistory?.findFirst) {
-      const history = await this.prisma.shiftAssignmentHistory.findFirst({
-        where: { employeeId: employee.id, customerId: employee.customerId, effectiveFrom: { lte: todayAtt.punchIn } },
-        orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
-        include: { newShift: true },
-      });
-      if (history) assignedShift = history.newShift;
-    }
+    const assignedShift = todayAtt?.punchIn
+      ? await this.resolveShiftAtPunch(employee, todayAtt.punchIn)
+      : employee.shift;
 
     const isPunchedIn = Boolean(todayAtt && todayAtt.punchIn && !todayAtt.punchOut);
     const activeBreak = todayAtt?.breaks?.find((b: any) => !b.breakEnd);
@@ -1416,12 +1411,7 @@ result: SUCCESS`);
     });
     if (!todayAtt?.punchIn) return empty('no_punch_in');
 
-    const shiftForEval =
-      assignedShift?.startTime != null
-        ? assignedShift
-        : employee?.shift?.startTime != null
-          ? employee.shift
-          : null;
+    const shiftForEval = assignedShift?.startTime != null ? assignedShift : null;
     if (!shiftForEval?.startTime) {
       console.warn(
         `[LATE_MARK] employee=${employee?.id} customer=${employee?.customerId}: no assigned shift with a start time; skipping late evaluation`,
@@ -1484,6 +1474,21 @@ result: SUCCESS`);
     const rounded = Math.round((Number(amount) || 0) * 100) / 100;
     const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
     return currency === 'INR' ? `₹${text}` : `${currency} ${text}`;
+  }
+
+  private async resolveShiftAtPunch(employee: any, punchIn: Date) {
+    if (!this.prisma.shiftAssignmentHistory?.findFirst) return employee.shift;
+    const where = { employeeId: employee.id, customerId: employee.customerId };
+    const prior = await this.prisma.shiftAssignmentHistory.findFirst({
+      where: { ...where, effectiveFrom: { lte: punchIn } },
+      orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }], include: { newShift: true },
+    });
+    if (prior) return prior.newShift;
+    const next = await this.prisma.shiftAssignmentHistory.findFirst({
+      where: { ...where, effectiveFrom: { gt: punchIn } },
+      orderBy: [{ effectiveFrom: 'asc' }, { id: 'asc' }], include: { previousShift: true },
+    });
+    return next ? next.previousShift : employee.shift;
   }
 
   private async evaluatePunchLateness(employee: any, attendancePolicy: any, punchIn: Date) {

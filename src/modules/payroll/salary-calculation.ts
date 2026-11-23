@@ -313,7 +313,7 @@ export interface LatePunchEvaluation {
   reason?: string;
 }
 
-/** Late minutes after grace, using the Asia/Kolkata clock and the assigned shift. */
+/** Late minutes from the assigned shift start using the Asia/Kolkata clock. */
 export function evaluateLatePunch(input: {
   punchIn: Date | string;
   shift?: {
@@ -334,7 +334,6 @@ export function evaluateLatePunch(input: {
   const policy = input.policy;
   const enabled = policy?.isEnabled !== false;
   const rate = Math.max(0, Number(policy?.deductionRatePerMin ?? 1));
-  const grace = 0;
   const startRaw = input.shift?.startTime || null;
   const startMins = parseTimeStringToMinutes(startRaw);
   const endMins = parseTimeStringToMinutes(input.shift?.endTime);
@@ -343,7 +342,7 @@ export function evaluateLatePunch(input: {
     isLate: false,
     rawLateMinutes: 0,
     lateMinutes: 0,
-    gracePeriodMinutes: grace,
+    gracePeriodMinutes: 0,
     ratePerMinute: rate,
     deduction: 0,
     shiftStartTime: startRaw,
@@ -388,7 +387,7 @@ export function evaluateLatePunch(input: {
     const timestamp = new Date(input.punchIn).getTime();
     if (timestamp % 60000 !== 0) raw += 1;
   }
-  const eligible = Math.max(0, raw - grace);
+  const eligible = Math.max(0, raw);
   let deduction = deductionReason ? 0 : Math.round(eligible * rate * 100) / 100;
   const maxDaily = policy?.maxDailyDeduction;
   if (maxDaily != null && Number(maxDaily) > 0 && deduction > Number(maxDaily)) {
@@ -399,7 +398,7 @@ export function evaluateLatePunch(input: {
     isLate: eligible > 0,
     rawLateMinutes: raw,
     lateMinutes: eligible,
-    gracePeriodMinutes: grace,
+    gracePeriodMinutes: 0,
     ratePerMinute: rate,
     deduction,
     shiftStartTime: startRaw,
