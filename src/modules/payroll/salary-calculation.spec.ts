@@ -306,6 +306,18 @@ describe('evaluateLatePunch', () => {
   const policy = { isEnabled: true, deductionRatePerMin: 2, gracePeriodMinutes: 0, currency: 'INR' };
   const shift = { startTime: '10:00 AM', endTime: '07:00 PM', workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] };
 
+  it.each([
+    ['09:30 AM', '2026-08-03T04:00:00.000Z', 0],
+    ['09:30 AM', '2026-08-03T04:01:00.000Z', 1],
+    ['09:30 AM', '2026-08-03T04:30:00.000Z', 30],
+    ['09:30 AM', '2026-08-03T04:33:00.000Z', 33],
+    ['10:00 AM', '2026-08-03T04:33:00.000Z', 3],
+  ])('uses assigned start %s for %s without grace', (startTime, punchIn, minutes) => {
+    const result = evaluateLatePunch({ punchIn, shift: { ...shift, startTime }, policy });
+    expect(result.lateMinutes).toBe(minutes);
+    expect(result.isLate).toBe(minutes > 0);
+  });
+
   it('applies the zero-grace ₹1/minute rule for exact, one-minute, two-minute, and fifteen-minute punches', () => {
     const oneRupeePolicy = { isEnabled: true, deductionRatePerMin: 1, gracePeriodMinutes: 0, currency: 'INR' };
     const cases = [

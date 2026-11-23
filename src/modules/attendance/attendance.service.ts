@@ -325,7 +325,7 @@ export class AttendanceService {
     const actualWorkingHours = Math.round((netWorkingMinutes / 60) * 100) / 100;
 
     // Status Determination:
-    // IMPORTANT: Keep Late Arrival Grace Period ONLY for late punch in.
+    // Preserve the recorded late classification when auto-checking out.
     // If employee punched in on time, missing punch-out must NOT trigger a late mark.
     const wasPunchInLate = Boolean(attendance.isLate || attendance.status === AttendanceStatus.LATE);
     const { status: finalStatus } = classifyPunchOut({
