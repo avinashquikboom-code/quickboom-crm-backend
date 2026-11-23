@@ -100,7 +100,7 @@ export class BannerController {
 
   // ── Company Admin Endpoints ─────────────────────────────────────────────────
 
-  @Post('admin/marketing/banners')
+  @Post(['admin/marketing/banners', 'admin/content/banners', 'admin/banners'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Create a new marketing banner with file upload (Company Admin only)' })
@@ -117,7 +117,7 @@ export class BannerController {
     return this.bannerService.create(dto, context, file);
   }
 
-  @Get('admin/marketing/banners/stats')
+  @Get(['admin/marketing/banners/stats', 'admin/content/banners/stats', 'admin/banners/stats'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Get banner statistics (Total, Active, Inactive, Last Updated)' })
@@ -130,7 +130,7 @@ export class BannerController {
     return this.bannerService.getStats(context);
   }
 
-  @Get('admin/marketing/banners')
+  @Get(['admin/marketing/banners', 'admin/content/banners', 'admin/banners'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'List all banners with filter & pagination (Company Admin)' })
@@ -144,7 +144,7 @@ export class BannerController {
     return this.bannerService.findAllAdmin(query, context);
   }
 
-  @Get('admin/marketing/banners/:id')
+  @Get(['admin/marketing/banners/:id', 'admin/content/banners/:id', 'admin/banners/:id'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Get banner by ID' })
@@ -158,7 +158,7 @@ export class BannerController {
     return this.bannerService.findOne(id, context);
   }
 
-  @Patch('admin/marketing/banners/:id')
+  @Patch(['admin/marketing/banners/:id', 'admin/content/banners/:id', 'admin/banners/:id'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Update marketing banner with optional image replace (Company Admin only)' })
@@ -184,7 +184,7 @@ export class BannerController {
     }
   }
 
-  @Delete('admin/marketing/banners/:id')
+  @Delete(['admin/marketing/banners/:id', 'admin/content/banners/:id', 'admin/banners/:id'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Soft delete marketing banner (Company Admin only)' })
@@ -198,7 +198,7 @@ export class BannerController {
     return this.bannerService.remove(id, context);
   }
 
-  @Patch('admin/marketing/banners/:id/publish')
+  @Patch(['admin/marketing/banners/:id/publish', 'admin/content/banners/:id/publish', 'admin/banners/:id/publish'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Toggle/set banner publish status (Company Admin only)' })
@@ -213,7 +213,7 @@ export class BannerController {
     return this.bannerService.setPublished(id, dto.isPublished, context);
   }
 
-  @Patch('admin/marketing/banners/:id/status')
+  @Patch(['admin/marketing/banners/:id/status', 'admin/content/banners/:id/status', 'admin/banners/:id/status'])
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiOperation({ summary: 'Toggle/set banner active status (Company Admin only)' })
