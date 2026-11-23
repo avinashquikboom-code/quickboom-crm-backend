@@ -1168,7 +1168,15 @@ result: SUCCESS`);
 
     // Never substitute a tenant-default shift: deductions must only be
     // computed against the employee's own assigned shift.
-    const assignedShift = employee.shift;
+    let assignedShift = employee.shift;
+    if (todayAtt?.punchIn && this.prisma.shiftAssignmentHistory?.findFirst) {
+      const history = await this.prisma.shiftAssignmentHistory.findFirst({
+        where: { employeeId: employee.id, customerId: employee.customerId, effectiveFrom: { lte: todayAtt.punchIn } },
+        orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+        include: { newShift: true },
+      });
+      if (history) assignedShift = history.newShift;
+    }
 
     const isPunchedIn = Boolean(todayAtt && todayAtt.punchIn && !todayAtt.punchOut);
     const activeBreak = todayAtt?.breaks?.find((b: any) => !b.breakEnd);
@@ -1364,9 +1372,7 @@ result: SUCCESS`);
       lateDays += 1;
       totalLateMinutes += minutes;
       const rateUsed = storedRate > 0 ? storedRate : fallbackRate;
-      const dayDeduction = storedDeduction > 0
-        ? storedDeduction
-        : Math.round(minutes * rateUsed * 100) / 100;
+      const dayDeduction = storedDeduction;
       totalDeduction += dayDeduction;
       if (rateUsed > 0) rates.add(rateUsed);
     }
@@ -1427,7 +1433,7 @@ result: SUCCESS`);
     const employeeWithShift = { ...employee, shift: shiftForEval };
     const evaluation = await this.evaluatePunchLateness(employeeWithShift, attendancePolicy, punchIn);
 
-    if (!evaluation.applicable || !evaluation.isLate || evaluation.lateMinutes <= 0) {
+    if (!evaluation.isLate || evaluation.lateMinutes <= 0) {
       return {
         ...empty(evaluation.reason || 'not_late'),
         lateRatePerMinute: evaluation.applicable ? evaluation.ratePerMinute : 0,
@@ -1435,27 +1441,14 @@ result: SUCCESS`);
       };
     }
 
-    const storedDeduction = Number((todayAtt as any)?.lateDeduction) || 0;
-    const storedRate = Number((todayAtt as any)?.lateRatePerMinute) || 0;
-    const storedGrace = Number((todayAtt as any)?.lateGraceMinutes) || 0;
-
-    const lateMinutes = storedGrace > 0 && storedRate > 0
-      ? Math.max(0, Number(todayAtt.lateMinutes) || 0) : evaluation.lateMinutes;
-    const lateRatePerMinute = storedRate > 0 ? storedRate : evaluation.ratePerMinute;
-    const lateGraceMinutes = storedGrace > 0 ? storedGrace : evaluation.gracePeriodMinutes;
-    // Older attendance rows predate stored deductions and have database-default
-    // zero amounts. Only trust a stored deduction when it is actually > 0;
-    // a stored rate with a zero amount is an incomplete record, not a real ₹0.
-    const lateDeduction = storedDeduction > 0 ? storedDeduction : evaluation.deduction;
-
     return {
-      isEligibleLateMark: true,
+      isEligibleLateMark: evaluation.applicable,
       isLate: true,
-      lateMinutes,
-      lateDeduction,
-      lateRatePerMinute,
-      lateGraceMinutes,
-      lateMarkStatus: 'eligible',
+      lateMinutes: evaluation.lateMinutes,
+      lateDeduction: evaluation.deduction,
+      lateRatePerMinute: evaluation.applicable ? evaluation.ratePerMinute : 0,
+      lateGraceMinutes: 0,
+      lateMarkStatus: evaluation.applicable ? 'eligible' : (evaluation.reason || 'no_deduction'),
     };
   }
 
@@ -1531,12 +1524,13 @@ result: SUCCESS`);
       }
     } catch (error: any) {
       console.error(`[LATE_PUNCH_POLICY] employee=${employee.id}: ${error?.message}`);
+      throw error;
     }
     return evaluateLatePunch({
       punchIn,
       shift: employee.shift?.startTime ? employee.shift : null,
       policy: latePolicy || {
-        isEnabled: true,
+        isEnabled: false,
         deductionRatePerMin: 1,
         gracePeriodMinutes: 0,
         currency: 'INR',
