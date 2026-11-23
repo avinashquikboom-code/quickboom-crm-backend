@@ -2942,10 +2942,58 @@ export class LeadRepository {
       if (tenantStage) return tenantStage;
     }
 
-    return this.prisma.leadStage.findFirst({
+    const sharedStage = await this.prisma.leadStage.findFirst({
       where: { ...candidate, customerId: null },
       orderBy,
     });
+    if (sharedStage) return sharedStage;
+
+    // Visit Done is a required destination for a completed field visit. A
+    // workspace with a custom pipeline may not have inherited the default
+    // stage seed, so restore its configured stage or create the system stage.
+    if (!Number.isInteger(tenantId) || tenantId <= 0) return null;
+    const configuredTenantStage = await this.prisma.leadStage.findFirst({
+      where: {
+        customerId: tenantId,
+        OR: (candidate as any).OR,
+      },
+      orderBy,
+    });
+    if (configuredTenantStage) {
+      return this.prisma.leadStage.update({
+        where: { id: configuredTenantStage.id },
+        data: { isActive: true, deletedAt: null },
+      });
+    }
+    if (typeof this.prisma.leadStage.upsert !== 'function') return null;
+
+    const scheduledStage = await this.resolveVisitScheduledLeadStage(tenantId);
+    const sortOrder = (scheduledStage?.sortOrder ?? 6) + 1;
+    if (typeof this.prisma.leadStage.updateMany === 'function') {
+      await this.prisma.leadStage.updateMany({
+        where: { customerId: tenantId, deletedAt: null, sortOrder: { gte: sortOrder } },
+        data: { sortOrder: { increment: 1 } },
+      });
+    }
+    const created = await this.prisma.leadStage.upsert({
+      where: { customerId_key: { customerId: tenantId, key: 'VISIT_DONE' } },
+      update: { isActive: true, deletedAt: null },
+      create: {
+        customerId: tenantId,
+        name: 'Visit Done',
+        key: 'VISIT_DONE',
+        sortOrder,
+        color: '#0891B2',
+        bgColor: '#E0F7FA',
+        borderColor: '#B2EBF2',
+        isActive: true,
+        isSystem: true,
+        emailEnabled: true,
+        whatsappEnabled: true,
+      },
+    });
+    this.logger.log(`[VISIT_DONE_SYNC] Created required Visit Done stage for customerId=${tenantId}`);
+    return created;
   }
 
   /**
