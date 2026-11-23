@@ -78,11 +78,6 @@ export class CreateShiftDto {
   @IsNumber()
   durationHours?: number;
 
-  @ApiPropertyOptional({ example: 15 })
-  @IsOptional()
-  @IsNumber()
-  gracePeriodMinutes?: number;
-
   @ApiPropertyOptional({ example: 4.5 })
   @IsOptional()
   @IsNumber()
