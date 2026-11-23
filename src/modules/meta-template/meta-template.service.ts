@@ -717,9 +717,12 @@ export class MetaTemplateService {
     if (!error) return false;
     const code = Number(error.code);
     const subcode = Number(error.error_subcode);
-    if (code === 100 || code === 803) return true;
+    const message = String(error.message || '');
+    // Graph error 100 is also used for malformed parameters. Only treat it as
+    // absence when Meta's message explicitly describes a missing object/path.
+    if (code === 803) return true;
     if (code === 10 && (subcode === 33 || subcode === 200 || subcode === 201)) return true;
-    return /does not exist|not found|unsupported (get|delete) request/i.test(String(error.message || ''));
+    return /does not exist|not found|unsupported (get|delete) request/i.test(message);
   }
 
   private async isTemplateOnMeta(customerId: number | string | null | undefined, templateName: string, language: string) {
@@ -976,6 +979,37 @@ export class MetaTemplateService {
         if (!stillThere) return 'ALREADY_ABSENT';
         throw new BadRequestException(`Meta reported the template as missing, but it still exists in WABA ${wabaId}. Local record was preserved. ${safeMessage}`);
       }
+      if (this.isMetaInvalidParameterError(error)) {
+        // Meta's delete edge accepts the template ID (hsm_id) or the name.
+        // Some Graph versions reject the pair together as an invalid parameter.
+        // Verify presence first; only retry when the exact template is found.
+        const templates = await this.fetchMetaTemplatesFromWaba(customerId);
+        const remote = templates.templates.find((candidate) =>
+          String(candidate.name || '').trim().toLowerCase() === String(item.templateName || '').trim().toLowerCase() &&
+          String(candidate.language || '') === String(item.language || ''),
+        );
+        if (!remote) return 'ALREADY_ABSENT';
+
+        const selectors = [
+          remote.id ? { hsm_id: String(remote.id) } : null,
+          { name: item.templateName },
+        ].filter(Boolean);
+        let lastError = error;
+        for (const selector of selectors) {
+          try {
+            await axios.delete(base, { headers, params: selector, timeout: 20000 });
+            return 'DELETED';
+          } catch (retryError: any) {
+            lastError = retryError;
+            if (this.isMetaNotFoundError(retryError)) {
+              const stillThere = await this.isTemplateOnMeta(customerId, item.templateName, item.language).catch(() => true);
+              if (!stillThere) return 'ALREADY_ABSENT';
+            }
+          }
+        }
+        const finalMessage = this.metaApiError(lastError, apiKey);
+        throw new BadRequestException(`Meta deletion failed; the local template was preserved. Template is still present in WABA ${wabaId}. ${finalMessage}`);
+      }
       if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT' || !error?.response) {
         // The request may have reached Meta. Verify before deciding anything.
         const stillThere = await this.isTemplateOnMeta(customerId, item.templateName, item.language);
@@ -984,6 +1018,13 @@ export class MetaTemplateService {
       }
       throw new BadRequestException(`Meta deletion failed; the local template was preserved. ${safeMessage}`);
     }
+  }
+
+  private isMetaInvalidParameterError(err: any) {
+    const metaError = err?.response?.data?.error;
+    if (!metaError) return false;
+    const message = String(metaError.message || '');
+    return Number(metaError.code) === 100 && /invalid parameter/i.test(message);
   }
 
   private async completeLocalDeletion(item: any, user: any, reason?: string) {

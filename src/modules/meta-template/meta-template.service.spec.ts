@@ -337,6 +337,37 @@ describe('MetaTemplateService', () => {
       expect(record.deletionState).toBe('LOCAL_DELETED');
     });
 
+    it('retries Meta invalid-parameter deletion with the remote template ID only', async () => {
+      const del = jest.spyOn(axios, 'delete')
+        .mockRejectedValueOnce({ response: { status: 400, data: { error: { code: 100, message: 'Invalid parameter' } } } } as any)
+        .mockResolvedValueOnce({ data: { success: true } } as any);
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [
+        { id: 'remote-template-40', name: 'welcome_lead', language: 'en_US', status: 'APPROVED' },
+      ] } } as any);
+
+      const result = await service.remove(40, admin);
+
+      expect(result.success).toBe(true);
+      expect(del).toHaveBeenNthCalledWith(2,
+        'https://graph.facebook.com/v21.0/987654321/message_templates',
+        expect.objectContaining({ params: { hsm_id: 'remote-template-40' } }),
+      );
+      expect(record.deletedAt).toBeTruthy();
+    });
+
+    it('does not treat Meta Invalid parameter as proof the template is absent', async () => {
+      jest.spyOn(axios, 'delete').mockRejectedValue({
+        response: { status: 400, data: { error: { code: 100, message: 'Invalid parameter' } } },
+      } as any);
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [
+        { id: 'remote-template-40', name: 'welcome_lead', language: 'en_US', status: 'APPROVED' },
+      ] } } as any);
+
+      await expect(service.remove(40, admin)).rejects.toThrow(/Template is still present in WABA 987654321/);
+      expect(record.deletedAt).toBeNull();
+      expect(record.deletionState).toBe('NONE');
+    });
+
     it('refuses deletion when the connected WABA differs from the synced WABA', async () => {
       mockIntegrationSettingsService.getIntegrationConfig.mockResolvedValueOnce({
         isEnabled: true,
