@@ -1986,11 +1986,11 @@ export class WhatsappService {
   /**
    * Verifies X-Hub-Signature-256 HMAC-SHA256 signature using Meta App Secret.
    */
-  async verifyMetaSignature(rawBody: string, signatureHeader?: string): Promise<boolean> {
+  async verifyMetaSignature(rawBody: Buffer | string, signatureHeader?: string): Promise<boolean> {
     const creds = await this.getWhatsAppCredentials();
     if (!creds.appSecret) {
-      // App secret not configured, bypass signature check safely
-      return true;
+      this.logger.error('[WHATSAPP_WEBHOOK] App Secret is not configured; signature verification denied');
+      return false;
     }
 
     if (!signatureHeader || typeof signatureHeader !== 'string') {
@@ -2000,13 +2000,13 @@ export class WhatsappService {
 
     try {
       const parts = signatureHeader.split('=');
-      if (parts.length !== 2 || parts[0] !== 'sha256') {
+      if (parts.length !== 2 || parts[0] !== 'sha256' || !/^[a-fA-F0-9]{64}$/.test(parts[1])) {
         return false;
       }
       const expectedHash = parts[1];
       const actualHash = crypto
         .createHmac('sha256', creds.appSecret)
-        .update(rawBody, 'utf8')
+        .update(typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : rawBody)
         .digest('hex');
 
       const expectedBuf = Buffer.from(expectedHash, 'hex');

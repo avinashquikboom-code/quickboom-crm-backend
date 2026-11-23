@@ -98,8 +98,11 @@ export class WhatsappWebhookController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    // 1. Signature verification if App Secret configured
-    const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(payload);
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+    if (!rawBody) {
+      this.logger.warn('[WHATSAPP_WEBHOOK] Raw request body unavailable; signature cannot be verified');
+      return res.status(HttpStatus.UNAUTHORIZED).json({ error: 'Invalid webhook signature' });
+    }
     const isSignatureValid = await this.whatsappService.verifyMetaSignature(rawBody, signature);
     if (!isSignatureValid) {
       this.logger.warn('[WHATSAPP_WEBHOOK] Rejected request with invalid X-Hub-Signature-256');

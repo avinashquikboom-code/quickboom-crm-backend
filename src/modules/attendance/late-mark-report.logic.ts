@@ -118,7 +118,7 @@ export function summarizeLateMarks(rows: StoredLateMark[]): LateMarkSummary {
 }
 
 export function toCsv(rows: StoredLateMark[]): string {
-  const header = ['Date', 'Employee ID', 'Employee', 'Department', 'Shift', 'Shift start', 'Punch in', 'Grace minutes', 'Late minutes', 'Rate', 'Deduction', 'Status'];
+  const header = ['Date', 'Employee ID', 'Employee', 'Department', 'Shift', 'Shift start', 'Punch in', 'Late minutes', 'Rate', 'Deduction', 'Status'];
   const lines = rows.map((row) => [
     row.date,
     row.employeeCode,
@@ -127,7 +127,6 @@ export function toCsv(rows: StoredLateMark[]): string {
     row.shiftName,
     row.shiftStart,
     row.punchIn || '',
-    row.graceMinutes,
     row.lateMinutes,
     row.rate,
     row.deduction,

@@ -163,7 +163,7 @@ describe('WhatsappWebhook', () => {
   describe('POST Webhook Signature Verification', () => {
     it('rejects request with HTTP 401 when signature header is invalid', async () => {
       const payload = { object: 'whatsapp_business_account', entry: [] };
-      const req: any = { body: payload };
+      const req: any = { body: payload, rawBody: Buffer.from(JSON.stringify(payload)) };
       const res: any = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
@@ -177,10 +177,10 @@ describe('WhatsappWebhook', () => {
 
     it('accepts request with HTTP 200 when signature header matches App Secret HMAC', async () => {
       const payload = { object: 'whatsapp_business_account', entry: [] };
-      const rawBody = JSON.stringify(payload);
+      const rawBody = '{ "object": "whatsapp_business_account", "entry": [] }';
       const validHash = crypto.createHmac('sha256', mockAppSecret).update(rawBody, 'utf8').digest('hex');
 
-      const req: any = { body: rawBody };
+      const req: any = { body: payload, rawBody: Buffer.from(rawBody) };
       const res: any = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
@@ -190,6 +190,20 @@ describe('WhatsappWebhook', () => {
 
       expect(res.status).toHaveBeenCalledWith(HttpStatus.OK);
       expect(res.json).toHaveBeenCalledWith({ status: 'ok' });
+    });
+
+    it('rejects missing raw bytes and does not process the webhook', async () => {
+      const payload = { object: 'whatsapp_business_account', entry: [] };
+      const process = jest.spyOn(service, 'processWebhookPayload');
+      const res: any = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+      await controller.handleWebhook(payload, 'sha256=' + '0'.repeat(64), { body: payload } as any, res);
+      expect(res.status).toHaveBeenCalledWith(HttpStatus.UNAUTHORIZED);
+      expect(process).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the App Secret is missing', async () => {
+      jest.spyOn(service, 'getWhatsAppCredentials').mockResolvedValue({ appSecret: '' } as any);
+      expect(await service.verifyMetaSignature(Buffer.from('{}'), 'sha256=' + '0'.repeat(64))).toBe(false);
     });
   });
 
