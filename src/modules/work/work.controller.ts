@@ -15,7 +15,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { WorkService } from './work.service';
 import { WorkPermissionService } from './work-permission.service';
-import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, AssignWorkDto } from './dto/work.dto';
+import { CreateWorkDto, UpdateWorkDto, SubmitWorkDto, ReviewWorkDto, AssignWorkDto } from './dto/work.dto';
 import { WorkStatus, WorkType, TaskStatus, WorkAccessRequestStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -663,7 +663,7 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
   }
 
   @Post(':id/approve')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CustomerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Customer or Admin approves deliverable / level' })
   async approveWork(
@@ -672,8 +672,21 @@ resultCount: ${Array.isArray(result) ? result.length : 0}`);
     @CurrentUser() user: any,
     @Req() req: any,
   ) {
-    const custId = customerIdQuery || user?.customerId || req?.user?.customerId;
+    const custId = req.customerId;
+    if (!custId || await this.workService.isEmployeeAccount(user)) {
+      throw new ForbiddenException('Only the associated customer can approve this work.');
+    }
     return this.workService.approveWork(custId, id);
+  }
+
+  @Post(':id/revision')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  async requestRevision(@Param('id') id: string, @Body() dto: ReviewWorkDto, @CurrentUser() user: any, @Req() req: any) {
+    if (!req.customerId || await this.workService.isEmployeeAccount(user)) {
+      throw new ForbiddenException('Only the associated customer can request changes.');
+    }
+    return this.workService.requestRevision(req.customerId, id, dto);
   }
 
   @Post(':id/cancel')

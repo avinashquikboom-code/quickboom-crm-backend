@@ -31,6 +31,11 @@ const SALES_CHECK_SELECT = {
 export class WorkService {
   private readonly logger = new Logger(WorkService.name);
 
+  async isEmployeeAccount(user: any): Promise<boolean> {
+    if (!user?.id) return true;
+    return Boolean(await this.prisma.employee.findFirst({ where: { userId: Number(user.id) }, select: { id: true } }));
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workPermissionService: WorkPermissionService,
@@ -576,6 +581,14 @@ export class WorkService {
     if (!existing) {
       existing = await this.findOne(scopedCustomerId, numId);
     }
+    if (employeeId && dto.status === WorkStatus.COMPLETED) {
+      const assigned = await this.prisma.work.findFirst({ where: { id: numId, OR: [
+        { assignedToId: employeeId }, { editorId: employeeId },
+        { tasks: { some: { assignedToId: employeeId } } },
+        { team: { members: { some: { employeeId } } } }, { team: { leaderId: employeeId } },
+      ] }, select: { id: true } });
+      if (!assigned) throw new ForbiddenException('Only an assigned employee can submit this work.');
+    }
     if (dto.assignedToId) {
       const targetEmpId = Number(dto.assignedToId);
       const perm = await this.workPermissionService.getAllowedActivityTypesForEmployee(targetEmpId, existing.customerId);
@@ -614,6 +627,28 @@ export class WorkService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      if (employeeId && dto.status === WorkStatus.COMPLETED) {
+        await tx.$queryRaw`SELECT id FROM "Work" WHERE id = ${numId} FOR UPDATE`;
+        const current = await tx.work.findUniqueOrThrow({ where: { id: numId } });
+        if (current.status === WorkStatus.CUSTOMER_REVIEW) {
+          return tx.work.findUniqueOrThrow({ where: { id: numId }, include: { customer: true, assignedTo: true, editor: true, entitlement: true, tasks: true } });
+        }
+        if (current.status !== WorkStatus.IN_PROGRESS && current.status !== WorkStatus.REVISION_REQUESTED) {
+          throw new BadRequestException('Start the task before submitting it.');
+        }
+        const recipient = await tx.user.findFirst({ where: { customerId: current.customerId, isActive: true, deletedAt: null, employee: null }, orderBy: { id: 'asc' }, select: { id: true } });
+        if (!recipient) throw new BadRequestException('No customer account is available to review this work.');
+        updateData.status = WorkStatus.CUSTOMER_REVIEW;
+        updateData.submittedAt = new Date();
+        delete updateData.completedAt;
+        const work = await tx.work.update({ where: { id: numId }, data: updateData, include: { customer: true, assignedTo: true, editor: true, entitlement: true, tasks: true } });
+        await tx.notification.create({ data: { customerId: current.customerId, userId: recipient.id,
+          title: current.revisionCount > 0 ? 'Revised Task Submitted' : 'Task Completed – Ready for Review',
+          message: `Your task ${current.title} has been completed. Please review the submitted work.`,
+          type: 'WORK_SUBMITTED', data: { workId: current.id },
+        } });
+        return work;
+      }
       // Handle quota transition if status changed to COMPLETED or CANCELLED
       if (dto.status === WorkStatus.COMPLETED && existing.status !== WorkStatus.COMPLETED && existing.entitlementId) {
         await tx.planEntitlement.update({
@@ -813,8 +848,13 @@ export class WorkService {
     if (existing.status === WorkStatus.COMPLETED) {
       return { success: true, message: 'Work already approved and completed.', work: existing };
     }
+    if (existing.status !== WorkStatus.CUSTOMER_REVIEW || !existing.submittedAt) {
+      throw new BadRequestException('Only submitted work awaiting customer review can be approved.');
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.work.updateMany({ where: { id: numId, status: WorkStatus.CUSTOMER_REVIEW, submittedAt: existing.submittedAt }, data: { status: WorkStatus.COMPLETED } });
+      if (claimed.count !== 1) throw new BadRequestException('This submission has already been reviewed or changed.');
       // 1. Mark COMPLETED
       const work = await tx.work.update({
         where: { id: numId },
@@ -850,11 +890,13 @@ export class WorkService {
 
       // 4. Fallback in-DB notification if notificationService not available
       const staffUserIds = [work.assignedTo?.userId, work.editor?.userId].filter(Boolean) as number[];
-      if (!this.notificationService) {
-        for (const uid of staffUserIds) {
+      {
+        for (const uid of new Set(staffUserIds)) {
+          const recipient = await tx.user.findUnique({ where: { id: uid }, select: { customerId: true } });
+          if (!recipient?.customerId) continue;
           await tx.notification.create({
             data: {
-              customerId: work.customerId,
+              customerId: recipient.customerId,
               userId: uid,
               title: '✅ Level Approved',
               message: `Your submitted level for "${work.title}" has been approved by Admin.`,
@@ -872,42 +914,6 @@ export class WorkService {
       };
     });
 
-    // 5. Notify assigned staff via Push Notification + FCM
-    if (this.notificationService) {
-      const staffUserIds = [result.work.assignedTo?.userId, result.work.editor?.userId].filter(Boolean) as number[];
-      for (const uid of staffUserIds) {
-        try {
-          const existingNotifs = await this.prisma.notification.findMany({
-            where: {
-              userId: uid,
-              type: 'LEVEL_APPROVED',
-            },
-            select: { data: true },
-            take: 20,
-            orderBy: { id: 'desc' },
-          });
-          const alreadyNotified = existingNotifs.some((n: any) => n.data?.workId === String(result.work.id));
-          if (!alreadyNotified) {
-            await this.notificationService.sendPushNotification({
-              userId: uid,
-              customerId: result.work.customerId,
-              title: '✅ Level Approved',
-              body: `Your submitted level for "${result.work.title}" has been approved by Admin.`,
-              type: 'LEVEL_APPROVED',
-              data: {
-                type: 'WORK',
-                workId: String(result.work.id),
-                status: 'APPROVED',
-              },
-            });
-            this.logger.log(`Dispatched LEVEL_APPROVED push notification to staff user #${uid} for work #${result.work.id}`);
-          }
-        } catch (err: any) {
-          this.logger.warn(`Failed to send level approval push to staff user #${uid} (non-fatal): ${err?.message}`);
-        }
-      }
-    }
-
     return result;
   }
 
@@ -919,11 +925,14 @@ export class WorkService {
     const numId = Number(id);
     const existing = await this.findOne(numCustomerId, numId);
 
-    if (existing.status === WorkStatus.COMPLETED) {
-      throw new BadRequestException('Cannot request revision on an already approved/completed work item.');
+    if (!dto.feedback?.trim()) throw new BadRequestException('Revision feedback is required.');
+    if (existing.status !== WorkStatus.CUSTOMER_REVIEW || !existing.submittedAt) {
+      throw new BadRequestException('Only submitted work awaiting customer review can be revised.');
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.work.updateMany({ where: { id: numId, status: WorkStatus.CUSTOMER_REVIEW, submittedAt: existing.submittedAt }, data: { status: WorkStatus.REVISION_REQUESTED } });
+      if (claimed.count !== 1) throw new BadRequestException('This submission has already been reviewed or changed.');
       const work = await tx.work.update({
         where: { id: numId },
         data: {
@@ -941,10 +950,12 @@ export class WorkService {
 
       // Notify editor / assigned employee
       const staffUserIds = [work.editor?.userId, work.assignedTo?.userId].filter(Boolean) as number[];
-      for (const uid of staffUserIds) {
+      for (const uid of new Set(staffUserIds)) {
+        const recipient = await tx.user.findUnique({ where: { id: uid }, select: { customerId: true } });
+        if (!recipient?.customerId) continue;
         await tx.notification.create({
           data: {
-            customerId: work.customerId,
+            customerId: recipient.customerId,
             userId: uid,
             title: 'Revision Requested',
             message: `Customer requested revision on "${work.title}": "${dto.feedback}"`,
@@ -2116,6 +2127,8 @@ status: ${item.status}`);
         outputUrl: w.outputUrl,
         feedback: w.feedback,
         revisionCount: w.revisionCount,
+        approvedAt: w.approvedAt,
+        submittedAt: w.submittedAt,
         socialMediaAccount: smAccount,
         platform: platform,
         tasks: w.tasks || [],
