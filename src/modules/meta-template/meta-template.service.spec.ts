@@ -76,6 +76,13 @@ describe('MetaTemplateService', () => {
       expect(result.stats).toBeDefined();
       expect(result.meta.total).toBe(1);
     });
+
+    it('does not reseed defaults when only archived templates remain', async () => {
+      mockPrisma.metaTemplate.count.mockResolvedValue(1);
+      await service.ensureDefaultTemplates(1);
+      expect(mockPrisma.metaTemplate.count).toHaveBeenCalledWith({ where: {} });
+      expect(mockPrisma.metaTemplate.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('create', () => {
@@ -116,6 +123,33 @@ describe('MetaTemplateService', () => {
           1,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('update', () => {
+    const synced = {
+      id: 32, customerId: 1, name: 'Welcome', templateName: 'welcome_lead', key: 'WELCOME',
+      language: 'en_US', category: 'UTILITY', status: 'APPROVED', metaTemplateId: 'meta-32',
+      headerType: 'NONE', headerContent: null, body: 'Hello {{leadName}}', footer: null,
+      buttons: [], variables: ['leadName'], isLocalActive: true, syncStatus: 'SYNCED',
+    };
+
+    it('requires a new Meta name or language for a submitted template content revision', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(synced);
+      await expect(service.update(32, { body: 'Hi {{leadName}}' } as any, 1))
+        .rejects.toThrow(/Choose a new Meta template name or language/);
+      expect(mockPrisma.metaTemplate.update).not.toHaveBeenCalled();
+    });
+
+    it('saves revised content as not synced and clears the old Meta ID', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(synced);
+      mockPrisma.metaTemplate.update.mockImplementation(({ data }) => Promise.resolve({ ...synced, ...data }));
+      const result = await service.update(32, { templateName: 'welcome_lead_v2', body: 'Hi {{leadName}}' } as any, 1);
+      expect(mockPrisma.metaTemplate.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: 'NOT_SYNCED', metaTemplateId: null, syncStatus: 'NOT_SYNCED', body: 'Hi {{leadName}}' }),
+      }));
+      expect(result.metaTemplateId).toBeNull();
+      expect(result.body).toBe('Hi {{leadName}}');
     });
   });
 
@@ -356,17 +390,27 @@ describe('MetaTemplateService', () => {
     it('blocks deletion when an active lead stage is mapped to the template', async () => {
       const del = jest.spyOn(axios, 'delete');
       mockPrisma.leadStage.findMany
-        .mockResolvedValueOnce([{ id: 5, name: 'Contacted', key: 'CONTACTED', isActive: true }])
+        .mockResolvedValueOnce([{ id: 5, name: 'Contacted', key: 'CONTACTED', isActive: true, whatsappTemplateId: 40, whatsappEnabled: true }])
         .mockResolvedValueOnce([]);
       await expect(service.remove(40, admin)).rejects.toThrow(/Lead stage "Contacted" is actively mapped/);
       expect(del).not.toHaveBeenCalled();
       expect(record.deletedAt).toBeNull();
     });
 
+    it('does not block deletion for an active stage that is not WhatsApp-enabled or mapped', async () => {
+      jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
+      mockPrisma.leadStage.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 5, name: 'New', key: 'WELCOME', isActive: true, whatsappTemplateId: null, whatsappEnabled: false }]);
+      const res = await service.remove(40, admin);
+      expect(res.success).toBe(true);
+      expect(record.deletedAt).toBeTruthy();
+    });
+
     it('unmaps inactive or key-only stage references during cleanup', async () => {
       jest.spyOn(axios, 'delete').mockResolvedValue({ data: { success: true } } as any);
       mockPrisma.leadStage.findMany
-        .mockResolvedValueOnce([{ id: 6, name: 'Old', key: 'OLD', isActive: false }])
+        .mockResolvedValueOnce([{ id: 6, name: 'Old', key: 'OLD', isActive: false, whatsappTemplateId: 40, whatsappEnabled: false }])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: 6 }]);
       const res = await service.remove(40, admin);
@@ -418,7 +462,7 @@ describe('MetaTemplateService', () => {
     it('reports references in the delete preview without changing anything', async () => {
       const del = jest.spyOn(axios, 'delete');
       mockPrisma.leadStage.findMany
-        .mockResolvedValueOnce([{ id: 5, name: 'Contacted', key: 'CONTACTED', isActive: true }])
+        .mockResolvedValueOnce([{ id: 5, name: 'Contacted', key: 'CONTACTED', isActive: true, whatsappTemplateId: 40, whatsappEnabled: true }])
         .mockResolvedValueOnce([]);
       const preview = await service.previewDelete(40, admin);
       expect(preview).toMatchObject({

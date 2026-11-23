@@ -61,8 +61,10 @@ export class MetaTemplateService {
    */
   async ensureDefaultTemplates(customerId?: number | null) {
     try {
+      // Count archived rows too, so the next listing request does not recreate
+      // defaults after an administrator intentionally removes the last template.
       const count = await this.prisma.metaTemplate.count({
-        where: { deletedAt: null },
+        where: {},
       });
       if (count > 0) return;
 
@@ -522,6 +524,8 @@ export class MetaTemplateService {
   async update(id: number, dto: UpdateMetaTemplateDto, customerId?: number | string | null) {
     const item = await this.findOne(id, customerId);
 
+    const hasRemoteTemplate = Boolean(item.metaTemplateId && !String(item.metaTemplateId).startsWith('seed_'));
+
     const effectiveName = dto.name !== undefined ? dto.name.trim() : item.name;
     const bodyToUse = dto.body !== undefined ? dto.body : item.body;
     const headerToUse = dto.headerContent !== undefined ? dto.headerContent : item.headerContent;
@@ -536,6 +540,26 @@ export class MetaTemplateService {
         .toLowerCase()
         .replace(/[\s-]+/g, '_')
         .replace(/[^a-z0-9_]/g, '');
+    }
+
+    const remoteContentChanged =
+      templateName !== item.templateName ||
+      (dto.language !== undefined && dto.language !== item.language) ||
+      (dto.category !== undefined && dto.category.toUpperCase() !== item.category) ||
+      (dto.headerType !== undefined && dto.headerType !== item.headerType) ||
+      (dto.headerContent !== undefined && (dto.headerContent || null) !== (item.headerContent || null)) ||
+      bodyToUse.trim() !== item.body ||
+      (dto.footer !== undefined && (dto.footer ? dto.footer.trim() : null) !== (item.footer || null)) ||
+      (dto.buttons !== undefined && JSON.stringify(dto.buttons ?? null) !== JSON.stringify(item.buttons ?? null));
+    if (
+      hasRemoteTemplate &&
+      remoteContentChanged &&
+      templateName === item.templateName &&
+      (dto.language ?? item.language) === item.language
+    ) {
+      throw new BadRequestException(
+        'Meta does not allow editing a submitted template in place. Choose a new Meta template name or language for this revision.',
+      );
     }
 
     const effectiveIsLocalActive =
@@ -556,8 +580,12 @@ export class MetaTemplateService {
         key: dto.key !== undefined ? (dto.key ? dto.key.trim().toUpperCase().replace(/[\s-]+/g, '_') : null) : item.key,
         language: dto.language !== undefined ? dto.language : item.language,
         category: dto.category !== undefined ? dto.category.toUpperCase() : item.category,
-        status: dto.status !== undefined ? dto.status.toUpperCase() : item.status,
-        metaTemplateId: dto.metaTemplateId !== undefined ? dto.metaTemplateId : item.metaTemplateId,
+        status: hasRemoteTemplate && remoteContentChanged
+          ? 'NOT_SYNCED'
+          : dto.status !== undefined ? dto.status.toUpperCase() : item.status,
+        metaTemplateId: hasRemoteTemplate && remoteContentChanged
+          ? null
+          : dto.metaTemplateId !== undefined ? dto.metaTemplateId : item.metaTemplateId,
         headerType: dto.headerType !== undefined ? dto.headerType : item.headerType,
         headerContent: dto.headerContent !== undefined ? dto.headerContent : item.headerContent,
         body: bodyToUse.trim(),
@@ -565,6 +593,14 @@ export class MetaTemplateService {
         buttons: dto.buttons !== undefined ? dto.buttons : (item.buttons as any),
         variables,
         isLocalActive: effectiveIsLocalActive,
+        ...(hasRemoteTemplate && remoteContentChanged
+          ? {
+              syncStatus: 'NOT_SYNCED',
+              syncError: 'Template content changed locally. Submit this revision to Meta for approval.',
+              syncedWabaId: null,
+              lastSyncedAt: null,
+            }
+          : {}),
       },
     });
   }
@@ -621,12 +657,12 @@ export class MetaTemplateService {
     const [byLink, byKey, campaigns, deliveries] = await Promise.all([
       this.prisma.leadStage.findMany({
         where: { deletedAt: null, whatsappTemplateId: item.id },
-        select: { id: true, name: true, key: true, isActive: true },
+        select: { id: true, name: true, key: true, isActive: true, whatsappTemplateId: true, whatsappEnabled: true },
       }),
       item.key
         ? this.prisma.leadStage.findMany({
             where: { deletedAt: null, key: { equals: item.key, mode: 'insensitive' } },
-            select: { id: true, name: true, key: true, isActive: true },
+            select: { id: true, name: true, key: true, isActive: true, whatsappTemplateId: true, whatsappEnabled: true },
           })
         : Promise.resolve([]),
       this.prisma.whatsAppCampaign?.count
@@ -637,13 +673,16 @@ export class MetaTemplateService {
         : Promise.resolve(0),
     ]);
     const linkedIds = new Set(byLink.map((s) => s.id));
-    const stages = [...byLink, ...byKey.filter((stage) => !linkedIds.has(stage.id))];
+    const stages = [...byLink, ...byKey.filter((stage) => !linkedIds.has(stage.id))].filter((stage) =>
+      stage.whatsappTemplateId === item.id ||
+      (!stage.whatsappTemplateId && stage.whatsappEnabled === true && stage.key && item.key && String(stage.key).toUpperCase() === String(item.key).toUpperCase()),
+    );
     return {
       leadStages: stages,
       whatsappCampaigns: campaigns,
       deliveryRecords: deliveries,
       blockers: stages
-        .filter((stage) => stage.isActive && (linkedIds.has(stage.id) || stage.whatsappTemplateId === item.id || (!stage.whatsappTemplateId && stage.key && item.key && String(stage.key).toUpperCase() === String(item.key).toUpperCase())))
+        .filter((stage) => stage.isActive && stage.whatsappEnabled === true)
         .map((stage) => `Lead stage "${stage.name}" is actively mapped to this template.`),
     };
   }
@@ -967,23 +1006,19 @@ export class MetaTemplateService {
           data: { metaTemplateId: null },
         });
       }
-      if (tx.metaTemplate?.delete) {
-        await tx.metaTemplate.delete({
-          where: { id: item.id },
-        });
-      } else {
-        await tx.metaTemplate.update({
-          where: { id: item.id },
-          data: {
-            deletedAt: now,
-            isLocalActive: false,
-            deletionState: 'LOCAL_DELETED',
-            deletionError: null,
-            deletedByUserId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
-            deletedByName: actor,
-          },
-        });
-      }
+      // Keep a tombstone so list calls do not reseed or re-import the deleted
+      // local row, while normal queries hide it through `deletedAt: null`.
+      await tx.metaTemplate.update({
+        where: { id: item.id },
+        data: {
+          deletedAt: now,
+          isLocalActive: false,
+          deletionState: 'LOCAL_DELETED',
+          deletionError: null,
+          deletedByUserId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+          deletedByName: actor,
+        },
+      });
     });
     return { deletedAt: now, reason };
   }
