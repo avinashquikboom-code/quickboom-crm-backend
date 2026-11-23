@@ -39,6 +39,49 @@ export class VisitService {
     @Optional() @Inject(forwardRef(() => LeadService)) private readonly leadService?: LeadService,
   ) {}
 
+  private async notifyAssignedEmployeeVisitScheduled(visit: any) {
+    if (!this.notificationService || !visit?.customerId || !visit?.employee) return;
+    try {
+      const employee = visit.employee;
+      let userId = Number(employee.userId) || null;
+      if (!userId && employee.email) {
+        const user = await this.prisma.user.findFirst({
+          where: {
+            customerId: Number(visit.customerId),
+            email: { equals: String(employee.email).trim(), mode: 'insensitive' },
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        userId = user?.id ?? null;
+      }
+      if (!userId) {
+        this.logger.warn(`[VISIT_SCHEDULED_NOTIFICATION] No linked user for employeeId=${employee.id}`);
+        return;
+      }
+
+      const employeeName = `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Field Sales Executive';
+      const leadName = visit.customerName || visit.lead?.companyName || visit.lead?.title || 'your assigned lead';
+      await this.notificationService.sendPushNotification({
+        userId,
+        customerId: Number(visit.customerId),
+        title: 'Field Visit Scheduled',
+        body: `A field visit for ${leadName} has been scheduled for ${visit.date ? new Date(visit.date).toLocaleDateString() : 'an upcoming date'} at ${visit.time || 'the scheduled time'}.`,
+        type: 'VISIT_SCHEDULED',
+        data: {
+          type: 'VISIT_SCHEDULED',
+          visitId: String(visit.id),
+          leadId: visit.leadId ? String(visit.leadId) : '',
+          employeeId: String(employee.id),
+          employeeName,
+          route: '/visits',
+        },
+      });
+    } catch (error: any) {
+      this.logger.warn(`[VISIT_SCHEDULED_NOTIFICATION] visitId=${visit.id} failed: ${error?.message}`);
+    }
+  }
+
   private async resolveCustomerId(customerId?: number | string): Promise<number> {
     if (typeof customerId === 'number' && !isNaN(customerId)) {
       return customerId;
@@ -498,6 +541,8 @@ export class VisitService {
     } catch (commErr: any) {
       this.logger.warn(`Non-fatal: Calendar appointment communications notice: ${commErr?.message}`);
     }
+
+    await this.notifyAssignedEmployeeVisitScheduled(visit);
 
     // Sync Calendar Activity to Customer Team Member Task
     try {

@@ -122,6 +122,58 @@ export class LeadService {
     }
   }
 
+  private async notifyAssignedVisitorVisitScheduled(customerId: number, leadId: number) {
+    const notificationService = this.getNotificationService();
+    if (!notificationService) return;
+    try {
+      const visit = await this.prisma.visit.findFirst({
+        where: { customerId, leadId, status: { in: ['SCHEDULED', 'IN_PROGRESS'] } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        include: {
+          employee: { select: { id: true, userId: true, email: true, firstName: true, lastName: true } },
+          lead: { select: { companyName: true, title: true, firstName: true, lastName: true } },
+        },
+      });
+      if (!visit?.employee) return;
+
+      let recipientId = Number(visit.employee.userId) || null;
+      if (!recipientId && visit.employee.email) {
+        const linkedUser = await this.prisma.user.findFirst({
+          where: {
+            customerId,
+            email: { equals: visit.employee.email.trim(), mode: 'insensitive' },
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        recipientId = linkedUser?.id ?? null;
+      }
+      if (!recipientId) {
+        this.logger.warn(`[VISIT_SCHEDULED_NOTIFICATION] No linked user for employeeId=${visit.employee.id}`);
+        return;
+      }
+
+      const name = `${visit.lead?.firstName || ''} ${visit.lead?.lastName || ''}`.trim() ||
+        visit.lead?.companyName || visit.lead?.title || visit.customerName || 'your assigned lead';
+      await notificationService.sendPushNotification({
+        userId: recipientId,
+        customerId,
+        title: 'Field Visit Scheduled',
+        body: `A field visit for ${name} has been scheduled for ${visit.date.toISOString().slice(0, 10)} at ${visit.time || 'the scheduled time'}.`,
+        type: 'VISIT_SCHEDULED',
+        data: {
+          type: 'VISIT_SCHEDULED',
+          visitId: String(visit.id),
+          leadId: String(leadId),
+          employeeId: String(visit.employee.id),
+          route: '/visits',
+        },
+      });
+    } catch (error: any) {
+      this.logger.warn(`[VISIT_SCHEDULED_NOTIFICATION] leadId=${leadId} failed: ${error?.message}`);
+    }
+  }
+
   public async sendLeadAssignedNotification(params: {
     customerId: number | string;
     employeeId?: number | string | null;
@@ -4012,6 +4064,7 @@ export class LeadService {
     const updated = await this.leadRepository.manageVisit(customerId, leadId, userId, dto);
 
     if (updated && dto.action === 'SCHEDULE') {
+      await this.notifyAssignedVisitorVisitScheduled(Number(lead.customerId), Number(leadId));
       await this.runStageAutomationsAfterTransition(
         customerId,
         updated,
