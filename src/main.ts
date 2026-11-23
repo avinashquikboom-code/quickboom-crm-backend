@@ -15,7 +15,7 @@ import { join } from 'path';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   // Serve locally uploaded banner images (fallback when S3 is unavailable)
   // Files saved to <project_root>/uploads/ are reachable at /uploads/<path>

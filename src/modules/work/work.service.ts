@@ -692,6 +692,8 @@ export class WorkService {
     if (submissionNotification) {
       const notification = submissionNotification;
       this.logger.log(`[TASK_SUBMISSION_SAVED] workId=${notification.workId} customerId=${notification.customerId} userId=${notification.userId} notificationId=${notification.id}`);
+      this.logger.log(`[CUSTOMER_RESOLVED] workId=${notification.workId} customerId=${notification.customerId} userId=${notification.userId}`);
+      this.logger.log(`[NOTIFICATION_CREATED] workId=${notification.workId} notificationId=${notification.id} userId=${notification.userId}`);
       if (this.notificationService) {
         try {
           this.logger.log(`[PUSH_DELIVERY_ATTEMPTED] workId=${notification.workId} notificationId=${notification.id}`);
@@ -702,6 +704,8 @@ export class WorkService {
           this.logger.error(`[PUSH_DELIVERY_FAILED] workId=${notification.workId} notificationId=${notification.id} error=${error?.message}`);
         }
       } else this.logger.warn(`[PUSH_DELIVERY_FAILED] workId=${notification.workId} notificationId=${notification.id} service_unavailable`);
+    } else if (employeeId && dto.status === WorkStatus.COMPLETED && result.status === WorkStatus.CUSTOMER_REVIEW) {
+      this.logger.log(`[TASK_SUBMISSION_SAVED] workId=${result.id} customerId=${result.customerId} notification=not_created_or_existing`);
     }
     this.emitRealtimeScheduleEvent(result.customerId, 'PLAN_SCHEDULE_UPDATED', {
       scheduleId: result.id,
