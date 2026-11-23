@@ -1580,7 +1580,7 @@ export class AuthService {
     const payloadRole = payload.role ? String(payload.role).toUpperCase() : '';
     const isEmployeeRoleCheck =
       payloadRole === 'EMPLOYEE' ||
-      payload.roleType === RoleType.CUSTOM ||
+      (payload.roleType === RoleType.CUSTOM && Boolean((user as any).employee)) ||
       Boolean((user as any).employee) ||
       (user as any).userRoles?.some((ur: any) => {
         const type = ur.role?.type ? String(ur.role.type).toUpperCase() : '';

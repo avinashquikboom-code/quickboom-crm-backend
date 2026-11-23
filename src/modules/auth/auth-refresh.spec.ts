@@ -128,6 +128,15 @@ describe('AuthService - Token Refresh Flow', () => {
     expect(res.accessToken).toBe('mock-jwt-token');
   });
 
+  it('allows a CUSTOMER with CUSTOM role type and no employee record to refresh', async () => {
+    jwtService.verify.mockReturnValue({ sub: 11, role: 'CUSTOMER', roleType: RoleType.CUSTOM });
+    prisma.refreshToken.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValue({ id: 11, email: 'customer@test.com', isActive: true, deletedAt: null, customerId: 5, employee: null, userRoles: [] });
+    const result = await authService.refreshToken({ refreshToken: 'customer-refresh-token' });
+    expect(result.accessToken).toBe('mock-jwt-token');
+    expect(result.user.role).toBe('CUSTOMER');
+  });
+
   it('rejects and revokes refresh for a disabled customer workspace', async () => {
     jwtService.verify.mockReturnValue({ sub: 30, role: 'CUSTOMER_ADMIN' });
     prisma.refreshToken.findUnique.mockResolvedValue({
