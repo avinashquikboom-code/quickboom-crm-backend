@@ -306,6 +306,38 @@ describe('evaluateLatePunch', () => {
   const policy = { isEnabled: true, deductionRatePerMin: 2, gracePeriodMinutes: 0, currency: 'INR' };
   const shift = { startTime: '10:00 AM', endTime: '07:00 PM', workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] };
 
+  it('applies the zero-grace ₹1/minute rule for exact, one-minute, two-minute, and fifteen-minute punches', () => {
+    const oneRupeePolicy = { isEnabled: true, deductionRatePerMin: 1, gracePeriodMinutes: 0, currency: 'INR' };
+    const cases = [
+      ['2026-08-03T04:30:00.000Z', 0, 0], // 10:00 IST
+      ['2026-08-03T04:31:00.000Z', 1, 1], // 10:01 IST
+      ['2026-08-03T04:32:00.000Z', 2, 2], // 10:02 IST
+      ['2026-08-03T04:45:00.000Z', 15, 15], // 10:15 IST
+    ] as const;
+    for (const [punchIn, minutes, rupees] of cases) {
+      const result = evaluateLatePunch({ punchIn, shift, policy: oneRupeePolicy });
+      expect(result.lateMinutes).toBe(minutes);
+      expect(result.deduction).toBe(rupees);
+      expect(result.ratePerMinute).toBe(1);
+    }
+  });
+
+  it('calculates against a different assigned shift and skips missing assignments', () => {
+    const oneRupeePolicy = { isEnabled: true, deductionRatePerMin: 1, currency: 'INR' };
+    const otherShift = evaluateLatePunch({
+      punchIn: '2026-08-03T04:15:00.000Z', // 09:45 IST
+      shift: { ...shift, startTime: '09:30 AM' },
+      policy: oneRupeePolicy,
+    });
+    expect(otherShift.lateMinutes).toBe(15); // Punch is 09:45, assigned start is 09:30.
+    expect(otherShift.deduction).toBe(15);
+
+    const noShift = evaluateLatePunch({ punchIn: '2026-08-03T04:45:00.000Z', shift: null, policy: oneRupeePolicy });
+    expect(noShift.applicable).toBe(false);
+    expect(noShift.lateMinutes).toBe(0);
+    expect(noShift.deduction).toBe(0);
+  });
+
   it('does not deduct an on-time punch and ignores configured grace', () => {
     const onTime = evaluateLatePunch({
       punchIn: '2026-08-03T04:30:00.000Z',

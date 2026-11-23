@@ -74,6 +74,7 @@ export class AttendanceService {
     if (!employee && user.id) {
       employee = await this.prisma.employee.findFirst({
         where: {
+          ...(targetCustomerId ? { customerId: targetCustomerId } : {}),
           OR: [
             { userId: user.id },
             { email: { equals: user.email?.trim().toLowerCase(), mode: 'insensitive' } },

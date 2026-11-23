@@ -919,11 +919,16 @@ export class MetaTemplateService {
     const base = `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates`;
     const headers = { Authorization: `Bearer ${apiKey}` };
     try {
-      if (remoteId) {
-        await axios.delete(`${base}/${encodeURIComponent(remoteId)}`, { headers, timeout: 20000 });
-      } else {
-        await axios.delete(base, { headers, params: { name: item.templateName, language: item.language }, timeout: 20000 });
-      }
+      // Meta deletes templates from the WABA edge. The template ID belongs in
+      // `hsm_id`, not as a path segment (which Graph API rejects as an unknown
+      // path component).
+      await axios.delete(base, {
+        headers,
+        params: remoteId
+          ? { hsm_id: remoteId, name: item.templateName }
+          : { name: item.templateName },
+        timeout: 20000,
+      });
       return 'DELETED';
     } catch (error: any) {
       const safeMessage = this.metaApiError(error, apiKey);

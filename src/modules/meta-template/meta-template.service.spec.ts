@@ -207,7 +207,7 @@ describe('MetaTemplateService', () => {
 
     const baseTemplate = {
       id: 40, customerId: 1, name: 'Welcome Lead', templateName: 'welcome_lead', key: 'WELCOME',
-      language: 'en_US', category: 'UTILITY', status: 'APPROVED', metaTemplateId: 'meta-40',
+      language: 'en_US', category: 'UTILITY', status: 'APPROVED', metaTemplateId: '888160003829980',
       syncedWabaId: '987654321', body: 'Hello {{leadName}}', variables: ['leadName'], isLocalActive: true,
       isSystem: false, deletedAt: null, deletionState: 'NONE', deletionError: null, syncStatus: 'SYNCED',
     };
@@ -240,7 +240,7 @@ describe('MetaTemplateService', () => {
         metaTemplate: { update: jest.fn().mockImplementation(({ data }: any) => { record = { ...record, ...data }; return Promise.resolve(record); }) },
       };
       mockPrisma.$transaction = jest.fn(async (work: any) => work(tx));
-      jest.spyOn(axios, 'get').mockResolvedValue({ data: { data: [{ id: 'meta-40', name: 'welcome_lead', language: 'en_US', status: 'APPROVED' }] } } as any);
+      jest.spyOn(axios, 'get').mockResolvedValue({ data: { data: [{ id: '888160003829980', name: 'welcome_lead', language: 'en_US', status: 'APPROVED' }] } } as any);
     });
 
     afterEach(() => jest.restoreAllMocks());
@@ -251,8 +251,12 @@ describe('MetaTemplateService', () => {
       const res = await service.remove(40, admin, { reason: 'Cleanup' });
 
       expect(del).toHaveBeenCalledWith(
-        'https://graph.facebook.com/v21.0/987654321/message_templates/meta-40',
-        expect.objectContaining({ headers: { Authorization: 'Bearer EAABsampletoken12345' }, timeout: 20000 }),
+        'https://graph.facebook.com/v21.0/987654321/message_templates',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer EAABsampletoken12345' },
+          params: { hsm_id: '888160003829980', name: 'welcome_lead' },
+          timeout: 20000,
+        }),
       );
       expect(record.deletedAt).toEqual(expect.any(Date));
       expect(record.deletionState).toBe('LOCAL_DELETED');
