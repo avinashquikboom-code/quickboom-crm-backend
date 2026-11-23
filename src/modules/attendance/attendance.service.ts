@@ -641,12 +641,9 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
         },
       };
     });
-    await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'PUNCH_IN', 'Punch In Successful', `Your attendance was marked successfully at ${formatTimeInTimezone(now)}. Date: ${dateStr}. Status: ${result?.data?.status || attendanceStatus}.`, { punchInAt: now.toISOString(), attendanceDate: dateStr, status: String(result?.data?.status || attendanceStatus) }, user?.id);
-    if (lateEvaluation.applicable && lateEvaluation.isLate && lateEvaluation.lateMinutes > 0) {
-      const shiftStart = employee.shift?.startTime || 'assigned shift start';
-      await this.notifyAttendanceEvent(employee, result?.data?.attendanceId, 'LATE_MARK', 'Late Mark Recorded', `You are ${result.data.lateMinutes} minutes late today. Your assigned shift started at ${shiftStart}; punch-in was ${formatTimeInTimezone(now)}.`, { lateMinutes: String(result.data.lateMinutes), shiftStart: String(shiftStart), punchInAt: now.toISOString(), attendanceDate: dateStr }, user?.id);
-      if (Number(result.data.lateDeduction) > 0) await this.notifyAttendanceEvent(employee, result.data.attendanceId, `LATE_DEDUCTION_${Number(result.data.lateDeduction).toFixed(2)}`, 'Late Mark Deduction Applied', `Your Late Mark deduction for today is ${this.formatLateMoney(Number(result.data.lateDeduction), lateEvaluation.currency)}. Late minutes: ${result.data.lateMinutes}. Deduction rate: ${this.formatLateMoney(Number(result.data.lateRatePerMinute), lateEvaluation.currency)}/min.`, { lateMinutes: String(result.data.lateMinutes), deductionRate: String(result.data.lateRatePerMinute), deductionAmount: String(result.data.lateDeduction), attendanceDate: dateStr }, user?.id);
-    }
+    await this.notifyAttendanceEvent(employee, result.data.attendanceId, 'PUNCH_IN', 'Punch In Successful', isLatePunchIn
+      ? `You are ${lateMinutesCount} minutes late today. Estimated salary deduction: ${this.formatLateMoney(lateEvaluation.deduction, lateEvaluation.currency)}.`
+      : 'You are on time today.', { punchInAt: now.toISOString(), attendanceDate: dateStr, status: String(result.data.status) }, user?.id);
     return result;
   }
 
@@ -816,6 +813,8 @@ result: SUCCESS`);
           breakDuration: totalBreakFormatted,
           totalBreak: totalBreakFormatted,
           status: updated.status,
+          lateMinutes: updated.lateMinutes || 0,
+          lateDeduction: Number(updated.lateDeduction) || 0,
           office: {
             id: office.id,
             name: office.name,
@@ -833,7 +832,9 @@ result: SUCCESS`);
       };
     });
     const punchOutAt = result.data.punchOutAt;
-    await this.notifyAttendanceEvent(employee, result.data.attendanceId, 'PUNCH_OUT', 'Punch Out Successful', `Your punch-out was recorded at ${punchOutAt ? formatTimeInTimezone(new Date(punchOutAt)) : 'the recorded time'}. Total working hours today: ${result.data.workingDuration}.`, { punchOutAt: punchOutAt || '', workingMinutes: String(result.data.workingMinutes ?? 0), attendanceDate: dateStr }, user?.id);
+    await this.notifyAttendanceEvent(employee, result.data.attendanceId, 'PUNCH_OUT', 'Punch Out Successful', result.data.lateMinutes > 0
+      ? `Today's Attendance Summary: Late by ${result.data.lateMinutes} minutes. Total late deduction: ${this.formatLateMoney(result.data.lateDeduction)}.`
+      : "Today's late deduction: ₹0.", { punchOutAt: punchOutAt || '', workingMinutes: String(result.data.workingMinutes ?? 0), attendanceDate: dateStr }, user?.id);
     return result;
   }
 
