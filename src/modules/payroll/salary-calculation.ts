@@ -334,7 +334,7 @@ export function evaluateLatePunch(input: {
   const policy = input.policy;
   const enabled = policy?.isEnabled !== false;
   const rate = Math.max(0, Number(policy?.deductionRatePerMin ?? 1));
-  const grace = 0;
+  const grace = Math.max(0, Number(input.shift?.gracePeriodMinutes ?? policy?.gracePeriodMinutes ?? 0) || 0);
   const startRaw = input.shift?.startTime || null;
   const startMins = parseTimeStringToMinutes(startRaw);
   const endMins = parseTimeStringToMinutes(input.shift?.endTime);
@@ -384,6 +384,10 @@ export function evaluateLatePunch(input: {
   let raw = 0;
   if (ist.minutes >= startMins) raw = ist.minutes - startMins;
   else if (overnight && endMins != null && ist.minutes <= endMins) raw = ist.minutes + 24 * 60 - startMins;
+  if (ist.minutes >= startMins || (overnight && endMins != null && ist.minutes <= endMins)) {
+    const timestamp = new Date(input.punchIn).getTime();
+    if (timestamp % 60000 !== 0) raw += 1;
+  }
   const eligible = Math.max(0, raw - grace);
   let deduction = deductionReason ? 0 : Math.round(eligible * rate * 100) / 100;
   const maxDaily = policy?.maxDailyDeduction;
