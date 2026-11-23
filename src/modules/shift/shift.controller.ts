@@ -16,6 +16,8 @@ import {
   UpdateShiftDto,
   UpdateShiftGuidanceDto,
   AssignEmployeesToShiftDto,
+  UnassignEmployeesDto,
+  QueryShiftHistoryDto,
 } from './dto/shift.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -26,9 +28,44 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 @ApiTags('HRM - Shifts & Guidance')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, CustomerGuard)
-@Controller('shifts')
+@Controller(['shifts', 'admin/hrm/shifts'])
 export class ShiftController {
   constructor(private readonly shiftService: ShiftService) {}
+
+  @Get('history')
+  @ApiOperation({ summary: 'Get shift assignment history with filtering and pagination' })
+  @ApiQuery({ name: 'customerId', required: false })
+  @ApiQuery({ name: 'employeeId', required: false })
+  @ApiQuery({ name: 'shiftId', required: false })
+  @ApiQuery({ name: 'startDate', required: false })
+  @ApiQuery({ name: 'endDate', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  async getHistory(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query() query: QueryShiftHistoryDto,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.shiftService.getShiftHistory(targetCustomerId, query, isSuperAdmin);
+  }
+
+  @Get('history/:employeeId')
+  @ApiOperation({ summary: 'Get shift assignment history for a specific employee' })
+  @ApiQuery({ name: 'customerId', required: false })
+  async getEmployeeHistory(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('employeeId') employeeId: string,
+    @Query('customerId') customerIdQuery?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    return this.shiftService.getEmployeeShiftHistory(targetCustomerId, employeeId, isSuperAdmin);
+  }
 
   @Get('metrics')
   @ApiOperation({ summary: 'Get shift overview and workforce allocation metrics' })
@@ -123,7 +160,32 @@ export class ShiftController {
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
-    return this.shiftService.assignEmployees(targetCustomerId, id, dto, isSuperAdmin);
+    return this.shiftService.assignEmployees(targetCustomerId, id, dto, user, isSuperAdmin);
+  }
+
+  @Post(':id/unassign')
+  @ApiOperation({ summary: 'Unassign employees from a shift' })
+  async unassignFromShift(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Param('id') id: string,
+    @Body() dto: UnassignEmployeesDto,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.shiftService.unassignEmployees(targetCustomerId, id, dto, user, isSuperAdmin);
+  }
+
+  @Post('unassign')
+  @ApiOperation({ summary: 'Unassign employees from shifts' })
+  async unassignEmployees(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() dto: UnassignEmployeesDto,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? customerId : user?.customerId;
+    return this.shiftService.unassignEmployees(targetCustomerId, null, dto, user, isSuperAdmin);
   }
 
   @Delete(':id')
