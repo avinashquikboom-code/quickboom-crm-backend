@@ -24,6 +24,7 @@ import { EmailService } from './email.service';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { PreviewEmailTemplateDto, TestSendTemplateDto } from './dto/preview-email-template.dto';
+import { BulkDeleteEmailTemplatesDto, DeleteEmailTemplateDto } from './dto/bulk-delete-email-template.dto';
 
 @ApiTags('Email Templates')
 @Controller(['email/templates', 'admin/email-templates', 'templates/email'])
@@ -131,13 +132,38 @@ export class EmailTemplateController {
     return this.emailTemplateService.duplicate(id, user?.customerId);
   }
 
+  @Delete('bulk')
+  @ApiOperation({ summary: 'Bulk permanently delete email templates' })
+  async bulkRemove(
+    @Body() dto: BulkDeleteEmailTemplatesDto,
+    @CurrentUser() user: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const custId = headerCustomerId || user?.customerId;
+    return this.emailTemplateService.bulkRemove(dto, custId ? Number(custId) : null, user);
+  }
+
+  @Post('bulk-delete')
+  @ApiOperation({ summary: 'Bulk permanently delete email templates (POST fallback)' })
+  async bulkRemovePost(
+    @Body() dto: BulkDeleteEmailTemplatesDto,
+    @CurrentUser() user: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+  ) {
+    const custId = headerCustomerId || user?.customerId;
+    return this.emailTemplateService.bulkRemove(dto, custId ? Number(custId) : null, user);
+  }
+
   @Delete(':id')
-  @ApiOperation({ summary: 'Soft delete a custom email template' })
+  @ApiOperation({ summary: 'Permanently delete a custom email template' })
   async remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
+    @Headers('x-customer-id') headerCustomerId?: string,
+    @Body() dto?: DeleteEmailTemplateDto,
   ) {
-    return this.emailTemplateService.remove(id, user?.customerId);
+    const custId = headerCustomerId || user?.customerId;
+    return this.emailTemplateService.remove(id, custId ? Number(custId) : null, user, dto?.reason);
   }
 
   @Post('preview')

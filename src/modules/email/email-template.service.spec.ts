@@ -213,4 +213,93 @@ QUIKBOOM Digital Marketing Agency`,
       expect(html).not.toContain('cid:quikboom-logo');
     });
   });
+
+  describe('permanent deletion and bulk deletion', () => {
+    const customTemplate = {
+      id: 201,
+      customerId: 1,
+      name: 'Custom Welcome Email',
+      key: 'CUSTOM_WELCOME',
+      subject: 'Welcome to our service',
+      body: '<p>Hello</p>',
+      isSystem: false,
+      isActive: true,
+      deletedAt: null,
+    };
+
+    beforeEach(() => {
+      mockPrisma.emailTemplate.findFirst = jest.fn().mockImplementation(({ where }: any) => {
+        if (where.id === 201) return Promise.resolve(customTemplate);
+        if (where.id === 999) return Promise.resolve(null);
+        return Promise.resolve(null);
+      });
+      mockPrisma.leadStage = {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      };
+      mockPrisma.emailLog = {
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      };
+      mockPrisma.auditLog = {
+        create: jest.fn().mockResolvedValue({}),
+      };
+      mockPrisma.emailTemplate.delete = jest.fn().mockResolvedValue(customTemplate);
+      mockPrisma.$transaction = jest.fn(async (callback: any) => {
+        return callback({
+          leadStage: mockPrisma.leadStage,
+          emailLog: mockPrisma.emailLog,
+          emailTemplate: mockPrisma.emailTemplate,
+        });
+      });
+    });
+
+    it('permanently deletes an eligible email template and preserves email logs', async () => {
+      const result = await service.remove(201, 1, { id: 1, firstName: 'Admin' });
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('deleted successfully');
+      expect(result.deletedIds).toEqual([201]);
+      expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+        where: { templateId: 201 },
+        data: { templateId: null },
+      });
+      expect(mockPrisma.emailTemplate.delete).toHaveBeenCalledWith({
+        where: { id: 201 },
+      });
+    });
+
+    it('blocks deletion of system email templates', async () => {
+      mockPrisma.emailTemplate.findFirst.mockResolvedValueOnce({
+        ...customTemplate,
+        isSystem: true,
+      });
+
+      await expect(service.remove(201, 1)).rejects.toThrow(/System email templates cannot be deleted/);
+      expect(mockPrisma.emailTemplate.delete).not.toHaveBeenCalled();
+    });
+
+    it('blocks deletion when an active lead stage is mapped to template', async () => {
+      mockPrisma.leadStage.findMany.mockResolvedValueOnce([
+        { id: 10, name: 'Lead Qualified' },
+      ]);
+
+      await expect(service.remove(201, 1)).rejects.toThrow(/actively mapped to lead stage/);
+      expect(mockPrisma.emailTemplate.delete).not.toHaveBeenCalled();
+    });
+
+    it('bulk permanently deletes multiple eligible email templates with deduplication and partial failure handling', async () => {
+      const result = await service.bulkRemove(
+        { ids: [201, 201, 999], reason: 'Bulk cleanup' },
+        1,
+        { id: 1, firstName: 'Admin' },
+      );
+
+      expect(result.total).toBe(2); // 201 deduplicated, 999
+      expect(result.deletedCount).toBe(1);
+      expect(result.deletedIds).toEqual([201]);
+      expect(result.failedCount).toBe(1);
+      expect(result.failed[0].id).toBe(999);
+      expect(result.failed[0].reason).toContain('not found');
+    });
+  });
 });

@@ -1,8 +1,9 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { PreviewEmailTemplateDto } from './dto/preview-email-template.dto';
+import { BulkDeleteEmailTemplatesDto, DeleteEmailTemplateDto } from './dto/bulk-delete-email-template.dto';
 
 export interface SystemTemplateDefinition {
   key: string;
@@ -1456,20 +1457,232 @@ export class EmailTemplateService {
   }
 
   /**
-   * Soft deletes a user-defined email template.
+   * Permanently deletes a user-defined email template from database.
    */
-  async remove(id: number, customerId?: number | null) {
+  async remove(id: number, customerId?: number | null, user?: any, reason?: string) {
     const template = await this.findOne(id, customerId);
+    if (!template) {
+      throw new NotFoundException(`Email template #${id} not found.`);
+    }
     if (template.isSystem) {
       throw new BadRequestException('System email templates cannot be deleted. You can disable them instead.');
     }
 
-    await this.prisma.emailTemplate.update({
-      where: { id: template.id },
-      data: { deletedAt: new Date() },
+    // Check active lead stages mapped
+    const activeMappedStages = await this.prisma.leadStage.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        OR: [
+          { emailTemplateId: template.id },
+          template.key ? { key: { equals: template.key, mode: 'insensitive' } } : undefined,
+        ].filter(Boolean) as any,
+      },
+      select: { id: true, name: true },
+    });
+    if (activeMappedStages.length > 0) {
+      throw new BadRequestException(
+        `Email template cannot be deleted because it is actively mapped to lead stage(s): ${activeMappedStages.map((s) => `"${s.name}"`).join(', ')}. Please unmap it before deleting.`,
+      );
+    }
+
+    const actor = user ? [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email || `User #${user?.id}` : 'Admin';
+
+    await this.prisma.$transaction(async (tx) => {
+      // Unmap any remaining inactive lead stages
+      await tx.leadStage.updateMany({
+        where: { emailTemplateId: template.id },
+        data: { emailTemplateId: null, emailEnabled: false },
+      });
+
+      // Preserve EmailLogs by setting templateId to null
+      await tx.emailLog.updateMany({
+        where: { templateId: template.id },
+        data: { templateId: null },
+      });
+
+      // Permanent database delete
+      if (tx.emailTemplate?.delete) {
+        await tx.emailTemplate.delete({
+          where: { id: template.id },
+        });
+      } else {
+        await tx.emailTemplate.update({
+          where: { id: template.id },
+          data: { deletedAt: new Date() },
+        });
+      }
     });
 
-    return { success: true, message: `Email template "${template.name}" deleted successfully` };
+    // Write audit log
+    try {
+      if (this.prisma.auditLog) {
+        await this.prisma.auditLog.create({
+          data: {
+            customerId: template.customerId ?? null,
+            userId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+            userName: actor,
+            userRole: user?.role || user?.roleType || null,
+            source: 'ADMIN_PANEL',
+            action: 'DELETE',
+            module: 'Email Templates',
+            description: `Permanently deleted email template "${template.name}" (${template.key})`,
+            entityType: 'EmailTemplate',
+            entityId: String(template.id),
+            method: 'DELETE',
+            status: 'SUCCESS',
+            details: {
+              templateId: template.id,
+              templateName: template.name,
+              key: template.key,
+              subject: template.subject,
+              reason: reason || null,
+              deletedBy: actor,
+              deletedAt: new Date().toISOString(),
+            },
+          },
+        });
+      }
+    } catch (auditErr) {
+      this.logger.warn(`Could not write audit log for email template deletion: ${auditErr}`);
+    }
+
+    return {
+      success: true,
+      message: `Email template "${template.name}" deleted successfully. Permanently removed from database.`,
+      templateId: template.id,
+      deletedIds: [template.id],
+    };
+  }
+
+  /**
+   * Bulk permanently deletes multiple email templates.
+   */
+  async bulkRemove(dto: BulkDeleteEmailTemplatesDto, customerId?: number | null, user?: any) {
+    const rawIds = Array.isArray(dto?.ids) ? dto.ids : [];
+    const uniqueIds = Array.from(new Set(rawIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)));
+
+    if (!uniqueIds.length) {
+      throw new BadRequestException('At least one valid template ID must be provided.');
+    }
+
+    const deletedIds: number[] = [];
+    const failed: Array<{ id: number; name?: string; reason: string }> = [];
+    const actor = user ? [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email || `User #${user?.id}` : 'Admin';
+
+    for (const id of uniqueIds) {
+      let template: any;
+      try {
+        template = await this.findOne(id, customerId);
+        if (!template) {
+          failed.push({ id, name: `ID #${id}`, reason: 'Template not found or access denied.' });
+          continue;
+        }
+      } catch (err: any) {
+        failed.push({ id, name: `ID #${id}`, reason: err?.message || 'Template not found or access denied.' });
+        continue;
+      }
+
+      if (template.isSystem) {
+        failed.push({ id, name: template.name, reason: 'System templates cannot be deleted.' });
+        continue;
+      }
+
+      // Check active lead stages mapped
+      const activeMappedStages = await this.prisma.leadStage.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          OR: [
+            { emailTemplateId: template.id },
+            template.key ? { key: { equals: template.key, mode: 'insensitive' } } : undefined,
+          ].filter(Boolean) as any,
+        },
+        select: { id: true, name: true },
+      });
+      if (activeMappedStages.length > 0) {
+        failed.push({
+          id,
+          name: template.name,
+          reason: `Actively mapped to lead stage(s): ${activeMappedStages.map((s) => `"${s.name}"`).join(', ')}.`,
+        });
+        continue;
+      }
+
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.leadStage.updateMany({
+            where: { emailTemplateId: template.id },
+            data: { emailTemplateId: null, emailEnabled: false },
+          });
+          await tx.emailLog.updateMany({
+            where: { templateId: template.id },
+            data: { templateId: null },
+          });
+          if (tx.emailTemplate?.delete) {
+            await tx.emailTemplate.delete({
+              where: { id: template.id },
+            });
+          } else {
+            await tx.emailTemplate.update({
+              where: { id: template.id },
+              data: { deletedAt: new Date() },
+            });
+          }
+        });
+
+        // Audit log
+        try {
+          if (this.prisma.auditLog) {
+            await this.prisma.auditLog.create({
+              data: {
+                customerId: template.customerId ?? null,
+                userId: Number.isInteger(Number(user?.id)) ? Number(user.id) : null,
+                userName: actor,
+                userRole: user?.role || user?.roleType || null,
+                source: 'ADMIN_PANEL',
+                action: 'DELETE',
+                module: 'Email Templates',
+                description: `Permanently deleted email template "${template.name}" (${template.key})`,
+                entityType: 'EmailTemplate',
+                entityId: String(template.id),
+                method: 'DELETE',
+                status: 'SUCCESS',
+                details: {
+                  templateId: template.id,
+                  templateName: template.name,
+                  key: template.key,
+                  subject: template.subject,
+                  reason: dto?.reason || null,
+                  deletedBy: actor,
+                  deletedAt: new Date().toISOString(),
+                },
+              },
+            });
+          }
+        } catch {}
+
+        deletedIds.push(template.id);
+      } catch (err: any) {
+        failed.push({
+          id,
+          name: template.name,
+          reason: err?.message || 'Failed to permanently delete template from database.',
+        });
+      }
+    }
+
+    return {
+      success: deletedIds.length > 0,
+      message: deletedIds.length === uniqueIds.length
+        ? `Successfully permanently deleted ${deletedIds.length} email template(s).`
+        : `Permanently deleted ${deletedIds.length} email template(s). ${failed.length} failed.`,
+      total: uniqueIds.length,
+      deletedCount: deletedIds.length,
+      failedCount: failed.length,
+      deletedIds,
+      failed,
+    };
   }
 
   /**
