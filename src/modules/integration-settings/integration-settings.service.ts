@@ -18,6 +18,7 @@ import {
   TestIntegrationDto,
 } from "./dto/integration-settings.dto";
 import axios from "axios";
+import { testGoogleGrowthConnection } from "./google-growth-connection";
 import * as crypto from "crypto";
 import * as nodemailer from "nodemailer";
 const Razorpay = require("razorpay");
@@ -2380,9 +2381,6 @@ export class IntegrationSettingsService {
     adminUserId?: number,
   ) {
     const normProvider = normalizeProvider(provider);
-    if (normProvider === IntegrationProvider.GOOGLE_BUSINESS_GROWTH) {
-      throw new BadRequestException('Google Business Growth connection testing is not implemented');
-    }
 
     // Resolve credentials to test: use incoming dto if provided, else use saved/active config
     const active = await this.getIntegrationConfig(normProvider);
@@ -2404,6 +2402,10 @@ export class IntegrationSettingsService {
       if (typeof v === "string" && !isMaskedSecret(v) && v.trim().length > 0) {
         resolvedCreds[k] = v.trim();
       }
+    }
+
+    if (normProvider === IntegrationProvider.GOOGLE_BUSINESS_GROWTH) {
+      return testGoogleGrowthConnection(resolvedCreds, { ...(active?.config || {}), ...(dto?.config || {}) });
     }
 
     if (normProvider === IntegrationProvider.GOOGLE_MAPS) {
