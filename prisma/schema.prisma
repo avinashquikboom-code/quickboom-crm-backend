@@ -3896,6 +3896,7 @@ model MetaTemplate {
   footer            String?
   buttons           Json?
   variables         String[]  @default([])
+  sampleValues      Json?
   rejectionReason   String?
   isLocalActive     Boolean   @default(true)
   isSystem          Boolean   @default(false)

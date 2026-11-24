@@ -297,24 +297,65 @@ export class MetaTemplateService {
     };
   }
 
+  private validateTemplate(dto: CreateMetaTemplateDto, submitting = false) {
+    const name = dto.templateName || dto.name;
+    if (!name || !/^[a-z0-9_]{1,512}$/.test(name)) throw new BadRequestException('Meta template name must contain only lowercase letters, numbers and underscores.');
+    if (!['UTILITY', 'MARKETING', 'AUTHENTICATION'].includes((dto.category || 'UTILITY').toUpperCase())) throw new BadRequestException('Invalid template category.');
+    if (!/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(dto.language || 'en_US')) throw new BadRequestException('Invalid template language.');
+    if (!dto.body?.trim() || dto.body.trim().length > 1024) throw new BadRequestException('Body is required and must not exceed 1024 characters.');
+    const header = (dto.headerType || 'NONE').toUpperCase();
+    if (!['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'].includes(header)) throw new BadRequestException('Invalid header type.');
+    if (header === 'TEXT' && (!dto.headerContent?.trim() || dto.headerContent.trim().length > 60)) throw new BadRequestException('Text header is required and must not exceed 60 characters.');
+    if (dto.footer && (dto.footer.length > 60 || /[{}]/.test(dto.footer))) throw new BadRequestException('Footer must be at most 60 characters and cannot contain variables.');
+    if (dto.buttons != null && (!Array.isArray(dto.buttons) || dto.buttons.length > 10)) throw new BadRequestException('Buttons must be an array with at most 10 entries.');
+    for (const button of dto.buttons || []) {
+      if (!button || !['QUICK_REPLY', 'URL', 'PHONE_NUMBER'].includes(button.type) || typeof button.text !== 'string' || !button.text.trim() || button.text.length > 25) throw new BadRequestException('Each button requires a valid type and label of at most 25 characters.');
+      if (button.type === 'URL' && !/^https?:\/\//i.test(button.url || '')) throw new BadRequestException('URL buttons require an HTTP or HTTPS URL.');
+      if (button.type === 'PHONE_NUMBER' && !/^\+?[0-9]{8,15}$/.test(button.phone_number || button.phoneNumber || '')) throw new BadRequestException('Phone buttons require a valid phone number.');
+      if (button.type === 'URL' && /[{}]/.test(button.url)) throw new BadRequestException('Dynamic button URLs are not supported by this editor.');
+    }
+    const allKeys = this.extractVariables(`${dto.body} ${header === 'TEXT' ? dto.headerContent || '' : ''}`);
+    if (allKeys.some(key => /^\d+$/.test(key)) && allKeys.some(key => !/^\d+$/.test(key))) throw new BadRequestException('Do not mix positional and named variables in a template.');
+    for (const text of [dto.body, header === 'TEXT' ? dto.headerContent || '' : '']) {
+      const matches = [...text.matchAll(/\{\{([^{}]+)\}\}/g)].map(match => match[1]);
+      if (/[{}]/.test(text.replace(/\{\{[^{}]+\}\}/g, ''))) throw new BadRequestException('Malformed template variable.');
+      if (matches.some(key => !(submitting ? /^(?:[1-9]\d*|[a-z][a-z0-9_]*)$/ : /^(?:[1-9]\d*|[a-zA-Z][a-zA-Z0-9_]*)$/).test(key))) throw new BadRequestException('Variables must use positional numbers or lowercase named parameters.');
+      const numeric = matches.filter(key => /^\d+$/.test(key));
+      if (numeric.length && numeric.length !== matches.length) throw new BadRequestException('Do not mix positional and named variables in a component.');
+      const unique = [...new Set(numeric)];
+      if (unique.some((key, index) => Number(key) !== index + 1)) throw new BadRequestException('Positional variables must start at {{1}} and be consecutive.');
+      if (submitting && matches.some(key => typeof dto.sampleValues?.[key] !== 'string' || !dto.sampleValues[key].trim() || dto.sampleValues[key].trim() === `[${key}]`)) throw new BadRequestException('Provide a sample value for every variable before submitting to Meta.');
+      if (header === 'TEXT' && text === dto.headerContent && new Set(matches).size > 1) throw new BadRequestException('Text headers support at most one variable.');
+    }
+    if (submitting && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(header)) throw new BadRequestException('Media headers require a Meta upload handle, which this editor does not yet provide.');
+  }
+
   private buildMetaGraphComponents(dto: CreateMetaTemplateDto) {
+    this.validateTemplate(dto, true);
     const components: any[] = [];
+    const examples = (text: string, field: 'header' | 'body') => {
+      const keys = this.extractVariables(text);
+      if (!keys.length) return undefined;
+      const named = !/^\d+$/.test(keys[0]);
+      if (named) return { [`${field}_text_named_params`]: keys.map(key => ({ param_name: key, example: dto.sampleValues[key].trim() })) };
+      const values = keys.map(key => dto.sampleValues[key].trim());
+      return { [`${field}_text`]: field === 'body' ? [values] : values };
+    };
     const headerType = (dto.headerType || 'NONE').toUpperCase();
-    if (headerType && headerType !== 'NONE') {
-      const header: any = { type: 'HEADER', format: headerType };
-      if (headerType === 'TEXT') {
-        if (!dto.headerContent?.trim()) {
-          throw new BadRequestException('Header text is required when header type is TEXT.');
-        }
-        header.text = dto.headerContent.trim();
-      }
-      components.push(header);
+    if (headerType === 'TEXT') {
+      const text = dto.headerContent.trim();
+      const example = examples(text, 'header');
+      components.push({ type: 'HEADER', format: 'TEXT', text, ...(example ? { example } : {}) });
     }
-    components.push({ type: 'BODY', text: dto.body.trim() });
+    const text = dto.body.trim();
+    const example = examples(text, 'body');
+    components.push({ type: 'BODY', text, ...(example ? { example } : {}) });
     if (dto.footer?.trim()) components.push({ type: 'FOOTER', text: dto.footer.trim() });
-    if (Array.isArray(dto.buttons) && dto.buttons.length) {
-      components.push({ type: 'BUTTONS', buttons: dto.buttons });
-    }
+    if (dto.buttons?.length) components.push({ type: 'BUTTONS', buttons: dto.buttons.map(button => ({
+      type: button.type, text: button.text.trim(),
+      ...(button.type === 'URL' ? { url: button.url } : {}),
+      ...(button.type === 'PHONE_NUMBER' ? { phone_number: button.phone_number || button.phoneNumber } : {}),
+    })) });
     return components;
   }
 
@@ -333,6 +374,10 @@ export class MetaTemplateService {
     const code = err?.response?.data?.error?.code;
     let message = String(err?.response?.data?.error?.message || err?.message || 'Meta Graph API request failed');
     if (token) message = message.split(token).join('[redacted]');
+    const details = err?.response?.data?.error;
+    const userMessage = typeof details?.error_user_msg === 'string' ? details.error_user_msg.split(token || '\0').join('[redacted]') : '';
+    const trace = typeof details?.fbtrace_id === 'string' ? details.fbtrace_id : '';
+    message += `${userMessage && userMessage !== message ? ` — ${userMessage}` : ''}${trace ? ` (Meta trace ${trace})` : ''}`;
     if (status === 429 || code === 4 || code === 17 || code === 32) return `Meta rate limit reached${status ? ` (HTTP ${status})` : ''}: ${message}`;
     if (status === 401 || code === 190) return `Meta rejected the access token${status ? ` (HTTP ${status})` : ''}: ${message}`;
     return `Meta Graph API error${status ? ` (HTTP ${status})` : ''}: ${message}`;
@@ -383,6 +428,7 @@ export class MetaTemplateService {
       name: templateName,
       language: dto.language || 'en_US',
       category: (dto.category || 'UTILITY').toUpperCase(),
+      ...(this.extractVariables(`${dto.body} ${dto.headerContent || ''}`).some(key => !/^\d+$/.test(key)) ? { parameter_format: 'NAMED' } : {}),
       components: this.buildMetaGraphComponents(dto),
     };
 
@@ -413,7 +459,7 @@ export class MetaTemplateService {
       return {
         templateName,
         metaTemplateId: data.id ? String(data.id) : null,
-        status: String(data.status || 'PENDING').toUpperCase(),
+        status: String(data.status || 'UNKNOWN').toUpperCase(),
         wabaId,
         alreadyExists: false,
         raw: data,
@@ -474,15 +520,16 @@ export class MetaTemplateService {
         ? dto.isLocalActive
         : true;
 
+    this.validateTemplate({ ...dto, templateName: rawTemplateName });
     const submitToMeta = dto.submitToMeta !== false;
     let metaSubmission: { templateName: string; metaTemplateId: string | null; status: string; raw?: any; wabaId?: string; alreadyExists?: boolean } | null = null;
     if (submitToMeta) {
-      metaSubmission = await this.submitTemplateToMeta(dto, customerId);
+      metaSubmission = await this.submitTemplateToMeta({ ...dto, templateName: rawTemplateName }, customerId);
     }
 
     const resolvedTemplateName = metaSubmission?.templateName || rawTemplateName;
     const resolvedStatus = metaSubmission?.status || 'NOT_SYNCED';
-    const resolvedMetaId = metaSubmission?.metaTemplateId || dto.metaTemplateId || null;
+    const resolvedMetaId = metaSubmission?.metaTemplateId || null;
     const now = new Date();
     const syncStatus = !submitToMeta
       ? 'NOT_SYNCED'
@@ -511,6 +558,7 @@ export class MetaTemplateService {
         footer: dto.footer?.trim() || null,
         buttons: dto.buttons || null,
         variables,
+        sampleValues: dto.sampleValues || undefined,
         isLocalActive: effectiveIsLocalActive,
         isSystem: false,
         source: submitToMeta ? 'QB_SINGLE' : 'QB_SINGLE',
@@ -541,6 +589,8 @@ export class MetaTemplateService {
         .replace(/[\s-]+/g, '_')
         .replace(/[^a-z0-9_]/g, '');
     }
+
+    this.validateTemplate({ name: effectiveName, templateName, body: bodyToUse, language: dto.language ?? item.language, category: dto.category ?? item.category, headerType: dto.headerType ?? item.headerType, headerContent: headerToUse, footer: dto.footer ?? item.footer, buttons: dto.buttons ?? item.buttons, sampleValues: dto.sampleValues ?? item.sampleValues } as CreateMetaTemplateDto);
 
     const remoteContentChanged =
       templateName !== item.templateName ||
@@ -582,16 +632,17 @@ export class MetaTemplateService {
         category: dto.category !== undefined ? dto.category.toUpperCase() : item.category,
         status: hasRemoteTemplate && remoteContentChanged
           ? 'NOT_SYNCED'
-          : dto.status !== undefined ? dto.status.toUpperCase() : item.status,
+          : item.status,
         metaTemplateId: hasRemoteTemplate && remoteContentChanged
           ? null
-          : dto.metaTemplateId !== undefined ? dto.metaTemplateId : item.metaTemplateId,
+          : item.metaTemplateId,
         headerType: dto.headerType !== undefined ? dto.headerType : item.headerType,
         headerContent: dto.headerContent !== undefined ? dto.headerContent : item.headerContent,
         body: bodyToUse.trim(),
         footer: effectiveFooter,
         buttons: dto.buttons !== undefined ? dto.buttons : (item.buttons as any),
         variables,
+        sampleValues: dto.sampleValues !== undefined ? dto.sampleValues : (item.sampleValues as any) ?? undefined,
         isLocalActive: effectiveIsLocalActive,
         ...(hasRemoteTemplate && remoteContentChanged
           ? {
@@ -1286,12 +1337,18 @@ export class MetaTemplateService {
     const syncResult = await this.syncOne(id, customerId);
     if (syncResult.syncStatus === 'SYNCED') return { ...syncResult, alreadyExists: true, message: 'Template already exists on Meta; local status was refreshed.' };
 
-    const result = await this.submitTemplateToMeta({
-      name: item.name, templateName: item.templateName, language: item.language, category: item.category,
-      body: item.body, headerType: item.headerType || 'NONE', headerContent: item.headerContent || undefined,
-      footer: item.footer || undefined, buttons: Array.isArray(item.buttons) ? item.buttons as any : undefined,
-      variables: item.variables, submitToMeta: true,
-    } as CreateMetaTemplateDto, customerId);
+    let result: Awaited<ReturnType<MetaTemplateService['submitTemplateToMeta']>>;
+    try {
+      result = await this.submitTemplateToMeta({
+        name: item.name, templateName: item.templateName, language: item.language, category: item.category,
+        body: item.body, headerType: item.headerType || 'NONE', headerContent: item.headerContent || undefined,
+        footer: item.footer || undefined, buttons: Array.isArray(item.buttons) ? item.buttons as any : undefined,
+        variables: item.variables, sampleValues: item.sampleValues as Record<string, string> || undefined, submitToMeta: true,
+      } as CreateMetaTemplateDto, customerId);
+    } catch (err: any) {
+      await this.prisma.metaTemplate.update({ where: { id: item.id }, data: { syncStatus: 'SYNC_FAILED', syncError: String(err?.message || 'Meta submission failed'), lastSyncAttemptAt: new Date() } });
+      throw err;
+    }
     const now = new Date();
     const synced = Boolean(result.metaTemplateId);
     const updated = await this.prisma.metaTemplate.update({
@@ -1306,7 +1363,7 @@ export class MetaTemplateService {
         lastSyncedAt: synced ? now : item.lastSyncedAt,
       },
     });
-    return { ...updated, alreadyExists: Boolean(result.alreadyExists), message: result.alreadyExists ? 'Existing Meta template was linked; no duplicate was created.' : 'Template submitted to Meta.' };
+    return { ...updated, alreadyExists: Boolean(result.alreadyExists), message: !synced ? 'Meta did not return a template ID; submission is unconfirmed.' : result.alreadyExists ? 'Existing Meta template was linked; no duplicate was created.' : `Meta confirmed template ${result.metaTemplateId}; status ${result.status}.` };
   }
 
   /**

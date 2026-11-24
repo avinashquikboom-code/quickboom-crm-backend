@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max, ArrayNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsInt, Min, Max, ArrayNotEmpty, IsObject } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateMetaTemplateDto {
@@ -82,6 +82,11 @@ export class CreateMetaTemplateDto {
   @IsString({ each: true })
   variables?: string[];
 
+  @ApiPropertyOptional({ description: 'Example values for template variables' })
+  @IsOptional()
+  @IsObject()
+  sampleValues?: Record<string, string>;
+
   @ApiPropertyOptional({ description: 'Whether locally enabled in CRM', default: true })
   @IsOptional()
   @IsBoolean()
@@ -89,6 +94,7 @@ export class CreateMetaTemplateDto {
 
   @ApiPropertyOptional({ description: 'When true, submits the template to Meta Graph API before saving', default: true })
   @IsOptional()
+  @Type(() => Object)
   @IsBoolean()
   submitToMeta?: boolean;
 }
@@ -171,6 +177,11 @@ export class UpdateMetaTemplateDto {
   @IsArray()
   @IsString({ each: true })
   variables?: string[];
+
+  @ApiPropertyOptional({ description: 'Example values for template variables' })
+  @IsOptional()
+  @IsObject()
+  sampleValues?: Record<string, string>;
 
   @ApiPropertyOptional({ description: 'Whether locally enabled' })
   @IsOptional()

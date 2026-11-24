@@ -96,7 +96,8 @@ describe('MetaTemplateService', () => {
         {
           name: 'Visit Confirmation',
           templateName: 'Visit Scheduled Notice',
-          body: 'Hi {{leadName}}, your visit with {{companyName}} is confirmed for {{startDate}}.',
+          body: 'Hi {{1}}, your visit with {{2}} is confirmed for {{3}}.',
+          sampleValues: { '1': 'Rahul', '2': 'Acme', '3': 'Tomorrow' },
           category: 'UTILITY',
         },
         1,
@@ -104,10 +105,55 @@ describe('MetaTemplateService', () => {
 
       expect(res.id).toBe(10);
       expect(res.templateName).toBe('visit_scheduled_notice');
-      expect(res.variables).toEqual(expect.arrayContaining(['leadName', 'companyName', 'startDate']));
+      expect(res.variables).toEqual(expect.arrayContaining(['1', '2', '3']));
+      expect(axios.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ components: expect.arrayContaining([expect.objectContaining({ type: 'BODY', example: { body_text: [['Rahul', 'Acme', 'Tomorrow']] } })]) }), expect.any(Object));
+      expect((axios.post as jest.Mock).mock.calls[0][1]).not.toHaveProperty('submitToMeta');
       expect(res.isLocalActive).toBe(true);
       expect(res.syncStatus).toBe('SYNCED');
       jest.restoreAllMocks();
+    });
+
+    it('sends four positional examples, header example and provider-only button fields', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      mockPrisma.metaTemplate.create.mockImplementation(({ data }) => Promise.resolve({ id: 11, ...data }));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      const post = jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { id: 'meta-11', status: 'PENDING' } } as any);
+      await service.create({ name: 'Notice', templateName: 'notice', headerType: 'TEXT', headerContent: 'Dear {{1}}', body: 'Hello {{1}} {{2}} {{3}} {{4}}', sampleValues: { '1': 'A', '2': 'B', '3': 'C', '4': 'D' }, buttons: [{ type: 'PHONE_NUMBER', text: 'Call', phoneNumber: '+919876543210', internal: 'ignored' }] }, 1);
+      const payload = post.mock.calls[0][1] as any;
+      expect(payload.components).toEqual(expect.arrayContaining([
+        { type: 'HEADER', format: 'TEXT', text: 'Dear {{1}}', example: { header_text: ['A'] } },
+        { type: 'BODY', text: 'Hello {{1}} {{2}} {{3}} {{4}}', example: { body_text: [['A', 'B', 'C', 'D']] } },
+        { type: 'BUTTONS', buttons: [{ type: 'PHONE_NUMBER', text: 'Call', phone_number: '+919876543210' }] },
+      ]));
+      jest.restoreAllMocks();
+    });
+
+    it('does not invent a status when Meta omits it', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      mockPrisma.metaTemplate.create.mockImplementation(({ data }) => Promise.resolve({ id: 10, ...data }));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { id: 'meta-10' } } as any);
+      const result = await service.create({ name: 'Welcome', templateName: 'welcome', body: 'Hello' }, 1);
+      expect(result.status).toBe('UNKNOWN');
+      jest.restoreAllMocks();
+    });
+
+    it('does not trust client supplied approval status or Meta ID for a draft', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      mockPrisma.metaTemplate.create.mockImplementation(({ data }) => Promise.resolve({ id: 12, ...data }));
+      const result = await service.create({ name: 'Welcome', templateName: 'welcome', body: 'Hello', submitToMeta: false, status: 'APPROVED', metaTemplateId: 'fake' }, 1);
+      expect(result.status).toBe('NOT_SYNCED');
+      expect(result.metaTemplateId).toBeNull();
+    });
+
+    it('rejects gaps in positional variables', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      await expect(service.create({ name: 'Welcome', templateName: 'welcome', body: 'Hello {{1}} {{3}}', submitToMeta: false }, 1)).rejects.toThrow(/consecutive/);
+    });
+
+    it('requires examples for positional variables before sending to Meta', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      await expect(service.create({ name: 'Welcome', templateName: 'welcome', body: 'Hello {{1}}' }, 1)).rejects.toThrow(/sample value/);
     });
 
     it('rejects duplicate template name and language', async () => {
