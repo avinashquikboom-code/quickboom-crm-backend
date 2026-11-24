@@ -17,6 +17,28 @@ export class MetaTemplateMediaService {
     const tenant = Number(customerId);
     if (!Number.isSafeInteger(tenant) || tenant <= 0) throw new BadRequestException('A workspace is required to upload an image.');
     const result = await this.s3.uploadBuffer(data, actual, actual === 'image/png' ? 'header.png' : 'header.jpg', `meta-templates/${tenant}`);
-    return { url: result.imageUrl, fileName: file.originalname, size: data.length, mimeType: actual };
+    const reference = `s3key:${result.imageKey}`;
+    const previewUrl = await this.previewImage(reference, tenant);
+    return { reference, previewUrl, url: previewUrl, fileName: file.originalname, size: data.length, mimeType: actual };
+  }
+
+  async previewImage(reference: string, customerId?: number | string) {
+    const tenant = Number(customerId);
+    if (!Number.isSafeInteger(tenant) || tenant <= 0) throw new BadRequestException('A workspace is required.');
+    const input = String(reference || '').trim();
+    let key = input.startsWith('s3key:') ? input.slice(6) : '';
+    if (!key && /^https:\/\//i.test(input)) {
+      try {
+        const path = decodeURIComponent(new URL(input).pathname);
+        const prefix = `/meta-templates/${tenant}/`;
+        const index = path.indexOf(prefix);
+        if (index >= 0) key = path.slice(index + 1);
+      } catch { throw new BadRequestException('Invalid media reference.'); }
+    }
+    const prefix = `meta-templates/${tenant}/`;
+    if (!key.startsWith(prefix) || !/^[a-zA-Z0-9._-]+$/.test(key.slice(prefix.length))) throw new BadRequestException('Image is not available in this workspace.');
+    const url = await this.s3.getPresignedUrl(key, 3600);
+    if (!url || !/^https:\/\//i.test(url)) throw new BadRequestException('Could not generate an image preview URL.');
+    return url;
   }
 }

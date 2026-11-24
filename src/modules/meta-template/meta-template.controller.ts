@@ -145,6 +145,12 @@ export class MetaTemplateController {
     return this.mediaService.uploadImage(file, user?.customerId);
   }
 
+  @Post('media/preview')
+  @ApiOperation({ summary: 'Get a temporary preview URL for a workspace template image' })
+  async previewImage(@Body('reference') reference: string, @CurrentUser() user: any) {
+    return { url: await this.mediaService.previewImage(reference, user?.customerId) };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get single Meta template by ID' })
   async findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
