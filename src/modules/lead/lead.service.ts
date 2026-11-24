@@ -4656,7 +4656,7 @@ Sent by ${senderOrgName} via CRM.
       } else {
         let status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED' = 'SENT';
         const metaStatus = (meta.status || '').toUpperCase();
-        if (action === 'WHATSAPP_FAILED' || metaStatus === 'FAILED') {
+        if (action === 'WHATSAPP_FAILED' || metaStatus === 'FAILED' || meta.success === false) {
           status = 'FAILED';
         } else if (metaStatus === 'READ') {
           status = 'READ';
@@ -4664,6 +4664,12 @@ Sent by ${senderOrgName} via CRM.
           status = 'DELIVERED';
         } else if (metaStatus === 'SENT' || metaStatus === 'SUCCESS') {
           status = 'SENT';
+        } else if (metaStatus === 'SKIPPED') {
+          status = 'FAILED';
+        } else if (metaStatus === 'QUEUED' || metaStatus === 'PENDING') {
+          status = 'QUEUED';
+        } else {
+          status = action === 'WHATSAPP_SENT' ? 'SENT' : 'FAILED';
         }
 
         items.push({
@@ -4676,7 +4682,7 @@ Sent by ${senderOrgName} via CRM.
           content: tl.description || '',
           recipient: meta.phone || lead.phone || '',
           sender: 'CRM Team',
-          errorMessage: meta.errorReason || meta.errorCode || null,
+          errorMessage: meta.errorReason || meta.errorCode || meta.errorDetails || null,
           providerMessageId: meta.messageId || null,
           createdAt: tl.createdAt.toISOString(),
           metadata: meta,
@@ -4684,11 +4690,51 @@ Sent by ${senderOrgName} via CRM.
       }
     }
 
+    // 4. Incorporate Stage Email Deliveries if available
+    if ((this.prisma as any).leadStageEmailDelivery) {
+      const stageDeliveries = await (this.prisma as any).leadStageEmailDelivery.findMany({
+        where: { leadId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }).catch(() => []);
+
+      for (const sd of stageDeliveries) {
+        const isDuplicate = items.some((it) => {
+          if (it.channel !== 'EMAIL') return false;
+          const diff = Math.abs(new Date(it.createdAt).getTime() - new Date(sd.createdAt).getTime());
+          return diff < 60000;
+        });
+        if (isDuplicate) continue;
+
+        const rawStatus = (sd.status || 'SENT').toUpperCase();
+        let status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'RECEIVED' = 'SENT';
+        if (rawStatus === 'FAILED') status = 'FAILED';
+        else if (rawStatus === 'QUEUED') status = 'QUEUED';
+        else if (rawStatus === 'DELIVERED') status = 'DELIVERED';
+
+        items.push({
+          id: `stage-email-${sd.id}`,
+          channel: 'EMAIL',
+          direction: 'OUTBOUND',
+          action: 'STAGE_CHANGE_EMAIL',
+          status,
+          title: sd.templateName ? `Stage Email: ${sd.templateName}` : 'Stage Transition Email',
+          content: sd.error || sd.status || 'Stage Email Dispatched',
+          recipient: sd.recipientEmail || lead.email || '',
+          sender: 'System / CRM',
+          errorMessage: sd.error || null,
+          providerMessageId: sd.providerMessageId || null,
+          createdAt: sd.createdAt ? sd.createdAt.toISOString() : new Date().toISOString(),
+          metadata: sd,
+        });
+      }
+    }
+
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const successfulItems = items.filter((i) => i.status !== 'FAILED');
-    const totalEmails = successfulItems.filter((i) => i.channel === 'EMAIL').length;
-    const totalWhatsApp = successfulItems.filter((i) => i.channel === 'WHATSAPP').length;
+    const totalEmails = items.filter((i) => i.channel === 'EMAIL' && i.status !== 'FAILED').length;
+    const totalWhatsApp = items.filter((i) => i.channel === 'WHATSAPP' && i.status !== 'FAILED').length;
     const lastItem = successfulItems[0] || items[0];
 
     return {
@@ -4697,6 +4743,14 @@ Sent by ${senderOrgName} via CRM.
         totalCommunications: items.length,
         totalEmails,
         totalWhatsApp,
+        attemptedEmails: items.filter((i) => i.channel === 'EMAIL').length,
+        acceptedEmails: totalEmails,
+        failedEmails: items.filter((i) => i.channel === 'EMAIL' && i.status === 'FAILED').length,
+        attemptedWhatsApp: items.filter((i) => i.channel === 'WHATSAPP').length,
+        acceptedWhatsApp: totalWhatsApp,
+        deliveredWhatsApp: items.filter((i) => i.channel === 'WHATSAPP' && (i.status === 'DELIVERED' || i.status === 'READ')).length,
+        readWhatsApp: items.filter((i) => i.channel === 'WHATSAPP' && i.status === 'READ').length,
+        failedWhatsApp: items.filter((i) => i.channel === 'WHATSAPP' && i.status === 'FAILED').length,
         lastContactAt: lastItem ? lastItem.createdAt : null,
         lastChannel: lastItem ? lastItem.channel : null,
         lastStatus: lastItem ? lastItem.status : null,
@@ -5091,7 +5145,9 @@ Sent by ${senderOrgName} via CRM.
 
     // Write to LeadActivityTimeline
     const eventType = dto?.eventType || 'LEAD_STAGE_CHANGED';
-    const action = eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'WHATSAPP_SENT';
+    const action = result.success
+      ? (eventType === 'LEAD_CREATED' ? 'LEAD_CREATED_WHATSAPP' : 'WHATSAPP_SENT')
+      : 'WHATSAPP_FAILED';
     const templateDisplay = metaTemplate?.name || metaTemplate?.templateName || templateNameStr;
 
     await this.prisma.leadActivityTimeline
@@ -5103,7 +5159,7 @@ Sent by ${senderOrgName} via CRM.
             ? (eventType === 'LEAD_CREATED'
                 ? `Welcome WhatsApp message sent to ${maskPhone(phone)} for ${targetStageName} stage (template: "${templateDisplay}")`
                 : `WhatsApp notification sent to ${maskPhone(phone)} for stage ${targetStageName} (template: "${templateDisplay}")`)
-            : `WhatsApp notification skipped or failed for ${maskPhone(phone)}: ${result.reason || result.error || 'Not delivered'}`,
+            : `WhatsApp notification failed for ${maskPhone(phone)}: ${result.message || result.reason || result.error || 'Not delivered'}`,
           metadata: {
             eventType,
             phone: maskPhone(phone),
@@ -5115,10 +5171,13 @@ Sent by ${senderOrgName} via CRM.
             templateName: metaTemplate?.templateName || null,
             templateTitle: metaTemplate?.name || null,
             language: metaTemplate?.language || 'en',
-            status: result.success ? 'Sent' : (result.skipped ? 'Skipped' : 'Failed'),
+            status: result.success ? 'SENT' : (result.skipped ? 'SKIPPED' : 'FAILED'),
             success: result.success,
             messageId: result.messageId || null,
             errorCode: result.errorCode || result.error || null,
+            metaErrorCode: result.metaErrorCode || null,
+            metaErrorSubcode: result.metaErrorSubcode || null,
+            fbtraceId: result.fbtraceId || null,
             errorReason: result.reason || null,
             errorDetails: result.providerMessage || result.details || null,
             providerResponse: result.providerResponse || null,

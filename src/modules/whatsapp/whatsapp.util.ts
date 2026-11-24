@@ -24,6 +24,8 @@ export interface WhatsAppSendResult {
   error?: string;
   /** Meta Graph API error code (e.g. 132001) */
   metaErrorCode?: number;
+  /** Meta Graph API error subcode */
+  metaErrorSubcode?: number | string;
   /** Meta Graph API error type (e.g. OAuthException) */
   metaErrorType?: string;
   /** Meta Graph API error message */
