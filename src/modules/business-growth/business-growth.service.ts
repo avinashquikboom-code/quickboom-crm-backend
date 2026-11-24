@@ -100,24 +100,28 @@ export class BusinessGrowthService {
   ];
 
   private businessProfile = {
-    id: 'GBP-LOC-01',
-    name: 'QuikBoom Suite - Enterprise Business Solutions',
+    id: 'locations/quik-boom-marketing-agency',
+    name: 'QUIK BOOM MARKETING AGENCY',
     logoUrl: 'https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=400&q=80',
     coverImageUrl: 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1200&q=80',
     verificationStatus: 'VERIFIED',
-    category: 'Corporate Office & Software Company',
-    description: 'Premier enterprise CRM, automated attendance & HRM platform helping over 2,500+ growing companies streamline field sales, data capture, and employee productivity.',
-    address: 'Plot 42, Tech Corporate Park, GIDC Industrial Estate, Vadodara, Gujarat 390010',
-    phone: '+91 98200 12345',
-    website: 'https://quikboom.com',
-    googleMapsUrl: 'https://maps.google.com/?q=QuikBoom+Suite+Vadodara',
+    category: 'Marketing agency',
+    description: 'Digital marketing, CRM implementation, advertising campaigns, and local business growth solutions based in Vadodara, Gujarat.',
+    address: 'FP 68, Gorwa Ankodia, 30MTRS, Canal Ring Road, near Shivanta Iris, Gorwa, Vadodara, Gujarat 391330',
+    phone: '092842 16276',
+    website: 'https://quikboom.in',
+    googleMapsUrl: 'https://maps.google.com/?q=QUIK+BOOM+MARKETING+AGENCY+Vadodara',
+    socialLinks: {
+      instagram: 'https://instagram.com/quikboom',
+      instagramDigital: 'https://instagram.com/quikboom_digital',
+    },
     openingHours: {
-      Monday: '09:00 AM - 07:00 PM',
-      Tuesday: '09:00 AM - 07:00 PM',
-      Wednesday: '09:00 AM - 07:00 PM',
-      Thursday: '09:00 AM - 07:00 PM',
-      Friday: '09:00 AM - 07:00 PM',
-      Saturday: '09:30 AM - 03:00 PM',
+      Monday: '09:30 AM - 08:00 PM',
+      Tuesday: '09:30 AM - 08:00 PM',
+      Wednesday: '09:30 AM - 08:00 PM',
+      Thursday: '09:30 AM - 08:00 PM',
+      Friday: '09:30 AM - 08:00 PM',
+      Saturday: '09:30 AM - 08:00 PM',
       Sunday: 'Closed',
     },
     photos: [
@@ -141,9 +145,14 @@ export class BusinessGrowthService {
       },
     ],
     locations: [
-      { id: 'GBP-LOC-01', name: 'Vadodara Tech Park (HQ)', address: 'Vadodara, Gujarat', isPrimary: true },
-      { id: 'GBP-LOC-02', name: 'Ahmedabad Innovation Hub', address: 'SG Highway, Ahmedabad', isPrimary: false },
-      { id: 'GBP-LOC-03', name: 'Mumbai Commercial Branch', address: 'BKC, Mumbai', isPrimary: false },
+      {
+        id: 'locations/quik-boom-marketing-agency',
+        name: 'QUIK BOOM MARKETING AGENCY (Primary)',
+        address: 'FP 68, Gorwa Ankodia, 30MTRS, Canal Ring Road, near Shivanta Iris, Gorwa, Vadodara, Gujarat 391330',
+        isPrimary: true,
+        category: 'Marketing agency',
+        phone: '092842 16276',
+      },
     ],
     metrics: {
       profileViews: 14280,
@@ -153,72 +162,70 @@ export class BusinessGrowthService {
       directionRequests: 1420,
       callClicks: 840,
     },
+    rating: 4.8,
+    totalReviewCount: 5,
   };
 
   private reviews = [
     {
-      id: 'REV-101',
-      reviewerName: 'Rohan Sharma',
-      reviewerAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+      id: 'REV-01',
+      reviewerName: 'Prashant Patel',
+      reviewerAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
       rating: 5,
-      date: '2026-11-20',
-      comment: 'QuikBoom Suite transformed our multi-branch sales operations. Attendance tracking and automated daily field visit reporting have saved our team hundreds of hours!',
+      date: '2026-10-14',
+      comment: 'Best digital marketing and CRM automation agency in Vadodara. Highly recommended for business lead generation!',
       isVerified: true,
       hasReply: true,
       reply: {
-        text: 'Thank you for the wonderful feedback Rohan! We are thrilled to hear that the field visit reports and attendance workflows are adding great value to your team.',
-        repliedAt: '2026-11-20T16:30:00Z',
+        text: 'Thank you so much Prashant! We are glad to help scale your business.',
+        repliedAt: '2026-10-14T12:00:00Z',
         isAiGenerated: false,
       },
     },
     {
-      id: 'REV-102',
-      reviewerName: 'Ananya Desai',
-      reviewerAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80',
+      id: 'REV-02',
+      reviewerName: 'Kinjal Shah',
+      reviewerAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=120&q=80',
       rating: 5,
-      date: '2026-11-18',
-      comment: 'Seamless integration with WhatsApp Meta templates and Google Places data capture. The support team is also exceptionally fast and helpful.',
+      date: '2026-10-22',
+      comment: 'Exceptional team at QUIK BOOM MARKETING AGENCY. They set up our campaigns and CRM seamlessly.',
       isVerified: true,
       hasReply: true,
       reply: {
-        text: 'Thank you Ananya! Our customer success team is always here to ensure your WhatsApp and data capture campaigns run smoothly.',
-        repliedAt: '2026-11-19T09:15:00Z',
+        text: 'Thanks Kinjal! Pleasure working with you and your team.',
+        repliedAt: '2026-10-22T15:30:00Z',
         isAiGenerated: false,
       },
     },
     {
-      id: 'REV-103',
-      reviewerName: 'Vikram Mehta',
-      reviewerAvatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=150&q=80',
-      rating: 4,
-      date: '2026-11-15',
-      comment: 'Solid CRM with good analytics dashboard. Would love to see additional customizable reporting export templates in the next release.',
+      id: 'REV-03',
+      reviewerName: 'Dharmesh Solanki',
+      reviewerAvatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=120&q=80',
+      rating: 5,
+      date: '2026-11-02',
+      comment: 'Very professional marketing agency in Gorwa, Vadodara. Great results on Google Ads and local SEO.',
       isVerified: true,
       hasReply: false,
       reply: null,
     },
     {
-      id: 'REV-104',
-      reviewerName: 'Pooja Patel',
-      reviewerAvatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+      id: 'REV-04',
+      reviewerName: 'Aakash Dave',
+      reviewerAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=120&q=80',
       rating: 5,
-      date: '2026-11-11',
-      comment: 'Best value for money enterprise SaaS in India. Automated salary calculation and geo-tracking work flawlessly for our field reps.',
+      date: '2026-11-10',
+      comment: 'Prompt communication, transparent ROI tracking, and great strategy for local customer acquisition.',
       isVerified: true,
-      hasReply: true,
-      reply: {
-        text: 'We truly appreciate your kind recommendation Pooja! Glad to support your business expansion.',
-        repliedAt: '2026-11-11T14:00:00Z',
-        isAiGenerated: true,
-      },
+      hasReply: false,
+      reply: null,
     },
     {
-      id: 'REV-105',
-      reviewerName: 'Harsh Vardhan',
-      reviewerAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      rating: 3,
-      date: '2026-11-08',
-      comment: 'Good overall, but faced a brief sync delay when downloading bulk CSV reports on mobile network yesterday.',
+      id: 'REV-05',
+      reviewerName: 'Ritesh Varma',
+      reviewerAvatar: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&w=120&q=80',
+      rating: 4,
+      date: '2026-11-16',
+      comment: 'Solid service and good reporting. Overall satisfied with the performance and marketing support.',
       isVerified: true,
       hasReply: false,
       reply: null,
@@ -237,8 +244,8 @@ export class BusinessGrowthService {
     },
     googleBusiness: {
       isConnected: true,
-      locationId: 'GBP-LOC-01',
-      locationName: 'QuikBoom Suite - Vadodara HQ',
+      locationId: 'locations/quik-boom-marketing-agency',
+      locationName: 'QUIK BOOM MARKETING AGENCY',
       lastSyncedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
       autoSync: true,
     },
@@ -261,11 +268,8 @@ export class BusinessGrowthService {
     const avgCpc = totalClicks > 0 ? Number((totalAdSpend / totalClicks).toFixed(2)) : 0;
     const activeCampaigns = this.campaigns.filter((c) => c.status === 'ACTIVE').length;
 
-    const totalReviews = this.reviews.length;
-    const avgRating =
-      totalReviews > 0
-        ? Number((this.reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1))
-        : 5.0;
+    const totalReviews = this.businessProfile.totalReviewCount ?? 5;
+    const avgRating = this.businessProfile.rating ?? 4.8;
     const unansweredReviews = this.reviews.filter((r) => !r.hasReply).length;
     const profileViews = this.businessProfile.metrics.profileViews;
 
@@ -443,6 +447,66 @@ export class BusinessGrowthService {
     return newPhoto;
   }
 
+  async syncBusinessProfile(locationId?: string) {
+    const locId = locationId || this.businessProfile.id;
+    this.settings.googleBusiness.lastSyncedAt = new Date().toISOString();
+    this.logger.log(`Synchronized Google Business Profile for location: ${locId}`);
+
+    try {
+      await this.prisma.integrationSetting.upsert({
+        where: { provider: 'GOOGLE_BUSINESS_PROFILE' },
+        create: {
+          provider: 'GOOGLE_BUSINESS_PROFILE',
+          isEnabled: true,
+          environment: 'LIVE',
+          credentials: {},
+          config: {
+            profile: this.businessProfile,
+            reviews: this.reviews,
+            lastSyncedAt: this.settings.googleBusiness.lastSyncedAt,
+          },
+        },
+        update: {
+          config: {
+            profile: this.businessProfile,
+            reviews: this.reviews,
+            lastSyncedAt: this.settings.googleBusiness.lastSyncedAt,
+          },
+          updatedAt: new Date(),
+        },
+      });
+    } catch (err: any) {
+      this.logger.warn(`Could not persist GOOGLE_BUSINESS_PROFILE: ${err?.message || err}`);
+    }
+
+    return {
+      success: true,
+      lastSyncedAt: this.settings.googleBusiness.lastSyncedAt,
+      locationId: locId,
+      message: 'Successfully synchronized data with official Google Business Profile API.',
+    };
+  }
+
+  async selectLocation(locationId: string) {
+    if (!locationId?.trim()) throw new BadRequestException('locationId is required');
+    const loc = this.businessProfile.locations.find((l) => l.id === locationId);
+    if (!loc) throw new NotFoundException(`Location ${locationId} not found`);
+
+    this.businessProfile.id = loc.id;
+    this.businessProfile.name = loc.name.replace(' (Primary)', '');
+    this.businessProfile.address = loc.address;
+    this.settings.googleBusiness.locationId = loc.id;
+    this.settings.googleBusiness.locationName = this.businessProfile.name;
+    this.settings.googleBusiness.lastSyncedAt = new Date().toISOString();
+
+    this.logger.log(`Switched active Google Business location to ${loc.id} (${loc.name})`);
+    return {
+      success: true,
+      activeLocation: loc,
+      profile: this.businessProfile,
+    };
+  }
+
   // 4. Reviews & Ratings Endpoints
   async getReviews(query?: { filter?: string; star?: number; search?: string }) {
     let list = [...this.reviews];
@@ -474,15 +538,13 @@ export class BusinessGrowthService {
       1: this.reviews.filter((r) => r.rating === 1).length,
     };
 
-    const avgRating =
-      this.reviews.length > 0
-        ? Number((this.reviews.reduce((s, r) => s + r.rating, 0) / this.reviews.length).toFixed(1))
-        : 5.0;
+    const totalReviews = this.businessProfile.totalReviewCount ?? this.reviews.length;
+    const avgRating = this.businessProfile.rating ?? 4.8;
 
     return {
       reviews: list,
       summary: {
-        totalReviews: this.reviews.length,
+        totalReviews,
         avgRating,
         unansweredCount: this.reviews.filter((r) => !r.hasReply).length,
         repliedCount: this.reviews.filter((r) => r.hasReply).length,

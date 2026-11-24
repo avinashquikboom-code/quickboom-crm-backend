@@ -192,3 +192,10 @@ export class GoogleOAuthConnectDto {
   })
   provider!: 'ADS' | 'BUSINESS_PROFILE';
 }
+
+export class SelectLocationDto {
+  @IsString()
+  @IsNotEmpty({ message: 'locationId cannot be empty' })
+  locationId!: string;
+}
+
