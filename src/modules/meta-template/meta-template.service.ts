@@ -474,7 +474,10 @@ export class MetaTemplateService {
         const session = String(start.data?.id || '');
         const sessionParts = session.match(/^(upload:[A-Za-z0-9:_.+\/=-]+)(?:\?sig=([A-Za-z0-9_-]+))?$/);
         if (!sessionParts) throw new Error('Meta did not return a valid upload session.');
-        const uploadUrl = new URL(`https://graph.facebook.com/${apiVersion}/${encodeURIComponent(sessionParts[1])}`);
+        // Graph's resumable endpoint requires the literal `upload:` prefix.
+        // Encode slashes within the opaque ID without changing its path delimiter.
+        const sessionPath = `upload:${sessionParts[1].slice('upload:'.length).replace(/\//g, '%2F')}`;
+        const uploadUrl = new URL(`https://graph.facebook.com/${apiVersion}/${sessionPath}`);
         if (sessionParts[2]) uploadUrl.searchParams.set('sig', sessionParts[2]);
         const uploaded = await axios.post(uploadUrl.toString(), image.data, {
           headers: { Authorization: `OAuth ${apiKey}`, file_offset: '0', 'Content-Type': 'application/octet-stream' },
