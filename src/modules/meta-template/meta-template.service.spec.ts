@@ -7,6 +7,7 @@ describe('MetaTemplateService', () => {
   let mockPrisma: any;
   let mockIntegrationSettingsService: any;
   let mockWhatsappService: any;
+  let mockMediaService: any;
 
   beforeEach(() => {
     mockPrisma = {
@@ -52,7 +53,8 @@ describe('MetaTemplateService', () => {
       }),
     };
 
-    service = new MetaTemplateService(mockPrisma, mockIntegrationSettingsService, mockWhatsappService);
+    mockMediaService = { readImage: jest.fn().mockResolvedValue({ data: Buffer.from('image'), mimeType: 'image/jpeg', fileName: 'header.jpg' }) };
+    service = new MetaTemplateService(mockPrisma, mockIntegrationSettingsService, mockWhatsappService, mockMediaService);
   });
 
   describe('findAll', () => {
@@ -110,6 +112,55 @@ describe('MetaTemplateService', () => {
       expect((axios.post as jest.Mock).mock.calls[0][1]).not.toHaveProperty('submitToMeta');
       expect(res.isLocalActive).toBe(true);
       expect(res.syncStatus).toBe('SYNCED');
+      jest.restoreAllMocks();
+    });
+
+    it('uploads the workspace image to Meta and submits its returned sample handle', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      mockPrisma.metaTemplate.create.mockImplementation(({ data }) => Promise.resolve({ id: 14, ...data }));
+      mockIntegrationSettingsService.getIntegrationConfig.mockResolvedValue({ isEnabled: true, credentials: { accessToken: 'secret-token', businessAccountId: '123', appId: '456' } });
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      const post = jest.spyOn(axios, 'post')
+        .mockResolvedValueOnce({ data: { id: 'upload:session_123?sig=valid_signature' } } as any)
+        .mockResolvedValueOnce({ data: { h: '2:sample_handle' } } as any)
+        .mockResolvedValueOnce({ data: { id: 'meta-14', status: 'PENDING' } } as any);
+      const result = await service.create({ name: 'Image', templateName: 'image', body: 'Hello', headerType: 'IMAGE', headerContent: 's3key:meta-templates/1/header.jpg' }, 1);
+      expect(mockMediaService.readImage).toHaveBeenCalledWith('s3key:meta-templates/1/header.jpg', 1);
+      expect(post.mock.calls[0][0]).toMatch(/456\/uploads$/);
+      expect(post.mock.calls[1][0]).toContain('upload%3Asession_123?sig=valid_signature');
+      expect(post.mock.calls[2][1]).toMatchObject({ components: [{ type: 'HEADER', format: 'IMAGE', example: { header_handle: ['2:sample_handle'] } }, { type: 'BODY', text: 'Hello' }] });
+      expect(result.headerContent).toBe('s3key:meta-templates/1/header.jpg');
+      jest.restoreAllMocks();
+    });
+
+    it('requires a Meta App ID and does not upload without it', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      const post = jest.spyOn(axios, 'post');
+      await expect(service.create({ name: 'Image', templateName: 'image', body: 'Hello', headerType: 'IMAGE', headerContent: 's3key:meta-templates/1/header.jpg' }, 1)).rejects.toThrow(/Meta App ID/);
+      expect(post).not.toHaveBeenCalled();
+      jest.restoreAllMocks();
+    });
+
+    it('rejects an unreadable image before starting the Meta upload', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      mockIntegrationSettingsService.getIntegrationConfig.mockResolvedValue({ isEnabled: true, credentials: { accessToken: 'secret-token', businessAccountId: '123', appId: '456' } });
+      mockMediaService.readImage.mockRejectedValue(new Error('wrong workspace'));
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      const post = jest.spyOn(axios, 'post');
+      await expect(service.create({ name: 'Image', templateName: 'image', body: 'Hello', headerType: 'IMAGE', headerContent: 's3key:meta-templates/2/header.jpg' }, 1)).rejects.toThrow(/workspace S3/);
+      expect(post).not.toHaveBeenCalled();
+      jest.restoreAllMocks();
+    });
+
+    it('does not submit a template when Meta fails to return a media handle', async () => {
+      mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+      mockIntegrationSettingsService.getIntegrationConfig.mockResolvedValue({ isEnabled: true, credentials: { accessToken: 'secret-token', businessAccountId: '123', appId: '456' } });
+      jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
+      const post = jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: { id: 'upload:session_123' } } as any).mockResolvedValueOnce({ data: {} } as any);
+      await expect(service.create({ name: 'Image', templateName: 'image', body: 'Hello', headerType: 'IMAGE', headerContent: 's3key:meta-templates/1/header.jpg' }, 1)).rejects.toThrow(/upload handle/);
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(mockPrisma.metaTemplate.create).not.toHaveBeenCalled();
       jest.restoreAllMocks();
     });
 

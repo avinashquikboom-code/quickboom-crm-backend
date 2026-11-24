@@ -4,8 +4,10 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import axios from 'axios';
+import { MetaTemplateMediaService } from './meta-template-media.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import {
@@ -44,6 +46,7 @@ export class MetaTemplateService {
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
     private readonly whatsappService: WhatsappService,
+    @Optional() private readonly mediaService?: MetaTemplateMediaService,
   ) {}
 
   /**
@@ -327,10 +330,11 @@ export class MetaTemplateService {
       if (submitting && matches.some(key => typeof dto.sampleValues?.[key] !== 'string' || !dto.sampleValues[key].trim() || dto.sampleValues[key].trim() === `[${key}]`)) throw new BadRequestException('Provide a sample value for every variable before submitting to Meta.');
       if (header === 'TEXT' && text === dto.headerContent && new Set(matches).size > 1) throw new BadRequestException('Text headers support at most one variable.');
     }
-    if (submitting && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(header)) throw new BadRequestException('Media headers require a Meta upload handle, which this editor does not yet provide.');
+    if (submitting && header === 'IMAGE' && !dto.headerContent?.trim()) throw new BadRequestException('Upload a header image before submitting to Meta.');
+    if (submitting && ['VIDEO', 'DOCUMENT'].includes(header)) throw new BadRequestException('Video and document sample uploads are not yet supported.');
   }
 
-  private buildMetaGraphComponents(dto: CreateMetaTemplateDto) {
+  private buildMetaGraphComponents(dto: CreateMetaTemplateDto, mediaHandle?: string) {
     this.validateTemplate(dto, true);
     const components: any[] = [];
     const examples = (text: string, field: 'header' | 'body') => {
@@ -346,6 +350,10 @@ export class MetaTemplateService {
       const text = dto.headerContent.trim();
       const example = examples(text, 'header');
       components.push({ type: 'HEADER', format: 'TEXT', text, ...(example ? { example } : {}) });
+    }
+    if (headerType === 'IMAGE') {
+      if (!mediaHandle) throw new BadRequestException('Meta did not return an image sample handle.');
+      components.push({ type: 'HEADER', format: 'IMAGE', example: { header_handle: [mediaHandle] } });
     }
     const text = dto.body.trim();
     const example = examples(text, 'body');
@@ -366,7 +374,8 @@ export class MetaTemplateService {
     const { token: apiKey } = resolveCleanAccessToken(rawApiKey);
     const wabaId = (creds.businessAccountId || creds.wabaId || creds.business_account_id || '').trim();
     const apiVersion = String(creds.apiVersion || config?.config?.apiVersion || 'v21.0').trim().replace(/^v?/i, 'v');
-    return { config, apiKey, wabaId, apiVersion };
+    const appId = String(creds.appId || creds.app_id || config?.config?.appId || '').trim();
+    return { config, apiKey, wabaId, apiVersion, appId };
   }
 
   private metaApiError(err: any, token?: string) {
@@ -411,7 +420,7 @@ export class MetaTemplateService {
   }
 
   private async submitTemplateToMeta(dto: CreateMetaTemplateDto, customerId?: number | string | null) {
-    const { config, apiKey, wabaId, apiVersion } = await this.resolveWhatsAppCredentials(customerId);
+    const { config, apiKey, wabaId, apiVersion, appId } = await this.resolveWhatsAppCredentials(customerId);
     if (config?.isEnabled === false) {
       throw new BadRequestException('WhatsApp integration is disabled. Enable it before submitting templates to Meta.');
     }
@@ -424,12 +433,13 @@ export class MetaTemplateService {
       .toLowerCase()
       .replace(/[\s-]+/g, '_')
       .replace(/[^a-z0-9_]/g, '');
+    this.validateTemplate(dto, true);
     const payload = {
       name: templateName,
       language: dto.language || 'en_US',
       category: (dto.category || 'UTILITY').toUpperCase(),
       ...(this.extractVariables(`${dto.body} ${dto.headerContent || ''}`).some(key => !/^\d+$/.test(key)) ? { parameter_format: 'NAMED' } : {}),
-      components: this.buildMetaGraphComponents(dto),
+      components: [] as any[],
     };
 
     // A prior submission may have succeeded even if its response was lost. Adopt
@@ -448,6 +458,33 @@ export class MetaTemplateService {
         alreadyExists: true,
       };
     }
+
+    let mediaHandle: string | undefined;
+    if ((dto.headerType || 'NONE').toUpperCase() === 'IMAGE') {
+      if (!/^\d+$/.test(appId)) throw new BadRequestException('Configure a valid Meta App ID in Settings → Integrations → WhatsApp before submitting an image template.');
+      if (!this.mediaService) throw new BadRequestException('Image storage service is unavailable.');
+      let image: Awaited<ReturnType<MetaTemplateMediaService['readImage']>>;
+      try { image = await this.mediaService.readImage(dto.headerContent, customerId); }
+      catch { throw new BadRequestException('Cannot read this image from your workspace S3 storage. Use Upload File and try again.'); }
+      try {
+        const start = await axios.post(`https://graph.facebook.com/${apiVersion}/${appId}/uploads`, null, {
+          params: { file_name: image.fileName, file_length: image.data.length, file_type: image.mimeType },
+          headers: { Authorization: `Bearer ${apiKey}` }, timeout: 20000,
+        });
+        const session = String(start.data?.id || '');
+        const sessionParts = session.match(/^(upload:[A-Za-z0-9:_.+\/=-]+)(?:\?sig=([A-Za-z0-9_-]+))?$/);
+        if (!sessionParts) throw new Error('Meta did not return a valid upload session.');
+        const uploadUrl = new URL(`https://graph.facebook.com/${apiVersion}/${encodeURIComponent(sessionParts[1])}`);
+        if (sessionParts[2]) uploadUrl.searchParams.set('sig', sessionParts[2]);
+        const uploaded = await axios.post(uploadUrl.toString(), image.data, {
+          headers: { Authorization: `OAuth ${apiKey}`, file_offset: '0', 'Content-Type': 'application/octet-stream' },
+          timeout: 60000, maxBodyLength: 5 * 1024 * 1024,
+        });
+        mediaHandle = typeof uploaded.data?.h === 'string' ? uploaded.data.h.trim() : '';
+        if (!mediaHandle || /^https?:/i.test(mediaHandle)) throw new Error('Meta did not return a valid upload handle.');
+      } catch (error: any) { throw new BadRequestException(this.metaApiError(error, apiKey)); }
+    }
+    payload.components = this.buildMetaGraphComponents(dto, mediaHandle);
 
     try {
       const response = await axios.post(

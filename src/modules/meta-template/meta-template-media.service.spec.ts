@@ -1,7 +1,7 @@
 import { MetaTemplateMediaService } from './meta-template-media.service';
 
 describe('template header image uploads', () => {
-  const s3 = { uploadBuffer: jest.fn(), getPresignedUrl: jest.fn() };
+  const s3 = { uploadBuffer: jest.fn(), getPresignedUrl: jest.fn(), readPrivateObject: jest.fn() };
   const service = new MetaTemplateMediaService(s3 as any);
   const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13]), Buffer.from('IHDR'), Buffer.alloc(8)]);
   beforeEach(() => { s3.uploadBuffer.mockReset().mockResolvedValue({ imageKey: 'meta-templates/12/header.png', imageUrl: 'https://cdn.example.com/image.png' }); s3.getPresignedUrl.mockReset().mockResolvedValue('https://cdn.example.com/signed-image'); });
@@ -23,6 +23,14 @@ describe('template header image uploads', () => {
     await expect(service.previewImage('s3key:meta-templates/12/../secret.png', 12)).rejects.toThrow(/workspace/);
     await expect(service.previewImage('https://bucket.example.com/meta-templates/12/header.png', 12)).resolves.toBe('https://cdn.example.com/signed-image');
     expect(s3.getPresignedUrl).toHaveBeenCalledWith('meta-templates/12/header.png', 3600);
+  });
+  it('reads image bytes only from the owning workspace', async () => {
+    s3.readPrivateObject.mockReset().mockResolvedValue(png);
+    const result = await service.readImage('s3key:meta-templates/12/header.png', 12);
+    expect(result.mimeType).toBe('image/png');
+    expect(s3.readPrivateObject).toHaveBeenCalledWith('meta-templates/12/header.png');
+    await expect(service.readImage('s3key:meta-templates/13/header.png', 12)).rejects.toThrow(/workspace/);
+    expect(s3.readPrivateObject).toHaveBeenCalledTimes(1);
   });
   it('rejects missing workspace before uploading', async () => {
     await expect(service.uploadImage({ buffer: png, mimetype: 'image/png' } as any)).rejects.toThrow(/workspace/);
