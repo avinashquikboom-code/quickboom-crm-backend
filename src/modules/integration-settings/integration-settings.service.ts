@@ -37,6 +37,7 @@ import { integrationDefinition } from "./integration-registry";
 export enum IntegrationProvider {
   RAZORPAY = "RAZORPAY",
   GOOGLE_MAPS = "GOOGLE_MAPS",
+  GOOGLE_BUSINESS_GROWTH = "GOOGLE_BUSINESS_GROWTH",
   TWILIO = "TWILIO",
   WHATSAPP = "WHATSAPP",
   SENDGRID = "SENDGRID",
@@ -1421,6 +1422,10 @@ export class IntegrationSettingsService {
     adminUserId?: number,
   ) {
     const normProvider = normalizeProvider(provider);
+    if (normProvider === IntegrationProvider.GOOGLE_BUSINESS_GROWTH &&
+        Object.keys({ ...(dto.credentials || {}), ...(dto.config || {}) }).some(k => /encryption.?key/i.test(k))) {
+      throw new BadRequestException('The Google integration encryption key must be configured in the server environment');
+    }
 
     // Fetch existing configuration to handle masked credentials retention
     const existing = await this.getIntegrationConfig(normProvider);
@@ -1905,6 +1910,7 @@ export class IntegrationSettingsService {
     const supportedProviders = [
       IntegrationProvider.RAZORPAY,
       IntegrationProvider.GOOGLE_MAPS,
+      IntegrationProvider.GOOGLE_BUSINESS_GROWTH,
       IntegrationProvider.WHATSAPP,
       IntegrationProvider.AWS,
       IntegrationProvider.MSG91,
@@ -2374,6 +2380,9 @@ export class IntegrationSettingsService {
     adminUserId?: number,
   ) {
     const normProvider = normalizeProvider(provider);
+    if (normProvider === IntegrationProvider.GOOGLE_BUSINESS_GROWTH) {
+      throw new BadRequestException('Google Business Growth connection testing is not implemented');
+    }
 
     // Resolve credentials to test: use incoming dto if provided, else use saved/active config
     const active = await this.getIntegrationConfig(normProvider);

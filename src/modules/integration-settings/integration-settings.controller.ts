@@ -55,6 +55,12 @@ export class IntegrationSettingsController {
     }
   }
 
+  private checkProviderAccess(provider: string, user: any) {
+    if (provider.trim().toUpperCase() === 'GOOGLE_BUSINESS_GROWTH' && !isUserSuperAdmin(user)) {
+      throw new ForbiddenException('Only super administrators can manage the shared Google Business Growth configuration');
+    }
+  }
+
   @Get('payment')
   @ApiOperation({ summary: 'Get payment gateway and offline payment configuration for Admin Settings' })
   async getPaymentSettings(@CurrentUser() user: any) {
@@ -79,7 +85,9 @@ export class IntegrationSettingsController {
   })
   async getAllIntegrations(@CurrentUser() user: any) {
     this.checkAdminAccess(user);
-    return this.integrationSettingsService.getAllIntegrationsMasked();
+    const result = await this.integrationSettingsService.getAllIntegrationsMasked();
+    if (!isUserSuperAdmin(user)) result.data = result.data.filter((row) => row.provider !== 'GOOGLE_BUSINESS_GROWTH');
+    return result;
   }
 
   @Post(':provider/test')
@@ -94,6 +102,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.testIntegration(provider, dto, adminUserId);
   }
@@ -107,6 +116,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     return this.integrationSettingsService.getMaskedProviderConfig(provider);
   }
 
@@ -117,6 +127,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     return this.integrationSettingsService.getProviderModels(provider);
   }
 
@@ -131,6 +142,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.updateIntegrationConfig(
       provider,
@@ -147,6 +159,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.toggleIntegration(provider, body?.isEnabled !== false, adminUserId);
   }
@@ -160,6 +173,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.disconnectIntegration(provider, adminUserId);
   }
@@ -174,6 +188,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     const adminUserId = user?.id ? Number(user.id) : undefined;
     return this.integrationSettingsService.sendFirebaseTestNotification(dto, adminUserId);
   }
@@ -188,6 +203,7 @@ export class IntegrationSettingsController {
     @CurrentUser() user: any,
   ) {
     this.checkAdminAccess(user);
+    this.checkProviderAccess(provider, user);
     return this.integrationSettingsService.subscribeWhatsappWebhook(dto?.credentials);
   }
 }

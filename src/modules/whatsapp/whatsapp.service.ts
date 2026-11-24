@@ -506,14 +506,16 @@ export class WhatsappService {
       template: {
         name: resolvedTemplateName,
         language: { code: resolvedLanguageCode },
-        components: templateMetadata?.components ?? (parameters.length > 0
-          ? [
-              {
-                type: 'body',
-                parameters,
-              },
-            ]
-          : undefined),
+        components: (templateMetadata?.components && templateMetadata.components.length > 0)
+          ? templateMetadata.components
+          : (parameters.length > 0
+              ? [
+                  {
+                    type: 'body',
+                    parameters,
+                  },
+                ]
+              : undefined),
       },
     };
 
@@ -1658,7 +1660,7 @@ export class WhatsappService {
           return { success: false, skipped: true, reason: 'WHATSAPP_CONFIGURATION_ERROR',
             message: 'Configure enabled WhatsApp credentials, WABA ID and Phone Number ID in Integrations.' };
         }
-        const baseUrl = `https://graph.facebook.com/${creds.apiVersion || 'v25.0'}`;
+        const baseUrl = `https://graph.facebook.com/${creds.apiVersion || 'v22.0'}`;
         const options = { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 };
         const [templates, phones] = await Promise.all([
           axios.get(`${baseUrl}/${wabaId}/message_templates`, {
@@ -1666,25 +1668,93 @@ export class WhatsappService {
           }),
           axios.get(`${baseUrl}/${wabaId}/phone_numbers`, { ...options, params: { fields: 'id', limit: 100 } }),
         ]);
+
+        // Find approved template on Meta: match by metaTemplateId or exact name
         const approved = templates.data?.data?.find((item: any) =>
-          String(item.id) === String(template!.metaTemplateId) &&
-          item.name === template!.templateName && item.language === template!.language &&
+          (String(item.id) === String(template!.metaTemplateId) ||
+            item.name.toLowerCase() === template!.templateName.toLowerCase()) &&
           item.status === 'APPROVED');
-        if (!approved || !phones.data?.data?.some((item: any) => String(item.id) === phoneId)) {
-          return { success: false, skipped: true, reason: 'META_TEMPLATE_ACCOUNT_MISMATCH',
-            message: 'The exact approved template, language and sending phone must belong to the configured WABA. Sync Meta templates and correct the stage mapping.' };
+
+        if (!approved) {
+          const matchingTemplate = templates.data?.data?.find((item: any) =>
+            item.name.toLowerCase() === template!.templateName.toLowerCase()
+          );
+          if (matchingTemplate && matchingTemplate.status !== 'APPROVED') {
+            return {
+              success: false,
+              skipped: true,
+              errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+              reason: `TEMPLATE_${matchingTemplate.status}`,
+              message: `WhatsApp template "${template.templateName}" has status "${matchingTemplate.status}" in Meta. Only APPROVED templates can be sent.`,
+              details: `Meta template status is ${matchingTemplate.status}`,
+            };
+          }
+          return {
+            success: false,
+            skipped: true,
+            reason: 'META_TEMPLATE_ACCOUNT_MISMATCH',
+            errorCode: WHATSAPP_ERROR_CODES.TEMPLATE_ERROR,
+            message: `Template "${template.templateName}" is not approved or not found on connected WABA ${wabaId}. Sync Meta templates and verify approval in Meta WhatsApp Manager.`,
+            details: `Template "${template.templateName}" was not found among approved templates for WABA ${wabaId}.`,
+          };
         }
+
+        if (!phones.data?.data?.some((item: any) => String(item.id) === phoneId)) {
+          return {
+            success: false,
+            skipped: true,
+            reason: 'META_TEMPLATE_ACCOUNT_MISMATCH',
+            errorCode: WHATSAPP_ERROR_CODES.CONFIGURATION_ERROR,
+            message: `The configured Phone Number ID ${phoneId} does not belong to WABA ${wabaId}.`,
+            details: `Configured phone number ID not found in WABA phone numbers.`,
+          };
+        }
+
+        // Auto-synchronize outdated / stale template metadata in the DB
+        if (approved.id && (String(template!.metaTemplateId) !== String(approved.id) || template!.status !== 'APPROVED' || (approved.language && template!.language !== approved.language))) {
+          template!.metaTemplateId = String(approved.id);
+          template!.status = 'APPROVED';
+          if (approved.language) template!.language = approved.language;
+          if (this.prisma && (this.prisma as any).metaTemplate && template.id) {
+            await (this.prisma as any).metaTemplate.update({
+              where: { id: Number(template.id) },
+              data: {
+                metaTemplateId: String(approved.id),
+                status: 'APPROVED',
+                language: approved.language || template.language,
+                isLocalActive: true,
+                syncedWabaId: wabaId,
+                lastSyncedAt: new Date(),
+              },
+            }).catch(() => null);
+          }
+        }
+
         components = buildStageTemplateComponents(approved.components || [], variables);
       } catch (error: any) {
         // Validation runs before the POST, so even a timeout cannot have sent a
         // message. Transient lookup failures can safely be retried by the outbox.
         const status = error?.response?.status;
+        const fbError = error?.response?.data?.error;
+        const metaCode = fbError?.code || error?.code;
+        const metaSubcode = fbError?.error_subcode;
+        const fbtraceId = fbError?.fbtrace_id;
+        const metaMessage = fbError?.message || error?.message || 'Meta template validation failed';
         const retryable = !error?.response && Boolean(error?.isAxiosError || error?.code) ||
           status === 429 || status >= 500;
-        return { success: false, skipped: false, reason: 'META_TEMPLATE_VALIDATION_FAILED',
+        return {
+          success: false,
+          skipped: false,
+          reason: 'META_TEMPLATE_VALIDATION_FAILED',
+          errorCode: metaCode ? String(metaCode) : 'META_TEMPLATE_VALIDATION_FAILED',
+          metaErrorCode: typeof metaCode === 'number' ? metaCode : (Number(metaCode) || undefined),
+          metaErrorSubcode: metaSubcode,
+          metaErrorMessage: metaMessage,
+          fbtraceId,
           stageProviderOutcome: retryable ? 'RETRYABLE_REJECTION' : 'DEFINITE_REJECTION',
-          message: error?.response ? 'Unable to verify template approval with Meta. Check integration access and retry.'
-            : (error?.message || 'Unable to validate Meta template parameters.') };
+          message: error?.response ? `Unable to verify template approval with Meta: ${metaMessage}` : (error?.message || 'Unable to validate Meta template parameters.'),
+          details: `Meta template validation error: ${metaMessage} (code: ${metaCode || 'N/A'}, subcode: ${metaSubcode || 'N/A'}, fbtrace_id: ${fbtraceId || 'N/A'})`,
+        };
       }
     }
 
@@ -2664,6 +2734,9 @@ export const STAGE_KEY_TO_WHATSAPP_KEY: Record<string, string> = {
   CLOSED_LOST: 'LOST',
   CANCELLED: 'LOST',
   DEAL_LOST: 'LOST',
+  LOST_LEAD_CLOSED: 'LOST',
+  LOST___LEAD_CLOSED: 'LOST',
+  LEAD_CLOSED: 'LOST',
 };
 
 export interface LeadStageWhatsAppTemplate {
