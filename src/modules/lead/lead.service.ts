@@ -692,32 +692,32 @@ export class LeadService {
       (currentEmployeeId != null && (targetId === currentEmployeeId || employee.id === currentEmployeeId));
 
     if (!isHistoricalPreserved) {
-      // Validate that the assigned employee belongs to the BPO team / department / designation
-      const isBpoEmployee =
-        // 1. Team member of a team containing 'BPO'
+      // Validate that the assigned employee belongs to the Sales or BPO team / department / designation
+      const isSalesOrBpoEmployee =
+        // 1. Team member of a team containing 'SALES' or 'BPO'
         employee.teamMembers?.some((tm: any) =>
-          (tm.team?.name || '').toUpperCase().includes('BPO') ||
-          (tm.team?.description || '').toUpperCase().includes('BPO')
+          /SALES|BPO/i.test(tm.team?.name || '') ||
+          /SALES|BPO/i.test(tm.team?.description || '')
         ) ||
-        // 2. Leader of a team containing 'BPO'
+        // 2. Leader of a team containing 'SALES' or 'BPO'
         employee.ledTeams?.some((t: any) =>
-          (t.name || '').toUpperCase().includes('BPO') ||
-          (t.description || '').toUpperCase().includes('BPO')
+          /SALES|BPO/i.test(t.name || '') ||
+          /SALES|BPO/i.test(t.description || '')
         ) ||
-        // 3. Department containing 'BPO'
-        (employee.department?.name || '').toUpperCase().includes('BPO') ||
-        (employee.department?.code || '').toUpperCase().includes('BPO') ||
-        // 4. Designation containing 'BPO'
-        (employee.designation?.name || '').toUpperCase().includes('BPO') ||
-        (employee.designation?.code || '').toUpperCase().includes('BPO');
+        // 3. Department containing 'SALES' or 'BPO'
+        /SALES|BPO/i.test(employee.department?.name || '') ||
+        /SALES|BPO/i.test(employee.department?.code || '') ||
+        // 4. Designation containing 'SALES' or 'BPO'
+        /SALES|BPO/i.test(employee.designation?.name || '') ||
+        /SALES|BPO/i.test(employee.designation?.code || '');
 
-      if (!isBpoEmployee) {
-        throw new BadRequestException('Lead can only be assigned to an active BPO team employee');
+      if (!isSalesOrBpoEmployee) {
+        throw new BadRequestException('Lead can only be assigned to an active BPO team employee or Sales department');
       }
     }
 
     this.logger.log(
-      `[LEAD_ASSIGNMENT] Assigning lead to BPO employee: employeeId=${employee.id} userId=${employee.userId || targetId} customerId=${customerId}`,
+      `[LEAD_ASSIGNMENT] Assigning lead to employee: employeeId=${employee.id} userId=${employee.userId || targetId} customerId=${customerId}`,
     );
 
     return {
