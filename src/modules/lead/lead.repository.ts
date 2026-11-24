@@ -281,11 +281,13 @@ export class LeadRepository {
       companyName: finalCompanyName,
       city: resolvedCity,
       pincode: resolvedPincode,
-      firstName: resolvedFirstName,
-      lastName: resolvedLastName,
-      assignedToId: dto.assignedToId
-        ? Number(dto.assignedToId)
-        : (employeeId && numCreatedById ? numCreatedById : (numCreatedById || undefined)),
+      firstName: resolvedFirstName || '',
+      lastName: resolvedLastName || '',
+      assignedToId: dto.assignedToId === null
+        ? null
+        : dto.assignedToId
+          ? Number(dto.assignedToId)
+          : (employeeId && numCreatedById ? numCreatedById : (numCreatedById || undefined)),
       status,
       stageId,
       customerId: numCustomerId,
