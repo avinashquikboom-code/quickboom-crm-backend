@@ -257,10 +257,16 @@ export class EmployeeService {
         OR: [
           { department: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
           { department: { code: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
+          { department: { name: { contains: 'SALES', mode: 'insensitive' as Prisma.QueryMode } } },
+          { department: { code: { contains: 'SALES', mode: 'insensitive' as Prisma.QueryMode } } },
           { designation: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
           { designation: { code: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } },
+          { designation: { name: { contains: 'SALES', mode: 'insensitive' as Prisma.QueryMode } } },
+          { designation: { code: { contains: 'SALES', mode: 'insensitive' as Prisma.QueryMode } } },
           { teamMembers: { some: { team: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } } } },
+          { teamMembers: { some: { team: { name: { contains: 'SALES', mode: 'insensitive' as Prisma.QueryMode } } } } },
           { ledTeams: { some: { name: { contains: 'BPO', mode: 'insensitive' as Prisma.QueryMode } } } },
+          { ledTeams: { some: { name: { contains: 'SALES', mode: 'insensitive' as Prisma.QueryMode } } } },
         ],
       });
     } else if (department && department !== 'ALL') {
