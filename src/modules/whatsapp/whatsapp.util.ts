@@ -186,12 +186,17 @@ export function buildStageTemplateComponents(
       if (parameters.length > 0) {
         components.push({ type: type.toLowerCase(), parameters });
       }
-    } else if (type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(definition.format)) {
-      const link = variables.header_media_url || variables.headerMediaUrl;
-      if (link && /^https:\/\//i.test(link)) {
-        const mediaType = String(definition.format).toLowerCase();
-        components.push({ type: 'header', parameters: [{ type: mediaType, [mediaType]: { link } }] });
+    } else if (type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(definition.format || '').toUpperCase())) {
+      const link = String(variables.header_media_url || variables.headerMediaUrl || '').trim();
+      const id = String(variables.header_media_id || variables.headerMediaId || '').trim();
+      if (id && !/^\d+$/.test(id)) throw new Error('The WhatsApp header media ID is invalid.');
+      if (!id) {
+        let valid = false;
+        try { const url = new URL(link); valid = url.protocol === 'https:' && !url.username && !url.password; } catch { /* Invalid URL */ }
+        if (!valid) throw new Error('The approved template requires a valid HTTPS header media URL or WhatsApp media ID.');
       }
+      const mediaType = String(definition.format).toLowerCase();
+      components.push({ type: 'header', parameters: [{ type: mediaType, [mediaType]: id ? { id } : { link } }] });
     } else if (type === 'BUTTONS') {
       for (const [index, button] of (definition.buttons || []).entries()) {
         if (button.type === 'URL' && button.url) {
