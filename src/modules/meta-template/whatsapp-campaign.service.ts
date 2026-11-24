@@ -189,13 +189,7 @@ export class WhatsAppCampaignService {
     });
 
     const mapping = (campaign.variableMapping as Record<string, string>) || {};
-    const orderedKeys = Array.isArray(template.variables) && template.variables.length
-      ? template.variables
-      : Object.keys(mapping);
-    const parameters = orderedKeys.map((key) => ({
-      type: 'text' as const,
-      text: String(mapping[key] ?? mapping[String(key)] ?? ''),
-    }));
+    const variables = Object.fromEntries(Object.entries(mapping).map(([key, value]) => [key, String(value ?? '')]));
     const recipients = await this.prisma.whatsAppCampaignRecipient.findMany({
       where: { campaignId: campaign.id, status: 'PENDING' },
       take: 200,
@@ -205,13 +199,15 @@ export class WhatsAppCampaignService {
     let failed = 0;
     for (const recipient of recipients) {
       try {
-        const result = await this.whatsappService.sendTemplate(
-          recipient.phone,
-          template.templateName,
-          parameters,
-          template.language || 'en_US',
-          template.body,
-        );
+        const result = await this.whatsappService.sendLeadStageMessage({
+          to: recipient.phone,
+          stageKey: template.key || template.templateName,
+          variables,
+          metaTemplate: template,
+          customMessage: template.body,
+          customerId: campaign.customerId,
+          validateOnMeta: true,
+        });
         if (result?.success) {
           sent++;
           await this.prisma.whatsAppCampaignRecipient.update({

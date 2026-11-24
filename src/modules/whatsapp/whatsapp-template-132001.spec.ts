@@ -518,6 +518,35 @@ describe('WhatsApp Error #132001 Tracing & Pre-Send Validation Tests', () => {
     expect(payload.to).toBe('919876543210');
   });
 
+  it('sends the approved image header and positional body as separate components', async () => {
+    const template = { ...templatesInDb[7], headerType: 'IMAGE', headerContent: 's3key:meta-templates/1/header.jpg', body: 'Hello {{1}}, welcome to {{2}}.' };
+    const previewImage = jest.fn().mockResolvedValue('https://s3.example.com/signed-image');
+    (whatsappService as any).mediaService = { previewImage };
+    mockedAxios.get.mockImplementation(async (url: any) => {
+      if (String(url).endsWith('/message_templates')) return { data: { data: [{ id: template.metaTemplateId, name: template.templateName, language: template.language, status: 'APPROVED', components: [{ type: 'HEADER', format: 'IMAGE' }, { type: 'BODY', text: template.body }] }] } } as any;
+      if (String(url).endsWith('/phone_numbers')) return { data: { data: [{ id: validConfig.credentials.phoneNumberId }] } } as any;
+      return { data: { verified_name: 'Verified' } } as any;
+    });
+    mockedAxios.post.mockResolvedValue({ status: 200, data: { messages: [{ id: 'wamid.test' }] } } as any);
+    const result = await whatsappService.sendLeadStageMessage({ to: '919876543210', stageKey: 'FINAL_CALL', customerId: 1, metaTemplate: template, validateOnMeta: true, variables: { '1': 'Customer', '2': 'Company' } });
+    expect(result.success).toBe(true);
+    expect(previewImage).toHaveBeenCalledWith(template.headerContent, 1);
+    expect((mockedAxios.post.mock.calls[0][1] as any).template.components).toEqual([
+      { type: 'header', parameters: [{ type: 'image', image: { link: 'https://s3.example.com/signed-image' } }] },
+      { type: 'body', parameters: [{ type: 'text', text: 'Customer' }, { type: 'text', text: 'Company' }] },
+    ]);
+  });
+
+  it('does not send if the approved template language differs', async () => {
+    const template = templatesInDb[7];
+    mockedAxios.get.mockImplementation(async (url: any) => String(url).endsWith('/phone_numbers')
+      ? { data: { data: [{ id: validConfig.credentials.phoneNumberId }] } } as any
+      : { data: { data: [{ id: template.metaTemplateId, name: template.templateName, status: 'APPROVED', language: 'en_US', components: [] }] } } as any);
+    const result = await whatsappService.sendLeadStageMessage({ to: '919876543210', stageKey: 'FINAL_CALL', customerId: 1, metaTemplate: template, validateOnMeta: true, variables: {} });
+    expect(result.success).toBe(false);
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
   it.each([
     [{ isAxiosError: true, code: 'ETIMEDOUT' }, 'RETRYABLE_REJECTION'],
     [{ response: { status: 503 } }, 'RETRYABLE_REJECTION'],

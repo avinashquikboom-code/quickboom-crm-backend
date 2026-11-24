@@ -103,6 +103,17 @@ describe('Meta Template Validation & Parameter Mapping Regression Tests', () => 
       expect(() => buildStageTemplateComponents(definitions, { header_media_id: 'bad-id' })).toThrow(/media ID is invalid/);
     });
 
+    it('keeps header and body parameters separate even when positional tags repeat', () => {
+      const components = buildStageTemplateComponents([
+        { type: 'HEADER', format: 'TEXT', text: 'Dear {{1}}' },
+        { type: 'BODY', text: 'Hello {{1}}, welcome to {{2}}' },
+      ], { header_1: 'Header Name', body_1: 'Body Name', body_2: 'Company' });
+      expect(components).toEqual([
+        { type: 'header', parameters: [{ type: 'text', text: 'Header Name' }] },
+        { type: 'body', parameters: [{ type: 'text', text: 'Body Name' }, { type: 'text', text: 'Company' }] },
+      ]);
+    });
+
     it('ensures static templates without variables produce no body parameters', () => {
       const staticDefinitions = [
         {

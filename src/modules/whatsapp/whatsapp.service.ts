@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { MetaTemplateMediaService } from '../meta-template/meta-template-media.service';
 import { decryptSecret } from '../../common/utils/crypto.util';
 
 export * from './whatsapp.util';
@@ -28,6 +29,7 @@ export class WhatsappService {
     private readonly prisma: PrismaService,
     private readonly integrationSettingsService: IntegrationSettingsService,
     @Optional() private readonly moduleRef?: ModuleRef,
+    @Optional() private readonly mediaService?: MetaTemplateMediaService,
   ) {}
 
   private getNotificationService(): any {
@@ -506,7 +508,7 @@ export class WhatsappService {
       template: {
         name: resolvedTemplateName,
         language: { code: resolvedLanguageCode },
-        components: (templateMetadata?.components && templateMetadata.components.length > 0)
+        components: Array.isArray(templateMetadata?.components)
           ? templateMetadata.components
           : (parameters.length > 0
               ? [
@@ -1649,7 +1651,7 @@ export class WhatsappService {
 
     let components: Record<string, any>[] | undefined;
     let wabaId: string | undefined;
-    if (params.validateOnMeta) {
+    if (params.validateOnMeta !== false) {
       try {
         const config = await this.integrationSettingsService.getIntegrationConfig('WHATSAPP', { forceFresh: true });
         const creds = config?.credentials || {};
@@ -1673,7 +1675,7 @@ export class WhatsappService {
         const approved = templates.data?.data?.find((item: any) =>
           (String(item.id) === String(template!.metaTemplateId) ||
             item.name.toLowerCase() === template!.templateName.toLowerCase()) &&
-          item.status === 'APPROVED');
+          item.status === 'APPROVED' && String(item.language || '') === String(template!.language || ''));
 
         if (!approved) {
           const matchingTemplate = templates.data?.data?.find((item: any) =>
@@ -1730,7 +1732,22 @@ export class WhatsappService {
           }
         }
 
-        components = buildStageTemplateComponents(approved.components || [], variables);
+        if (!Array.isArray(approved.components)) throw new Error('Meta did not return the approved template components. Sync the template and retry.');
+        const mediaHeader = approved.components.find((item: any) => String(item.type || '').toUpperCase() === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(String(item.format || '').toUpperCase()));
+        const componentVariables = { ...variables };
+        if (mediaHeader) {
+          const expected = String(mediaHeader.format).toUpperCase();
+          const configured = String((template as any).headerType || '').toUpperCase();
+          if (configured && configured !== expected) throw new Error('The saved header type does not match the approved Meta template. Sync the template and check its media.');
+          if (!componentVariables.header_media_url && !componentVariables.headerMediaUrl && !componentVariables.header_media_id && !componentVariables.headerMediaId) {
+            const reference = String((template as any).headerContent || '').trim();
+            if (reference.startsWith('s3key:') || reference.includes('/meta-templates/')) {
+              if (!this.mediaService) throw new Error('Template image storage is unavailable.');
+              componentVariables.header_media_url = await this.mediaService.previewImage(reference, customerId);
+            } else if (/^https:\/\//i.test(reference)) componentVariables.header_media_url = reference;
+          }
+        }
+        components = buildStageTemplateComponents(approved.components, componentVariables);
       } catch (error: any) {
         // Validation runs before the POST, so even a timeout cannot have sent a
         // message. Transient lookup failures can safely be retried by the outbox.
