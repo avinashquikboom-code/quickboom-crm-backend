@@ -5117,7 +5117,7 @@ Sent by ${senderOrgName} via CRM.
           userId: userId ? Number(userId) : undefined,
           metaTemplateId: metaTemplate?.id,
           metaTemplate: metaTemplate || fallbackTemplate,
-          validateOnMeta: dto?.eventType !== 'MANUAL_SEND',
+          validateOnMeta: true,
         });
       } catch (sendErr: any) {
         result = {

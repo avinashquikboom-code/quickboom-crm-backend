@@ -46,6 +46,9 @@ describe('MetaTemplateService', () => {
         return clean.length >= 10 ? clean : null;
       }),
       maskPhone: jest.fn((phone) => '****1234'),
+      sendLeadStageMessage: jest.fn().mockResolvedValue({
+        success: true, messageId: 'wamid.HBgLMTIzNDU2Nzg5MA==', provider: 'WHATSAPP',
+      }),
       sendTemplate: jest.fn().mockResolvedValue({
         success: true,
         messageId: 'wamid.HBgLMTIzNDU2Nzg5MA==',
@@ -701,24 +704,10 @@ describe('MetaTemplateService', () => {
       expect(result.success).toBe(true);
       expect(result.messageId).toBe('wamid.HBgLMTIzNDU2Nzg5MA==');
       expect(result.status).toBe('SENT');
-      expect(mockWhatsappService.sendTemplate).toHaveBeenCalledWith(
-        '919820010000',
-        'appointment_notice',
-        [
-          { type: 'text', text: 'Test Customer' },
-          { type: 'text', text: '25 Sep 2026' },
-        ],
-        'en_US',
-        undefined,
-        'TEMPLATE_TEST',
-        1,
-        1,
-        expect.objectContaining({
-          templateId: '10',
-          templateStatus: 'APPROVED',
-          isApproved: true,
-        }),
-      );
+      expect(mockWhatsappService.sendLeadStageMessage).toHaveBeenCalledWith(expect.objectContaining({
+        to: '919820010000', validateOnMeta: true, metaTemplate: mockApprovedTemplate,
+        variables: expect.objectContaining({ '1': 'Test Customer', '2': '25 Sep 2026' }),
+      }));
     });
 
     it('rejects testing if template status is not APPROVED', async () => {

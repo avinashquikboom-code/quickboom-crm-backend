@@ -1533,83 +1533,23 @@ export class MetaTemplateService {
       throw new BadRequestException('This WhatsApp template is currently deactivated in your CRM settings.');
     }
 
-    // 3. Extract variables from body & header in exact order of appearance
-    const bodyText = template.body || '';
-    const headerText = template.headerContent || '';
-    const fullText = `${headerText} ${bodyText}`;
-    const matches = fullText.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) || [];
-    const orderedVars: string[] = [];
-    const seen = new Set<string>();
-    for (const m of matches) {
-      const v = m.replace(/[\{\}\s]/g, '');
-      if (!seen.has(v)) {
-        seen.add(v);
-        orderedVars.push(v);
-      }
-    }
-
-    // 4. Build parameters for Meta Cloud API
-    const userVars = dto.variables || {};
+    // Build parameters from the exact approved Meta components, including media headers.
     const sampleVars: Record<string, string> = {
-      leadName: 'Mr. Raj Sharma',
-      leadTitle: 'Mr. Raj Sharma',
-      companyName: 'QUIKBOOM',
-      userName: user?.firstName || 'Admin',
-      assignedUser: user?.firstName || 'Admin',
+      leadName: 'Mr. Raj Sharma', leadTitle: 'Mr. Raj Sharma', companyName: 'QUIKBOOM',
+      userName: user?.firstName || 'Admin', assignedUser: user?.firstName || 'Admin',
       assignedEmployeeName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Admin Team',
-      assignedEmployeePhone: user?.phone || '+91 98765 43210',
-      assignedEmployeeEmail: user?.email || 'admin@quikboom.com',
-      stage: 'Contacted',
-      startDate: '25 September 2026',
-      startTime: '11:30 AM',
-      dealValue: '₹1,50,000',
-      serviceName: 'Digital Marketing',
-      1: 'Mr. Raj Sharma',
-      2: 'QUIKBOOM',
-      3: '25 September 2026',
-      4: '11:30 AM',
+      assignedEmployeePhone: user?.phone || '+91 98765 43210', assignedEmployeeEmail: user?.email || 'admin@quikboom.com',
+      stage: 'Contacted', startDate: '25 September 2026', startTime: '11:30 AM',
+      dealValue: '₹1,50,000', serviceName: 'Digital Marketing',
+      '1': 'Mr. Raj Sharma', '2': 'QUIKBOOM', '3': '25 September 2026', '4': '11:30 AM',
     };
-
-    const parameters: Array<{ type: 'text'; text: string }> = orderedVars.map((varName, idx) => {
-      const val =
-        userVars[varName] !== undefined && userVars[varName] !== null && String(userVars[varName]).trim() !== ''
-          ? String(userVars[varName]).trim()
-          : userVars[String(idx + 1)] !== undefined && String(userVars[String(idx + 1)]).trim() !== ''
-          ? String(userVars[String(idx + 1)]).trim()
-          : sampleVars[varName] || sampleVars[String(idx + 1)] || `Sample ${varName}`;
-
-      return {
-        type: 'text',
-        text: val,
-      };
+    const userVars = Object.fromEntries(Object.entries(dto.variables || {}).filter(([, value]) => value != null && String(value).trim()).map(([key, value]) => [key, String(value)]));
+    const sendResult = await this.whatsappService.sendLeadStageMessage({
+      to: normalizedPhone, stageKey: template.key || template.templateName,
+      variables: { ...sampleVars, ...userVars }, customMessage: template.body,
+      stageName: 'TEMPLATE_TEST', customerId: customerId ? Number(customerId) : undefined,
+      userId: user?.id ? Number(user.id) : undefined, metaTemplate: template, validateOnMeta: true,
     });
-
-    const resolvedLang = template.language || dto.language || 'en';
-
-    this.logger.log(
-      `[WHATSAPP TEST SEND] Dispatching template "${template.templateName}" (lang: ${resolvedLang}) ` +
-      `to recipient ${this.whatsappService.maskPhone(normalizedPhone)} with ${parameters.length} parameters. ` +
-      `Company ID: ${customerId || 'GLOBAL'}`
-    );
-
-    // 5. Send via existing WhatsappService (Meta WhatsApp Cloud API)
-    // NOTE: fallbackText is intentionally undefined so only the actual template is tested
-    const sendResult = await this.whatsappService.sendTemplate(
-      normalizedPhone,
-      template.templateName,
-      parameters,
-      resolvedLang,
-      undefined,
-      'TEMPLATE_TEST',
-      customerId ? Number(customerId) : undefined,
-      user?.id ? Number(user.id) : undefined,
-      {
-        templateId: template.id ? String(template.id) : undefined,
-        providerTemplateId: template.metaTemplateId || undefined,
-        templateStatus: template.status || undefined,
-        isApproved: template.status === 'APPROVED',
-      },
-    );
 
     if (!sendResult.success) {
       const errStatus = sendResult.providerStatus || 400;
@@ -1622,7 +1562,7 @@ export class MetaTemplateService {
         `companyId: ${customerId || 'GLOBAL'}\n` +
         `templateId: ${template.id}\n` +
         `templateName: ${template.templateName}\n` +
-        `language: ${resolvedLang}\n` +
+        `language: ${template.language || 'en_US'}\n` +
         `recipientMasked: ${this.whatsappService.maskPhone(normalizedPhone)}\n` +
         `internalErrorCode: ${sendResult.errorCode || 'UNKNOWN'}\n` +
         `metaHttpStatus: ${sendResult.providerStatus || 'N/A'}\n` +
