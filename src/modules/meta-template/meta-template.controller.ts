@@ -12,7 +12,11 @@ import {
   ParseIntPipe,
   Req,
   Logger,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { MetaTemplateMediaService } from './meta-template-media.service';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { RoleType } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -42,6 +46,7 @@ export class MetaTemplateController {
   constructor(
     private readonly metaTemplateService: MetaTemplateService,
     private readonly whatsAppCampaignService: WhatsAppCampaignService,
+    private readonly mediaService: MetaTemplateMediaService,
   ) {}
 
   @Get()
@@ -131,6 +136,13 @@ export class MetaTemplateController {
   @ApiOperation({ summary: 'Cancel a draft or scheduled campaign' })
   cancelCampaign(@Param('campaignId', ParseIntPipe) campaignId: number, @CurrentUser() user: any) {
     return this.whatsAppCampaignService.cancel(campaignId, user?.customerId);
+  }
+
+  @Post('media/image')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  @ApiOperation({ summary: 'Upload a WhatsApp template header image' })
+  async uploadImage(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: any) {
+    return this.mediaService.uploadImage(file, user?.customerId);
   }
 
   @Get(':id')

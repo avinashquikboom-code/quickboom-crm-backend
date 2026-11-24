@@ -24,6 +24,22 @@ describe('Google Growth connection test', () => {
     expect(JSON.stringify(result)).not.toContain('developer');
     expect(JSON.stringify(result)).not.toContain('Bearer');
   });
+  it('uses a refresh token supplied through Integration Settings', async () => {
+    delete process.env.GOOGLE_BUSINESS_GROWTH_REFRESH_TOKEN;
+    http.post.mockResolvedValue({ status: 200, data: { access_token: 'access' } });
+    http.get.mockResolvedValue({ status: 200, data: {} });
+    const result = await testGoogleGrowthConnection({ ...credentials, refreshToken: 'settings-refresh' }, {});
+    expect(result.success).toBe(true);
+    expect(new URLSearchParams(http.post.mock.calls[0][1] as string).get('refresh_token')).toBe('settings-refresh');
+    expect(JSON.stringify(result)).not.toContain('settings-refresh');
+  });
+  it('tests Cloud-managed Ads access without a developer token', async () => {
+    delete process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+    http.post.mockResolvedValue({ status: 200, data: { access_token: 'access' } });
+    http.get.mockResolvedValue({ status: 200, data: {} });
+    expect((await testGoogleGrowthConnection({ clientId: 'client', clientSecret: 'secret' }, {})).success).toBe(true);
+    expect(http.get.mock.calls[0][1]?.headers).not.toHaveProperty('developer-token');
+  });
   it('fails when either API rejects access', async () => {
     http.post.mockResolvedValue({ status: 200, data: { access_token: 'access' } });
     http.get.mockResolvedValueOnce({ status: 403 }).mockResolvedValueOnce({ status: 200 });

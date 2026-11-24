@@ -57,6 +57,20 @@ describe('Integration Settings & Gateway Dynamic System', () => {
     });
   });
 
+  it('encrypts a Google refresh token and masks it in Integration Settings', async () => {
+    mockPrisma.integrationSetting.findUnique.mockResolvedValue(null);
+    mockPrisma.integrationSetting.upsert.mockResolvedValue({ id: 1 });
+    await service.updateIntegrationConfig('GOOGLE_BUSINESS_GROWTH', { credentials: { refreshToken: 'google-refresh-token-secret' } }, 101);
+    const stored = mockPrisma.integrationSetting.upsert.mock.calls[0][0].create.credentials.refreshToken;
+    expect(stored).toMatch(/^enc:v1:/);
+    expect(decryptSecret(stored)).toBe('google-refresh-token-secret');
+    service.clearCache();
+    mockPrisma.integrationSetting.findUnique.mockResolvedValue({ provider: 'GOOGLE_BUSINESS_GROWTH', isEnabled: false, credentials: { refreshToken: stored }, config: {}, deletedAt: null });
+    const result = await service.getMaskedProviderConfig('GOOGLE_BUSINESS_GROWTH');
+    expect(result.credentials.refreshToken).not.toBe('google-refresh-token-secret');
+    expect(result.credentials.refreshToken).toContain('***');
+  });
+
   describe('2. Dynamic Precedence: Database Overrides .env Fallback', () => {
     it('returns .env fallback when no database record exists', async () => {
       process.env.RAZORPAY_ENVIRONMENT = 'TEST';

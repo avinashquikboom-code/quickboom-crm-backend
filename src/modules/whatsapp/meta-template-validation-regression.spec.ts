@@ -89,6 +89,20 @@ describe('Meta Template Validation & Parameter Mapping Regression Tests', () => 
       });
     });
 
+    it.each(['IMAGE', 'VIDEO', 'DOCUMENT'])('uses the approved %s header format and a media URL', (format) => {
+      const result = buildStageTemplateComponents([{ type: 'HEADER', format }], { header_media_url: 'https://cdn.example.com/media' });
+      const type = format.toLowerCase();
+      expect(result).toEqual([{ type: 'header', parameters: [{ type, [type]: { link: 'https://cdn.example.com/media' } }] }]);
+    });
+
+    it('supports WhatsApp media IDs and rejects missing or invalid references', () => {
+      const definitions = [{ type: 'HEADER', format: 'IMAGE' }];
+      expect(buildStageTemplateComponents(definitions, { header_media_id: '123456' })).toEqual([{ type: 'header', parameters: [{ type: 'image', image: { id: '123456' } }] }]);
+      expect(() => buildStageTemplateComponents(definitions, {})).toThrow(/requires a valid HTTPS/);
+      expect(() => buildStageTemplateComponents(definitions, { header_media_url: 'http://example.com/file' })).toThrow(/requires a valid HTTPS/);
+      expect(() => buildStageTemplateComponents(definitions, { header_media_id: 'bad-id' })).toThrow(/media ID is invalid/);
+    });
+
     it('ensures static templates without variables produce no body parameters', () => {
       const staticDefinitions = [
         {

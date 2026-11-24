@@ -4,10 +4,10 @@ import axios from 'axios';
 export async function testGoogleGrowthConnection(credentials: Record<string, any>, config: Record<string, any>) {
   const clientId = String(credentials.clientId || process.env.GOOGLE_CLIENT_ID || '').trim();
   const clientSecret = String(credentials.clientSecret || process.env.GOOGLE_CLIENT_SECRET || '').trim();
-  const refreshToken = String(process.env.GOOGLE_BUSINESS_GROWTH_REFRESH_TOKEN || '').trim();
+  const refreshToken = String(credentials.refreshToken || process.env.GOOGLE_BUSINESS_GROWTH_REFRESH_TOKEN || '').trim();
   const developerToken = String(credentials.developerToken || process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '').trim();
   const version = String(config.apiVersion || process.env.GOOGLE_ADS_API_VERSION || 'v26').trim();
-  const missing = [!clientId && 'Google OAuth client ID', !clientSecret && 'Google OAuth client secret', !refreshToken && 'backend GOOGLE_BUSINESS_GROWTH_REFRESH_TOKEN', !developerToken && 'Google Ads developer token'].filter(Boolean);
+  const missing = [!clientId && 'Google OAuth client ID', !clientSecret && 'Google OAuth client secret', !refreshToken && 'Google OAuth refresh token in Integration Settings'].filter(Boolean);
   if (missing.length) return { success: false, status: 'NOT_CONFIGURED', message: `To test Google access, configure: ${missing.join(', ')}.` };
   if (!/^v\d+$/.test(version)) return { success: false, status: 'ERROR', message: 'Google Ads API version is invalid; use a value such as v26.' };
   try {
@@ -15,7 +15,7 @@ export async function testGoogleGrowthConnection(credentials: Record<string, any
     if (tokenResponse.status !== 200 || typeof tokenResponse.data?.access_token !== 'string') return { success: false, status: 'ERROR', message: 'Google OAuth authorization failed. Check the client credentials and refresh token, and reauthorize the Google account if needed.' };
     const headers = { Authorization: `Bearer ${tokenResponse.data.access_token}` };
     const [ads, business] = await Promise.allSettled([
-      axios.get(`https://googleads.googleapis.com/${version}/customers:listAccessibleCustomers`, { headers: { ...headers, 'developer-token': developerToken }, timeout: 12000, validateStatus: () => true }),
+      axios.get(`https://googleads.googleapis.com/${version}/customers:listAccessibleCustomers`, { headers: { ...headers, ...(developerToken ? { 'developer-token': developerToken } : {}) }, timeout: 12000, validateStatus: () => true }),
       axios.get('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers, timeout: 12000, validateStatus: () => true }),
     ]);
     const describe = (result: PromiseSettledResult<any>) => result.status === 'fulfilled' ? result.value.status : 'network error';
