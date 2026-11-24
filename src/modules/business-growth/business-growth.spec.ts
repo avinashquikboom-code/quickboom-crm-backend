@@ -8,6 +8,7 @@ import {
   UpdateBusinessProfileDto,
   ReplyReviewDto,
   GenerateAiReplyDto,
+  SelectLocationDto,
 } from './dto/business-growth.dto';
 
 describe('BusinessGrowth DTO Validation', () => {
@@ -86,5 +87,17 @@ describe('BusinessGrowth DTO Validation', () => {
     });
     const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
     expect(errors.length).toBe(0);
+  });
+
+  it('validates SelectLocationDto with valid and invalid payloads', async () => {
+    const valid = plainToInstance(SelectLocationDto, {
+      locationId: 'locations/quik-boom-marketing-agency',
+    });
+    const validErrors = await validate(valid, { whitelist: true, forbidNonWhitelisted: true });
+    expect(validErrors.length).toBe(0);
+
+    const invalid = plainToInstance(SelectLocationDto, { locationId: '' });
+    const invalidErrors = await validate(invalid);
+    expect(invalidErrors.length).toBeGreaterThan(0);
   });
 });

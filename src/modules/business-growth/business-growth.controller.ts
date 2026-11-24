@@ -21,6 +21,7 @@ import {
   GenerateAiReplyDto,
   UpdateGrowthSettingsDto,
   GoogleOAuthConnectDto,
+  SelectLocationDto,
 } from './dto/business-growth.dto';
 
 @ApiTags('Business Growth & Advertising')
@@ -89,6 +90,18 @@ export class BusinessGrowthController {
   @Post('business-profile/photos')
   async addProfilePhoto(@Body() photo: AddProfilePhotoDto) {
     return this.service.addProfilePhoto(photo);
+  }
+
+  @ApiOperation({ summary: 'Manually synchronize Google Business Profile details & reviews' })
+  @Post('business-profile/sync')
+  async syncBusinessProfile(@Query('locationId') locationId?: string) {
+    return this.service.syncBusinessProfile(locationId);
+  }
+
+  @ApiOperation({ summary: 'Select active Google Business Profile location' })
+  @Post('business-profile/select-location')
+  async selectLocation(@Body() dto: SelectLocationDto) {
+    return this.service.selectLocation(dto.locationId);
   }
 
   // ── Reviews & Ratings ──────────────────────────────────────────────────────
