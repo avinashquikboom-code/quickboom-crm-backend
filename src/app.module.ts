@@ -58,6 +58,7 @@ import { MetaTemplateModule } from './modules/meta-template/meta-template.module
 import { CommissionModule } from './modules/commission/commission.module';
 import { GeneralSettingsModule } from './modules/general-settings/general-settings.module';
 import { SendDetailsModule } from './modules/send-details/send-details.module';
+import { BusinessGrowthModule } from './modules/business-growth/business-growth.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -124,6 +125,7 @@ import { AppController } from './app.controller';
     CommissionModule,
     GeneralSettingsModule,
     SendDetailsModule,
+    BusinessGrowthModule,
   ],
   controllers: [AppController],
   providers: [
