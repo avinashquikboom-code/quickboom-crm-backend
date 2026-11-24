@@ -33,46 +33,172 @@ export interface WhatsAppSendResult {
   providerResponse?: unknown;
 }
 
+/**
+ * Resolves a template parameter tag against the variables map.
+ * Supports:
+ * 1. Direct key match: body_1, body_name, 1, customerName, etc.
+ * 2. Positional parameters: {{1}}, {{2}}, {{3}}, {{4}}, {{5}} with standard CRM fallbacks.
+ * 3. Semantic aliases for named variables: customer_name, lead_name, company_name, etc.
+ * 4. Safe fallback to prevent throwing unhandled exceptions that break delivery.
+ */
+export function resolveTemplateVariableValue(
+  tag: string,
+  section: string,
+  variables: Record<string, string>,
+): string {
+  if (!variables) return '';
+
+  // 1. Exact section_tag match (e.g. body_1, body_customerName)
+  const prefixedKey = `${section}_${tag}`;
+  if (variables[prefixedKey] !== undefined && String(variables[prefixedKey]).trim() !== '') {
+    return String(variables[prefixedKey]).trim();
+  }
+
+  // 2. Exact tag match (e.g. '1', 'customerName', 'companyName')
+  if (variables[tag] !== undefined && String(variables[tag]).trim() !== '') {
+    return String(variables[tag]).trim();
+  }
+
+  // 3. Case-insensitive & punctuation-insensitive match (e.g. customer_name -> customerName)
+  const cleanTag = tag.toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const [k, v] of Object.entries(variables)) {
+    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cleanK === cleanTag && v !== undefined && String(v).trim() !== '') {
+      return String(v).trim();
+    }
+  }
+
+  // 4. Positional parameter fallback ({{1}}, {{2}}, {{3}}, {{4}}, {{5}})
+  if (/^\d+$/.test(tag)) {
+    const num = Number(tag);
+    if (num === 1) {
+      return (
+        variables.customerName ||
+        variables.name ||
+        variables.firstName ||
+        variables.leadName ||
+        variables.leadTitle ||
+        'Valued Customer'
+      ).trim();
+    }
+    if (num === 2) {
+      return (variables.companyName || variables.businessName || 'QUIKBOOM').trim();
+    }
+    if (num === 3) {
+      return (variables.stage || variables.leadTitle || variables.userName || 'Update').trim();
+    }
+    if (num === 4) {
+      return (
+        variables.assignedEmployeeName ||
+        variables.userName ||
+        variables.assignedUser ||
+        'QuickBoom Team'
+      ).trim();
+    }
+    if (num === 5) {
+      return (variables.phone || variables.mobile || '').trim();
+    }
+  }
+
+  // 5. Semantic alias resolution for common CRM parameters
+  if (
+    cleanTag.includes('customer') ||
+    cleanTag.includes('leadname') ||
+    cleanTag === 'name' ||
+    cleanTag === 'firstname' ||
+    cleanTag === 'prospect'
+  ) {
+    return (
+      variables.customerName ||
+      variables.name ||
+      variables.firstName ||
+      variables.leadName ||
+      'Valued Customer'
+    ).trim();
+  }
+  if (cleanTag.includes('company') || cleanTag.includes('business') || cleanTag === 'agency') {
+    return (variables.companyName || variables.businessName || 'QUIKBOOM').trim();
+  }
+  if (cleanTag.includes('stage') || cleanTag === 'status') {
+    return (variables.stage || 'Update').trim();
+  }
+  if (
+    cleanTag.includes('user') ||
+    cleanTag.includes('employee') ||
+    cleanTag.includes('agent') ||
+    cleanTag.includes('rep')
+  ) {
+    return (
+      variables.assignedEmployeeName ||
+      variables.userName ||
+      variables.assignedUser ||
+      'QuickBoom Team'
+    ).trim();
+  }
+  if (cleanTag.includes('phone') || cleanTag.includes('mobile')) {
+    return (variables.phone || variables.mobile || '').trim();
+  }
+  if (cleanTag.includes('email')) {
+    return (variables.email || variables.assignedEmployeeEmail || '').trim();
+  }
+  if (cleanTag.includes('date')) {
+    return (variables.nextFollowUpDate || variables.startDate || '').trim();
+  }
+  if (cleanTag.includes('time')) {
+    return (variables.nextFollowUpTime || variables.startTime || '').trim();
+  }
+
+  // Safe non-empty fallback
+  return '';
+}
+
 /** Build only parameters declared by the approved Meta component definitions. */
 export function buildStageTemplateComponents(
   definitions: any[],
   variables: Record<string, string>,
 ): Record<string, any>[] {
   const textParameters = (text: string, section: string) => {
-    const tags = Array.from(new Set(
-      Array.from((text || '').matchAll(/\{\{\s*([\w]+)\s*\}\}/g), (m) => m[1]),
-    ));
-    if (tags.every((tag) => /^\d+$/.test(tag))) tags.sort((a, b) => Number(a) - Number(b));
+    const rawMatches = Array.from((text || '').matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g), (m) => m[1]);
+    if (!rawMatches.length) return [];
+    const tags = Array.from(new Set(rawMatches));
+    if (tags.every((tag) => /^\d+$/.test(tag))) {
+      tags.sort((a, b) => Number(a) - Number(b));
+    }
     return tags.map((tag) => {
-      const value = variables[`${section}_${tag}`] ?? variables[tag];
-      if (!value?.trim()) throw new Error(`Missing WhatsApp template variable: ${section}_${tag}`);
-      return { type: 'text', text: value.trim(), ...(/^\d+$/.test(tag) ? {} : { parameter_name: tag }) };
+      const resolved = resolveTemplateVariableValue(tag, section, variables);
+      // Meta Graph API requires non-empty string for each declared parameter
+      const safeText = resolved && resolved.trim().length > 0 ? resolved.trim() : '-';
+      return {
+        type: 'text',
+        text: safeText,
+        ...(/^\d+$/.test(tag) ? {} : { parameter_name: tag }),
+      };
     });
   };
+
   const components: Record<string, any>[] = [];
-  for (const definition of definitions) {
-    const type = String(definition.type).toUpperCase();
+  for (const definition of (definitions || [])) {
+    const type = String(definition.type || '').toUpperCase();
     if (type === 'BODY' || (type === 'HEADER' && definition.format === 'TEXT')) {
       const parameters = textParameters(definition.text, type.toLowerCase());
-      if (parameters.length) components.push({ type: type.toLowerCase(), parameters });
+      if (parameters.length > 0) {
+        components.push({ type: type.toLowerCase(), parameters });
+      }
     } else if (type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(definition.format)) {
-      const link = variables.header_media_url;
-      if (!link || !/^https:\/\//i.test(link)) throw new Error('Map header_media_url to a public HTTPS file URL.');
-      const mediaType = String(definition.format).toLowerCase();
-      components.push({ type: 'header', parameters: [{ type: mediaType, [mediaType]: { link } }] });
+      const link = variables.header_media_url || variables.headerMediaUrl;
+      if (link && /^https:\/\//i.test(link)) {
+        const mediaType = String(definition.format).toLowerCase();
+        components.push({ type: 'header', parameters: [{ type: mediaType, [mediaType]: { link } }] });
+      }
     } else if (type === 'BUTTONS') {
       for (const [index, button] of (definition.buttons || []).entries()) {
-        if (button.type === 'URL') {
+        if (button.type === 'URL' && button.url) {
           const parameters = textParameters(button.url, `button_${index}`);
-          if (parameters.length) components.push({ type: 'button', sub_type: 'url', index: String(index), parameters });
-        } else if (!['PHONE_NUMBER', 'QUICK_REPLY'].includes(button.type)) {
-          throw new Error(`Unsupported stage template button: ${button.type}. Choose a compatible approved template.`);
+          if (parameters.length > 0) {
+            components.push({ type: 'button', sub_type: 'url', index: String(index), parameters });
+          }
         }
       }
-    } else if (!['FOOTER', 'HEADER'].includes(type)) {
-      throw new Error(`Unsupported stage template component: ${type}.`);
-    } else if (type === 'HEADER' && definition.format !== 'TEXT') {
-      throw new Error(`Unsupported stage template header: ${definition.format}.`);
     }
   }
   return components;
