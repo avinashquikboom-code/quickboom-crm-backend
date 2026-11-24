@@ -6,18 +6,21 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { BusinessGrowthService } from './business-growth.service';
 import {
   CreateCampaignDto,
+  QueryCampaignsDto,
   UpdateCampaignBudgetDto,
   UpdateCampaignStatusDto,
   UpdateBusinessProfileDto,
+  AddProfilePhotoDto,
+  QueryReviewsDto,
   ReplyReviewDto,
   GenerateAiReplyDto,
   UpdateGrowthSettingsDto,
+  GoogleOAuthConnectDto,
 } from './dto/business-growth.dto';
 
 @ApiTags('Business Growth & Advertising')
@@ -41,7 +44,7 @@ export class BusinessGrowthController {
 
   @ApiOperation({ summary: 'Get Google Ads campaigns' })
   @Get('google-ads/campaigns')
-  async getCampaigns(@Query() query: { status?: string; search?: string }) {
+  async getCampaigns(@Query() query: QueryCampaignsDto) {
     return this.service.getCampaigns(query);
   }
 
@@ -84,14 +87,14 @@ export class BusinessGrowthController {
 
   @ApiOperation({ summary: 'Add photo to Google Business Profile' })
   @Post('business-profile/photos')
-  async addProfilePhoto(@Body() photo: { url: string; tag: string }) {
+  async addProfilePhoto(@Body() photo: AddProfilePhotoDto) {
     return this.service.addProfilePhoto(photo);
   }
 
   // ── Reviews & Ratings ──────────────────────────────────────────────────────
   @ApiOperation({ summary: 'Get Google Reviews & Ratings with distribution' })
   @Get('reviews')
-  async getReviews(@Query() query: { filter?: string; star?: number; search?: string }) {
+  async getReviews(@Query() query: QueryReviewsDto) {
     return this.service.getReviews(query);
   }
 
@@ -129,13 +132,13 @@ export class BusinessGrowthController {
 
   @ApiOperation({ summary: 'Connect Google OAuth integration' })
   @Post('google/oauth/connect')
-  async connectGoogleOAuth(@Body('provider') provider: 'ADS' | 'BUSINESS_PROFILE') {
-    return this.service.connectGoogleOAuth(provider);
+  async connectGoogleOAuth(@Body() dto: GoogleOAuthConnectDto) {
+    return this.service.connectGoogleOAuth(dto.provider);
   }
 
   @ApiOperation({ summary: 'Disconnect Google OAuth integration' })
   @Post('google/oauth/disconnect')
-  async disconnectGoogleOAuth(@Body('provider') provider: 'ADS' | 'BUSINESS_PROFILE') {
-    return this.service.disconnectGoogleOAuth(provider);
+  async disconnectGoogleOAuth(@Body() dto: GoogleOAuthConnectDto) {
+    return this.service.disconnectGoogleOAuth(dto.provider);
   }
 }
