@@ -1508,7 +1508,7 @@ export class LeadService {
     }
   }
 
-  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; category?: string; assignedToId?: string | number; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean }, user?: any) {
+  async getLeads(customerId: number | string | undefined, query: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; createdFrom?: string; priority?: string; source?: string; category?: string; assignedToId?: string | number; employeeIds?: string; departmentId?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean }, user?: any) {
     return this.leadRepository.findAll(customerId, query, user);
   }
 
