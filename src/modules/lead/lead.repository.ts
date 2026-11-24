@@ -898,7 +898,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; employeeIds?: string; departmentId?: string; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -1041,6 +1041,28 @@ export class LeadRepository {
     }
     if (pipelineFilters.length) andConditions.push(...pipelineFilters);
 
+    // Employee IDs and user IDs are different namespaces. Resolve the selected
+    // employee records within the workspace before matching legacy user assignments.
+    if (options.employeeIds || options.departmentId) {
+      const tokens = String(options.employeeIds || '').split(',').filter(Boolean);
+      const unassigned = tokens.includes('unassigned');
+      const ids = tokens.filter((token) => token !== 'unassigned').map(Number);
+      if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0) || (options.departmentId && (!/^\d+$/.test(options.departmentId) || Number(options.departmentId) <= 0))) {
+        throw new BadRequestException('Invalid employee or department filter');
+      }
+      const employees = await this.prisma.employee.findMany({
+        where: { customerId: numCustomerId, ...(ids.length ? { id: { in: ids } } : {}), ...(options.departmentId ? { departmentId: Number(options.departmentId) } : {}) },
+        select: { id: true, userId: true },
+      });
+      const selected = (ids.length || options.departmentId) ? employees : [];
+      const employeeIds = selected.map((employee) => employee.id);
+      const userIds = selected.map((employee) => employee.userId || employee.id);
+      const matches: any[] = [];
+      if (employeeIds.length) matches.push({ employeeId: { in: employeeIds } }, { AND: [{ employeeId: null }, { assignedToId: { in: userIds } }] });
+      if (unassigned && !options.departmentId) matches.push({ employeeId: null, assignedToId: null });
+      andConditions.push(matches.length ? { OR: matches } : { id: -1 });
+    }
+
     if (options.assignedToId && options.assignedToId !== 'ALL' && !isNaN(Number(options.assignedToId))) {
       const assignedId = Number(options.assignedToId);
       andConditions.push({ OR: [{ assignedToId: assignedId }, { employeeId: assignedId }] });
@@ -1120,7 +1142,6 @@ export class LeadRepository {
     const startedAt = Date.now();
     let stageCounts: Array<{ status: string | null; stageId: number | null; count: number }> | undefined;
 
-    const countsRequest = (async () => {
     if (options.includeCounts && typeof this.prisma.lead.groupBy === 'function') {
       try {
         const countWhere = { ...where, AND: andConditions.filter((condition) => !pipelineFilters.includes(condition)) };
@@ -1132,11 +1153,11 @@ export class LeadRepository {
         });
         stageCounts = grouped.map((row) => ({ status: row.status, stageId: row.stageId, count: row._count._all }));
       } catch (countErr: any) {
-        this.logger.warn(`Lead stage counts failed: ${countErr?.message || countErr}`);
+        this.logger.error(`Lead stage counts failed: ${countErr?.message || countErr}`);
+        throw countErr;
       }
     }
 
-    })();
 
     try {
       [data, total] = await Promise.all([
@@ -1188,7 +1209,6 @@ export class LeadRepository {
       }
     }
 
-    await countsRequest;
 
     // Safe diagnostic log (Section 9)
     this.logger.log(
