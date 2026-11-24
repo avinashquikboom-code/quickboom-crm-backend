@@ -431,7 +431,7 @@ export class BusinessGrowthService {
     return this.businessProfile;
   }
 
-  async addProfilePhoto(photo: { url: string; tag: string }) {
+  async addProfilePhoto(photo: { url: string; tag?: string }) {
     if (!photo.url?.trim()) throw new BadRequestException('Photo URL is required');
     const newPhoto = {
       id: `PHT-${this.businessProfile.photos.length + 1}`,
