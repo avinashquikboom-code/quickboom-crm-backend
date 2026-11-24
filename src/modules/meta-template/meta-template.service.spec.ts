@@ -121,13 +121,13 @@ describe('MetaTemplateService', () => {
       mockIntegrationSettingsService.getIntegrationConfig.mockResolvedValue({ isEnabled: true, credentials: { accessToken: 'secret-token', businessAccountId: '123', appId: '456' } });
       jest.spyOn(axios, 'get').mockResolvedValueOnce({ data: { data: [] } } as any);
       const post = jest.spyOn(axios, 'post')
-        .mockResolvedValueOnce({ data: { id: 'upload:session_123?sig=valid_signature' } } as any)
+        .mockResolvedValueOnce({ data: { id: 'upload:MTphdHRhY2htZW50OjE0NGNkYjg4LWU0YWItNGY2My05MGRhLWZmYTAwODkzMjdlMT9maWxlX3R5cGU9aW1hZ2UlMkZqcGVnJmZpbGVfbGVuZ3RoPTE4OTQ0MyZmaWxlX25hbWU9aGVhZGVyLmpwZw==?sig=valid_signature' } } as any)
         .mockResolvedValueOnce({ data: { h: '2:sample_handle' } } as any)
         .mockResolvedValueOnce({ data: { id: 'meta-14', status: 'PENDING' } } as any);
       const result = await service.create({ name: 'Image', templateName: 'image', body: 'Hello', headerType: 'IMAGE', headerContent: 's3key:meta-templates/1/header.jpg' }, 1);
       expect(mockMediaService.readImage).toHaveBeenCalledWith('s3key:meta-templates/1/header.jpg', 1);
       expect(post.mock.calls[0][0]).toMatch(/456\/uploads$/);
-      expect(post.mock.calls[1][0]).toContain('upload%3Asession_123?sig=valid_signature');
+      expect(post.mock.calls[1][0]).toBe('https://graph.facebook.com/v21.0/upload:MTphdHRhY2htZW50OjE0NGNkYjg4LWU0YWItNGY2My05MGRhLWZmYTAwODkzMjdlMT9maWxlX3R5cGU9aW1hZ2UlMkZqcGVnJmZpbGVfbGVuZ3RoPTE4OTQ0MyZmaWxlX25hbWU9aGVhZGVyLmpwZw==?sig=valid_signature');
       expect(post.mock.calls[2][1]).toMatchObject({ components: [{ type: 'HEADER', format: 'IMAGE', example: { header_handle: ['2:sample_handle'] } }, { type: 'BODY', text: 'Hello' }] });
       expect(result.headerContent).toBe('s3key:meta-templates/1/header.jpg');
       jest.restoreAllMocks();
