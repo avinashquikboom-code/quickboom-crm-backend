@@ -107,6 +107,7 @@ handledBy: NestJS`);
       // causes Chromium-based browsers to reject the preflight.
     ],
     exposedHeaders: [
+      'Content-Disposition',
       'Content-Range',
       'X-Content-Range',
       'x-customer-id',

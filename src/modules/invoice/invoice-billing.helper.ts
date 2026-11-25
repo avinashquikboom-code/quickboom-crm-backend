@@ -179,12 +179,24 @@ export async function generateInvoicePaymentReceiptPdfBuffer(params: {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
+    const fontDirectories = [path.join(process.cwd(), 'dist/src/assets/fonts'), path.join(process.cwd(), 'dist/assets/fonts'), path.join(process.cwd(), 'src/assets/fonts')];
+    const fontDirectory = fontDirectories.find((dir) => fs.existsSync(path.join(dir, 'Roboto-Regular.ttf')) && fs.existsSync(path.join(dir, 'Roboto-Bold.ttf')));
+    if (fontDirectory) {
+      doc.registerFont('Helvetica', path.join(fontDirectory, 'Roboto-Regular.ttf'));
+      doc.registerFont('Helvetica-Bold', path.join(fontDirectory, 'Roboto-Bold.ttf'));
+    }
+
     // Header brand strip
     doc.rect(0, 0, doc.page.width, 84).fill('#173D30');
-    const logoPath = path.resolve(process.cwd(), 'public', 'logo.png');
-    if (fs.existsSync(logoPath)) {
+    const logoPath = [
+      path.join(process.cwd(), 'dist/src/assets/images/logo.png'),
+      path.join(process.cwd(), 'dist/assets/images/logo.png'),
+      path.join(process.cwd(), 'src/assets/images/logo.png'),
+    ].find((candidate) => fs.existsSync(candidate));
+    if (logoPath) {
       try {
-        doc.image(logoPath, 45, 20, { height: 42 });
+        doc.roundedRect(45, 14, 112, 56, 5).fill('#FFFFFF');
+        doc.image(logoPath, 51, 18, { fit: [100, 48], align: 'center', valign: 'center' });
       } catch {}
     }
 
@@ -198,6 +210,7 @@ export async function generateInvoicePaymentReceiptPdfBuffer(params: {
       'FP 68, Gorwa Ankodia, 30MTRS, Canal Ring Road, Gorwa, Vadodara, Gujarat 391330\nsupport@quikboom.in',
       45,
       yStart + 18,
+      { width: 265 },
     );
 
     doc.font('Helvetica-Bold').fontSize(10).fillColor('#111827').text('Received From:', 340, yStart);
@@ -205,6 +218,7 @@ export async function generateInvoicePaymentReceiptPdfBuffer(params: {
       `${params.customerName}\n${params.customerEmail || ''}\n${params.customerPhone || ''}`.trim(),
       340,
       yStart + 16,
+      { width: 205 },
     );
 
     // Summary Box
@@ -244,7 +258,7 @@ export async function generateInvoicePaymentReceiptPdfBuffer(params: {
         doc.rect(45, curY - 4, 505, 26).fill('#F8FAFC');
       }
       doc.fillColor('#1E293B').font(idx === rows.length - 1 ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).text(label, 58, curY + 2);
-      doc.text(val, 450, curY + 2, { width: 85, align: 'right' });
+      doc.font('Helvetica-Bold').text(val, 450, curY + 2, { width: 85, align: 'right' });
       curY += 28;
     });
 
