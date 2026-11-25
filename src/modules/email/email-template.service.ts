@@ -4,6 +4,7 @@ import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { PreviewEmailTemplateDto } from './dto/preview-email-template.dto';
 import { BulkDeleteEmailTemplatesDto, DeleteEmailTemplateDto } from './dto/bulk-delete-email-template.dto';
+import { resolveTemplateVariables } from './template-variable.util';
 
 export interface SystemTemplateDefinition {
   key: string;
@@ -487,6 +488,33 @@ Regards,
 QUIKBOOM Digital Marketing Agency
 
 {{email}}`,
+  },
+  {
+    key: 'QUIKBOOM_HOT_LEAD',
+    name: 'Hot Lead Email Template',
+    category: 'HOT_LEAD',
+    subject: "Let's Take the Next Step – {{company_name}}",
+    description: 'Sent to high-intent Hot Leads with personalized enquiry details and executive contact',
+    supportedVariables: ['customer_name', 'product_or_service', 'lead_source', 'employee_name', 'contact_number', 'company_name'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8e5; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8e5;">
+    <img src="{{logoUrl}}" alt="{{company_name}}" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
+  </div>
+  <h2 style="color: #123D32; margin-top: 0; margin-bottom: 16px; font-size: 20px;">Let's Take the Next Step</h2>
+  <p style="color: #142D25; font-size: 15px; margin-bottom: 12px;">Hi {{customer_name}},</p>
+  <p style="color: #475569; font-size: 15px; margin-bottom: 12px;">Thank you for showing interest in <strong>{{product_or_service}}</strong>!</p>
+  <p style="color: #475569; font-size: 15px; margin-bottom: 18px;">We're excited to connect with you and help you find the right solution.</p>
+  <div style="background-color: #F3F8F5; border: 1px solid #E2E8E5; padding: 16px; border-radius: 8px; margin: 18px 0;">
+    <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #123D32;">Your Enquiry Details:</p>
+    <p style="margin: 4px 0; font-size: 14px; color: #142D25;">• <strong>Interested In:</strong> {{product_or_service}}</p>
+    <p style="margin: 4px 0; font-size: 14px; color: #142D25;">• <strong>Lead Source:</strong> {{lead_source}}</p>
+    <p style="margin: 4px 0; font-size: 14px; color: #142D25;">• <strong>Assigned Executive:</strong> {{employee_name}}</p>
+  </div>
+  <p style="color: #142D25; font-size: 14px; margin-bottom: 14px;">Contact us: <strong>{{contact_number}}</strong></p>
+  <p style="color: #475569; font-size: 14px; margin-bottom: 20px;">We look forward to hearing from you!</p>
+  <hr style="border: 0; border-top: 1px solid #e2e8e5; margin: 20px 0;" />
+  <p style="color: #64748B; font-size: 13px; margin-bottom: 0;">Best Regards,<br /><strong style="color: #123D32;">{{company_name}}</strong></p>
+</div>`,
   },
   {
     key: 'QUIKBOOM_LOST',

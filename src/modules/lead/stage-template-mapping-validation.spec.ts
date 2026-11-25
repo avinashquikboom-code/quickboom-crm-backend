@@ -46,7 +46,7 @@ describe('default stage seeding', () => {
     await repository.ensureDefaultStagesForCustomer(3);
 
     expect(upsert).toHaveBeenCalledTimes(13);
-    expect(upsert.mock.calls.map(([args]) => args.create.key)).toContain('HOT_DEAL');
+    expect(upsert.mock.calls.map(([args]) => args.create.key)).toContain('HOT_LEAD');
     expect(upsert.mock.calls[3][0].create).toMatchObject({
       name: 'Details Sent', key: 'DETAILS_SENT', emailTemplateId: null, whatsappTemplateId: null,
     });

@@ -4,7 +4,7 @@ import { VisitorLeadActionsGuard } from './visitor-lead-actions.guard';
 import { ForbiddenException } from '@nestjs/common';
 
 // These are isolated fixture identifiers, never production stage/employee IDs.
-const stages = ['NEW', 'CONTACTED', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST', 'HOT_DEAL'].map((key, i) => ({id:101+i,key,name:key,customerId:7,deletedAt:null,isActive:true}));
+const stages = ['NEW', 'CONTACTED', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST', 'HOT_LEAD'].map((key, i) => ({id:101+i,key,name:key,customerId:7,deletedAt:null,isActive:true}));
 const scheduled = stages.find(s => s.key === 'VISIT_SCHEDULED')!;
 const done = stages.find(s => s.key === 'VISIT_DONE')!;
 const admin = {id:1,role:'ADMIN',customerId:7};
@@ -84,9 +84,9 @@ describe('pipeline stage and Visitor assignment contract', () => {
     expect(result.meta.total).toBe(1);
     expect(f.prisma.lead.count.mock.calls[0][0].where).toEqual(f.prisma.lead.findMany.mock.calls[0][0].where);
   });
-  it('adds and removes a lead from the Hot Deal stage filter as its stage changes', async () => {
+  it('adds and removes a lead from the Hot Lead stage filter as its stage changes', async () => {
     const f = fixture();
-    const hot = stages.find(stage => stage.key === 'HOT_DEAL')!;
+    const hot = stages.find(stage => stage.key === 'HOT_LEAD')!;
     const lead = f.leads[0];
     lead.stageId = hot.id;
     lead.stage = hot;

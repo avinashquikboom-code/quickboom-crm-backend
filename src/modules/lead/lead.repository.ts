@@ -3815,7 +3815,7 @@ export class LeadRepository {
       { key: 'PROPOSAL_SENT',   name: 'Proposal Sent',    sortOrder: 8,  color: '#7C3AED', bgColor: '#EDE9FE', borderColor: '#DDD6FE' },
       { key: 'NEGOTIATION',     name: 'Negotiation',      sortOrder: 9,  color: '#B45309', bgColor: '#FFFBEB', borderColor: '#FDE68A' },
       { key: 'FINAL_CALL',      name: 'Final Call',       sortOrder: 10, color: '#C2410C', bgColor: '#FFF7ED', borderColor: '#FED7AA' },
-      { key: 'HOT_DEAL',        name: 'Hot Deal',         sortOrder: 10, color: '#EA580C', bgColor: '#FFF7ED', borderColor: '#FED7AA' },
+      { key: 'HOT_LEAD',        name: 'Hot Lead',         sortOrder: 10, color: '#EA580C', bgColor: '#FFF7ED', borderColor: '#FED7AA' },
       { key: 'WON',             name: 'Won',              sortOrder: 11, color: '#15803D', bgColor: '#DCFCE7', borderColor: '#BBF7D0' },
       { key: 'LOST',            name: 'Lost',             sortOrder: 12, color: '#DC2626', bgColor: '#FFF1F2', borderColor: '#FECDD3' },
     ];
