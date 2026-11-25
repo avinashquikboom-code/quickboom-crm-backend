@@ -1,14 +1,18 @@
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QueryReportDto, ExportReportDto } from './dto/report.dto';
 import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezone.util';
 import { REPORT_CATALOG, REPORT_CATEGORIES, reportById, ReportDefinition } from './report-catalog';
 import PDFDocument = require('pdfkit');
 import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
+import { FinancialMetricsService } from '../invoice/financial-metrics.service';
 
 @Injectable()
 export class ReportService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly financialMetrics?: FinancialMetricsService,
+  ) {}
 
   /**
    * Helper: Parse dates into start and end Date objects in IST
@@ -43,8 +47,12 @@ export class ReportService {
    * Returns aggregated high-level KPIs calculated dynamically from DB.
    */
   async getSummaryReport(customerId: number | string, query?: QueryReportDto) {
-    const numCustomerId = Number(customerId) || 1;
-    const { startDate, endDate } = this.resolveDateRange(query?.dateFrom, query?.dateTo);
+    const parsedId = Number(customerId);
+    const hasCustomer = !Number.isNaN(parsedId) && parsedId > 0;
+    const custFilter = hasCustomer ? { customerId: parsedId } : {};
+    const fromStr = (query as any)?.fromDate || query?.dateFrom;
+    const toStr = (query as any)?.toDate || query?.dateTo;
+    const { startDate, endDate } = this.resolveDateRange(fromStr, toStr);
 
     const [
       totalEmployees,
@@ -56,82 +64,46 @@ export class ReportService {
       salarySummary,
       visitsCount,
       revenueSummary,
+      financial,
     ] = await Promise.all([
-      // Total employees registered
-      this.prisma.employee.count({
-        where: { customerId: numCustomerId },
-      }),
-      // Active employees
-      this.prisma.employee.count({
-        where: { customerId: numCustomerId, status: 'ACTIVE' },
-      }),
-      // Attendance totals in range
+      this.prisma.employee.count({ where: custFilter }),
+      this.prisma.employee.count({ where: { ...custFilter, status: 'ACTIVE' } }),
       this.prisma.attendance.aggregate({
-        where: {
-          customerId: numCustomerId,
-          date: { gte: startDate, lte: endDate },
-        },
+        where: { ...custFilter, date: { gte: startDate, lte: endDate } },
         _count: true,
-        _sum: {
-          workingHours: true,
-          workingMinutes: true,
-          breakDuration: true,
-        },
+        _sum: { workingHours: true, workingMinutes: true, breakDuration: true },
       }),
-      // Attendance status breakdown
       this.prisma.attendance.groupBy({
         by: ['status'],
-        where: {
-          customerId: numCustomerId,
-          date: { gte: startDate, lte: endDate },
-        },
+        where: { ...custFilter, date: { gte: startDate, lte: endDate } },
         _count: { status: true },
       }),
-      // Leaves pending
       this.prisma.leaveRequest.count({
-        where: {
-          customerId: numCustomerId,
-          status: 'PENDING',
-          createdAt: { gte: startDate, lte: endDate },
-        },
+        where: { ...custFilter, status: 'PENDING', createdAt: { gte: startDate, lte: endDate } },
       }),
-      // Leaves approved
       this.prisma.leaveRequest.count({
-        where: {
-          customerId: numCustomerId,
-          status: 'APPROVED',
-          createdAt: { gte: startDate, lte: endDate },
-        },
+        where: { ...custFilter, status: 'APPROVED', createdAt: { gte: startDate, lte: endDate } },
       }),
-      // Payroll / Salary aggregate
       this.prisma.salarySlip.aggregate({
-        where: {
-          customerId: numCustomerId,
-          generatedAt: { gte: startDate, lte: endDate },
-        },
-        _sum: {
-          grossSalary: true,
-          totalDeductions: true,
-          netSalary: true,
-        },
+        where: { ...custFilter, generatedAt: { gte: startDate, lte: endDate } },
+        _sum: { grossSalary: true, totalDeductions: true, netSalary: true },
         _count: true,
       }),
-      // Client / Lead Visits
       this.prisma.visit.count({
-        where: {
-          customerId: numCustomerId,
-          date: { gte: startDate, lte: endDate },
-        },
+        where: { ...custFilter, date: { gte: startDate, lte: endDate } },
       }),
-      // Revenue / Invoices
       this.prisma.invoice.aggregate({
-        where: {
-          customerId: numCustomerId,
-          createdAt: { gte: startDate, lte: endDate },
-        },
+        where: { ...custFilter, deletedAt: null, issueDate: { gte: startDate, lte: endDate } },
         _sum: { totalAmount: true },
         _count: true,
       }),
+      this.financialMetrics
+        ? this.financialMetrics.getFinancialSummary({
+            customerId: hasCustomer ? parsedId : null,
+            fromDate: fromStr,
+            toDate: toStr,
+          })
+        : Promise.resolve(null),
     ]);
 
     // Format status breakdown

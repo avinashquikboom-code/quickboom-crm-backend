@@ -21,6 +21,9 @@ import PDFDocument = require('pdfkit');
 import { formatInrCurrency } from '../receipt/receipt.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { FinancialMetricsService } from './financial-metrics.service';
+import { getBusinessDayRange } from '../../common/utils/timezone.util';
+import { FinancialMetricsService } from './financial-metrics.service';
 import {
   roundCurrency,
   isOnlinePaymentMethod,
@@ -54,6 +57,7 @@ export class InvoiceService {
     private readonly prisma: PrismaService,
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly whatsappService?: WhatsappService,
+    @Optional() private readonly financialMetrics?: FinancialMetricsService,
   ) {}
 
   private parsePlanActivationFromNotes(notes?: string | null): Date | null {
@@ -224,9 +228,7 @@ export class InvoiceService {
 
         let fullBase = Number(firstPay.amount) || 0;
         let fullTax = Number(firstPay.taxAmount) || 0;
-        let fullTotal = roundCurrency(
-          paymentsGroup.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0),
-        );
+        let fullTotal = roundCurrency(fullBase + fullTax);
 
         if (sub) {
           const cycle = String(sub.billingCycle || firstPay.billingCycle || 'MONTHLY').toUpperCase();
@@ -245,17 +247,20 @@ export class InvoiceService {
           if (computedTotal > 0) {
             fullBase = taxable;
             fullTax = computedTax;
-            fullTotal = Math.max(computedTotal, totalPaid);
+            fullTotal = computedTotal;
           }
         }
 
         if (fullTotal <= 0) {
-          fullTotal = totalPaid;
+          fullTotal = roundCurrency(
+            paymentsGroup.reduce((sum, p) => sum + Number(p.totalAmount || p.amount || 0), 0),
+          );
           fullBase = roundCurrency(fullTotal / 1.18);
           fullTax = roundCurrency(fullTotal - fullBase);
         }
 
-        const balanceAmount = Math.max(0, roundCurrency(fullTotal - totalPaid));
+        const effectivePaid = Math.min(totalPaid, fullTotal);
+        const balanceAmount = Math.max(0, roundCurrency(fullTotal - effectivePaid));
         const isFullyPaid = balanceAmount <= 0.01;
         const resolvedMode = resolvePaymentModeFromTransactions(
           paymentsGroup.map((p) => ({
@@ -415,7 +420,20 @@ export class InvoiceService {
 
   async findAll(
     customerId: number | string,
-    query: { status?: InvoiceStatus | string; page?: number; limit?: number; search?: string; customerId?: number | string; clientId?: number | string },
+    query: {
+      status?: InvoiceStatus | string;
+      page?: number;
+      limit?: number;
+      search?: string;
+      customerId?: number | string;
+      clientId?: number | string;
+      fromDate?: string;
+      toDate?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      paymentMode?: string;
+      subscriptionPlanId?: number | string;
+    },
     user?: any,
   ) {
     const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
@@ -426,13 +444,30 @@ export class InvoiceService {
 
     if (numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0) {
       where.customerId = numCustomerId;
-      // Auto-reconcile invoices for this customer
       await this.reconcileCustomerInvoices(numCustomerId);
     } else if (!isSuperAdmin) {
       throw new UnauthorizedException('Customer context is required');
     } else {
-      // Platform-wide Super Admin view: auto-reconcile across all active customers with payments
       await this.reconcileAllCustomerInvoices();
+    }
+
+    const fromStr = query.fromDate || query.dateFrom;
+    const toStr = query.toDate || query.dateTo;
+    if (fromStr || toStr) {
+      const start = fromStr ? getBusinessDayRange(fromStr).start : undefined;
+      const end = toStr ? getBusinessDayRange(toStr).end : undefined;
+      where.issueDate = {
+        ...(start ? { gte: start } : {}),
+        ...(end ? { lte: end } : {}),
+      };
+    }
+
+    if (query.subscriptionPlanId && Number(query.subscriptionPlanId) > 0) {
+      where.subscription = { planId: Number(query.subscriptionPlanId) };
+    }
+
+    if (query.paymentMode && query.paymentMode !== 'ALL') {
+      where.paymentMode = String(query.paymentMode).toUpperCase();
     }
 
     const page = Math.max(Number(query.page) || 1, 1);
@@ -445,13 +480,14 @@ export class InvoiceService {
         where.OR = [
           { status: InvoiceStatus.OVERDUE },
           {
-            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.SENT, InvoiceStatus.DRAFT] },
+            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID] },
             dueDate: { lt: new Date() },
+            balanceAmount: { gt: 0.01 },
           },
         ];
       } else if (rawStatus === 'PENDING' || rawStatus === 'UNPAID') {
         where.status = {
-          in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT],
+          in: [InvoiceStatus.PENDING, InvoiceStatus.SENT],
         };
       } else if (Object.values(InvoiceStatus).includes(rawStatus as InvoiceStatus)) {
         where.status = rawStatus as InvoiceStatus;
@@ -460,84 +496,63 @@ export class InvoiceService {
 
     if (query.search && query.search.trim()) {
       const q = query.search.trim();
-      where.OR = [
+      const searchConds = [
         { invoiceNo: { contains: q, mode: 'insensitive' } },
         { contact: { firstName: { contains: q, mode: 'insensitive' } } },
         { contact: { lastName: { contains: q, mode: 'insensitive' } } },
         { contact: { email: { contains: q, mode: 'insensitive' } } },
         { customer: { name: { contains: q, mode: 'insensitive' } } },
         { customer: { companyName: { contains: q, mode: 'insensitive' } } },
-        { notes: { contains: q, mode: 'insensitive' } },
+        { planName: { contains: q, mode: 'insensitive' } },
       ];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: searchConds }];
+        delete where.OR;
+      } else {
+        where.OR = searchConds;
+      }
     }
 
-    console.log('[INVOICE_QUERY]', {
-      queryParameters: query,
-      resolvedCustomerCompany: numCustomerId || 'ALL_SUPER_ADMIN',
-      databaseQuery: JSON.stringify(where),
-    });
-
-    let items: any[] = [];
-    let total = 0;
-
-    const summaryBaseWhere = numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0
-      ? { customerId: numCustomerId, deletedAt: null }
-      : { deletedAt: null };
-
-    let totalInvoicesCount = 0;
-    let paidInvoicesCount = 0;
-    let pendingInvoicesCount = 0;
-    let overdueInvoicesCount = 0;
-
-    try {
-      [items, total, totalInvoicesCount, paidInvoicesCount, pendingInvoicesCount, overdueInvoicesCount] = await Promise.all([
-        this.prisma.invoice.findMany({
-          where,
-          skip,
-          take: limit,
-          orderBy: { issueDate: 'desc' },
-          include: {
-            contact: true,
-            customer: true,
-            items: true,
+    const [items, total, financialSummary, upcomingBillingCount] = await Promise.all([
+      this.prisma.invoice.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { issueDate: 'desc' },
+        include: {
+          contact: true,
+          customer: true,
+          items: true,
+          payments: { orderBy: { paidAt: 'desc' } },
+          subscription: {
+            include: {
+              plan: true,
+              coupon: true,
+              installments: { orderBy: { installmentNumber: 'asc' } },
+            },
           },
-        }),
-        this.prisma.invoice.count({ where }),
-        this.prisma.invoice.count({ where: summaryBaseWhere }),
-        this.prisma.invoice.count({
-          where: {
-            ...summaryBaseWhere,
-            status: InvoiceStatus.PAID,
-          },
-        }),
-        this.prisma.invoice.count({
-          where: {
-            ...summaryBaseWhere,
-            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT] },
-          },
-        }),
-        this.prisma.invoice.count({
-          where: {
-            ...summaryBaseWhere,
-            OR: [
-              { status: InvoiceStatus.OVERDUE },
-              {
-                status: { in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT] },
-                dueDate: { lt: new Date() },
-              },
-            ],
-          },
-        }),
-      ]);
-    } catch (err: any) {
-      console.error('[INVOICE_ERROR]', {
-        errorName: err?.name || 'Error',
-        errorMessage: err?.message || String(err),
-        prismaErrorCode: err?.code || null,
-      });
-      throw err;
-    }
+        },
+      }),
+      this.prisma.invoice.count({ where }),
+      this.financialMetrics
+        ? this.financialMetrics.getFinancialSummary({
+            customerId: numCustomerId > 0 ? numCustomerId : null,
+            fromDate: fromStr,
+            toDate: toStr,
+            paymentMode: query.paymentMode,
+            subscriptionPlanId: query.subscriptionPlanId ? Number(query.subscriptionPlanId) : null,
+          })
+        : Promise.resolve(null),
+      this.prisma.customerSubscription.count({
+        where: {
+          ...(numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {}),
+          status: 'ACTIVE',
+          autoRenew: true,
+        },
+      }),
+    ]);
 
+    const now = new Date();
     const formatted = await Promise.all(items.map(async (inv) => {
       const planDates = await this.resolveInvoicePlanDates(inv);
       const contactFullName = inv.contact
@@ -545,28 +560,35 @@ export class InvoiceService {
         : '';
       const clientDisplayName = contactFullName || inv.customer?.name || inv.customer?.companyName || 'General Client';
 
-      // Parse payment mode and plan from notes if recorded during subscription activation
-      let paymentMode = 'RAZORPAY';
-      if (inv.notes && inv.notes.includes('Payment Method:')) {
-        const afterMethod = inv.notes.split('Payment Method:')[1];
-        if (afterMethod) {
-          paymentMode = afterMethod.split('.')[0].trim();
-        }
-      }
-
-      let planName = 'CRM Subscription Plan';
-      if (inv.notes && inv.notes.includes('Subscription payment for')) {
-        const afterSub = inv.notes.split('Subscription payment for')[1];
-        if (afterSub) {
-          planName = afterSub.split(/\s*\(|\.\s*(?:Total Paid|Purchase|Plan activation|Payment Method|Order):/i)[0].trim();
-        }
-      }
+      const calc = this.financialMetrics
+        ? this.financialMetrics.computeAuthoritativeInvoice(inv, now)
+        : {
+            subTotal: Number(inv.subTotal || 0),
+            discountAmount: Number(inv.discountAmount || 0),
+            taxAmount: Number(inv.taxAmount || 0),
+            totalAmount: Number(inv.totalAmount || 0),
+            paidAmount: Number(inv.paidAmount || 0),
+            balanceAmount: Number(inv.balanceAmount ?? Math.max(0, Number(inv.totalAmount || 0) - Number(inv.paidAmount || 0))),
+            status: inv.status,
+            isOverdue: Boolean(inv.isOverdue),
+            paymentMode: inv.paymentMode || 'NOT_PAID',
+            paymentMethod: null,
+            paymentMethods: [],
+            lastPaymentDate: inv.lastPaymentDate || null,
+            planName: inv.planName || 'CRM Subscription Plan',
+            billingCycle: inv.billingCycle || null,
+            nextInstallmentDate: inv.nextInstallmentDate || null,
+            nextInstallmentAmount: inv.nextInstallmentAmount != null ? Number(inv.nextInstallmentAmount) : null,
+            nextBillingDate: inv.nextBillingDate || null,
+            nextBillingAmount: inv.nextBillingAmount != null ? Number(inv.nextBillingAmount) : null,
+          };
 
       return {
         id: inv.id,
         invoiceNumber: inv.invoiceNo,
         invoiceNo: inv.invoiceNo,
         customerId: inv.customerId,
+        subscriptionId: inv.subscriptionId,
         clientName: clientDisplayName,
         customerName: inv.customer?.name || 'General Client',
         companyName: inv.customer?.companyName || inv.customer?.name || 'General Client',
@@ -578,42 +600,76 @@ export class InvoiceService {
         expiryDate: planDates.expiryDate,
         planEndDate: planDates.expiryDate,
         dueDate: inv.dueDate,
-        amount: `₹${Number(inv.totalAmount || 0).toLocaleString('en-IN')}`,
-        subTotal: Number(inv.subTotal || 0),
-        taxAmount: Number(inv.taxAmount || 0),
-        tax: Number(inv.taxAmount || 0),
-        totalAmount: Number(inv.totalAmount || 0),
-        total: Number(inv.totalAmount || 0),
-        nextInstallmentAmount: inv.nextInstallmentAmount == null ? null : Number(inv.nextInstallmentAmount),
-        status: inv.status,
-        paymentStatus: inv.status,
-        paymentMode,
-        paymentDate: inv.status === InvoiceStatus.PAID ? inv.issueDate : null,
-        planName,
+        amount: `₹${calc.totalAmount.toLocaleString('en-IN')}`,
+        subTotal: calc.subTotal,
+        discountAmount: calc.discountAmount,
+        taxAmount: calc.taxAmount,
+        tax: calc.taxAmount,
+        totalAmount: calc.totalAmount,
+        total: calc.totalAmount,
+        paidAmount: calc.paidAmount,
+        balanceAmount: calc.balanceAmount,
+        outstandingBalance: calc.balanceAmount,
+        status: calc.status,
+        paymentStatus: calc.status,
+        isOverdue: calc.isOverdue,
+        paymentMode: calc.paymentMode,
+        paymentMethod: calc.paymentMethod,
+        paymentMethods: calc.paymentMethods,
+        lastPaymentDate: calc.lastPaymentDate,
+        paymentDate: calc.lastPaymentDate,
+        nextInstallmentDate: calc.nextInstallmentDate,
+        nextInstallmentAmount: calc.nextInstallmentAmount,
+        nextBillingDate: calc.nextBillingDate,
+        nextBillingAmount: calc.nextBillingAmount,
+        billingCycle: calc.billingCycle,
+        planName: calc.planName,
         notes: inv.notes,
         contact: inv.contact,
         customer: inv.customer,
         items: inv.items || [],
+        payments: inv.payments || [],
       };
     }));
 
     const totalPages = Math.ceil(total / limit) || 1;
+    const c = financialSummary?.counts || {
+      total,
+      paid: 0,
+      partiallyPaid: 0,
+      pending: 0,
+      overdue: 0,
+      draft: 0,
+      cancelled: 0,
+    };
 
     return {
       data: formatted,
       items: formatted,
       summary: {
-        totalInvoices: totalInvoicesCount,
-        paidInvoices: paidInvoicesCount,
-        pendingPayments: pendingInvoicesCount,
-        pendingInvoices: pendingInvoicesCount,
-        overdueInvoices: overdueInvoicesCount,
+        totalInvoices: c.total,
+        paidInvoices: c.paid,
+        partiallyPaidInvoices: c.partiallyPaid,
+        pendingPayments: c.pending,
+        pendingInvoices: c.pending,
+        overdueInvoices: c.overdue,
+        draftInvoices: c.draft,
+        cancelledInvoices: c.cancelled,
+        totalInvoiceAmount: financialSummary?.totalInvoicedAmount ?? 0,
+        totalBilledAmount: financialSummary?.totalInvoicedAmount ?? 0,
+        totalCollected: financialSummary?.totalCollectedAmount ?? 0,
+        totalCollectedAmount: financialSummary?.totalCollectedAmount ?? 0,
+        outstandingBalance: financialSummary?.outstandingReceivables ?? 0,
+        overdueAmount: financialSummary?.overdueAmount ?? 0,
+        upcomingBillingAmount: financialSummary?.upcomingBillingAmount ?? 0,
+        upcomingCollectionsTotal: financialSummary?.upcomingCollectionsTotal ?? 0,
+        onlineCollections: financialSummary?.onlineCollections ?? 0,
+        offlineCollections: financialSummary?.offlineCollections ?? 0,
+        refundedAmount: financialSummary?.refundedAmount ?? 0,
       },
       counts: {
-        total: totalInvoicesCount,
-        paid: paidInvoicesCount,
-        pending: pendingInvoicesCount,
-        overdue: overdueInvoicesCount,
+        ...c,
+        upcomingBilling: upcomingBillingCount,
       },
       pagination: {
         page,
@@ -1498,5 +1554,217 @@ export class InvoiceService {
         });
       }
     }
+  }
+
+  async getUpcomingBilling(customerId: number | string | undefined, user?: any) {
+    const isSuperAdmin = user ? isUserSuperAdmin(user) : false;
+    const numCust = Number(customerId);
+    const where: any = {
+      status: 'ACTIVE',
+      autoRenew: true,
+      ...(numCust > 0 ? { customerId: numCust } : !isSuperAdmin ? { customerId: -1 } : {}),
+    };
+
+    const subs = await this.prisma.customerSubscription.findMany({
+      where,
+      include: { customer: true, plan: true, coupon: true },
+      orderBy: { endDate: 'asc' },
+    });
+
+    return subs.map((sub) => {
+      const next = computeNextBillingFromSubscription(sub);
+      const baseAmount =
+        sub.customPrice != null && Number(sub.customPrice) > 0
+          ? Number(sub.customPrice)
+          : String(sub.billingCycle || 'MONTHLY').toUpperCase() === 'YEARLY'
+            ? Number(sub.plan?.yearlyPrice || 0)
+            : Number(sub.plan?.monthlyPrice || 0);
+      const discount = Number(sub.discountAmount || 0);
+      const taxable = Math.max(0, roundCurrency(baseAmount - discount));
+      const tax = roundCurrency(taxable * 0.18);
+      return {
+        subscriptionId: sub.id,
+        customerId: sub.customerId,
+        customerName: sub.customer?.name || sub.customer?.companyName || 'Customer',
+        companyName: sub.customer?.companyName || sub.customer?.name || 'Customer',
+        planName: sub.plan?.name || 'CRM Plan',
+        billingCycle: sub.billingCycle || 'MONTHLY',
+        nextBillingDate: next.nextBillingDate || sub.endDate,
+        estimatedAmount: next.nextBillingAmount ?? roundCurrency(taxable + tax),
+        taxAmount: tax,
+        discountAmount: discount,
+        renewalStatus: sub.autoRenew ? 'AUTO_RENEW' : 'MANUAL',
+        status: sub.status,
+      };
+    });
+  }
+
+  async recordPayment(customerId: number | string, id: number | string, dto: RecordInvoicePaymentDto, user: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    const amount = roundCurrency(Number(dto.amount));
+    if (!amount || amount <= 0) {
+      throw new BadRequestException('Payment amount must be greater than zero.');
+    }
+
+    const existingPayments = await this.prisma.invoicePayment.findMany({
+      where: { invoiceId: invoice.id },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    const calc = this.financialMetrics
+      ? this.financialMetrics.computeAuthoritativeInvoice({ ...invoice, payments: existingPayments })
+      : { totalAmount: Number(invoice.totalAmount || 0), paidAmount: Number(invoice.paidAmount || 0), balanceAmount: Number(invoice.balanceAmount || 0) };
+
+    if (amount > calc.balanceAmount + 0.01) {
+      throw new BadRequestException(`Payment amount (₹${amount}) exceeds remaining balance (₹${calc.balanceAmount}).`);
+    }
+
+    const paymentMode = dto.paymentMode || (isOnlinePaymentMethod(dto.paymentMethod) ? 'ONLINE' : 'OFFLINE');
+    const receiptNo = `QUIKBOOM-RECEIPT-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+
+    const created = await this.prisma.invoicePayment.create({
+      data: {
+        invoiceId: invoice.id,
+        customerId: invoice.customerId,
+        amount,
+        paymentMode,
+        paymentMethod: dto.paymentMethod || (paymentMode === 'ONLINE' ? 'RAZORPAY' : 'BANK_TRANSFER'),
+        transactionRef: dto.transactionRef || null,
+        receiptNo,
+        proofUrl: dto.proofUrl || null,
+        notes: dto.notes || null,
+        status: 'VERIFIED',
+        paidAt,
+        recordedByUserId: user?.id ? Number(user.id) : null,
+      },
+    });
+
+    const allPayments = [created, ...existingPayments];
+    const updatedCalc = this.financialMetrics
+      ? this.financialMetrics.computeAuthoritativeInvoice({ ...invoice, payments: allPayments })
+      : {
+          paidAmount: roundCurrency(calc.paidAmount + amount),
+          balanceAmount: Math.max(0, roundCurrency(calc.balanceAmount - amount)),
+          status: calc.balanceAmount - amount <= 0.01 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+          paymentMode: resolvePaymentModeFromTransactions(allPayments),
+          isOverdue: false,
+        };
+
+    await this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        paidAmount: updatedCalc.paidAmount,
+        balanceAmount: updatedCalc.balanceAmount,
+        status: updatedCalc.status,
+        paymentMode: updatedCalc.paymentMode,
+        lastPaymentDate: paidAt,
+        nextInstallmentDate: dto.nextInstallmentDate ? new Date(dto.nextInstallmentDate) : updatedCalc.balanceAmount <= 0.01 ? null : invoice.nextInstallmentDate,
+        nextInstallmentAmount: dto.nextInstallmentAmount != null ? Number(dto.nextInstallmentAmount) : updatedCalc.balanceAmount <= 0.01 ? null : updatedCalc.balanceAmount,
+      },
+    });
+
+    return { payment: created, invoiceStatus: updatedCalc.status, paidAmount: updatedCalc.paidAmount, balanceAmount: updatedCalc.balanceAmount };
+  }
+
+  async getInvoicePayments(customerId: number | string, id: number | string, user: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    return this.prisma.invoicePayment.findMany({
+      where: { invoiceId: invoice.id },
+      orderBy: { paidAt: 'desc' },
+    });
+  }
+
+  async getPaymentReceiptPdf(customerId: number | string, id: number | string, paymentId: number | string, user: any, res: Response) {
+    const invoice = await this.findOne(customerId, id, user);
+    const payment = await this.prisma.invoicePayment.findFirst({
+      where: { id: Number(paymentId), invoiceId: invoice.id },
+    });
+    if (!payment) throw new NotFoundException('Payment receipt not found.');
+
+    const pdfBuffer = await generateInvoicePaymentReceiptPdfBuffer({
+      receiptNo: payment.receiptNo || `QUIKBOOM-RECEIPT-${payment.id}`,
+      invoiceNo: invoice.invoiceNo,
+      customerName: invoice.customer?.companyName || invoice.customer?.name || 'Customer',
+      customerEmail: invoice.customer?.email || '',
+      planName: invoice.planName || 'CRM Subscription Plan',
+      paidAt: payment.paidAt || payment.createdAt,
+      amountPaid: Number(payment.amount || 0),
+      totalInvoiceAmount: Number(invoice.totalAmount || 0),
+      remainingBalance: Number(invoice.balanceAmount || 0),
+      paymentMode: payment.paymentMode,
+      paymentMethod: payment.paymentMethod,
+      transactionRef: payment.transactionRef,
+    });
+
+    const filename = `${(payment.receiptNo || `QUIKBOOM-RECEIPT-${payment.id}`).replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.end(pdfBuffer);
+  }
+
+  async rescheduleInstallment(customerId: number | string, id: number | string, dto: RescheduleInstallmentDto, user: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    return this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        nextInstallmentDate: new Date(dto.nextInstallmentDate),
+        ...(dto.nextInstallmentAmount != null ? { nextInstallmentAmount: Number(dto.nextInstallmentAmount) } : {}),
+      },
+    });
+  }
+
+  async generatePaymentLink(customerId: number | string, id: number | string, dto: GeneratePaymentLinkDto, user: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    const token = crypto.randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + (dto.expiresInDays || 7) * 86400000);
+    await this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        paymentLinkToken: token,
+        paymentLinkExpiresAt: expiresAt,
+        paymentLinkAllowPartial: Boolean(dto.allowPartial),
+      },
+    });
+    const baseUrl = process.env.CUSTOMER_PORTAL_URL || 'https://app.qbapp.online';
+    return {
+      token,
+      url: `${baseUrl}/pay/invoice/${invoice.id}?token=${token}`,
+      expiresAt,
+      allowPartial: Boolean(dto.allowPartial),
+    };
+  }
+
+  async sendCommunication(customerId: number | string, id: number | string, dto: SendInvoiceCommunicationDto, user: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    const recipient = dto.recipient || invoice.customer?.email || invoice.customer?.phone || '';
+    const log = await this.prisma.invoiceCommunicationLog.create({
+      data: {
+        invoiceId: invoice.id,
+        customerId: invoice.customerId,
+        channel: dto.channel || 'EMAIL',
+        messageType: dto.messageType || 'INVOICE',
+        recipient,
+        status: recipient ? 'SENT' : 'FAILED',
+        sentByUserId: user?.id ? Number(user.id) : null,
+      },
+    });
+    return log;
+  }
+
+  async cancelInvoice(customerId: number | string, id: number | string, dto: CancelInvoiceDto, user: any) {
+    const invoice = await this.findOne(customerId, id, user);
+    if (Number(invoice.paidAmount || 0) > 0 || invoice.status === InvoiceStatus.PAID) {
+      throw new BadRequestException('Cannot cancel an invoice that already has verified payments.');
+    }
+    return this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: InvoiceStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelReason: dto.reason || 'Cancelled by administrator',
+      },
+    });
   }
 }

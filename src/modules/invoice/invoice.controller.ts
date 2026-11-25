@@ -13,7 +13,16 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { InvoiceService } from './invoice.service';
-import { CreateInvoiceDto, UpdateInvoiceDto, BulkDeleteInvoiceDto } from './dto/invoice.dto';
+import {
+  CreateInvoiceDto,
+  UpdateInvoiceDto,
+  BulkDeleteInvoiceDto,
+  RecordInvoicePaymentDto,
+  RescheduleInstallmentDto,
+  GeneratePaymentLinkDto,
+  CancelInvoiceDto,
+  SendInvoiceCommunicationDto,
+} from './dto/invoice.dto';
 import { InvoiceStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -50,27 +59,20 @@ export class InvoiceController {
     @Query('limit') limit?: string,
     @Query('customerId') queryCustomerId?: string,
     @Query('clientId') queryClientId?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('paymentMode') paymentMode?: string,
+    @Query('subscriptionPlanId') subscriptionPlanId?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const explicitCustomer = queryCustomerId || queryClientId;
-    // For SUPER_ADMIN without explicit customer query, do not restrict to any customer (show all platform invoices).
-    // For normal customer or tenant admin, scope to their customerId.
     const targetCustomerId = explicitCustomer || (isSuperAdmin ? undefined : customerId);
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 20;
 
-    console.log('[INVOICE_DEBUG]', {
-      userId: user?.id,
-      role: user?.role,
-      isSuperAdmin,
-      explicitCustomer,
-      targetCustomerId: targetCustomerId || 'ALL_PLATFORM',
-      page: pageNum,
-      limit: limitNum,
-      status,
-    });
-
-    const response = await this.invoiceService.findAll(
+    return this.invoiceService.findAll(
       targetCustomerId,
       {
         status: status as any,
@@ -78,18 +80,15 @@ export class InvoiceController {
         customerId: queryCustomerId || queryClientId,
         page: pageNum,
         limit: limitNum,
+        fromDate,
+        toDate,
+        dateFrom,
+        dateTo,
+        paymentMode,
+        subscriptionPlanId,
       },
       user,
     );
-
-    console.log('[ADMIN_INVOICE_RESPONSE]', {
-      status: 200,
-      count: response?.data?.length || response?.items?.length || 0,
-      total: response?.pagination?.total || response?.meta?.total || 0,
-      summary: response?.summary,
-    });
-
-    return response;
   }
 
   @Get('customers/:customerId/invoices')
@@ -116,6 +115,13 @@ export class InvoiceController {
     @Query('limit') limit?: string,
   ) {
     return this.findAll(custId, user, status, search, page, limit, custId);
+  }
+
+  @Get('upcoming-billing')
+  @ApiOperation({ summary: 'Get upcoming recurring subscription billing schedule' })
+  async getUpcomingBilling(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {
+    const targetCustomerId = isUserSuperAdmin(user) ? undefined : customerId;
+    return this.invoiceService.getUpcomingBilling(targetCustomerId, user);
   }
 
   @Get(':id')
@@ -190,6 +196,83 @@ export class InvoiceController {
       );
     }
     return this.invoiceService.bulkRemove(resolvedIds, user);
+  }
+
+  @Post(':id/record-payment')
+  @ApiOperation({ summary: 'Record a verified or manual payment against an invoice' })
+  async recordPayment(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: RecordInvoicePaymentDto,
+  ) {
+    return this.invoiceService.recordPayment(customerId, id, dto, user);
+  }
+
+  @Get(':id/payments')
+  @ApiOperation({ summary: 'List verified payment history for an invoice' })
+  async getInvoicePayments(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.invoiceService.getInvoicePayments(customerId, id, user);
+  }
+
+  @Get(':id/payments/:paymentId/receipt')
+  @ApiOperation({ summary: 'Download PDF receipt for a specific invoice payment' })
+  async getPaymentReceipt(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Res() res: Response,
+  ) {
+    return this.invoiceService.getPaymentReceiptPdf(customerId, id, paymentId, user, res);
+  }
+
+  @Post(':id/reschedule-installment')
+  @ApiOperation({ summary: 'Reschedule next installment date/amount' })
+  async rescheduleInstallment(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: RescheduleInstallmentDto,
+  ) {
+    return this.invoiceService.rescheduleInstallment(customerId, id, dto, user);
+  }
+
+  @Post(':id/payment-link')
+  @ApiOperation({ summary: 'Generate payment link for remaining invoice balance' })
+  async generatePaymentLink(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: GeneratePaymentLinkDto,
+  ) {
+    return this.invoiceService.generatePaymentLink(customerId, id, dto, user);
+  }
+
+  @Post(':id/send-communication')
+  @ApiOperation({ summary: 'Send invoice or reminder via Email/WhatsApp' })
+  async sendCommunication(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: SendInvoiceCommunicationDto,
+  ) {
+    return this.invoiceService.sendCommunication(customerId, id, dto, user);
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({ summary: 'Cancel an unpaid/draft invoice' })
+  async cancelInvoice(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: CancelInvoiceDto,
+  ) {
+    return this.invoiceService.cancelInvoice(customerId, id, dto, user);
   }
 
   @Delete(':id')
