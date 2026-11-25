@@ -898,7 +898,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; assignedToId?: string | number; employeeIds?: string; departmentId?: string; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; stageKey?: string; assignedToId?: string | number; employeeIds?: string; departmentId?: string; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -998,7 +998,17 @@ export class LeadRepository {
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
     const pipelineFilters: any[] = [];
 
-    {
+    const requestedStageKeys = String(options.stageKey || '')
+      .split(',')
+      .map((key) => key.trim().toUpperCase())
+      .filter((key) => /^[A-Z0-9_]+$/.test(key));
+    if (requestedStageKeys.length) {
+      // Resolve by the lead's actual stage key so Super Admin can query
+      // customer-scoped stages across workspaces without needing one stage ID.
+      pipelineFilters.push({
+        stage: { is: { key: { in: requestedStageKeys }, deletedAt: null } },
+      });
+    } else {
       const stageId = options.stageId && options.stageId !== 'ALL' ? Number(options.stageId) : null;
       const status = options.status && options.status.toUpperCase() !== 'ALL' ? String(options.status).trim() : null;
       let stage: any = null;
