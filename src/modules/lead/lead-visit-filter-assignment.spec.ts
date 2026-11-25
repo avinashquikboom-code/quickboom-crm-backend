@@ -4,7 +4,7 @@ import { VisitorLeadActionsGuard } from './visitor-lead-actions.guard';
 import { ForbiddenException } from '@nestjs/common';
 
 // These are isolated fixture identifiers, never production stage/employee IDs.
-const stages = ['NEW', 'CONTACTED', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST'].map((key, i) => ({id:101+i,key,name:key,customerId:7,deletedAt:null,isActive:true}));
+const stages = ['NEW', 'CONTACTED', 'DETAILS_SENT', 'FOLLOW_UP', 'VISIT_SCHEDULED', 'VISIT_DONE', 'PROPOSAL_SENT', 'NEGOTIATION', 'FINAL_CALL', 'WON', 'LOST', 'HOT_DEAL'].map((key, i) => ({id:101+i,key,name:key,customerId:7,deletedAt:null,isActive:true}));
 const scheduled = stages.find(s => s.key === 'VISIT_SCHEDULED')!;
 const done = stages.find(s => s.key === 'VISIT_DONE')!;
 const admin = {id:1,role:'ADMIN',customerId:7};
@@ -83,6 +83,17 @@ describe('pipeline stage and Visitor assignment contract', () => {
     expect(result.data.map(l=>l.stageId)).toEqual([stage.id]);
     expect(result.meta.total).toBe(1);
     expect(f.prisma.lead.count.mock.calls[0][0].where).toEqual(f.prisma.lead.findMany.mock.calls[0][0].where);
+  });
+  it('adds and removes a lead from the Hot Deal stage filter as its stage changes', async () => {
+    const f = fixture();
+    const hot = stages.find(stage => stage.key === 'HOT_DEAL')!;
+    const lead = f.leads[0];
+    lead.stageId = hot.id;
+    lead.stage = hot;
+    expect((await f.repository.findAll(7, { stageId: hot.id }, admin)).data.map(l => l.id)).toContain(lead.id);
+    lead.stageId = stages[0].id;
+    lead.stage = stages[0];
+    expect((await f.repository.findAll(7, { stageId: hot.id }, admin)).data.map(l => l.id)).not.toContain(lead.id);
   });
   it('does not admit New records through the Visit Scheduled key or stage ID',async()=>{
     const f=fixture();
