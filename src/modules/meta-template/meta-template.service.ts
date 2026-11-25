@@ -169,7 +169,7 @@ export class MetaTemplateService {
     const [items, total] = await Promise.all([
       this.prisma.metaTemplate.findMany({
         where,
-        orderBy: [{ isSystem: 'asc' }, { updatedAt: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
       }),
