@@ -1292,6 +1292,7 @@ export class CustomerService {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     excludeAdmins?: boolean;
+    wonOnly?: boolean;
   }, user?: any) {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
@@ -1871,7 +1872,9 @@ export class CustomerService {
       },
     });
 
-    const visibleItems = items.filter((customer) => customerListed(customer, wonCustomersOnly));
+    const visibleItems = items.filter((customer) =>
+      query.wonOnly ? customerOriginIsWon(customer) : customerListed(customer, wonCustomersOnly),
+    );
     let formatted = visibleItems.map((c) => {
       const primaryUser = (c as any).users?.[0];
       const resolvedSub = this.resolveCustomerSubscription(c, now);
@@ -2140,9 +2143,9 @@ export class CustomerService {
 
     const unifiedDirectory = this.deduplicateCustomerDirectory([
       ...formatted,
-      ...unconvertedUpcomingLeads,
-      ...unconvertedInactiveLeads,
-      ...unconvertedActiveLeads,
+      ...(query.wonOnly ? [] : unconvertedUpcomingLeads),
+      ...(query.wonOnly ? [] : unconvertedInactiveLeads),
+      ...(query.wonOnly ? [] : unconvertedActiveLeads),
     ]);
 
     // Newest-first ordering for every tab: creation timestamp desc, id desc as stable tiebreak.
