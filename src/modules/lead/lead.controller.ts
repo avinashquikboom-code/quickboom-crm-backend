@@ -91,6 +91,36 @@ export class LeadController {
     return this.leadService.checkDuplicate(customerId, dto, user);
   }
 
+  @Get('dashboard')
+  @ApiOperation({ summary: 'Get complete CRM Dashboard metrics with server-side filters' })
+  async getDashboard(
+    @CurrentCustomer() customerId: string,
+    @CurrentUser() user: any,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('branchId') branchId?: string,
+    @Query('leadSource') leadSource?: string,
+    @Query('leadStageId') leadStageId?: string,
+  ) {
+    return this.leadService.getCrmDashboard(
+      customerId,
+      {
+        fromDate: fromDate || dateFrom,
+        toDate: toDate || dateTo,
+        departmentId: departmentId ? Number(departmentId) : null,
+        employeeId: employeeId ? Number(employeeId) : null,
+        branchId: branchId ? Number(branchId) : null,
+        leadSource,
+        leadStageId: leadStageId ? Number(leadStageId) : null,
+      },
+      user,
+    );
+  }
+
   @Get('metrics')
   @ApiOperation({ summary: 'Get summary metrics count for leads' })
   async getMetrics(@CurrentCustomer() customerId: string, @CurrentUser() user: any) {

@@ -15,6 +15,7 @@ import { LeadStageWhatsappDeliveryService } from './lead-stage-whatsapp-delivery
 import { LeadStageEmailDeliveryService } from './lead-stage-email-delivery.service';
 import { LeadPlanProposalService } from './lead-plan-proposal.service';
 import { EmailModule } from '../email/email.module';
+import { InvoiceModule } from '../invoice/invoice.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { EmailModule } from '../email/email.module';
     S3Module,
     forwardRef(() => SendDetailsModule),
     EmailModule,
+    InvoiceModule,
   ],
   controllers: [LeadController],
   providers: [LeadService, LeadRepository, LeadStageOutboxWorker, LeadStageWhatsappDeliveryService, LeadStageEmailDeliveryService, LeadPlanProposalService, VisitorLeadActionsGuard, CrmEmployeeAccessGuard],

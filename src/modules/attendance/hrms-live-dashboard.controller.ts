@@ -26,8 +26,29 @@ export class HrmsLiveDashboardController {
     @Query('customerId') customerIdQuery?: string,
     @Query('date') dateQuery?: string,
     @Query('period') periodQuery?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('departmentId') departmentId?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('branchId') branchId?: string,
+    @Query('shiftId') shiftId?: string,
+    @Query('status') status?: string,
   ) {
-    return this.attendanceService.getLiveDashboardData(user, customerIdQuery || customerId, dateQuery, periodQuery);
+    return this.attendanceService.getLiveDashboardData(
+      user,
+      customerIdQuery || customerId,
+      dateQuery,
+      periodQuery,
+      {
+        fromDate,
+        toDate,
+        departmentId: departmentId ? Number(departmentId) : undefined,
+        employeeId: employeeId ? Number(employeeId) : undefined,
+        branchId: branchId ? Number(branchId) : undefined,
+        shiftId: shiftId ? Number(shiftId) : undefined,
+        status,
+      },
+    );
   }
 
   @Get('live-employees')
