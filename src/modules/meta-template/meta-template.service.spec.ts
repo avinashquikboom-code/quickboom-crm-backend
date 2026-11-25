@@ -60,6 +60,14 @@ describe('MetaTemplateService', () => {
     service = new MetaTemplateService(mockPrisma, mockIntegrationSettingsService, mockWhatsappService, mockMediaService);
   });
 
+  it.each(['Hello\nworld', '*Important*', 'Welcome 🎉', '_Important_'])('rejects invalid Meta text header %s before submission', async (headerContent) => {
+    mockPrisma.metaTemplate.findFirst.mockResolvedValue(null);
+    const post = jest.spyOn(axios, 'post');
+    await expect(service.create({ name: 'Notice', templateName: 'notice', headerType: 'TEXT', headerContent, body: 'Hello' }, 1)).rejects.toThrow(/Header must be plain text/);
+    expect(post).not.toHaveBeenCalled();
+    post.mockRestore();
+  });
+
   describe('findAll', () => {
     it('returns filtered items and summary statistics', async () => {
       mockPrisma.metaTemplate.findMany.mockResolvedValue([
