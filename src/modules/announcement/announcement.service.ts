@@ -1,13 +1,46 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
+import { NotificationService } from '../notification/notification.service';
 import { AnnouncementBodyDto, AnnouncementQueryDto, ScheduleAnnouncementDto } from './dto/announcement.dto';
 
 const include = { department: { select: { id: true, name: true, code: true } } };
 
 @Injectable()
-export class AnnouncementService {
-  constructor(private readonly prisma: PrismaService) {}
+export class AnnouncementService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AnnouncementService.name);
+  private timer?: NodeJS.Timeout;
+  constructor(private readonly prisma: PrismaService, private readonly s3Service: S3Service, private readonly notifications: NotificationService) {}
+
+  onModuleInit() {
+    this.processScheduled().catch((err) => this.logger.error('Scheduled announcements failed', err));
+    this.timer = setInterval(() => this.processScheduled().catch((err) => this.logger.error('Scheduled announcements failed', err)), 60000);
+  }
+
+  onModuleDestroy() { if (this.timer) clearInterval(this.timer); }
+
+  private async notifyEmployees(row: any) {
+    const employees = await this.prisma.employee.findMany({
+      where: { customerId: row.customerId, status: 'ACTIVE', userId: { not: null }, ...(row.audience === 'DEPARTMENT' ? { departmentId: row.departmentId } : {}), user: { isActive: true, deletedAt: null } },
+      select: { userId: true },
+    });
+    for (const employee of employees) {
+      try {
+        await this.notifications.sendPushNotification({ userId: employee.userId!, customerId: row.customerId, title: row.title, body: row.description, type: 'ANNOUNCEMENT', data: { announcementId: String(row.id), ...(row.imageUrl ? { imageUrl: row.imageUrl } : {}) } });
+      } catch (err) {
+        this.logger.error(`Announcement ${row.id} delivery failed for user ${employee.userId}`, err);
+      }
+    }
+  }
+
+  async processScheduled() {
+    const due = await this.prisma.announcement.findMany({ where: { status: 'SCHEDULED', publishAt: { lte: new Date() } } });
+    for (const row of due) {
+      const claimed = await this.prisma.announcement.updateMany({ where: { id: row.id, status: 'SCHEDULED', publishAt: { lte: new Date() } }, data: { status: 'PUBLISHED' } });
+      if (claimed.count && (!row.expiresAt || row.expiresAt > new Date())) await this.notifyEmployees(row);
+    }
+  }
 
   private async customerId(value?: number | string) {
     const parsed = Number(value);
@@ -26,7 +59,7 @@ export class AnnouncementService {
       this.prisma.announcement.count({ where }),
       this.prisma.announcement.findMany({ where, include, orderBy: [{ publishAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * limit, take: limit }),
     ]);
-    return { data: rows.map(present), meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 } };
+    return { data: await Promise.all(rows.map((row) => this.present(row))), meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 } };
   }
 
   async summary(customerId?: number | string, query: AnnouncementQueryDto = {}) {
@@ -37,7 +70,7 @@ export class AnnouncementService {
   }
 
   async findOne(customerId: number | string | undefined, announcementId: number) {
-    return present(await this.load(customerId, announcementId));
+    return this.present(await this.load(customerId, announcementId));
   }
 
   async create(user: any, customerId: number | string | undefined, dto: AnnouncementBodyDto) {
@@ -47,25 +80,29 @@ export class AnnouncementService {
       data: { customerId: id, createdById: user?.id ? Number(user.id) : null, status: 'DRAFT', ...this.fields(dto) },
       include,
     });
-    return present(row);
+    return this.present(row);
   }
 
   async update(customerId: number | string | undefined, announcementId: number, dto: AnnouncementBodyDto) {
     const current = await this.load(customerId, announcementId);
     await this.assertDepartment(current.customerId, dto, current.departmentId);
     const row = await this.prisma.announcement.update({ where: { id: current.id }, data: this.fields(dto), include });
-    return present(row);
+    return this.present(row);
   }
 
   async publish(customerId: number | string | undefined, announcementId: number) {
     const current = await this.load(customerId, announcementId);
     if (current.status === 'ARCHIVED') throw new ConflictException('Archived announcements must be edited back to a draft before publishing.');
-    const row = await this.prisma.announcement.update({
-      where: { id: current.id },
+    const claimed = await this.prisma.announcement.updateMany({
+      where: { id: current.id, status: { in: ['DRAFT', 'SCHEDULED'] } },
       data: { status: 'PUBLISHED', publishAt: current.publishAt && current.publishAt <= new Date() ? current.publishAt : new Date() },
+    });
+    const row = await this.prisma.announcement.findUniqueOrThrow({
+      where: { id: current.id },
       include,
     });
-    return present(row);
+    if (claimed.count && (!row.expiresAt || row.expiresAt > new Date())) await this.notifyEmployees(row);
+    return this.present(row);
   }
 
   async schedule(customerId: number | string | undefined, announcementId: number, dto: ScheduleAnnouncementDto) {
@@ -73,13 +110,13 @@ export class AnnouncementService {
     const publishAt = new Date(dto.publishAt);
     if (Number.isNaN(publishAt.getTime()) || publishAt <= new Date()) throw new BadRequestException('Schedule time must be a future date.');
     const row = await this.prisma.announcement.update({ where: { id: current.id }, data: { status: 'SCHEDULED', publishAt }, include });
-    return present(row);
+    return this.present(row);
   }
 
   async archive(customerId: number | string | undefined, announcementId: number) {
     const current = await this.load(customerId, announcementId);
     const row = await this.prisma.announcement.update({ where: { id: current.id }, data: { status: 'ARCHIVED' }, include });
-    return present(row);
+    return this.present(row);
   }
 
   async remove(customerId: number | string | undefined, announcementId: number) {
@@ -87,6 +124,13 @@ export class AnnouncementService {
     if (current.status === 'PUBLISHED') throw new ConflictException('Archive a published announcement before deleting it.');
     await this.prisma.announcement.delete({ where: { id: current.id } });
     return { success: true };
+  }
+
+  private async present(row: any) {
+    const previewUrl = row.imageUrl
+      ? await this.s3Service.getPresignedUrl(row.imageUrl, 3600).catch(() => null)
+      : null;
+    return { ...row, departmentName: row.department?.name || '', previewUrl: previewUrl || row.imageUrl || null };
   }
 
   private where(customerId: number, query: AnnouncementQueryDto): Prisma.AnnouncementWhereInput {
@@ -145,9 +189,3 @@ export class AnnouncementService {
   }
 }
 
-function present(row: any) {
-  return {
-    ...row,
-    departmentName: row.department?.name || '',
-  };
-}
