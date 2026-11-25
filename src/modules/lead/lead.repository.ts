@@ -1006,9 +1006,21 @@ export class LeadRepository {
     if (hasStageKeyFilter) {
       // Resolve by the lead's actual stage key so Super Admin can query
       // customer-scoped stages across workspaces without needing one stage ID.
-      pipelineFilters.push(requestedStageKeys.length
-        ? { stage: { is: { key: { in: requestedStageKeys }, deletedAt: null } } }
-        : { id: -1 });
+      if (!requestedStageKeys.length) {
+        pipelineFilters.push({ id: -1 });
+      } else {
+        const stageScope = !isSuperAdmin || (Number.isInteger(numCustomerId) && numCustomerId > 0)
+          ? { OR: [{ customerId: numCustomerId }, { customerId: null }] }
+          : {};
+        const matchingStages = await this.prisma.leadStage.findMany({
+          where: { key: { in: requestedStageKeys }, deletedAt: null, ...stageScope },
+          select: { id: true },
+        });
+        const matchingStageIds = matchingStages.map((stage: any) => Number(stage.id));
+        pipelineFilters.push(matchingStageIds.length
+          ? { stageId: { in: matchingStageIds } }
+          : { id: -1 });
+      }
     } else {
       const stageId = options.stageId && options.stageId !== 'ALL' ? Number(options.stageId) : null;
       const status = options.status && options.status.toUpperCase() !== 'ALL' ? String(options.status).trim() : null;
