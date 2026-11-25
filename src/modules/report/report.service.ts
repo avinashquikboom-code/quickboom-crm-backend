@@ -840,6 +840,14 @@ export class ReportService {
 
   async buildPdf(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
     const view = await this.runCatalogReport(customerId, reportId, { ...query, page: 1, limit: 500 }, user);
+    const rows = [...view.rows];
+    for (let page = 2; rows.length < view.summary.records; page += 1) {
+      const next = await this.runCatalogReport(customerId, reportId, { ...query, page, limit: 500 }, user);
+      if (!next.rows.length) {
+        throw new Error(`Unable to export all report records (${rows.length} of ${view.summary.records} available).`);
+      }
+      rows.push(...next.rows);
+    }
     const buffer = await new Promise<Buffer>((resolve, reject) => {
       const doc = new PDFDocument({ margin: 36, size: 'A4', layout: view.columns.length > 6 ? 'landscape' : 'portrait', bufferPages: true });
       const chunks: Buffer[] = [];
@@ -856,11 +864,11 @@ export class ReportService {
       doc.text(`Generated: ${new Date(view.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
       doc.text(`Records: ${view.summary.records}`);
       doc.moveDown(0.6);
-      if (!view.rows.length) {
+      if (!rows.length) {
         doc.fillColor('#172B24').fontSize(11).text('No records match these filters.');
       } else {
         doc.fontSize(8).fillColor('#172B24');
-        view.rows.forEach((row, index) => {
+        rows.forEach((row, index) => {
           if (doc.y > doc.page.height - 60) doc.addPage();
           const line = view.columns.map((column) => `${column}: ${row[column] ?? '—'}`).join('  |  ');
           doc.text(`${index + 1}. ${line}`, { width: doc.page.width - 72 });
