@@ -212,6 +212,7 @@ export class LeadController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'stageId', required: false })
+  @ApiQuery({ name: 'stageKey', required: false, description: 'Comma-separated exact lead stage keys' })
   @ApiQuery({ name: 'dateFilter', required: false })
   @ApiQuery({ name: 'startDate', required: false })
   @ApiQuery({ name: 'createdFrom', required: false })
@@ -223,6 +224,7 @@ export class LeadController {
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('stageId') stageId?: string,
+    @Query('stageKey') stageKey?: string,
     @Query('createdFrom') createdFrom?: string,
     @Query('priority') priority?: string,
     @Query('source') source?: string,
@@ -246,6 +248,7 @@ export class LeadController {
         search,
         status,
         stageId,
+        stageKey,
         createdFrom,
         priority,
         source,
