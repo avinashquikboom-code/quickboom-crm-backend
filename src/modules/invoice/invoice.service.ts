@@ -1,13 +1,34 @@
-import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, ForbiddenException, BadRequestException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateInvoiceDto, UpdateInvoiceDto, BulkDeleteInvoiceDto } from './dto/invoice.dto';
+import {
+  CreateInvoiceDto,
+  UpdateInvoiceDto,
+  BulkDeleteInvoiceDto,
+  RecordInvoicePaymentDto,
+  VerifyInvoicePaymentDto,
+  RescheduleInstallmentDto,
+  GeneratePaymentLinkDto,
+  CancelInvoiceDto,
+  SendInvoiceCommunicationDto,
+} from './dto/invoice.dto';
 import { InvoiceStatus, WorkStatus } from '@prisma/client';
 import { isUserSuperAdmin, isUserAdmin } from '../../common/utils/role.util';
 import { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import PDFDocument = require('pdfkit');
 import { formatInrCurrency } from '../receipt/receipt.service';
+import { EmailService } from '../email/email.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import {
+  roundCurrency,
+  isOnlinePaymentMethod,
+  resolvePaymentModeFromTransactions,
+  computeNextBillingFromSubscription,
+  resolveInvoiceDisplayStatus,
+  generateInvoicePaymentReceiptPdfBuffer,
+} from './invoice-billing.helper';
 import {
   parseCalendarDateInput,
   resolveSubscriptionActivationDate,
@@ -29,7 +50,11 @@ const INVOICE_ISSUER = Object.freeze({
 
 @Injectable()
 export class InvoiceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly emailService?: EmailService,
+    @Optional() private readonly whatsappService?: WhatsappService,
+  ) {}
 
   private parsePlanActivationFromNotes(notes?: string | null): Date | null {
     if (!notes) return null;
@@ -131,64 +156,137 @@ export class InvoiceService {
   async reconcileCustomerInvoices(customerId: number): Promise<void> {
     if (!customerId || isNaN(customerId) || customerId <= 0) return;
     try {
-      // Find all successful or paid paymentHistory records for this customer
       const successfulPayments = await this.prisma.paymentHistory.findMany({
         where: {
           customerId,
+          deletedAt: null,
           status: { in: ['SUCCESS', 'PAID'] },
         },
         include: {
           subscription: {
-            include: { plan: true },
+            include: { plan: true, coupon: true, installments: { orderBy: { installmentNumber: 'asc' } } },
           },
           customer: true,
         },
+        orderBy: { createdAt: 'asc' },
       });
 
-      if (!successfulPayments.length) return;
+      if (!Array.isArray(successfulPayments) || !successfulPayments.length) return;
 
-      // ─────────────────────────────────────────────────────────────────────
-      // CRITICAL: fetch ALL invoices — both live (deletedAt: null) AND
-      // soft-deleted ones.  If we only fetch live invoices here and an admin
-      // has manually deleted one, reconcile won't find a match and will
-      // immediately recreate it, causing the invoice to reappear on every
-      // list refresh.  By including deleted records in the existence check
-      // we correctly honour the admin's deletion decision.
-      // ─────────────────────────────────────────────────────────────────────
       const allInvoices = await this.prisma.invoice.findMany({
         where: { customerId },
-        select: {
-          id: true,
-          invoiceNo: true,
-          notes: true,
-          totalAmount: true,
-          deletedAt: true,
-        },
+        include: { payments: true },
       });
 
+      // Group payments by subscriptionId when present so partial payments consolidate into one invoice
+      const groupedBySub = new Map<string, typeof successfulPayments>();
       for (const p of successfulPayments) {
-        const expectedInvoiceNo = p.orderNumber?.startsWith('INV-')
-          ? p.orderNumber
-          : (p.invoiceUrl?.startsWith('INV-')
-              ? p.invoiceUrl
-              : (p.orderNumber
-                  ? p.orderNumber.replace('#QB-', 'INV-2026-')
-                  : `INV-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`));
+        const key = p.subscriptionId ? `sub-${p.subscriptionId}` : `pay-${p.id}`;
+        const arr = groupedBySub.get(key) || [];
+        arr.push(p);
+        groupedBySub.set(key, arr);
+      }
 
-        // Check if a matching invoice already exists (live OR previously deleted).
-        // A deleted match means an admin intentionally removed it — do NOT recreate.
-        const exists = allInvoices.some((inv) =>
-          inv.invoiceNo === expectedInvoiceNo ||
-          (p.orderNumber && inv.invoiceNo === p.orderNumber) ||
-          (p.orderNumber && inv.notes && inv.notes.includes(p.orderNumber)) ||
-          (inv.notes && inv.notes.includes(`Order: ${p.id}`)) ||
-          (inv.notes &&
-            inv.notes.includes('Subscription payment for') &&
-            Math.abs(inv.totalAmount - Number(p.totalAmount || 0)) < 1)
+      for (const [key, paymentsGroup] of groupedBySub.entries()) {
+        const firstPay = paymentsGroup[0];
+        const latestPay = paymentsGroup[paymentsGroup.length - 1];
+        const sub = firstPay.subscription;
+
+        const expectedInvoiceNo = firstPay.orderNumber?.startsWith('INV-')
+          ? firstPay.orderNumber
+          : firstPay.invoiceUrl?.startsWith('INV-')
+            ? firstPay.invoiceUrl
+            : firstPay.orderNumber && firstPay.orderNumber.startsWith('#QB-')
+              ? firstPay.orderNumber.replace('#QB-', 'INV-2026-')
+              : `INV-${firstPay.createdAt.getFullYear()}-${String(firstPay.id).padStart(6, '0')}`;
+
+        const matchingInvoices = allInvoices.filter(
+          (inv) =>
+            (sub && inv.subscriptionId === sub.id) ||
+            inv.invoiceNo === expectedInvoiceNo ||
+            paymentsGroup.some(
+              (p) =>
+                (p.orderNumber && inv.invoiceNo === p.orderNumber) ||
+                (p.invoiceUrl && inv.invoiceNo === p.invoiceUrl) ||
+                (p.orderNumber && inv.notes && inv.notes.includes(p.orderNumber)) ||
+                (inv.notes && inv.notes.includes(`Order: ${p.id}`)),
+            ),
         );
 
-        if (!exists) {
-          // Find or create primary contact for the customer
+        // If an admin intentionally deleted this invoice, do NOT recreate it
+        if (matchingInvoices.some((inv) => inv.deletedAt !== null)) {
+          continue;
+        }
+
+        const totalPaid = roundCurrency(
+          paymentsGroup.reduce((sum, p) => sum + Number(p.totalAmount || p.amount || 0), 0),
+        );
+
+        let fullBase = Number(firstPay.amount) || 0;
+        let fullTax = Number(firstPay.taxAmount) || 0;
+        let fullTotal = roundCurrency(
+          paymentsGroup.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0),
+        );
+
+        if (sub) {
+          const cycle = String(sub.billingCycle || firstPay.billingCycle || 'MONTHLY').toUpperCase();
+          const planBase =
+            sub.customPrice != null && Number(sub.customPrice) > 0
+              ? Number(sub.customPrice)
+              : sub.plan
+                ? cycle === 'YEARLY'
+                  ? Number(sub.plan.yearlyPrice || 0)
+                  : Number(sub.plan.monthlyPrice || 0)
+                : fullBase;
+          const discountAmt = Number(sub.discountAmount || 0);
+          const taxable = Math.max(0, roundCurrency(planBase - discountAmt));
+          const computedTax = roundCurrency(taxable * 0.18);
+          const computedTotal = roundCurrency(taxable + computedTax);
+          if (computedTotal > 0) {
+            fullBase = taxable;
+            fullTax = computedTax;
+            fullTotal = Math.max(computedTotal, totalPaid);
+          }
+        }
+
+        if (fullTotal <= 0) {
+          fullTotal = totalPaid;
+          fullBase = roundCurrency(fullTotal / 1.18);
+          fullTax = roundCurrency(fullTotal - fullBase);
+        }
+
+        const balanceAmount = Math.max(0, roundCurrency(fullTotal - totalPaid));
+        const isFullyPaid = balanceAmount <= 0.01;
+        const resolvedMode = resolvePaymentModeFromTransactions(
+          paymentsGroup.map((p) => ({
+            paymentMode: isOnlinePaymentMethod(p.paymentMethod) ? 'ONLINE' : 'OFFLINE',
+            paymentMethod: p.paymentMethod,
+            status: 'CONFIRMED',
+            amount: Number(p.totalAmount || p.amount || 0),
+          })),
+        );
+
+        const pendingInst = sub?.installments?.find((inst: any) =>
+          ['PENDING', 'DUE', 'OVERDUE'].includes(String(inst.status || '').toUpperCase()),
+        );
+        const nextInstDate = !isFullyPaid
+          ? pendingInst?.dueDate ||
+            (() => {
+              const d = new Date(firstPay.createdAt);
+              d.setDate(d.getDate() + 30);
+              return d;
+            })()
+          : null;
+        const nextInstAmt = !isFullyPaid ? Number(pendingInst?.totalAmount || balanceAmount) : null;
+        const billingInfo = computeNextBillingFromSubscription(sub);
+
+        const planName = firstPay.planName || sub?.plan?.name || 'CRM Subscription Plan';
+        const cycle = String(firstPay.billingCycle || sub?.billingCycle || 'MONTHLY');
+        const planActivation = resolveSubscriptionActivationDate(firstPay.createdAt, sub?.startDate);
+
+        let targetInvoice = matchingInvoices.find((inv) => inv.deletedAt === null);
+
+        if (!targetInvoice) {
           let contact = await this.prisma.contact.findFirst({
             where: { customerId, deletedAt: null },
           });
@@ -196,47 +294,100 @@ export class InvoiceService {
             contact = await this.prisma.contact.create({
               data: {
                 customerId,
-                firstName: p.customer?.companyName || p.customer?.name || 'Customer',
+                firstName: firstPay.customer?.companyName || firstPay.customer?.name || 'Customer',
                 lastName: 'Billing',
-                email: p.customer?.email || `billing-${customerId}@quikboom.com`,
-                phone: p.customer?.phone || 'N/A',
+                email: firstPay.customer?.email || `billing-${customerId}@quikboom.com`,
+                phone: firstPay.customer?.phone || 'N/A',
               },
             });
           }
 
-          const baseAmount = Number(p.amount) || Math.round((Number(p.totalAmount || 0) / 1.18) * 100) / 100;
-          const taxAmount = Number(p.taxAmount) || Math.round((Number(p.totalAmount || 0) - baseAmount) * 100) / 100;
-          const totalAmount = Number(p.totalAmount) || Math.round((baseAmount + taxAmount) * 100) / 100;
-          const planName = p.planName || p.subscription?.plan?.name || 'CRM Subscription Plan';
-          const cycle = p.billingCycle || p.subscription?.billingCycle || 'MONTHLY';
-          const method = p.paymentMethod || 'RAZORPAY';
-          const planActivation = resolveSubscriptionActivationDate(
-            p.createdAt,
-            p.subscription?.startDate,
-          );
-
-          console.log('[RECONCILE_CREATING_INVOICE]', {
-            customerId,
-            paymentId: p.id,
-            expectedInvoiceNo,
-            reason: 'No existing invoice (live or deleted) found for this payment',
-          });
-
-          await this.prisma.invoice.create({
+          targetInvoice = await this.prisma.invoice.create({
             data: {
               customerId,
               contactId: contact.id,
+              subscriptionId: sub?.id || null,
               invoiceNo: expectedInvoiceNo,
-              status: InvoiceStatus.PAID,
-              issueDate: p.createdAt,
-              dueDate: p.createdAt,
-              subTotal: baseAmount,
-              taxAmount: taxAmount,
-              discount: 0,
-              totalAmount: totalAmount,
-              notes: `Subscription payment for ${planName} (${cycle} billing). Purchase: ${utcCalendarDateKey(p.createdAt)}. Plan activation: ${utcCalendarDateKey(planActivation)}. Payment Method: ${method}. Total Paid: ₹${totalAmount}, Balance: ₹0. Order: ${p.orderNumber || p.id}`,
+              status: isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+              issueDate: firstPay.createdAt,
+              dueDate: nextInstDate || firstPay.createdAt,
+              subTotal: fullBase,
+              taxAmount: fullTax,
+              discount: Number(sub?.discountAmount || 0),
+              totalAmount: fullTotal,
+              paidAmount: Math.min(totalPaid, fullTotal),
+              balanceAmount,
+              paymentMode: resolvedMode,
+              lastPaymentDate: latestPay.createdAt,
+              nextInstallmentDate: nextInstDate,
+              nextInstallmentAmount: nextInstAmt,
+              nextBillingDate: billingInfo.nextBillingDate,
+              nextBillingAmount: billingInfo.nextBillingAmount,
+              billingCycle: cycle,
+              planName,
+              notes: `Subscription payment for ${planName} (${cycle} billing). Purchase: ${utcCalendarDateKey(firstPay.createdAt)}. Plan activation: ${utcCalendarDateKey(planActivation)}. Payment Method: ${latestPay.paymentMethod || 'RAZORPAY'}. Total Paid: ₹${totalPaid}, Balance: ₹${balanceAmount}. Order: ${firstPay.orderNumber || firstPay.id}`,
             },
+            include: { payments: true },
           });
+        } else if (
+          Number(targetInvoice.paidAmount || 0) === 0 ||
+          (sub && !targetInvoice.subscriptionId) ||
+          (!isFullyPaid && targetInvoice.status === InvoiceStatus.PAID && balanceAmount > 0.01)
+        ) {
+          targetInvoice = await this.prisma.invoice.update({
+            where: { id: targetInvoice.id },
+            data: {
+              subscriptionId: sub?.id || targetInvoice.subscriptionId,
+              totalAmount: Math.max(Number(targetInvoice.totalAmount || 0), fullTotal),
+              paidAmount: Math.min(totalPaid, Math.max(Number(targetInvoice.totalAmount || 0), fullTotal)),
+              balanceAmount,
+              status: isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+              paymentMode: resolvedMode,
+              lastPaymentDate: latestPay.createdAt,
+              nextInstallmentDate: nextInstDate,
+              nextInstallmentAmount: nextInstAmt,
+              nextBillingDate: billingInfo.nextBillingDate,
+              nextBillingAmount: billingInfo.nextBillingAmount,
+              billingCycle: cycle,
+              planName,
+            },
+            include: { payments: true },
+          });
+        }
+
+        // Backfill InvoicePayment rows for any PaymentHistory not yet linked
+        if (this.prisma.invoicePayment && targetInvoice) {
+          for (const p of paymentsGroup) {
+            const existsIp = await this.prisma.invoicePayment.findFirst({
+              where: {
+                OR: [
+                  { idempotencyKey: `payhist-${p.id}` },
+                  { invoiceId: targetInvoice.id, paymentHistoryId: p.id },
+                ],
+              },
+            });
+            if (!existsIp) {
+              const mode = isOnlinePaymentMethod(p.paymentMethod) ? 'ONLINE' : 'OFFLINE';
+              await this.prisma.invoicePayment.create({
+                data: {
+                  invoiceId: targetInvoice.id,
+                  customerId,
+                  paymentHistoryId: p.id,
+                  amount: Number(p.totalAmount || p.amount || 0),
+                  paymentMode: mode,
+                  paymentMethod: String(p.paymentMethod || 'RAZORPAY'),
+                  transactionRef: p.transactionId || p.paymentId || p.orderNumber,
+                  gatewayPaymentId: p.paymentId,
+                  gatewayOrderId: p.orderId,
+                  receiptNo: p.invoiceUrl || `QUIKBOOM-RECEIPT-${p.createdAt.getFullYear()}-${String(p.id).padStart(6, '0')}`,
+                  status: 'CONFIRMED',
+                  paymentDate: p.createdAt,
+                  remarks: `Reconciled ${mode.toLowerCase()} payment`,
+                  idempotencyKey: `payhist-${p.id}`,
+                },
+              });
+            }
+          }
         }
       }
     } catch (err: any) {

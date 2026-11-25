@@ -528,44 +528,97 @@ export class InstallmentService {
         },
       });
 
-      // 2. Generate Invoice Record
-      const invoiceNo = `INV-${now.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
-      let contact = await tx.contact.findFirst({
-        where: { customerId: numCustomerId, deletedAt: null },
-      });
-      if (!contact) {
-        contact = await tx.contact.create({
+      // 2. Update existing subscription Invoice (do NOT create a duplicate invoice for installment)
+      const isOnline = ['RAZORPAY', 'UPI', 'CARD', 'NET_BANKING', 'ONLINE'].includes(String(paymentMethod).toUpperCase());
+      const payMode = isOnline ? 'ONLINE' : 'OFFLINE';
+
+      let invoice = installment.invoiceId
+        ? await tx.invoice.findUnique({ where: { id: installment.invoiceId }, include: { payments: true } })
+        : await tx.invoice.findFirst({
+            where: { customerId: numCustomerId, subscriptionId: installment.subscriptionId, deletedAt: null },
+            include: { payments: true },
+          });
+
+      if (!invoice) {
+        const invoiceNo = `INV-${now.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+        let contact = await tx.contact.findFirst({
+          where: { customerId: numCustomerId, deletedAt: null },
+        });
+        if (!contact) {
+          contact = await tx.contact.create({
+            data: {
+              customerId: numCustomerId,
+              firstName: installment.customer?.name || 'Customer',
+              lastName: 'Account',
+              email: installment.customer?.email || 'billing@customer.com',
+              phone: installment.customer?.phone || 'N/A',
+            },
+          });
+        }
+        invoice = await tx.invoice.create({
           data: {
             customerId: numCustomerId,
-            firstName: installment.customer?.name || 'Customer',
-            lastName: 'Account',
-            email: installment.customer?.email || 'billing@customer.com',
-            phone: installment.customer?.phone || 'N/A',
+            contactId: contact.id,
+            subscriptionId: installment.subscriptionId,
+            invoiceNo,
+            status: InvoiceStatus.PAID,
+            issueDate: now,
+            dueDate: now,
+            subTotal: baseAmount,
+            taxAmount,
+            discount: 0,
+            totalAmount: payAmount,
+            paidAmount: payAmount,
+            balanceAmount: 0,
+            paymentMode: payMode,
+            lastPaymentDate: now,
+            planName: installment.subscription?.plan?.name || 'Plan',
+            notes: `Installment ${installment.installmentNumber} of ${installment.totalInstallments} payment for ${
+              installment.subscription?.plan?.name || 'Plan'
+            }. Method: ${paymentMethod}. Order: ${orderNumber}`,
           },
+          include: { payments: true },
+        });
+      } else {
+        const newPaid = Math.min(Number(invoice.totalAmount || 0), Number(invoice.paidAmount || 0) + payAmount);
+        const newBal = Math.max(0, Math.round((Number(invoice.totalAmount || 0) - newPaid) * 100) / 100);
+        const hasOtherMode = (invoice.payments || []).some((ip) => ip.paymentMode !== payMode);
+        const resolvedMode = hasOtherMode ? 'MIXED' : payMode;
+        invoice = await tx.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            paidAmount: newPaid,
+            balanceAmount: newBal,
+            status: newBal <= 0 ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID,
+            paymentMode: resolvedMode,
+            lastPaymentDate: now,
+            nextInstallmentDate: newBal <= 0 ? null : invoice.nextInstallmentDate,
+            nextInstallmentAmount: newBal <= 0 ? null : newBal,
+          },
+          include: { payments: true },
         });
       }
 
-      const invoice = await tx.invoice.create({
+      await tx.invoicePayment.create({
         data: {
+          invoiceId: invoice.id,
           customerId: numCustomerId,
-          contactId: contact.id,
-          invoiceNo,
-          status: InvoiceStatus.PAID,
-          issueDate: now,
-          dueDate: now,
-          subTotal: baseAmount,
-          taxAmount,
-          discount: 0,
-          totalAmount: payAmount,
-          notes: `Installment ${installment.installmentNumber} of ${installment.totalInstallments} payment for ${
-            installment.subscription?.plan?.name || 'Plan'
-          }. Method: ${paymentMethod}. Order: ${orderNumber}`,
+          paymentHistoryId: payment.id,
+          amount: payAmount,
+          paymentMode: payMode,
+          paymentMethod: String(paymentMethod),
+          transactionRef: transactionId,
+          receiptNo: `QUIKBOOM-RECEIPT-${now.getFullYear()}-${String(payment.id).padStart(6, '0')}`,
+          status: 'CONFIRMED',
+          paymentDate: now,
+          remarks: `Installment ${installment.installmentNumber} of ${installment.totalInstallments}`,
+          idempotencyKey: `payhist-${payment.id}`,
         },
       });
 
       await tx.paymentHistory.update({
         where: { id: payment.id },
-        data: { invoiceUrl: invoiceNo },
+        data: { invoiceUrl: invoice.invoiceNo },
       });
 
       // 3. Mark Installment as PAID
@@ -762,7 +815,7 @@ export class InstallmentService {
         },
       });
 
-      // 3. Generate Invoice
+      // 3. Generate Authoritative Partially Paid Invoice (with full plan total & remaining balance)
       const invoiceNo = `INV-${now.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
       let contact = await tx.contact.findFirst({
         where: { customerId: numCustomerId, deletedAt: null },
@@ -779,19 +832,54 @@ export class InstallmentService {
         });
       }
 
+      const fullPlanBase = Math.round((firstInstallmentBase * totalInstallments) * 100) / 100;
+      const fullPlanTax = Math.round((firstInstallmentTax * totalInstallments) * 100) / 100;
+      const fullPlanTotal = Math.round((firstInstallmentTotal * totalInstallments) * 100) / 100;
+      const remainingBalance = Math.max(0, Math.round((fullPlanTotal - firstInstallmentTotal) * 100) / 100);
+      const isOnlineNew = ['RAZORPAY', 'UPI', 'CARD', 'NET_BANKING', 'ONLINE'].includes(String(paymentMethod).toUpperCase());
+      const newPayMode = isOnlineNew ? 'ONLINE' : 'OFFLINE';
+
       const invoice = await tx.invoice.create({
         data: {
           customerId: numCustomerId,
           contactId: contact.id,
+          subscriptionId: newSub.id,
           invoiceNo,
-          status: InvoiceStatus.PAID,
+          status: remainingBalance > 0 ? InvoiceStatus.PARTIALLY_PAID : InvoiceStatus.PAID,
           issueDate: now,
-          dueDate: now,
-          subTotal: firstInstallmentBase,
-          taxAmount: firstInstallmentTax,
+          dueDate: secondDueDate,
+          subTotal: fullPlanBase,
+          taxAmount: fullPlanTax,
           discount: 0,
-          totalAmount: firstInstallmentTotal,
+          totalAmount: fullPlanTotal,
+          paidAmount: firstInstallmentTotal,
+          balanceAmount: remainingBalance,
+          paymentMode: newPayMode,
+          lastPaymentDate: now,
+          nextInstallmentDate: remainingBalance > 0 ? secondDueDate : null,
+          nextInstallmentAmount: remainingBalance > 0 ? remainingBalance : null,
+          nextBillingDate: newEndDate,
+          nextBillingAmount: fullPlanTotal,
+          billingCycle: String(cycle),
+          planName: plan.name,
           notes: `New Plan Purchase: Advance Payment (50%) for ${plan.name}. Order: ${orderNumber}`,
+        },
+      });
+
+      await tx.invoicePayment.create({
+        data: {
+          invoiceId: invoice.id,
+          customerId: numCustomerId,
+          paymentHistoryId: payment.id,
+          amount: firstInstallmentTotal,
+          paymentMode: newPayMode,
+          paymentMethod: String(paymentMethod),
+          transactionRef: transactionId,
+          receiptNo: `QUIKBOOM-RECEIPT-${now.getFullYear()}-${String(payment.id).padStart(6, '0')}`,
+          status: 'CONFIRMED',
+          paymentDate: now,
+          remarks: 'Advance Payment (50%)',
+          idempotencyKey: `payhist-${payment.id}`,
         },
       });
 

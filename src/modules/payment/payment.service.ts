@@ -605,61 +605,138 @@ export class PaymentService {
 
       let finalInvoiceNo: string | null = null;
 
-      // 5. Final Invoice Generation ONLY when 100% Fully Paid
-      if (isFullyPaid) {
-        finalInvoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+      // 5. Create or Update Authoritative Invoice for BOTH Full & Partial Payments
+      finalInvoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
 
-        let contact = await tx.contact.findFirst({
-          where: { customerId, deletedAt: null },
+      let contact = await tx.contact.findFirst({
+        where: { customerId, deletedAt: null },
+      });
+
+      if (!contact) {
+        const customer = await tx.customer.findUnique({
+          where: { id: customerId },
         });
 
-        if (!contact) {
-          const customer = await tx.customer.findUnique({
-            where: { id: customerId },
-          });
-
-          contact = await tx.contact.create({
-            data: {
-              customerId,
-              firstName: customer?.companyName || customer?.name || 'Customer',
-              lastName: 'Account',
-              email: customer?.email || `billing-${customerId}@quikboom.com`,
-              phone: customer?.phone || 'N/A',
-            },
-          });
-        }
-
-        // Check if invoice already exists for this subscription
-        const existingInvoice = await tx.invoice.findFirst({
-          where: { customerId, invoiceNo: finalInvoiceNo },
+        contact = await tx.contact.create({
+          data: {
+            customerId,
+            firstName: customer?.companyName || customer?.name || 'Customer',
+            lastName: 'Account',
+            email: customer?.email || `billing-${customerId}@quikboom.com`,
+            phone: customer?.phone || 'N/A',
+          },
         });
-
-        if (!existingInvoice) {
-          await tx.invoice.create({
-            data: {
-              customerId,
-              contactId: contact.id,
-              invoiceNo: finalInvoiceNo,
-              status: InvoiceStatus.PAID,
-              issueDate: payment.createdAt,
-              dueDate: payment.createdAt,
-              subTotal: fullBasePrice,
-              taxAmount: fullTaxAmount,
-              discount: 0,
-              totalAmount: fullTotalAmount,
-              notes: `Subscription payment for ${plan.name} (${cycle} billing). Purchase: ${payment.createdAt.toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
-            },
-          });
-        }
-
-        this.logger.log(
-          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: true invoiceNo: ${finalInvoiceNo}`,
-        );
-      } else {
-        this.logger.log(
-          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: false`,
-        );
       }
+
+      const existingSubInvoice = await tx.invoice.findFirst({
+        where: {
+          customerId,
+          deletedAt: null,
+          OR: [{ subscriptionId: sub.id }, { invoiceNo: finalInvoiceNo }],
+        },
+        include: { payments: true },
+      });
+
+      const secondInstallmentDue = !isFullyPaid
+        ? (() => {
+            const d = new Date(startDate);
+            d.setDate(d.getDate() + 30);
+            return d;
+          })()
+        : null;
+
+      const invoiceStatus = isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
+      const clampedPaid = Math.min(totalPaid, fullTotalAmount);
+      const remainingBal = Math.max(0, Math.round((fullTotalAmount - clampedPaid) * 100) / 100);
+      const nextBillingAmt = sub.autoRenew ? fullTotalAmount : null;
+
+      let targetInvoiceId: number;
+      if (existingSubInvoice) {
+        finalInvoiceNo = existingSubInvoice.invoiceNo;
+        const hasOffline = (existingSubInvoice.payments || []).some((ip) => ip.paymentMode === 'OFFLINE');
+        const resolvedMode = hasOffline ? 'MIXED' : 'ONLINE';
+        const updated = await tx.invoice.update({
+          where: { id: existingSubInvoice.id },
+          data: {
+            subscriptionId: sub.id,
+            status: invoiceStatus,
+            paidAmount: clampedPaid,
+            balanceAmount: remainingBal,
+            paymentMode: resolvedMode,
+            lastPaymentDate: payment.createdAt,
+            nextInstallmentDate: secondInstallmentDue,
+            nextInstallmentAmount: !isFullyPaid ? remainingBal : null,
+            nextBillingDate: expiryDate,
+            nextBillingAmount: nextBillingAmt,
+            billingCycle: String(cycle),
+            planName: plan.name,
+            notes: `Subscription payment for ${plan.name} (${cycle} billing). Purchase: ${payment.createdAt.toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${clampedPaid}, Balance: ₹${remainingBal}. Order: ${payment.orderNumber || payment.orderId}`,
+          },
+        });
+        targetInvoiceId = updated.id;
+      } else {
+        const created = await tx.invoice.create({
+          data: {
+            customerId,
+            contactId: contact.id,
+            subscriptionId: sub.id,
+            invoiceNo: finalInvoiceNo,
+            status: invoiceStatus,
+            issueDate: payment.createdAt,
+            dueDate: secondInstallmentDue || payment.createdAt,
+            subTotal: fullBasePrice,
+            taxAmount: fullTaxAmount,
+            discount: 0,
+            totalAmount: fullTotalAmount,
+            paidAmount: clampedPaid,
+            balanceAmount: remainingBal,
+            paymentMode: 'ONLINE',
+            lastPaymentDate: payment.createdAt,
+            nextInstallmentDate: secondInstallmentDue,
+            nextInstallmentAmount: !isFullyPaid ? remainingBal : null,
+            nextBillingDate: expiryDate,
+            nextBillingAmount: nextBillingAmt,
+            billingCycle: String(cycle),
+            planName: plan.name,
+            notes: `Subscription payment for ${plan.name} (${cycle} billing). Purchase: ${payment.createdAt.toISOString().slice(0, 10)}. Plan activation: ${startDate.toISOString().slice(0, 10)}. Total Paid: ₹${clampedPaid}, Balance: ₹${remainingBal}. Order: ${payment.orderNumber || payment.orderId}`,
+          },
+        });
+        targetInvoiceId = created.id;
+      }
+
+      // Link SubscriptionInstallments to this invoice and record InvoicePayment
+      await tx.subscriptionInstallment.updateMany({
+        where: { subscriptionId: sub.id },
+        data: { invoiceId: targetInvoiceId },
+      });
+
+      const existingIp = await tx.invoicePayment.findFirst({
+        where: { invoiceId: targetInvoiceId, paymentHistoryId: payment.id },
+      });
+      if (!existingIp) {
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: targetInvoiceId,
+            customerId,
+            paymentHistoryId: payment.id,
+            amount: chargedTotal,
+            paymentMode: 'ONLINE',
+            paymentMethod: String(payment.paymentMethod || 'RAZORPAY'),
+            transactionRef: payment.transactionId || payment.paymentId || payment.orderNumber,
+            gatewayPaymentId: payment.paymentId,
+            gatewayOrderId: payment.orderId,
+            receiptNo,
+            status: 'CONFIRMED',
+            paymentDate: payment.createdAt,
+            remarks: isFullyPaid ? 'Full online subscription payment' : 'Partial online subscription payment',
+            idempotencyKey: `payhist-${payment.id}`,
+          },
+        });
+      }
+
+      this.logger.log(
+        `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${clampedPaid} balance: ${remainingBal} status: ${invoiceStatus} invoiceNo: ${finalInvoiceNo}`,
+      );
 
       // 6. Provision Plan Entitlements strictly from purchased plan features
       const serviceQuotas = extractDeliverableQuotas(plan.features);

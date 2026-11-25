@@ -2907,57 +2907,126 @@ export class SubscriptionService {
       const totalPaid = allPayments.reduce((sum, p) => sum + Number(p.totalAmount || 0), 0);
       isFullyPaid = totalPaid >= fullTotalAmount;
 
-      // 5. Generate Final Invoice ONLY if 100% Fully Settled
-      if (isFullyPaid) {
-        finalInvoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
-        const invoiceNo = finalInvoiceNo;
+      // 5. Create or Update Authoritative Invoice for BOTH Full & Partial Offline Payments
+      finalInvoiceNo = `INV-${startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+      let contact = await tx.contact.findFirst({
+        where: { customerId: sub.customerId, deletedAt: null },
+      });
 
-        let contact = await tx.contact.findFirst({
-          where: { customerId: sub.customerId, deletedAt: null },
+      if (!contact) {
+        contact = await tx.contact.create({
+          data: {
+            customerId: sub.customerId,
+            firstName: payment.customer?.name || 'Customer',
+            lastName: 'Account',
+            email: payment.customer?.email || `billing-${sub.customerId}@quikboom.com`,
+            phone: payment.customer?.phone || 'N/A',
+          },
         });
-
-        if (!contact) {
-          contact = await tx.contact.create({
-            data: {
-              customerId: sub.customerId,
-              firstName: payment.customer?.name || 'Customer',
-              lastName: 'Account',
-              email: payment.customer?.email || `billing-${sub.customerId}@quikboom.com`,
-              phone: payment.customer?.phone || 'N/A',
-            },
-          });
-        }
-
-        const existingInvoice = await tx.invoice.findFirst({
-          where: { customerId: sub.customerId, invoiceNo },
-        });
-
-        if (!existingInvoice) {
-          await tx.invoice.create({
-            data: {
-              customerId: sub.customerId,
-              contactId: contact.id,
-              invoiceNo,
-              status: InvoiceStatus.PAID,
-              issueDate: startDate,
-              dueDate: startDate,
-              subTotal: fullBaseAmount,
-              taxAmount: fullGstAmount,
-              discount: 0,
-              totalAmount: fullTotalAmount,
-              notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Total Paid: ₹${totalPaid}, Balance: ₹0. Order: ${payment.orderNumber || payment.orderId}`,
-            },
-          });
-        }
-
-        this.logger.log(
-          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: true invoiceNo: ${invoiceNo}`,
-        );
-      } else {
-        this.logger.log(
-          `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${totalPaid} invoiceAvailable: false`,
-        );
       }
+
+      const existingSubInvoice = await tx.invoice.findFirst({
+        where: {
+          customerId: sub.customerId,
+          deletedAt: null,
+          OR: [{ subscriptionId: sub.id }, { invoiceNo: finalInvoiceNo }],
+        },
+        include: { payments: true },
+      });
+
+      const clampedPaid = Math.min(totalPaid, fullTotalAmount);
+      const remainingBal = Math.max(0, Math.round((fullTotalAmount - clampedPaid) * 100) / 100);
+      const invoiceStatus = isFullyPaid ? InvoiceStatus.PAID : InvoiceStatus.PARTIALLY_PAID;
+      const secondDue = !isFullyPaid
+        ? (() => {
+            const d = new Date(startDate);
+            d.setDate(d.getDate() + 30);
+            return d;
+          })()
+        : null;
+      const nextBillingAmt = sub.autoRenew ? fullTotalAmount : null;
+
+      let targetInvoiceId: number;
+      if (existingSubInvoice) {
+        finalInvoiceNo = existingSubInvoice.invoiceNo;
+        const hasOnline = (existingSubInvoice.payments || []).some((ip) => ip.paymentMode === 'ONLINE');
+        const resolvedMode = hasOnline ? 'MIXED' : 'OFFLINE';
+        const updated = await tx.invoice.update({
+          where: { id: existingSubInvoice.id },
+          data: {
+            subscriptionId: sub.id,
+            status: invoiceStatus,
+            paidAmount: clampedPaid,
+            balanceAmount: remainingBal,
+            paymentMode: resolvedMode,
+            lastPaymentDate: new Date(),
+            nextInstallmentDate: secondDue,
+            nextInstallmentAmount: !isFullyPaid ? remainingBal : null,
+            nextBillingDate: endDate,
+            nextBillingAmount: nextBillingAmt,
+            billingCycle: String(cycle),
+            planName: plan.name,
+            notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Total Paid: ₹${clampedPaid}, Balance: ₹${remainingBal}. Order: ${payment.orderNumber || payment.orderId}`,
+          },
+        });
+        targetInvoiceId = updated.id;
+      } else {
+        const created = await tx.invoice.create({
+          data: {
+            customerId: sub.customerId,
+            contactId: contact.id,
+            subscriptionId: sub.id,
+            invoiceNo: finalInvoiceNo,
+            status: invoiceStatus,
+            issueDate: startDate,
+            dueDate: secondDue || startDate,
+            subTotal: fullBaseAmount,
+            taxAmount: fullGstAmount,
+            discount: 0,
+            totalAmount: fullTotalAmount,
+            paidAmount: clampedPaid,
+            balanceAmount: remainingBal,
+            paymentMode: 'OFFLINE',
+            lastPaymentDate: new Date(),
+            nextInstallmentDate: secondDue,
+            nextInstallmentAmount: !isFullyPaid ? remainingBal : null,
+            nextBillingDate: endDate,
+            nextBillingAmount: nextBillingAmt,
+            billingCycle: String(cycle),
+            planName: plan.name,
+            notes: `Subscription payment for ${plan.name} (${cycle} billing). Payment Method: OFFLINE. Total Paid: ₹${clampedPaid}, Balance: ₹${remainingBal}. Order: ${payment.orderNumber || payment.orderId}`,
+          },
+        });
+        targetInvoiceId = created.id;
+      }
+
+      const existingIp = await tx.invoicePayment.findFirst({
+        where: { invoiceId: targetInvoiceId, paymentHistoryId: payment.id },
+      });
+      if (!existingIp) {
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: targetInvoiceId,
+            customerId: sub.customerId,
+            paymentHistoryId: payment.id,
+            amount: Number(payment.totalAmount || fullTotalAmount),
+            paymentMode: 'OFFLINE',
+            paymentMethod: String(payment.paymentMethod || 'BANK_TRANSFER'),
+            transactionRef: payment.transactionId || receiptNo,
+            receiptNo,
+            status: 'CONFIRMED',
+            paymentDate: new Date(),
+            verifiedById: adminUserId || null,
+            verifiedAt: new Date(),
+            remarks: isFullyPaid ? 'Approved offline full payment' : 'Approved offline partial payment',
+            idempotencyKey: `payhist-${payment.id}`,
+          },
+        });
+      }
+
+      this.logger.log(
+        `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${clampedPaid} balance: ${remainingBal} status: ${invoiceStatus} invoiceNo: ${finalInvoiceNo}`,
+      );
 
       // 6. Provision Plan Entitlements strictly from purchased plan features
       const deliverableFeatures = sub.customFeatures || plan.features;
