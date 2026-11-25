@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isUserSuperAdmin } from '../../common/utils/role.util';
 import { getBusinessDayRange } from '../../common/utils/timezone.util';
@@ -454,12 +455,12 @@ export class ExportService {
     }
 
     if (module === 'deals') {
-      const where: any = {
+      const where: Prisma.DealWhereInput = {
         ...baseCustomerWhere,
         deletedAt: null,
         ...idFilter,
         ...(dateRange ? { createdAt: dateRange } : {}),
-        ...(filters.employeeId ? { ownerId: Number(filters.employeeId) } : {}),
+        ...(filters.employeeId ? { assignedToId: Number(filters.employeeId) } : {}),
         ...(search ? { title: { contains: search, mode: 'insensitive' } } : {}),
       };
       const items = await this.prisma.deal.findMany({
@@ -470,17 +471,18 @@ export class ExportService {
         include: {
           company: { select: { name: true } },
           contact: { select: { firstName: true, lastName: true } },
-          owner: { select: { firstName: true, lastName: true } },
+          assignedTo: { select: { firstName: true, lastName: true } },
+          stage: { select: { name: true } },
         },
       });
-      const rows = items.map((d: any) => ({
+      const rows = items.map((d) => ({
         id: d.id,
         title: d.title,
         leadName: d.company?.name || `${d.contact?.firstName || ''} ${d.contact?.lastName || ''}`.trim() || '—',
-        stage: d.stage,
-        value: Number(d.value || 0),
-        ownerName: d.owner ? `${d.owner.firstName || ''} ${d.owner.lastName || ''}`.trim() : 'Unassigned',
-        expectedCloseDate: d.expectedCloseDate,
+        stage: d.stage?.name || (d.isWon ? 'WON' : d.isLost ? 'LOST' : 'OPEN'),
+        value: Number(d.amount || 0),
+        ownerName: d.assignedTo ? `${d.assignedTo.firstName || ''} ${d.assignedTo.lastName || ''}`.trim() || 'Unassigned' : 'Unassigned',
+        expectedCloseDate: d.expectedClosing,
         createdAt: d.createdAt,
       }));
       return {
