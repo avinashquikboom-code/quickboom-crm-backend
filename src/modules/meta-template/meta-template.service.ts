@@ -309,6 +309,9 @@ export class MetaTemplateService {
     const header = (dto.headerType || 'NONE').toUpperCase();
     if (!['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'].includes(header)) throw new BadRequestException('Invalid header type.');
     if (header === 'TEXT' && (!dto.headerContent?.trim() || dto.headerContent.trim().length > 60)) throw new BadRequestException('Text header is required and must not exceed 60 characters.');
+    if (header === 'TEXT' && (/[\p{Extended_Pictographic}\p{Emoji_Presentation}\p{Cc}\p{Cf}\uFE0F*~`]/u.test(dto.headerContent || '') || /_[^_]+_/.test((dto.headerContent || '').replace(/\{\{[^{}]+\}\}/g, '')))) {
+      throw new BadRequestException('Header must be plain text on one line, without emojis, asterisks or formatting characters.');
+    }
     if (dto.footer && (dto.footer.length > 60 || /[{}]/.test(dto.footer))) throw new BadRequestException('Footer must be at most 60 characters and cannot contain variables.');
     if (dto.buttons != null && (!Array.isArray(dto.buttons) || dto.buttons.length > 10)) throw new BadRequestException('Buttons must be an array with at most 10 entries.');
     for (const button of dto.buttons || []) {
