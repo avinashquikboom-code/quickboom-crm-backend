@@ -44,6 +44,7 @@ import { LeadStageEmailDeliveryService } from './lead-stage-email-delivery.servi
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeadLimitService } from '../lead-limit/lead-limit.service';
 import { EmailService } from '../email/email.service';
+import { FinancialMetricsService } from '../invoice/financial-metrics.service';
 import {
   EmailTemplateService,
   TELECALLER_STATUS_TO_TEMPLATE_KEY,
@@ -111,6 +112,7 @@ export class LeadService {
     @Optional() private readonly stageEmailDeliveryService?: LeadStageEmailDeliveryService,
     @Optional() private readonly leadPlanProposalService?: LeadPlanProposalService,
     @Optional() private readonly moduleRef?: ModuleRef,
+    @Optional() private readonly financialMetrics?: FinancialMetricsService,
   ) {}
 
   private getNotificationService(): NotificationService | null {
@@ -5966,5 +5968,194 @@ Sent by ${senderOrgName} via CRM.
       Number(userId),
       dto,
     );
+  }
+
+  async getCrmDashboard(
+    customerId: number | string | undefined,
+    filters: {
+      fromDate?: string;
+      toDate?: string;
+      departmentId?: number | null;
+      employeeId?: number | null;
+      branchId?: number | null;
+      leadSource?: string;
+      leadStageId?: number | null;
+    },
+    user?: any,
+  ) {
+    const parsedCust = Number(customerId);
+    const hasCust = !Number.isNaN(parsedCust) && parsedCust > 0;
+    const custFilter = hasCust ? { customerId: parsedCust } : {};
+
+    const range = this.financialMetrics
+      ? this.financialMetrics.resolveDateBounds(filters.fromDate, filters.toDate)
+      : { start: undefined, end: undefined };
+    const dateCond =
+      range.start && range.end
+        ? { gte: range.start, lte: range.end }
+        : range.start
+          ? { gte: range.start }
+          : range.end
+            ? { lte: range.end }
+            : undefined;
+
+    const empWhere: any = {
+      ...custFilter,
+      status: 'ACTIVE',
+      ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
+      ...(filters.employeeId ? { id: filters.employeeId } : {}),
+      ...(filters.branchId ? { officeId: filters.branchId } : {}),
+    };
+    const scopedEmployees = await this.prisma.employee.findMany({
+      where: empWhere,
+      select: { id: true, userId: true, firstName: true, lastName: true, employeeCode: true, departmentId: true, department: { select: { name: true } } },
+    });
+    const hasOrgScope = Boolean(filters.departmentId || filters.employeeId || filters.branchId);
+    const userIds = scopedEmployees.map((e) => e.userId).filter((id): id is number => Boolean(id));
+
+    const leadWhere: any = {
+      ...custFilter,
+      deletedAt: null,
+      ...(dateCond ? { createdAt: dateCond } : {}),
+      ...(filters.leadSource && filters.leadSource !== 'ALL' ? { source: { equals: filters.leadSource, mode: 'insensitive' } } : {}),
+      ...(filters.leadStageId ? { stageId: filters.leadStageId } : {}),
+      ...(hasOrgScope
+        ? { assignedToId: { in: userIds.length ? userIds : [-1] } }
+        : {}),
+    };
+
+    const dealWhere: any = {
+      ...custFilter,
+      deletedAt: null,
+      ...(dateCond ? { createdAt: dateCond } : {}),
+      ...(hasOrgScope
+        ? { assignedToId: { in: userIds.length ? userIds : [-1] } }
+        : {}),
+    };
+
+    const [stages, leads, deals, financial] = await Promise.all([
+      this.prisma.leadStage.findMany({
+        where: { ...custFilter, isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+      this.prisma.lead.findMany({
+        where: leadWhere,
+        select: {
+          id: true,
+          status: true,
+          stageId: true,
+          source: true,
+          assignedToId: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.deal.findMany({
+        where: dealWhere,
+        select: {
+          id: true,
+          isWon: true,
+          isLost: true,
+          amount: true,
+          assignedToId: true,
+        },
+      }),
+      this.financialMetrics
+        ? this.financialMetrics.getFinancialSummary({
+            customerId: hasCust ? parsedCust : null,
+            fromDate: filters.fromDate,
+            toDate: filters.toDate,
+          })
+        : Promise.resolve(null),
+    ]);
+
+    // Count each lead ONCE by its current stage
+    const stageCounts = stages.map((st) => ({
+      stageId: st.id,
+      name: st.name,
+      color: st.color || '#123D32',
+      sortOrder: st.sortOrder,
+      count: 0,
+      percentage: 0,
+    }));
+
+    const stageById = new Map(stageCounts.map((s) => [s.stageId, s]));
+    const stageByToken = new Map(stageCounts.map((s) => [canonicalLeadStageToken(s.name), s]));
+    let unmatchedCount = 0;
+
+    for (const l of leads) {
+      let bucket = l.stageId ? stageById.get(l.stageId) : undefined;
+      if (!bucket && l.status) {
+        bucket = stageByToken.get(canonicalLeadStageToken(String(l.status)));
+      }
+      if (bucket) {
+        bucket.count += 1;
+      } else {
+        unmatchedCount += 1;
+      }
+    }
+
+    const totalLeads = leads.length;
+    for (const s of stageCounts) {
+      s.percentage = totalLeads > 0 ? Math.round((s.count / totalLeads) * 1000) / 10 : 0;
+    }
+
+    const wonLeads = leads.filter((l) => ['WON', 'CONVERTED'].includes(String(l.status || '').toUpperCase())).length;
+    const lostLeads = leads.filter((l) => String(l.status || '').toUpperCase() === 'LOST').length;
+    const activeDeals = deals.filter((d) => !d.isWon && !d.isLost).length;
+    const wonDeals = deals.filter((d) => Boolean(d.isWon)).length;
+
+    const sourceMap = new Map<string, number>();
+    for (const l of leads) {
+      const src = (l.source || 'DIRECT').trim().toUpperCase();
+      sourceMap.set(src, (sourceMap.get(src) || 0) + 1);
+    }
+
+    const employeePerformance = scopedEmployees.map((emp) => {
+      const empLeads = leads.filter((l) => emp.userId && l.assignedToId === emp.userId);
+      const empWonLeads = empLeads.filter((l) => ['WON', 'CONVERTED'].includes(String(l.status || '').toUpperCase())).length;
+      const empDeals = deals.filter((d) => emp.userId && d.assignedToId === emp.userId);
+      const empWonDeals = empDeals.filter((d) => Boolean(d.isWon));
+      return {
+        employeeId: emp.id,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee',
+        department: emp.department?.name || 'General',
+        totalLeads: empLeads.length,
+        wonLeads: empWonLeads,
+        activeDeals: empDeals.filter((d) => !d.isWon && !d.isLost).length,
+        wonDeals: empWonDeals.length,
+        dealValue: empWonDeals.reduce((sum, d) => sum + Number(d.amount || 0), 0),
+        conversionRate: empLeads.length > 0 ? Math.round((empWonLeads / empLeads.length) * 1000) / 10 : 0,
+      };
+    }).sort((a, b) => b.totalLeads - a.totalLeads);
+
+    return {
+      dateRange: { from: filters.fromDate || null, to: filters.toDate || null },
+      lastSyncedAt: new Date().toISOString(),
+      summary: {
+        totalLeads,
+        wonLeads,
+        lostLeads,
+        activeDeals,
+        wonDeals,
+        totalDeals: deals.length,
+        conversionRate: totalLeads > 0 ? Math.round((wonLeads / totalLeads) * 1000) / 10 : 0,
+        revenueCollected: financial?.totalCollectedAmount ?? 0,
+        totalInvoiced: financial?.totalInvoicedAmount ?? 0,
+        unmatchedStageLeads: unmatchedCount,
+      },
+      stages: stageCounts,
+      leadsBySource: Array.from(sourceMap.entries()).map(([source, count]) => ({
+        source,
+        count,
+        percentage: totalLeads > 0 ? Math.round((count / totalLeads) * 1000) / 10 : 0,
+      })),
+      employeePerformance,
+      employees: scopedEmployees.map((e) => ({
+        id: e.id,
+        name: `${e.firstName || ''} ${e.lastName || ''}`.trim(),
+        departmentId: e.departmentId,
+      })),
+    };
   }
 }

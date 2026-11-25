@@ -22,13 +22,17 @@ export class DashboardService {
     const baseCust = hasCustomer ? { customerId: filters.customerId! } : {};
 
     const range = this.financialMetrics
-      ? this.financialMetrics.resolveDateRange(filters.fromDate, filters.toDate)
-      : { startDate: null, endDate: null, fromKey: filters.fromDate || null, toKey: filters.toDate || null };
+      ? this.financialMetrics.resolveDateBounds(filters.fromDate, filters.toDate)
+      : { start: undefined, end: undefined };
 
     const dateFilter =
-      range.startDate && range.endDate
-        ? { gte: range.startDate, lte: range.endDate }
-        : undefined;
+      range.start && range.end
+        ? { gte: range.start, lte: range.end }
+        : range.start
+          ? { gte: range.start }
+          : range.end
+            ? { lte: range.end }
+            : undefined;
 
     const empWhere: any = {
       ...baseCust,
@@ -51,12 +55,7 @@ export class DashboardService {
       deletedAt: null,
       ...(dateFilter ? { createdAt: dateFilter } : {}),
       ...(hasOrgScope
-        ? {
-            OR: [
-              { assignedToEmployeeId: { in: filteredEmpIds.length ? filteredEmpIds : [-1] } },
-              { assignedToId: { in: filteredUserIds.length ? filteredUserIds : [-1] } },
-            ],
-          }
+        ? { assignedToId: { in: filteredUserIds.length ? filteredUserIds : [-1] } }
         : {}),
     };
 
@@ -65,12 +64,7 @@ export class DashboardService {
       deletedAt: null,
       ...(dateFilter ? { createdAt: dateFilter } : {}),
       ...(hasOrgScope
-        ? {
-            OR: [
-              { assignedToEmployeeId: { in: filteredEmpIds.length ? filteredEmpIds : [-1] } },
-              { assignedToId: { in: filteredUserIds.length ? filteredUserIds : [-1] } },
-            ],
-          }
+        ? { assignedToId: { in: filteredUserIds.length ? filteredUserIds : [-1] } }
         : {}),
     };
 
@@ -106,7 +100,7 @@ export class DashboardService {
       }),
       this.prisma.deal.findMany({
         where: dealWhere,
-        select: { id: true, stage: true, value: true, createdAt: true },
+        select: { id: true, isWon: true, isLost: true, amount: true, createdAt: true },
       }),
       this.prisma.customer.count({ where: { deletedAt: null } }),
       this.prisma.customer.count({
@@ -120,14 +114,13 @@ export class DashboardService {
         select: { employeeId: true },
         distinct: ['employeeId'],
       }),
-      this.prisma.followUp.findMany({
+      this.prisma.task.findMany({
         where: {
           ...baseCust,
-          status: { in: ['PENDING', 'SCHEDULED'] },
-          ...(dateFilter ? { followUpDate: dateFilter } : { followUpDate: { gte: todayRange.start } }),
+          status: { in: ['PENDING', 'IN_PROGRESS'] },
+          ...(dateFilter ? { dueDate: dateFilter } : { dueDate: { gte: todayRange.start } }),
         },
-        include: { lead: { select: { id: true, name: true, company: true } } },
-        orderBy: { followUpDate: 'asc' },
+        orderBy: { dueDate: 'asc' },
         take: 8,
       }),
       this.prisma.paymentHistory.findMany({
@@ -148,7 +141,7 @@ export class DashboardService {
     ]);
 
     const convertedLeads = leads.filter((l) => ['WON', 'CONVERTED'].includes(String(l.status || '').toUpperCase())).length;
-    const wonDeals = deals.filter((d) => String(d.stage || '').toUpperCase() === 'WON').length;
+    const wonDeals = deals.filter((d) => Boolean(d.isWon)).length;
 
     const sourceMap = new Map<string, number>();
     for (const l of leads) {
@@ -181,7 +174,7 @@ export class DashboardService {
     }
 
     return {
-      dateRange: { from: range.fromKey, to: range.toKey },
+      dateRange: { from: filters.fromDate || null, to: filters.toDate || null },
       lastSyncedAt: new Date().toISOString(),
       snapshot: {
         totalCustomers,
@@ -202,16 +195,16 @@ export class DashboardService {
         upcomingCollections: financial?.upcomingCollectionsTotal ?? 0,
         onlineCollections: financial?.onlineCollections ?? 0,
         offlineCollections: financial?.offlineCollections ?? 0,
-        collectionGrowthPercent: financial?.collectionGrowthPercent ?? null,
+        collectionGrowthPercent: (financial as any)?.collectionGrowthPercent ?? null,
       },
       leadsBySource: Array.from(sourceMap.entries()).map(([source, count]) => ({ source, count })),
       leadsByStage: Array.from(stageMap.entries()).map(([stage, count]) => ({ stage, count })),
       salesPerformance: Array.from(seriesMap.values()).sort((a, b) => a.date.localeCompare(b.date)),
       upcomingActivities: upcomingFollowUps.map((f) => ({
         id: f.id,
-        title: f.notes || `Follow-up with ${f.lead?.name || 'Lead'}`,
-        leadName: f.lead?.name || f.lead?.company || 'Lead',
-        scheduledAt: f.followUpDate,
+        title: f.title || f.description || 'Scheduled Task',
+        leadName: 'Task',
+        scheduledAt: f.dueDate,
         status: f.status,
       })),
       recentTransactions: recentPayments.map((p) => ({

@@ -23,7 +23,6 @@ import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { FinancialMetricsService } from './financial-metrics.service';
 import { getBusinessDayRange } from '../../common/utils/timezone.util';
-import { FinancialMetricsService } from './financial-metrics.service';
 import {
   roundCurrency,
   isOnlinePaymentMethod,
@@ -487,7 +486,7 @@ export class InvoiceService {
         ];
       } else if (rawStatus === 'PENDING' || rawStatus === 'UNPAID') {
         where.status = {
-          in: [InvoiceStatus.PENDING, InvoiceStatus.SENT],
+          in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT],
         };
       } else if (Object.values(InvoiceStatus).includes(rawStatus as InvoiceStatus)) {
         where.status = rawStatus as InvoiceStatus;
@@ -523,7 +522,7 @@ export class InvoiceService {
           contact: true,
           customer: true,
           items: true,
-          payments: { orderBy: { paidAt: 'desc' } },
+          payments: { orderBy: { paymentDate: 'desc' } },
           subscription: {
             include: {
               plan: true,
@@ -543,17 +542,19 @@ export class InvoiceService {
             subscriptionPlanId: query.subscriptionPlanId ? Number(query.subscriptionPlanId) : null,
           })
         : Promise.resolve(null),
-      this.prisma.customerSubscription.count({
-        where: {
-          ...(numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {}),
-          status: 'ACTIVE',
-          autoRenew: true,
-        },
-      }),
+      this.prisma.customerSubscription?.count
+        ? this.prisma.customerSubscription.count({
+            where: {
+              ...(numCustomerId && !Number.isNaN(numCustomerId) && numCustomerId > 0 ? { customerId: numCustomerId } : {}),
+              status: 'ACTIVE',
+              autoRenew: true,
+            },
+          })
+        : Promise.resolve(0),
     ]);
 
     const now = new Date();
-    const formatted = await Promise.all(items.map(async (inv) => {
+    const formatted = await Promise.all((items as any[]).map(async (inv: any) => {
       const planDates = await this.resolveInvoicePlanDates(inv);
       const contactFullName = inv.contact
         ? `${inv.contact.firstName || ''} ${inv.contact.lastName || ''}`.trim()
@@ -1608,7 +1609,7 @@ export class InvoiceService {
 
     const existingPayments = await this.prisma.invoicePayment.findMany({
       where: { invoiceId: invoice.id },
-      orderBy: { paidAt: 'desc' },
+      orderBy: { paymentDate: 'desc' },
     });
 
     const calc = this.financialMetrics
@@ -1621,7 +1622,7 @@ export class InvoiceService {
 
     const paymentMode = dto.paymentMode || (isOnlinePaymentMethod(dto.paymentMethod) ? 'ONLINE' : 'OFFLINE');
     const receiptNo = `QUIKBOOM-RECEIPT-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paymentDate = dto.paymentDate ? new Date(dto.paymentDate) : new Date();
 
     const created = await this.prisma.invoicePayment.create({
       data: {
@@ -1633,10 +1634,10 @@ export class InvoiceService {
         transactionRef: dto.transactionRef || null,
         receiptNo,
         proofUrl: dto.proofUrl || null,
-        notes: dto.notes || null,
-        status: 'VERIFIED',
-        paidAt,
-        recordedByUserId: user?.id ? Number(user.id) : null,
+        remarks: dto.remarks || null,
+        status: dto.pendingVerification ? 'PENDING' : 'CONFIRMED',
+        paymentDate,
+        recordedById: user?.id ? Number(user.id) : null,
       },
     });
 
@@ -1658,7 +1659,7 @@ export class InvoiceService {
         balanceAmount: updatedCalc.balanceAmount,
         status: updatedCalc.status,
         paymentMode: updatedCalc.paymentMode,
-        lastPaymentDate: paidAt,
+        lastPaymentDate: paymentDate,
         nextInstallmentDate: dto.nextInstallmentDate ? new Date(dto.nextInstallmentDate) : updatedCalc.balanceAmount <= 0.01 ? null : invoice.nextInstallmentDate,
         nextInstallmentAmount: dto.nextInstallmentAmount != null ? Number(dto.nextInstallmentAmount) : updatedCalc.balanceAmount <= 0.01 ? null : updatedCalc.balanceAmount,
       },
@@ -1671,7 +1672,7 @@ export class InvoiceService {
     const invoice = await this.findOne(customerId, id, user);
     return this.prisma.invoicePayment.findMany({
       where: { invoiceId: invoice.id },
-      orderBy: { paidAt: 'desc' },
+      orderBy: { paymentDate: 'desc' },
     });
   }
 
@@ -1688,9 +1689,10 @@ export class InvoiceService {
       customerName: invoice.customer?.companyName || invoice.customer?.name || 'Customer',
       customerEmail: invoice.customer?.email || '',
       planName: invoice.planName || 'CRM Subscription Plan',
-      paidAt: payment.paidAt || payment.createdAt,
+      paymentDate: payment.paymentDate || payment.createdAt,
       amountPaid: Number(payment.amount || 0),
-      totalInvoiceAmount: Number(invoice.totalAmount || 0),
+      invoiceTotal: Number(invoice.totalAmount || 0),
+      totalPaidToDate: Number(invoice.paidAmount || payment.amount || 0),
       remainingBalance: Number(invoice.balanceAmount || 0),
       paymentMode: payment.paymentMode,
       paymentMethod: payment.paymentMethod,
@@ -1709,8 +1711,8 @@ export class InvoiceService {
     return this.prisma.invoice.update({
       where: { id: invoice.id },
       data: {
-        nextInstallmentDate: new Date(dto.nextInstallmentDate),
-        ...(dto.nextInstallmentAmount != null ? { nextInstallmentAmount: Number(dto.nextInstallmentAmount) } : {}),
+        nextInstallmentDate: new Date(dto.dueDate),
+        ...(dto.amount != null ? { nextInstallmentAmount: Number(dto.amount) } : {}),
       },
     });
   }
@@ -1718,7 +1720,7 @@ export class InvoiceService {
   async generatePaymentLink(customerId: number | string, id: number | string, dto: GeneratePaymentLinkDto, user: any) {
     const invoice = await this.findOne(customerId, id, user);
     const token = crypto.randomBytes(24).toString('hex');
-    const expiresAt = new Date(Date.now() + (dto.expiresInDays || 7) * 86400000);
+    const expiresAt = new Date(Date.now() + (dto.expiresInHours || 72) * 3600000);
     await this.prisma.invoice.update({
       where: { id: invoice.id },
       data: {
@@ -1738,16 +1740,16 @@ export class InvoiceService {
 
   async sendCommunication(customerId: number | string, id: number | string, dto: SendInvoiceCommunicationDto, user: any) {
     const invoice = await this.findOne(customerId, id, user);
-    const recipient = dto.recipient || invoice.customer?.email || invoice.customer?.phone || '';
+    const recipient = invoice.customer?.email || invoice.customer?.phone || '';
     const log = await this.prisma.invoiceCommunicationLog.create({
       data: {
         invoiceId: invoice.id,
         customerId: invoice.customerId,
         channel: dto.channel || 'EMAIL',
-        messageType: dto.messageType || 'INVOICE',
+        messageType: dto.messageType || 'INVOICE_PDF',
         recipient,
         status: recipient ? 'SENT' : 'FAILED',
-        sentByUserId: user?.id ? Number(user.id) : null,
+        sentById: user?.id ? Number(user.id) : null,
       },
     });
     return log;

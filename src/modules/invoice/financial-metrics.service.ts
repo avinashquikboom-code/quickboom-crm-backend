@@ -3,10 +3,10 @@ import { InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezone.util';
 import {
-  computeNextBillingFromSubscription,
-  isOnlinePaymentMethod,
-  resolveInvoiceDisplayStatus,
   roundCurrency,
+  isOnlinePaymentMethod,
+  resolvePaymentModeFromTransactions,
+  computeNextBillingFromSubscription,
 } from './invoice-billing.helper';
 
 export interface FinancialFilterParams {
@@ -28,133 +28,277 @@ export class FinancialMetricsService {
     return { start, end };
   }
 
-  /**
-   * Authoritative financial summary shared across Main Admin Dashboard, CRM Dashboard,
-   * Customer Dashboard, Invoices & Billing, Active Subscriptions, and Reports.
-   */
-  async getFinancialSummary(filters: FinancialFilterParams = {}) {
-    const { customerId, fromDate, toDate, paymentStatus, paymentMode, subscriptionPlanId } = filters;
-    const { start, end } = this.resolveDateBounds(fromDate, toDate);
+  resolveDateRange(fromDate?: string, toDate?: string): {
+    startDate: Date | null;
+    endDate: Date | null;
+    prevStartDate: Date | null;
+    prevEndDate: Date | null;
+    fromKey: string | null;
+    toKey: string | null;
+  } {
+    if (!fromDate && !toDate) {
+      return {
+        startDate: null,
+        endDate: null,
+        prevStartDate: null,
+        prevEndDate: null,
+        fromKey: null,
+        toKey: null,
+      };
+    }
 
-    const baseCustomerWhere: any =
-      customerId && Number.isFinite(Number(customerId)) && Number(customerId) > 0
-        ? { customerId: Number(customerId) }
+    const effectiveToKey = toDate || getBusinessDate(new Date());
+    const effectiveFromKey = fromDate || '2020-01-01';
+    const startDate = getBusinessDayRange(effectiveFromKey).start;
+    const endDate = getBusinessDayRange(effectiveToKey).end;
+
+    const spanMs = Math.max(86400000, endDate.getTime() - startDate.getTime() + 1);
+    const prevEndDate = new Date(startDate.getTime() - 1);
+    const prevStartDate = new Date(prevEndDate.getTime() - spanMs + 1);
+
+    return {
+      startDate,
+      endDate,
+      prevStartDate,
+      prevEndDate,
+      fromKey: effectiveFromKey,
+      toKey: effectiveToKey,
+    };
+  }
+
+  computeAuthoritativeInvoice(inv: any, now = new Date()) {
+    const items = Array.isArray(inv.items) ? inv.items : [];
+    const sub = inv.subscription || null;
+
+    let subTotal = roundCurrency(Number(inv.subTotal || 0));
+    let taxAmount = roundCurrency(Number(inv.taxAmount || 0));
+    const discountAmount = roundCurrency(Number(sub?.discountAmount || 0));
+    let totalAmount = roundCurrency(Number(inv.totalAmount || 0));
+
+    if (items.length > 0) {
+      const itemsSubtotal = roundCurrency(
+        items.reduce(
+          (sum: number, item: any) =>
+            sum + Number(item.amount ?? Number(item.quantity || 1) * Number(item.unitPrice || 0)),
+          0,
+        ),
+      );
+      if (itemsSubtotal > 0) {
+        subTotal = itemsSubtotal;
+        if (taxAmount <= 0 && totalAmount > subTotal) {
+          taxAmount = roundCurrency(totalAmount - subTotal);
+        }
+        totalAmount = roundCurrency(Math.max(0, subTotal - discountAmount + taxAmount));
+      }
+    } else if (sub && Number(inv.totalAmount || 0) <= 0) {
+      const cycle = String(sub.billingCycle || inv.billingCycle || 'MONTHLY').toUpperCase();
+      const planBase =
+        sub.customPrice != null && Number(sub.customPrice) > 0
+          ? Number(sub.customPrice)
+          : sub.plan
+            ? cycle === 'YEARLY'
+              ? Number(sub.plan.yearlyPrice || 0)
+              : Number(sub.plan.monthlyPrice || 0)
+            : 0;
+      if (planBase > 0) {
+        const taxable = Math.max(0, roundCurrency(planBase - discountAmount));
+        subTotal = taxable;
+        taxAmount = roundCurrency(taxable * 0.18);
+        totalAmount = roundCurrency(taxable + taxAmount);
+      }
+    }
+
+    if (totalAmount > 0 && subTotal <= 0) {
+      subTotal = roundCurrency(totalAmount / 1.18);
+      taxAmount = roundCurrency(totalAmount - subTotal);
+    }
+
+    const invoicePayments = Array.isArray(inv.payments) ? inv.payments : [];
+    const verifiedPayments = invoicePayments.filter((p: any) =>
+      ['SUCCESS', 'PAID', 'VERIFIED', 'CONFIRMED'].includes(String(p.status || '').toUpperCase()),
+    );
+    const refundedPayments = invoicePayments.filter(
+      (p: any) => String(p.status || '').toUpperCase() === 'REFUNDED',
+    );
+
+    const grossPaidFromRows = roundCurrency(
+      verifiedPayments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0),
+    );
+    const totalRefunded = roundCurrency(
+      refundedPayments.reduce((sum: number, p: any) => sum + Number(p.refundedAmount || p.amount || 0), 0),
+    );
+
+    const paidAmount =
+      verifiedPayments.length > 0
+        ? Math.max(0, roundCurrency(grossPaidFromRows - totalRefunded))
+        : roundCurrency(Number(inv.paidAmount || (inv.status === InvoiceStatus.PAID ? totalAmount : 0)));
+
+    const balanceAmount = Math.max(0, roundCurrency(totalAmount - paidAmount));
+
+    let status: InvoiceStatus = inv.status;
+    if (status !== InvoiceStatus.CANCELLED && status !== InvoiceStatus.DRAFT) {
+      if (balanceAmount <= 0.01 && totalAmount > 0) {
+        status = InvoiceStatus.PAID;
+      } else if (paidAmount > 0 && balanceAmount > 0.01) {
+        status = InvoiceStatus.PARTIALLY_PAID;
+      } else {
+        status = InvoiceStatus.PENDING;
+      }
+    }
+
+    const isOverdue =
+      status !== InvoiceStatus.PAID &&
+      status !== InvoiceStatus.CANCELLED &&
+      balanceAmount > 0.01 &&
+      Boolean(inv.dueDate && new Date(inv.dueDate).getTime() < now.getTime());
+
+    const txForMode = verifiedPayments.map((p: any) => ({
+      paymentMode: p.paymentMode,
+      paymentMethod: p.paymentMethod,
+    }));
+    const paymentMode =
+      txForMode.length > 0
+        ? resolvePaymentModeFromTransactions(txForMode)
+        : paidAmount > 0
+          ? inv.paymentMode || 'ONLINE'
+          : 'NOT_PAID';
+
+    const paymentMethods = Array.from(
+      new Set(
+        verifiedPayments
+          .map((p: any) => String(p.paymentMethod || '').trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    );
+
+    const lastPaymentDate =
+      verifiedPayments.length > 0
+        ? verifiedPayments
+            .map((p: any) => new Date(p.paymentDate || p.createdAt))
+            .sort((a: Date, b: Date) => b.getTime() - a.getTime())[0]
+        : inv.lastPaymentDate || (status === InvoiceStatus.PAID ? inv.issueDate : null);
+
+    let planName = (inv.planName || sub?.plan?.name || '').trim();
+    if (!planName && inv.notes && inv.notes.includes('Subscription payment for')) {
+      const afterSub = inv.notes.split('Subscription payment for')[1];
+      if (afterSub) {
+        planName = afterSub
+          .split(/\s*\(|\.\s*(?:Total Paid|Purchase|Plan activation|Payment Method|Order):/i)[0]
+          .trim();
+      }
+    }
+    if (!planName) {
+      planName = items[0]?.description || 'CRM Subscription Plan';
+    }
+
+    const nextInstallmentRow = Array.isArray(sub?.installments)
+      ? sub.installments.find((inst: any) =>
+          ['PENDING', 'PARTIAL', 'OVERDUE'].includes(String(inst.status || '').toUpperCase()),
+        )
+      : null;
+
+    const nextInstallmentDate =
+      balanceAmount > 0.01 ? inv.nextInstallmentDate || nextInstallmentRow?.dueDate || null : null;
+    const nextInstallmentAmount =
+      balanceAmount > 0.01
+        ? inv.nextInstallmentAmount != null
+          ? Number(inv.nextInstallmentAmount)
+          : nextInstallmentRow?.amount != null
+            ? Number(nextInstallmentRow.amount)
+            : balanceAmount
+        : null;
+
+    const billingCycle = inv.billingCycle || sub?.billingCycle || null;
+    const computedNextBilling = sub
+      ? computeNextBillingFromSubscription(sub)
+      : { nextBillingDate: null, nextBillingAmount: null };
+    const nextBillingDate = inv.nextBillingDate || computedNextBilling.nextBillingDate;
+    const nextBillingAmount =
+      inv.nextBillingAmount != null ? Number(inv.nextBillingAmount) : computedNextBilling.nextBillingAmount;
+
+    return {
+      subTotal,
+      discountAmount,
+      taxAmount,
+      totalAmount,
+      paidAmount,
+      balanceAmount,
+      status,
+      isOverdue,
+      paymentMode,
+      paymentMethod: paymentMethods.length > 1 ? 'MIXED' : paymentMethods[0] || null,
+      paymentMethods,
+      lastPaymentDate,
+      planName,
+      billingCycle,
+      nextInstallmentDate,
+      nextInstallmentAmount,
+      nextBillingDate,
+      nextBillingAmount,
+    };
+  }
+
+  async getFinancialSummary(filters: FinancialFilterParams = {}) {
+    const { startDate, endDate, prevStartDate, prevEndDate, fromKey, toKey } = this.resolveDateRange(
+      filters.fromDate,
+      filters.toDate,
+    );
+
+    const baseCust =
+      filters.customerId && Number.isFinite(Number(filters.customerId)) && Number(filters.customerId) > 0
+        ? { customerId: Number(filters.customerId) }
         : {};
 
     const invoiceWhere: any = {
-      ...baseCustomerWhere,
+      ...baseCust,
       deletedAt: null,
+      ...(startDate && endDate ? { issueDate: { gte: startDate, lte: endDate } } : {}),
+      ...(filters.subscriptionPlanId ? { subscription: { planId: Number(filters.subscriptionPlanId) } } : {}),
     };
 
-    if (start || end) {
-      invoiceWhere.issueDate = {};
-      if (start) invoiceWhere.issueDate.gte = start;
-      if (end) invoiceWhere.issueDate.lte = end;
-    }
-
-    if (subscriptionPlanId && Number.isFinite(Number(subscriptionPlanId))) {
-      invoiceWhere.subscription = { planId: Number(subscriptionPlanId) };
-    }
-
-    const paymentWhere: any = {
-      status: 'CONFIRMED',
-      invoice: { deletedAt: null, ...baseCustomerWhere },
+    const payWhere: any = {
+      ...baseCust,
+      deletedAt: null,
+      status: { in: ['SUCCESS', 'PAID', 'REFUNDED'] },
+      ...(startDate && endDate ? { createdAt: { gte: startDate, lte: endDate } } : {}),
     };
-    if (start || end) {
-      paymentWhere.paymentDate = {};
-      if (start) paymentWhere.paymentDate.gte = start;
-      if (end) paymentWhere.paymentDate.lte = end;
-    }
 
-    const [allNonDeletedInvoices, periodInvoices, periodConfirmedPayments, activeSubscriptions] = await Promise.all([
-      this.prisma.invoice.findMany({
-        where: {
-          ...baseCustomerWhere,
-          deletedAt: null,
-          ...(subscriptionPlanId ? { subscription: { planId: Number(subscriptionPlanId) } } : {}),
-        },
-        include: {
-          payments: { where: { status: 'CONFIRMED' } },
-          subscription: { include: { plan: true } },
-        },
-      }),
+    const now = new Date();
+    const [invoices, activeSubs, invoicePaymentRows, paymentHistoryRows] = await Promise.all([
       this.prisma.invoice.findMany({
         where: invoiceWhere,
         include: {
-          payments: { where: { status: 'CONFIRMED' } },
-          subscription: { include: { plan: true } },
-        },
-      }),
-      this.prisma.invoicePayment.findMany({
-        where: paymentWhere,
-        include: {
-          invoice: { select: { id: true, customerId: true, paymentMode: true, subscriptionId: true } },
+          items: true,
+          payments: true,
+          subscription: {
+            include: { plan: true, coupon: true, installments: { orderBy: { installmentNumber: 'asc' } } },
+          },
         },
       }),
       this.prisma.customerSubscription.findMany({
         where: {
-          ...baseCustomerWhere,
+          ...baseCust,
           status: 'ACTIVE',
-          ...(subscriptionPlanId ? { planId: Number(subscriptionPlanId) } : {}),
+          autoRenew: true,
+          ...(filters.subscriptionPlanId ? { planId: Number(filters.subscriptionPlanId) } : {}),
         },
         include: { plan: true, coupon: true },
       }),
+      this.prisma.invoicePayment.findMany({
+        where: {
+          ...baseCust,
+          ...(startDate && endDate ? { paymentDate: { gte: startDate, lte: endDate } } : {}),
+          status: { in: ['CONFIRMED', 'SUCCESS', 'PAID', 'VERIFIED', 'REFUNDED'] },
+        },
+      }),
+      this.prisma.paymentHistory.findMany({
+        where: payWhere,
+      }),
     ]);
 
-    // Also include verified PaymentHistory rows not yet linked to an InvoicePayment
-    // so collections are never undercounted or double-counted.
-    const linkedPaymentHistoryIds = new Set(
-      periodConfirmedPayments
-        .map((p) => p.paymentHistoryId)
-        .filter((id): id is number => typeof id === 'number' && id > 0),
-    );
-
-    const legacyPaymentWhere: any = {
-      ...baseCustomerWhere,
-      deletedAt: null,
-      status: { in: ['SUCCESS', 'PAID'] },
-    };
-    if (start || end) {
-      legacyPaymentWhere.createdAt = {};
-      if (start) legacyPaymentWhere.createdAt.gte = start;
-      if (end) legacyPaymentWhere.createdAt.lte = end;
-    }
-
-    const legacyPayments = await this.prisma.paymentHistory.findMany({
-      where: legacyPaymentWhere,
-      include: { invoicePayments: { select: { id: true } } },
-    });
-
-    const unlinkedLegacyPayments = legacyPayments.filter(
-      (lp) => !linkedPaymentHistoryIds.has(lp.id) && (!lp.invoicePayments || lp.invoicePayments.length === 0),
-    );
-
-    // Filter invoices by paymentStatus/paymentMode if requested
-    const matchesStatusAndMode = (inv: any) => {
-      const displayStatus = resolveInvoiceDisplayStatus(inv.status, inv.dueDate, Number(inv.balanceAmount || 0));
-      if (paymentStatus && paymentStatus !== 'ALL') {
-        const wanted = String(paymentStatus).toUpperCase();
-        if (wanted === 'UNPAID' || wanted === 'PENDING') {
-          if (!['PENDING', 'SENT'].includes(displayStatus)) return false;
-        } else if (wanted === 'OVERDUE') {
-          if (displayStatus !== 'OVERDUE' && !inv.isOverdue) return false;
-        } else if (displayStatus !== wanted && String(inv.status).toUpperCase() !== wanted) {
-          return false;
-        }
-      }
-      if (paymentMode && paymentMode !== 'ALL') {
-        const invMode = String(inv.paymentMode || 'NOT_PAID').toUpperCase();
-        if (invMode !== String(paymentMode).toUpperCase()) return false;
-      }
-      return true;
-    };
-
-    const filteredPeriodInvoices = periodInvoices.filter(matchesStatusAndMode);
-    const filteredAllInvoices = allNonDeletedInvoices.filter(matchesStatusAndMode);
-
     let totalInvoicedAmount = 0;
-    let taxTotal = 0;
-    let discountTotal = 0;
+    let totalTaxAmount = 0;
+    let totalDiscountAmount = 0;
     let outstandingReceivables = 0;
     let overdueAmount = 0;
     let upcomingInstallmentsAmount = 0;
@@ -167,168 +311,119 @@ export class FinancialMetricsService {
       overdue: 0,
       draft: 0,
       cancelled: 0,
-      upcomingBilling: 0,
     };
 
-    const now = new Date();
-
-    for (const inv of filteredPeriodInvoices) {
-      const totalAmt = roundCurrency(Number(inv.totalAmount || 0));
-      const taxAmt = roundCurrency(Number(inv.taxAmount || 0));
-      const discAmt = roundCurrency(Number(inv.discountAmount || 0));
-      const paidAmt = roundCurrency(
-        inv.paidAmount != null
-          ? Number(inv.paidAmount)
-          : inv.status === InvoiceStatus.PAID
-            ? totalAmt
-            : (inv.payments || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0),
-      );
-      const balanceAmt = roundCurrency(
-        inv.balanceAmount != null
-          ? Number(inv.balanceAmount)
-          : Math.max(0, totalAmt - paidAmt),
-      );
-
-      const displayStatus = resolveInvoiceDisplayStatus(inv.status, inv.dueDate, balanceAmt);
-      const isOverdue =
-        displayStatus === 'OVERDUE' ||
-        (balanceAmt > 0.01 &&
-          inv.dueDate &&
-          new Date(inv.dueDate) < now &&
-          ![InvoiceStatus.PAID, InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT].includes(inv.status));
-
-      counts.total += 1;
-      if (displayStatus === 'PAID') counts.paid += 1;
-      else if (displayStatus === 'PARTIALLY_PAID') counts.partiallyPaid += 1;
-      else if (displayStatus === 'DRAFT') counts.draft += 1;
-      else if (displayStatus === 'CANCELLED') counts.cancelled += 1;
-      else counts.pending += 1;
-
-      if (isOverdue) {
-        counts.overdue += 1;
-        overdueAmount = roundCurrency(overdueAmount + balanceAmt);
-      }
-
-      if (displayStatus !== 'DRAFT' && displayStatus !== 'CANCELLED') {
-        totalInvoicedAmount = roundCurrency(totalInvoicedAmount + totalAmt);
-        taxTotal = roundCurrency(taxTotal + taxAmt);
-        discountTotal = roundCurrency(discountTotal + discAmt);
-        outstandingReceivables = roundCurrency(outstandingReceivables + balanceAmt);
-      }
-
-      if (inv.nextInstallmentAmount && Number(inv.nextInstallmentAmount) > 0 && balanceAmt > 0.01) {
-        upcomingInstallmentsAmount = roundCurrency(upcomingInstallmentsAmount + Number(inv.nextInstallmentAmount));
-      }
-    }
-
-    // Also compute current outstanding/overdue across all open invoices when a date filter is narrow
-    let currentOpenOutstanding = 0;
-    let currentOpenOverdue = 0;
-    for (const inv of filteredAllInvoices) {
-      if (inv.status === InvoiceStatus.DRAFT || inv.status === InvoiceStatus.CANCELLED || inv.status === InvoiceStatus.PAID) {
+    for (const inv of invoices) {
+      const calc = this.computeAuthoritativeInvoice(inv, now);
+      if (filters.paymentMode && filters.paymentMode !== 'ALL' && calc.paymentMode !== filters.paymentMode) {
         continue;
       }
-      const totalAmt = Number(inv.totalAmount || 0);
-      const paidAmt = Number(inv.paidAmount || 0);
-      const balanceAmt = inv.balanceAmount != null ? Number(inv.balanceAmount) : Math.max(0, totalAmt - paidAmt);
-      if (balanceAmt > 0.01) {
-        currentOpenOutstanding = roundCurrency(currentOpenOutstanding + balanceAmt);
-        if (inv.status === InvoiceStatus.OVERDUE || inv.isOverdue || (inv.dueDate && new Date(inv.dueDate) < now)) {
-          currentOpenOverdue = roundCurrency(currentOpenOverdue + balanceAmt);
+
+      counts.total += 1;
+      if (calc.status === InvoiceStatus.PAID) counts.paid += 1;
+      else if (calc.status === InvoiceStatus.PARTIALLY_PAID) counts.partiallyPaid += 1;
+      else if (calc.status === InvoiceStatus.DRAFT) counts.draft += 1;
+      else if (calc.status === InvoiceStatus.CANCELLED) counts.cancelled += 1;
+      else counts.pending += 1;
+
+      if (calc.isOverdue) {
+        counts.overdue += 1;
+        overdueAmount += calc.balanceAmount;
+      }
+
+      if (calc.status !== InvoiceStatus.CANCELLED && calc.status !== InvoiceStatus.DRAFT) {
+        totalInvoicedAmount += calc.totalAmount;
+        totalTaxAmount += calc.taxAmount;
+        totalDiscountAmount += calc.discountAmount;
+        outstandingReceivables += calc.balanceAmount;
+        if (calc.nextInstallmentAmount && calc.balanceAmount > 0.01) {
+          upcomingInstallmentsAmount += calc.nextInstallmentAmount;
         }
       }
     }
 
-    // Collections reporting strictly by payment transaction date
+    const linkedHistoryIds = new Set<number>(
+      invoicePaymentRows.map((p: any) => p.paymentHistoryId).filter((id: any) => typeof id === 'number'),
+    );
+
     let onlineCollections = 0;
     let offlineCollections = 0;
-    let refundsTotal = 0;
-    const methodBreakdown: Record<string, number> = {};
-    const dailySeriesMap = new Map<string, { date: string; invoiced: number; collected: number }>();
+    let refundedAmount = 0;
 
-    const recordCollection = (amount: number, methodRaw: string, txDate: Date, refunded = 0) => {
-      const net = roundCurrency(Math.max(0, amount - refunded));
-      refundsTotal = roundCurrency(refundsTotal + refunded);
-      const method = String(methodRaw || 'OTHER').toUpperCase();
-      if (paymentMode && paymentMode !== 'ALL') {
-        const isOnline = isOnlinePaymentMethod(method);
-        if (paymentMode.toUpperCase() === 'ONLINE' && !isOnline) return;
-        if (paymentMode.toUpperCase() === 'OFFLINE' && isOnline) return;
+    for (const p of invoicePaymentRows) {
+      const st = String(p.status || '').toUpperCase();
+      if (st === 'REFUNDED') {
+        refundedAmount += Number(p.refundedAmount || p.amount || 0);
+        continue;
       }
-      if (isOnlinePaymentMethod(method)) {
-        onlineCollections = roundCurrency(onlineCollections + net);
+      const amt = Number(p.amount || 0);
+      if (p.paymentMode === 'ONLINE' || isOnlinePaymentMethod(p.paymentMethod)) {
+        onlineCollections += amt;
       } else {
-        offlineCollections = roundCurrency(offlineCollections + net);
+        offlineCollections += amt;
       }
-      methodBreakdown[method] = roundCurrency((methodBreakdown[method] || 0) + net);
-
-      const dayKey = getBusinessDate(txDate);
-      const bucket = dailySeriesMap.get(dayKey) || { date: dayKey, invoiced: 0, collected: 0 };
-      bucket.collected = roundCurrency(bucket.collected + net);
-      dailySeriesMap.set(dayKey, bucket);
-    };
-
-    for (const p of periodConfirmedPayments) {
-      recordCollection(
-        Number(p.amount || 0),
-        p.paymentMethod || p.paymentMode || 'OTHER',
-        p.paymentDate || p.createdAt,
-        Number(p.refundedAmount || 0),
-      );
-    }
-
-    for (const lp of unlinkedLegacyPayments) {
-      recordCollection(
-        Number(lp.totalAmount || lp.amount || 0),
-        lp.paymentMethod || 'RAZORPAY',
-        lp.createdAt,
-        0,
-      );
-    }
-
-    for (const inv of filteredPeriodInvoices) {
-      if (inv.status === InvoiceStatus.DRAFT || inv.status === InvoiceStatus.CANCELLED) continue;
-      const dayKey = getBusinessDate(inv.issueDate || inv.createdAt);
-      const bucket = dailySeriesMap.get(dayKey) || { date: dayKey, invoiced: 0, collected: 0 };
-      bucket.invoiced = roundCurrency(bucket.invoiced + Number(inv.totalAmount || 0));
-      dailySeriesMap.set(dayKey, bucket);
-    }
-
-    const totalCollectedAmount = roundCurrency(onlineCollections + offlineCollections);
-
-    // Upcoming recurring subscription billing
-    let upcomingBillingAmount = 0;
-    for (const sub of activeSubscriptions) {
-      if (!sub.autoRenew) continue;
-      const next = computeNextBillingFromSubscription(sub);
-      if (next.nextBillingAmount > 0) {
-        counts.upcomingBilling += 1;
-        upcomingBillingAmount = roundCurrency(upcomingBillingAmount + next.nextBillingAmount);
+      if (Number(p.refundedAmount || 0) > 0) {
+        refundedAmount += Number(p.refundedAmount || 0);
       }
     }
 
-    const dailySeries = Array.from(dailySeriesMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    for (const h of paymentHistoryRows) {
+      if (linkedHistoryIds.has(h.id)) continue;
+      const st = String(h.status || '').toUpperCase();
+      if (st === 'REFUNDED') {
+        refundedAmount += Number(h.totalAmount || h.amount || 0);
+        continue;
+      }
+      const amt = Number(h.totalAmount || h.amount || 0);
+      if (isOnlinePaymentMethod(h.paymentMethod)) onlineCollections += amt;
+      else offlineCollections += amt;
+    }
+
+    const totalCollectedAmount = Math.max(0, roundCurrency(onlineCollections + offlineCollections - refundedAmount));
+    const upcomingBillingAmount = roundCurrency(
+      activeSubs.reduce((sum: number, sub: any) => {
+        const next = computeNextBillingFromSubscription(sub);
+        return sum + Number(next.nextBillingAmount || 0);
+      }, 0),
+    );
+
+    let previousCollectedAmount: number | null = null;
+    let collectionGrowthPercent: number | null = null;
+    if (prevStartDate && prevEndDate) {
+      const prevPayments = await this.prisma.paymentHistory.aggregate({
+        where: {
+          ...baseCust,
+          deletedAt: null,
+          status: { in: ['SUCCESS', 'PAID'] },
+          createdAt: { gte: prevStartDate, lte: prevEndDate },
+        },
+        _sum: { totalAmount: true },
+      });
+      previousCollectedAmount = roundCurrency(Number(prevPayments._sum.totalAmount || 0));
+      if (previousCollectedAmount > 0) {
+        collectionGrowthPercent = roundCurrency(
+          ((totalCollectedAmount - previousCollectedAmount) / previousCollectedAmount) * 100,
+        );
+      }
+    }
 
     return {
-      totalInvoicedAmount,
-      totalBilledAmount: totalInvoicedAmount,
-      actualRevenueCollected: totalCollectedAmount,
+      dateRange: { from: fromKey, to: toKey },
+      totalInvoicedAmount: roundCurrency(totalInvoicedAmount),
       totalCollectedAmount,
-      onlineCollections,
-      offlineCollections,
-      outstandingReceivables: start || end ? outstandingReceivables : currentOpenOutstanding,
-      outstandingBalance: start || end ? outstandingReceivables : currentOpenOutstanding,
-      currentOpenOutstanding,
-      overdueAmount: start || end ? overdueAmount : currentOpenOverdue,
-      refundsTotal,
-      taxTotal,
-      discountTotal,
-      upcomingInstallmentsAmount,
+      onlineCollections: roundCurrency(onlineCollections),
+      offlineCollections: roundCurrency(offlineCollections),
+      refundedAmount: roundCurrency(refundedAmount),
+      outstandingReceivables: roundCurrency(outstandingReceivables),
+      overdueAmount: roundCurrency(overdueAmount),
+      totalTaxAmount: roundCurrency(totalTaxAmount),
+      totalDiscountAmount: roundCurrency(totalDiscountAmount),
+      upcomingInstallmentsAmount: roundCurrency(upcomingInstallmentsAmount),
       upcomingBillingAmount,
-      upcomingCollections: roundCurrency(upcomingInstallmentsAmount + upcomingBillingAmount),
+      upcomingCollectionsTotal: roundCurrency(upcomingInstallmentsAmount + upcomingBillingAmount),
+      previousCollectedAmount,
+      collectionGrowthPercent,
       counts,
-      methodBreakdown,
-      dailySeries,
     };
   }
 }

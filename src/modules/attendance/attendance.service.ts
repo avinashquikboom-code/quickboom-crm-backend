@@ -1667,10 +1667,37 @@ result: SUCCESS`);
     return d;
   }
 
-  async getLiveDashboardData(user: any, customerIdParam?: number | string, dateParam?: string, periodParam?: string) {
+  async getLiveDashboardData(
+    user: any,
+    customerIdParam?: number | string,
+    dateParam?: string,
+    periodParam?: string,
+    filters?: {
+      fromDate?: string;
+      toDate?: string;
+      departmentId?: number;
+      employeeId?: number;
+      branchId?: number;
+      shiftId?: number;
+      status?: string;
+    },
+  ) {
     const customerId = await this.resolveCustomerId(user, customerIdParam);
     await this.processAutoCheckOuts({ customerId });
-    const { start: startOfDay, end: endOfDay } = getBusinessDayRange(dateParam);
+    const targetDateStr = filters?.toDate || dateParam || getBusinessDate(new Date());
+    const startRange = getBusinessDayRange(filters?.fromDate || targetDateStr);
+    const endRange = getBusinessDayRange(filters?.toDate || targetDateStr);
+    const startOfDay = startRange.start;
+    const endOfDay = endRange.end;
+
+    const employeeWhere: any = {
+      customerId,
+      status: 'ACTIVE',
+      ...(filters?.departmentId ? { departmentId: filters.departmentId } : {}),
+      ...(filters?.employeeId ? { id: filters.employeeId } : {}),
+      ...(filters?.branchId ? { officeId: filters.branchId } : {}),
+      ...(filters?.shiftId ? { shiftId: filters.shiftId } : {}),
+    };
 
     const [
       activeEmployees,
@@ -1683,12 +1710,10 @@ result: SUCCESS`);
       leavesToday,
       remoteToday,
       recentAuditLogs,
+      holidaysToday,
     ] = await Promise.all([
       this.prisma.employee.findMany({
-        where: {
-          customerId,
-          status: 'ACTIVE',
-        },
+        where: employeeWhere,
         include: {
           department: true,
           designation: true,
@@ -1709,6 +1734,7 @@ result: SUCCESS`);
         where: {
           customerId,
           date: { gte: startOfDay, lte: endOfDay },
+          ...(filters?.employeeId ? { employeeId: filters.employeeId } : {}),
         },
         include: {
           breaks: {
@@ -1785,6 +1811,12 @@ result: SUCCESS`);
         orderBy: { createdAt: 'desc' },
         take: 15,
       }),
+      this.prisma.publicHoliday.findMany({
+        where: {
+          customerId,
+          date: { gte: startOfDay, lte: endOfDay },
+        },
+      }).catch(() => []),
     ]);
 
     const attMap = new Map<number, (typeof attendances)[0]>();
@@ -1846,8 +1878,35 @@ result: SUCCESS`);
         workingMinutes = Math.max(0, totalElapsed - totalBreakMinutesToday);
       }
 
+      const onLeaveToday = leavesToday.some((lr) => lr.employeeId === emp.id);
+      const isHolidayToday = Array.isArray(holidaysToday) && holidaysToday.length > 0;
+      const isTodayIst = getBusinessDate(now) === targetDateStr;
+
+      // Check shift start time in Asia/Kolkata (do not mark absent before shift start!)
+      let shiftStarted = true;
+      let shiftStartMinutes: number | null = null;
+      if (emp.shift?.startTime) {
+        const [hh, mm] = String(emp.shift.startTime).split(':').map(Number);
+        if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+          shiftStartMinutes = hh * 60 + mm;
+          if (isTodayIst) {
+            const istParts = new Intl.DateTimeFormat('en-GB', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            }).formatToParts(now);
+            const curH = Number(istParts.find((p) => p.type === 'hour')?.value || 0);
+            const curM = Number(istParts.find((p) => p.type === 'minute')?.value || 0);
+            if (curH * 60 + curM < shiftStartMinutes) {
+              shiftStarted = false;
+            }
+          }
+        }
+      }
+
       let currentStatus = 'NOT_CHECKED_IN';
-      let attendanceStatus = 'ABSENT';
+      let attendanceStatus = 'NOT_YET_CHECKED_IN';
 
       if (punchInDate) {
         if (punchOutDate) {
@@ -1860,10 +1919,37 @@ result: SUCCESS`);
           currentStatus = 'WORKING';
           attendanceStatus = att?.status ? String(att.status) : 'PRESENT';
         }
+      } else if (onLeaveToday) {
+        currentStatus = 'ON_LEAVE';
+        attendanceStatus = 'ON_LEAVE';
+      } else if (isHolidayToday) {
+        currentStatus = 'HOLIDAY';
+        attendanceStatus = 'HOLIDAY';
+      } else if (!shiftStarted) {
+        currentStatus = 'NOT_CHECKED_IN';
+        attendanceStatus = 'NOT_YET_CHECKED_IN';
+      } else {
+        currentStatus = 'NOT_CHECKED_IN';
+        attendanceStatus = 'ABSENT';
       }
 
-      const isLate = Boolean(att?.isLate);
-      const lateMinutes = att?.lateMinutes || 0;
+      let lateMinutes = att?.lateMinutes || 0;
+      let isLate = Boolean(att?.isLate);
+      if (punchInDate && shiftStartMinutes !== null) {
+        const punchParts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).formatToParts(punchInDate);
+        const pH = Number(punchParts.find((p) => p.type === 'hour')?.value || 0);
+        const pM = Number(punchParts.find((p) => p.type === 'minute')?.value || 0);
+        const diff = pH * 60 + pM - shiftStartMinutes;
+        if (diff > 0) {
+          isLate = true;
+          lateMinutes = diff;
+        }
+      }
 
       const empLat = latestLoc?.latitude ?? att?.punchOutLatitude ?? att?.latitude ?? null;
       const empLng = latestLoc?.longitude ?? att?.punchOutLongitude ?? att?.longitude ?? null;
@@ -1951,9 +2037,17 @@ result: SUCCESS`);
       };
     });
 
+    const filteredStatus = filters?.status ? String(filters.status).toUpperCase() : null;
+    const statusFilteredEmployees = filteredStatus && filteredStatus !== 'ALL'
+      ? formattedEmployees.filter((e) => e.attendanceStatus === filteredStatus || e.currentStatus === filteredStatus)
+      : formattedEmployees;
+
     const totalEmployees = activeEmployees.length;
     const present = formattedEmployees.filter((e) => e.punchIn !== null).length;
-    const absent = Math.max(0, totalEmployees - present);
+    const onLeaveCount = formattedEmployees.filter((e) => e.attendanceStatus === 'ON_LEAVE').length;
+    const holidayCount = formattedEmployees.filter((e) => e.attendanceStatus === 'HOLIDAY').length;
+    const notYetCheckedInCount = formattedEmployees.filter((e) => e.attendanceStatus === 'NOT_YET_CHECKED_IN').length;
+    const absent = formattedEmployees.filter((e) => e.attendanceStatus === 'ABSENT').length;
     const late = formattedEmployees.filter((e) => e.isLate).length;
     const working = formattedEmployees.filter((e) => e.currentStatus === 'WORKING').length;
     const onBreak = formattedEmployees.filter((e) => e.currentStatus === 'ON_BREAK').length;
@@ -2114,14 +2208,17 @@ result: SUCCESS`);
       data: {
         summary: {
           totalEmployees,
+          scheduledEmployees: Math.max(0, totalEmployees - onLeaveCount - holidayCount),
           present,
           absent,
           late,
+          notYetCheckedIn: notYetCheckedInCount,
           working,
           onBreak,
           punchedOut,
           remote: formattedRemoteWorkers.length,
-          onLeave: formattedLeaves.length,
+          onLeave: Math.max(onLeaveCount, formattedLeaves.length),
+          holiday: holidayCount,
           insideRadius,
           outsideRadius,
           pendingLeaves: pendingLeavesCount,
@@ -2134,7 +2231,7 @@ result: SUCCESS`);
         remoteToday: formattedRemoteWorkers,
         recentActivities: finalActivities,
         periodAttendance,
-        employees: formattedEmployees,
+        employees: statusFilteredEmployees,
         offices: offices.map((o) => ({
           id: o.id,
           name: o.name,
