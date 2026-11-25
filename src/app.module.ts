@@ -23,6 +23,7 @@ import { VisitModule } from './modules/visit/visit.module';
 import { InvoiceModule } from './modules/invoice/invoice.module';
 import { ReceiptModule } from './modules/receipt/receipt.module';
 import { ReportModule } from './modules/report/report.module';
+import { ExportModule } from './modules/export/export.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { DepartmentModule } from './modules/department/department.module';
@@ -96,6 +97,7 @@ import { AppController } from './app.controller';
     InvoiceModule,
     ReceiptModule,
     ReportModule,
+    ExportModule,
     NotificationModule,
     AuditLogModule,
     LeadModule,
