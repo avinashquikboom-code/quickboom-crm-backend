@@ -2,9 +2,11 @@ import { Module } from '@nestjs/common';
 import { InvoiceController } from './invoice.controller';
 import { InvoiceService } from './invoice.service';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { EmailModule } from '../email/email.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, EmailModule, WhatsappModule],
   controllers: [InvoiceController],
   providers: [InvoiceService],
   exports: [InvoiceService],

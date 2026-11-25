@@ -213,6 +213,7 @@ model CustomerSubscription {
   customPlanOrders   CustomPlanOrder[]
   works              Work[]
   installments       SubscriptionInstallment[]
+  invoices           Invoice[]
   coupon             Coupon?                   @relation(fields: [couponId], references: [id])
   couponRedemptions  CouponRedemption[]
   customer           Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -316,6 +317,7 @@ model PaymentHistory {
   coupon           Coupon?                   @relation(fields: [couponId], references: [id], onDelete: SetNull)
   couponRedemption CouponRedemption?
   installments     SubscriptionInstallment[]
+  invoicePayments  InvoicePayment[]
   commission       Commission?
 
   @@index([customerId])
@@ -998,32 +1000,110 @@ model QuotationItem {
 }
 
 model Invoice {
-  id           Int                       @id @default(autoincrement())
-  customerId   Int
-  contactId    Int
-  quotationId  Int?
-  invoiceNo    String
-  status       InvoiceStatus             @default(DRAFT)
-  issueDate    DateTime
-  dueDate      DateTime
-  subTotal     Float
-  taxAmount    Float
-  discount     Float                     @default(0)
-  totalAmount  Float
-  notes        String?
-  createdAt    DateTime                  @default(now())
-  updatedAt    DateTime                  @updatedAt
-  deletedAt    DateTime?
-  contact      Contact                   @relation(fields: [contactId], references: [id])
-  customer     Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  quotation    Quotation?                @relation(fields: [quotationId], references: [id])
-  items        InvoiceItem[]
-  installments SubscriptionInstallment[]
+  id                      Int                         @id @default(autoincrement())
+  customerId              Int
+  contactId               Int
+  quotationId             Int?
+  subscriptionId          Int?
+  invoiceNo               String
+  status                  InvoiceStatus               @default(DRAFT)
+  issueDate               DateTime
+  dueDate                 DateTime
+  subTotal                Float
+  taxAmount               Float
+  discount                Float                       @default(0)
+  totalAmount             Float
+  paidAmount              Float                       @default(0)
+  balanceAmount           Float                       @default(0)
+  paymentMode             String                      @default("NOT_PAID")
+  lastPaymentDate         DateTime?
+  nextInstallmentDate     DateTime?
+  nextInstallmentAmount   Float?
+  nextBillingDate         DateTime?
+  nextBillingAmount       Float?
+  billingCycle            String?
+  planName                String?
+  isOverdue               Boolean                     @default(false)
+  cancelledAt             DateTime?
+  cancelReason            String?
+  paymentLinkToken        String?                     @unique
+  paymentLinkExpiresAt    DateTime?
+  paymentLinkAllowPartial Boolean                     @default(true)
+  notes                   String?
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  deletedAt               DateTime?
+  contact                 Contact                     @relation(fields: [contactId], references: [id])
+  customer                Customer                    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotation               Quotation?                  @relation(fields: [quotationId], references: [id])
+  subscription            CustomerSubscription?       @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  items                   InvoiceItem[]
+  installments            SubscriptionInstallment[]
+  payments                InvoicePayment[]
+  communicationLogs       InvoiceCommunicationLog[]
 
   @@index([customerId])
   @@index([contactId])
+  @@index([subscriptionId])
   @@index([status])
   @@index([deletedAt])
+}
+
+model InvoicePayment {
+  id               Int             @id @default(autoincrement())
+  invoiceId        Int
+  customerId       Int
+  paymentHistoryId Int?
+  amount           Float
+  paymentMode      String          // ONLINE | OFFLINE
+  paymentMethod    String          // UPI | CARD | NET_BANKING | RAZORPAY | CASH | BANK_TRANSFER | CHEQUE | MANUAL_UPI
+  transactionRef   String?
+  gatewayPaymentId String?
+  gatewayOrderId   String?
+  receiptNo        String?
+  proofUrl         String?
+  status           String          @default("CONFIRMED") // CONFIRMED | PENDING_VERIFICATION | FAILED | REFUNDED | REVERSED
+  paymentDate      DateTime        @default(now())
+  remarks          String?
+  recordedById     Int?
+  recordedByName   String?
+  verifiedById     Int?
+  verifiedByName   String?
+  verifiedAt       DateTime?
+  refundedAmount   Float           @default(0)
+  refundReason     String?
+  idempotencyKey   String?         @unique
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  invoice        Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  paymentHistory PaymentHistory? @relation(fields: [paymentHistoryId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@index([status])
+  @@map("invoice_payments")
+}
+
+model InvoiceCommunicationLog {
+  id                Int      @id @default(autoincrement())
+  invoiceId         Int
+  customerId        Int
+  channel           String   // WHATSAPP | EMAIL
+  messageType       String   // INVOICE_PDF | PAYMENT_RECEIPT | PARTIAL_PAYMENT_CONFIRMATION | FULL_PAYMENT_CONFIRMATION | INSTALLMENT_REMINDER | OVERDUE_REMINDER | RENEWAL_REMINDER | PAYMENT_LINK
+  recipient         String
+  status            String   @default("SENT") // SENT | FAILED | PENDING
+  templateName      String?
+  providerMessageId String?
+  errorMessage      String?  @db.Text
+  sentById          Int?
+  sentAt            DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@map("invoice_communication_logs")
 }
 
 model InvoiceItem {
@@ -2642,6 +2722,7 @@ enum TicketPriority {
 enum InvoiceStatus {
   DRAFT
   SENT
+  PARTIALLY_PAID
   PAID
   OVERDUE
   CANCELLED
