@@ -3969,6 +3969,8 @@ export class AuthService {
     const resolvedRole = role || (customerId ? 'COMPANY_ADMIN' : 'SUPER_ADMIN');
     const resolvedRoleType = roleType || role || (customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
     const rememberMe = Boolean(options?.rememberMe);
+    const isAdminSession = ['SUPER_ADMIN', 'ADMIN', 'COMPANY_ADMIN', 'CUSTOMER_ADMIN']
+      .includes(String(resolvedRole).toUpperCase());
 
     const payload: any = {
       sub: userId,
@@ -4003,10 +4005,12 @@ export class AuthService {
     const configuredRefreshExpiresIn =
       this.configService.get('JWT_REFRESH_EXPIRES_IN') ||
       this.configService.get('JWT_REFRESH_EXPIRATION');
-    const refreshExpiresIn = configuredRefreshExpiresIn || (rememberMe ? '30d' : '24h');
+    const refreshExpiresIn = isAdminSession
+      ? '7d'
+      : configuredRefreshExpiresIn || (rememberMe ? '30d' : '24h');
     const refreshTtlSeconds = this.parseDurationToSeconds(
       refreshExpiresIn,
-      rememberMe ? 30 * 86400 : 86400,
+      isAdminSession ? 7 * 86400 : rememberMe ? 30 * 86400 : 86400,
     );
 
     const refreshPayload = {
@@ -4044,11 +4048,14 @@ export class AuthService {
       },
     });
 
-    const inactivityTimeoutSeconds = Number(
+    const configuredInactivityTimeout = Number(
       this.configService.get('ADMIN_INACTIVITY_TIMEOUT_SECONDS') ||
       process.env.ADMIN_INACTIVITY_TIMEOUT_SECONDS ||
       1800,
     );
+    const inactivityTimeoutSeconds = isAdminSession
+      ? 7 * 86400
+      : configuredInactivityTimeout;
 
     return {
       accessToken,
