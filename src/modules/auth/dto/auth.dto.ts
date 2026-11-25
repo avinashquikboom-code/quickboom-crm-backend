@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({ example: 'admin@quikboom.com' })
@@ -16,6 +16,11 @@ export class LoginDto {
   @IsOptional()
   @IsString()
   appType?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'Persist session for 30 days instead of standard 24-hour session' })
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
 }
 
 export class RegisterCustomerDto {

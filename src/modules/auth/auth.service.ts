@@ -50,6 +50,7 @@ import {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly refreshGraceCache = new Map<string, { response: any; expiresAt: number }>();
 
   constructor(
     private prisma: PrismaService,
@@ -1317,7 +1318,16 @@ export class AuthService {
       userRole,
       userRoleType,
       roleId,
+      { rememberMe: typeof emailOrDto === 'object' ? Boolean(emailOrDto?.rememberMe) : false },
     );
+
+    this.emitAuthEvent('AUTH_LOGIN_SUCCESS', {
+      userId: user.id,
+      role: userRole,
+      rememberMe: typeof emailOrDto === 'object' ? Boolean(emailOrDto?.rememberMe) : false,
+      accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+      refreshTokenExpiresAt: tokens.refreshTokenExpiresAt,
+    });
 
     let emp: any = null;
     let employeeData: any = null;
@@ -1440,7 +1450,22 @@ export class AuthService {
   async refreshToken(dto: RefreshTokenDto, crmApp = false) {
     const rawToken = (dto.refreshToken || '').trim();
     if (!rawToken) {
+      this.emitAuthEvent('AUTH_REFRESH_FAILED', { reason: 'MISSING_REFRESH_TOKEN' });
       throw new UnauthorizedException('Refresh token is required');
+    }
+
+    const tokenDigest = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const cachedGrace = this.refreshGraceCache.get(tokenDigest);
+    if (cachedGrace && cachedGrace.expiresAt > Date.now()) {
+      this.emitAuthEvent('AUTH_REFRESH_SUCCESS', {
+        userId: cachedGrace.response?.user?.id,
+        graceReuse: true,
+        sessionId: tokenDigest.slice(0, 12),
+      });
+      return cachedGrace.response;
+    }
+    if (cachedGrace) {
+      this.refreshGraceCache.delete(tokenDigest);
     }
 
     const rawRefreshSecret =
@@ -1505,6 +1530,11 @@ export class AuthService {
     });
 
     if (existingToken && (existingToken.isRevoked || existingToken.expiresAt < new Date())) {
+      this.emitAuthEvent(existingToken.isRevoked ? 'AUTH_SESSION_REVOKED' : 'AUTH_SESSION_EXPIRED', {
+        userId,
+        sessionId: tokenDigest.slice(0, 12),
+        reason: existingToken.isRevoked ? 'REFRESH_TOKEN_REVOKED' : 'REFRESH_TOKEN_EXPIRED',
+      });
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
@@ -1657,6 +1687,7 @@ export class AuthService {
       await assertCrmAppEmployee(this.prisma, user);
     }
 
+    const rememberMe = Boolean(payload?.rememberMe);
     const tokens = await this.generateTokens(
       user.id,
       user.customerId,
@@ -1664,9 +1695,10 @@ export class AuthService {
       resolvedRole,
       resolvedRoleType,
       roleId,
+      { rememberMe },
     );
 
-    return {
+    const refreshResponse = {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       tokens,
@@ -1678,6 +1710,30 @@ export class AuthService {
         roleType: resolvedRoleType,
       },
     };
+
+    // 15-second grace window so concurrent/retried refresh calls with the same token
+    // receive the newly rotated pair instead of triggering a false-positive logout.
+    this.refreshGraceCache.set(tokenDigest, {
+      response: refreshResponse,
+      expiresAt: Date.now() + 15000,
+    });
+    if (this.refreshGraceCache.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of this.refreshGraceCache.entries()) {
+        if (v.expiresAt <= now) this.refreshGraceCache.delete(k);
+      }
+    }
+
+    this.emitAuthEvent('AUTH_REFRESH_SUCCESS', {
+      userId: user.id,
+      role: resolvedRole,
+      rememberMe,
+      sessionId: tokenDigest.slice(0, 12),
+      accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+      refreshTokenExpiresAt: tokens.refreshTokenExpiresAt,
+    });
+
+    return refreshResponse;
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
@@ -3853,12 +3909,52 @@ export class AuthService {
       }
     }
 
+    this.emitAuthEvent('AUTH_LOGOUT_TRIGGERED', {
+      revokedRefreshTokens,
+      revokedAccessToken,
+      reason: 'EXPLICIT_LOGOUT',
+    });
+
     return {
       success: true,
       revokedRefreshTokens,
       revokedAccessToken,
       message: 'Logged out successfully',
     };
+  }
+
+  private parseDurationToSeconds(raw: string | number | undefined, fallbackSeconds: number): number {
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+    if (typeof raw !== 'string') return fallbackSeconds;
+    const trimmed = raw.trim();
+    if (/^\d+$/.test(trimmed)) return Math.max(60, Number(trimmed));
+    const match = trimmed.match(/^(\d+)\s*(s|m|h|d)$/i);
+    if (!match) return fallbackSeconds;
+    const num = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    if (unit === 's') return num;
+    if (unit === 'm') return num * 60;
+    if (unit === 'h') return num * 3600;
+    if (unit === 'd') return num * 86400;
+    return fallbackSeconds;
+  }
+
+  private emitAuthEvent(event: string, meta: Record<string, any> = {}) {
+    try {
+      const sanitized: Record<string, any> = {
+        event,
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development',
+      };
+      for (const [key, value] of Object.entries(meta)) {
+        if (value === undefined) continue;
+        if (/token|password|secret|authorization|cookie|otp/i.test(key)) continue;
+        sanitized[key] = value;
+      }
+      this.logger.log(`[AUTH_EVENT] ${JSON.stringify(sanitized)}`);
+    } catch {
+      // Never block auth flow on telemetry
+    }
   }
 
   private async generateTokens(
@@ -3868,9 +3964,11 @@ export class AuthService {
     role?: string,
     roleType?: string,
     roleId?: number | null,
+    options?: { rememberMe?: boolean },
   ) {
     const resolvedRole = role || (customerId ? 'COMPANY_ADMIN' : 'SUPER_ADMIN');
     const resolvedRoleType = roleType || role || (customerId ? RoleType.CUSTOMER_ADMIN : RoleType.SUPER_ADMIN);
+    const rememberMe = Boolean(options?.rememberMe);
 
     const payload: any = {
       sub: userId,
@@ -3885,7 +3983,9 @@ export class AuthService {
     const accessExpiresIn =
       this.configService.get('JWT_ACCESS_EXPIRES_IN') ||
       this.configService.get('JWT_EXPIRATION') ||
-      '7d';
+      '15m';
+
+    const accessTtlSeconds = this.parseDurationToSeconds(accessExpiresIn, 900);
 
     const accessSecret = (
       this.configService.get<string>('JWT_SECRET') ||
@@ -3900,19 +4000,24 @@ export class AuthService {
       expiresIn: accessExpiresIn,
     });
 
+    const configuredRefreshExpiresIn =
+      this.configService.get('JWT_REFRESH_EXPIRES_IN') ||
+      this.configService.get('JWT_REFRESH_EXPIRATION');
+    const refreshExpiresIn = configuredRefreshExpiresIn || (rememberMe ? '30d' : '24h');
+    const refreshTtlSeconds = this.parseDurationToSeconds(
+      refreshExpiresIn,
+      rememberMe ? 30 * 86400 : 86400,
+    );
+
     const refreshPayload = {
       sub: userId,
       customerId,
       email,
       role: resolvedRole,
       roleType: resolvedRoleType,
+      rememberMe,
       jti: `${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     };
-
-    const refreshExpiresIn =
-      this.configService.get('JWT_REFRESH_EXPIRES_IN') ||
-      this.configService.get('JWT_REFRESH_EXPIRATION') ||
-      '30d';
 
     const refreshSecret = (
       this.configService.get<string>('JWT_REFRESH_SECRET') ||
@@ -3927,18 +4032,36 @@ export class AuthService {
       expiresIn: refreshExpiresIn,
     });
 
+    const nowMs = Date.now();
+    const accessTokenExpiresAt = new Date(nowMs + accessTtlSeconds * 1000).toISOString();
+    const refreshTokenExpiresDate = new Date(nowMs + refreshTtlSeconds * 1000);
+
     await this.prisma.refreshToken.create({
       data: {
         userId,
         token: refreshToken,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        expiresAt: refreshTokenExpiresDate,
       },
     });
+
+    const inactivityTimeoutSeconds = Number(
+      this.configService.get('ADMIN_INACTIVITY_TIMEOUT_SECONDS') ||
+      process.env.ADMIN_INACTIVITY_TIMEOUT_SECONDS ||
+      1800,
+    );
 
     return {
       accessToken,
       refreshToken,
-      expiresIn: 604800,
+      expiresIn: accessTtlSeconds,
+      accessTokenExpiresAt,
+      refreshTokenExpiresAt: refreshTokenExpiresDate.toISOString(),
+      sessionPolicy: {
+        accessTokenTtlSeconds: accessTtlSeconds,
+        refreshTokenTtlSeconds: refreshTtlSeconds,
+        rememberMe,
+        inactivityTimeoutSeconds: Number.isFinite(inactivityTimeoutSeconds) ? inactivityTimeoutSeconds : 1800,
+      },
     };
   }
 
