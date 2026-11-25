@@ -558,7 +558,7 @@ export class InvoiceService {
       if (inv.notes && inv.notes.includes('Subscription payment for')) {
         const afterSub = inv.notes.split('Subscription payment for')[1];
         if (afterSub) {
-          planName = afterSub.split('(')[0].trim();
+          planName = afterSub.split(/\s*\(|\.\s*(?:Total Paid|Purchase|Plan activation|Payment Method|Order):/i)[0].trim();
         }
       }
 
@@ -584,6 +584,7 @@ export class InvoiceService {
         tax: Number(inv.taxAmount || 0),
         totalAmount: Number(inv.totalAmount || 0),
         total: Number(inv.totalAmount || 0),
+        nextInstallmentAmount: inv.nextInstallmentAmount == null ? null : Number(inv.nextInstallmentAmount),
         status: inv.status,
         paymentStatus: inv.status,
         paymentMode,
