@@ -227,6 +227,7 @@ export class CustomerController {
   @ApiQuery({ name: 'sortBy', required: false })
   @ApiQuery({ name: 'sortOrder', required: false })
   @ApiQuery({ name: 'excludeAdmins', required: false })
+  @ApiQuery({ name: 'wonOnly', required: false, description: 'Only customers converted from won leads' })
   async findAll(
     @CurrentUser() user: any,
     @Query('search') search?: string,
@@ -245,6 +246,7 @@ export class CustomerController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
     @Query('excludeAdmins') excludeAdmins?: string,
+    @Query('wonOnly') wonOnly?: string,
   ) {
     const activeBool = isActive !== undefined ? isActive === 'true' : undefined;
     return this.customerService.findAll({
@@ -263,6 +265,7 @@ export class CustomerController {
       sortBy,
       sortOrder,
       excludeAdmins: excludeAdmins !== 'false',
+      wonOnly: wonOnly === 'true',
     }, user);
   }
 
