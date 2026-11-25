@@ -101,10 +101,16 @@ export class NotificationService {
     ]);
 
     const totalPages = Math.ceil(total / numLimit) || 1;
+    const displayItems = await Promise.all(items.map(async (item) => {
+      const data = item.data && typeof item.data === 'object' && !Array.isArray(item.data) ? item.data as Record<string, any> : null;
+      if (!data?.imageUrl || !this.s3Service) return item;
+      const imageUrl = await this.s3Service.getPresignedUrl(String(data.imageUrl), 3600).catch(() => null);
+      return { ...item, data: { ...data, imageUrl: imageUrl || data.imageUrl } };
+    }));
 
     return {
-      data: items,
-      items,
+      data: displayItems,
+      items: displayItems,
       unreadCount,
       pagination: {
         page: numPage,
@@ -397,12 +403,16 @@ export class NotificationService {
     }
 
     // Ensure data payload includes type & notification metadata
+    const deliveryImageUrl = data.imageUrl && this.s3Service
+      ? await this.s3Service.getPresignedUrl(data.imageUrl, 604800).catch(() => null)
+      : null;
     const payloadData: Record<string, string> = {
       type,
       title,
       body,
       notificationId: dbNotification ? String(dbNotification.id) : '',
       ...data,
+      ...(deliveryImageUrl ? { imageUrl: deliveryImageUrl } : {}),
     };
 
     // 3. Dispatch multicast push via FCM Service
