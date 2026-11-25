@@ -998,16 +998,17 @@ export class LeadRepository {
     const ALL_LEAD_STATUSES: string[] = Object.values(LeadStatus);
     const pipelineFilters: any[] = [];
 
+    const hasStageKeyFilter = options.stageKey !== undefined && options.stageKey !== null;
     const requestedStageKeys = String(options.stageKey || '')
       .split(',')
       .map((key) => key.trim().toUpperCase())
       .filter((key) => /^[A-Z0-9_]+$/.test(key));
-    if (requestedStageKeys.length) {
+    if (hasStageKeyFilter) {
       // Resolve by the lead's actual stage key so Super Admin can query
       // customer-scoped stages across workspaces without needing one stage ID.
-      pipelineFilters.push({
-        stage: { is: { key: { in: requestedStageKeys }, deletedAt: null } },
-      });
+      pipelineFilters.push(requestedStageKeys.length
+        ? { stage: { is: { key: { in: requestedStageKeys }, deletedAt: null } } }
+        : { id: -1 });
     } else {
       const stageId = options.stageId && options.stageId !== 'ALL' ? Number(options.stageId) : null;
       const status = options.status && options.status.toUpperCase() !== 'ALL' ? String(options.status).trim() : null;
