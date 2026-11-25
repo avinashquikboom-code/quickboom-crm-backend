@@ -1736,6 +1736,7 @@ result: SUCCESS`);
           date: { gte: startOfDay, lte: endOfDay },
           ...(filters?.employeeId ? { employeeId: filters.employeeId } : {}),
         },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
         include: {
           breaks: {
             orderBy: { breakStart: 'asc' },
