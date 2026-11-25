@@ -110,6 +110,8 @@ handledBy: NestJS`);
       'Content-Disposition',
       'Content-Range',
       'X-Content-Range',
+      'X-Export-Job-Id',
+      'X-Export-Record-Count',
       'x-customer-id',
       'x-tenant-id',
       'x-total-count',
