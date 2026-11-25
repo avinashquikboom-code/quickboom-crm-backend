@@ -19,6 +19,11 @@ export class AnnouncementBodyDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  imageUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   category?: string;
 
   @ApiPropertyOptional({ enum: AUDIENCES })

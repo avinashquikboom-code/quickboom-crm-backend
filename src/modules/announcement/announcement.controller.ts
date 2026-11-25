@@ -1,9 +1,27 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Optional,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { S3Service } from '../s3/s3.service';
 import { AnnouncementService } from './announcement.service';
 import { AnnouncementBodyDto, AnnouncementQueryDto, ScheduleAnnouncementDto } from './dto/announcement.dto';
 
@@ -12,7 +30,43 @@ import { AnnouncementBodyDto, AnnouncementQueryDto, ScheduleAnnouncementDto } fr
 @UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('admin/hrm/announcements')
 export class AnnouncementController {
-  constructor(private readonly announcements: AnnouncementService) {}
+  constructor(
+    private readonly announcements: AnnouncementService,
+    @Optional() private readonly s3Service?: S3Service,
+  ) {}
+
+  @Post('upload-image')
+  @ApiOperation({ summary: 'Upload an image for a company announcement' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  async uploadImage(@UploadedFile() file?: Express.Multer.File) {
+    if (!file || !file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException('Image file is required for upload');
+    }
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.mimetype)) {
+      throw new BadRequestException('Only JPG, PNG, and WebP images are supported');
+    }
+    if (!this.s3Service) {
+      throw new BadRequestException('Image upload service is unavailable');
+    }
+    const result = await this.s3Service.uploadFile(file, 'announcements');
+    const previewUrl = await this.s3Service.getPresignedUrl(result.imageKey, 604800).catch(() => null);
+    return {
+      success: true,
+      message: 'Announcement image uploaded successfully',
+      data: {
+        imageUrl: result.imageUrl,
+        imageKey: result.imageKey,
+        previewUrl: previewUrl || result.imageUrl,
+      },
+    };
+  }
 
   @Get('summary')
   @ApiOperation({ summary: 'Announcement counts by status' })

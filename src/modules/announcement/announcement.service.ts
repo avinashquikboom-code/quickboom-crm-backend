@@ -120,6 +120,7 @@ export class AnnouncementService {
     return {
       title: dto.title.trim(),
       description: dto.description.trim(),
+      imageUrl: dto.imageUrl?.trim() || null,
       category: dto.category?.trim() || 'GENERAL',
       audience: (dto.audience || 'ALL') as any,
       departmentId: dto.audience === 'DEPARTMENT' ? Number(dto.departmentId) : dto.departmentId ? Number(dto.departmentId) : null,

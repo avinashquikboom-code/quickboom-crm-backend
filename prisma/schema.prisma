@@ -1203,6 +1203,7 @@ model Announcement {
   customerId   Int
   title        String
   description  String
+  imageUrl     String?
   category     String               @default("GENERAL")
   audience     AnnouncementAudience @default(ALL)
   departmentId Int?
