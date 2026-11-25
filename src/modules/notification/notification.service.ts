@@ -1676,6 +1676,17 @@ export class NotificationService {
     return { success: true, campaignId: updated.id, status: updated.status, message: 'Campaign cancelled. It will not be sent.' };
   }
 
+  async deleteOfferDeliveryHistory(id: string, customerId: number | string | undefined) {
+    const numericId = Number(id);
+    if (!Number.isInteger(numericId) || numericId <= 0) throw new BadRequestException('Invalid notification ID');
+    const where: any = { id: numericId, type: 'ADMIN_OFFER' };
+    const tenantId = Number(customerId);
+    if (Number.isInteger(tenantId) && tenantId > 0) where.customerId = tenantId;
+    const result = await this.prisma.notification.deleteMany({ where });
+    if (!result.count) throw new NotFoundException('Notification not found');
+    return { deleted: true };
+  }
+
   async listOfferDeliveryHistory(
     customerId: number | string | undefined,
     query: { page?: number; limit?: number; search?: string; status?: string; from?: string; to?: string } = {},

@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiBody, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -33,7 +34,7 @@ import { CustomerGuard } from '../../common/guards/customer.guard';
 import { CurrentCustomer } from '../../common/decorators/current-customer.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
-import { isUserSuperAdmin } from '../../common/utils/role.util';
+import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -222,6 +223,15 @@ export class NotificationController {
       from,
       to,
     });
+  }
+
+  @Delete('admin/history/:id')
+  @ApiOperation({ summary: 'Delete an in-app campaign notification for its recipient' })
+  deleteAdminHistory(@Param('id') id: string, @CurrentCustomer() customerId: number | string | undefined, @CurrentUser() user: any) {
+    if (!isUserSuperAdmin(user) && (!isUserAdmin(user) || !Number(customerId))) {
+      throw new ForbiddenException('Administrator access is required');
+    }
+    return this.notificationService.deleteOfferDeliveryHistory(id, customerId);
   }
 
   @Post('admin/campaigns/:id/cancel')
