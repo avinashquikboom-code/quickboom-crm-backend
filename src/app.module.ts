@@ -24,6 +24,7 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
 import { ReceiptModule } from './modules/receipt/receipt.module';
 import { ReportModule } from './modules/report/report.module';
 import { ExportModule } from './modules/export/export.module';
+import { PublicWebsiteModule } from './modules/public-website/public-website.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { DepartmentModule } from './modules/department/department.module';
@@ -98,6 +99,7 @@ import { AppController } from './app.controller';
     ReceiptModule,
     ReportModule,
     ExportModule,
+    PublicWebsiteModule,
     NotificationModule,
     AuditLogModule,
     LeadModule,
