@@ -156,8 +156,16 @@ export class ReportService {
         total: visitsCount,
       },
       revenue: {
-        invoicesCount: revenueSummary._count || 0,
-        totalRevenue: revenueSummary._sum.totalAmount || 0,
+        invoicesCount: financial?.counts?.total ?? revenueSummary._count ?? 0,
+        totalRevenue: financial?.totalCollectedAmount ?? revenueSummary._sum.totalAmount ?? 0,
+        totalBilledAmount: financial?.totalInvoicedAmount ?? revenueSummary._sum.totalAmount ?? 0,
+        totalCollectedAmount: financial?.totalCollectedAmount ?? 0,
+        outstandingBalance: financial?.outstandingReceivables ?? 0,
+        overdueAmount: financial?.overdueAmount ?? 0,
+        onlineCollections: financial?.onlineCollections ?? 0,
+        offlineCollections: financial?.offlineCollections ?? 0,
+        upcomingBillingAmount: financial?.upcomingBillingAmount ?? 0,
+        collectionGrowthPercent: financial?.collectionGrowthPercent ?? null,
       },
     };
   }
