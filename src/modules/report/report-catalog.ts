@@ -38,6 +38,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
   { id: 'leads-category', category: 'sales', name: 'Leads by Category', description: 'Leads with their recorded category.', available: true, type: 'LEADS', filters: ['date'] },
   { id: 'lead-conversion', category: 'sales', name: 'Lead Conversion Report', description: 'Leads marked won or converted.', available: true, type: 'LEADS', preset: { status: 'WON' }, filters: ['date'] },
   { id: 'employee-leads', category: 'sales', name: 'Employee-wise Leads', description: 'Leads with the assigned employee.', available: true, type: 'LEADS', filters: ['date'] },
+  { id: 'employee-lead-stage', category: 'sales', name: 'Employee-Wise Lead & Stage Report', description: 'Employee performance, dynamic CRM stage breakdown, stage history, drill-down and exports.', available: true, type: 'LEADS', filters: ['date', 'department'] },
   { id: 'customer-report', category: 'sales', name: 'Customer Report', description: 'Tenant customer records.', available: true, type: 'CUSTOMERS', filters: ['date', 'status'] },
   { id: 'visits', category: 'sales', name: 'Visits Report', description: 'Field visits in the selected period.', available: true, type: 'VISITS', filters: ['date', 'status'] },
   { id: 'tasks', category: 'sales', name: 'Tasks Report', description: 'Tasks created in the selected period.', available: true, type: 'TASKS', filters: ['date', 'status'] },

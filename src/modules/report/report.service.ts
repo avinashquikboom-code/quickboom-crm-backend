@@ -6,6 +6,12 @@ import { REPORT_CATALOG, REPORT_CATEGORIES, reportById, ReportDefinition } from 
 import PDFDocument = require('pdfkit');
 import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
 import { FinancialMetricsService } from '../invoice/financial-metrics.service';
+import {
+  buildFormattedReportCsv,
+  buildFormattedReportExcel,
+  buildFormattedReportPdf,
+  formatReportFilename,
+} from './report-formatter.util';
 
 @Injectable()
 export class ReportService {
@@ -838,7 +844,7 @@ export class ReportService {
     };
   }
 
-  async buildPdf(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
+  private async loadFullCatalogView(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
     const view = await this.runCatalogReport(customerId, reportId, { ...query, page: 1, limit: 500 }, user);
     const rows = [...view.rows];
     for (let page = 2; rows.length < view.summary.records; page += 1) {
@@ -848,40 +854,27 @@ export class ReportService {
       }
       rows.push(...next.rows);
     }
-    const buffer = await new Promise<Buffer>((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 36, size: 'A4', layout: view.columns.length > 6 ? 'landscape' : 'portrait', bufferPages: true });
-      const chunks: Buffer[] = [];
-      doc.on('data', (chunk) => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      const company = view.company?.name || 'QB Suite';
-      doc.fontSize(16).fillColor('#163A2E').text('QB Suite');
-      doc.fontSize(10).fillColor('#172B24').text(company);
-      doc.moveDown(0.4);
-      doc.fontSize(14).text(view.report.name);
-      doc.fontSize(9).fillColor('#718078').text(view.report.description);
-      doc.text(`Period: ${view.dateRange.from} to ${view.dateRange.to}`);
-      doc.text(`Generated: ${new Date(view.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
-      doc.text(`Records: ${view.summary.records}`);
-      doc.moveDown(0.6);
-      if (!rows.length) {
-        doc.fillColor('#172B24').fontSize(11).text('No records match these filters.');
-      } else {
-        doc.fontSize(8).fillColor('#172B24');
-        rows.forEach((row, index) => {
-          if (doc.y > doc.page.height - 60) doc.addPage();
-          const line = view.columns.map((column) => `${column}: ${row[column] ?? '—'}`).join('  |  ');
-          doc.text(`${index + 1}. ${line}`, { width: doc.page.width - 72 });
-          doc.moveDown(0.3);
-        });
-      }
-      const range = doc.bufferedPageRange();
-      for (let i = range.start; i < range.start + range.count; i += 1) {
-        doc.switchToPage(i);
-        doc.fontSize(8).fillColor('#718078').text(`${company} · Page ${i + 1} of ${range.count}`, 36, doc.page.height - 28, { align: 'center', width: doc.page.width - 72 });
-      }
-      doc.end();
-    });
-    return { filename: `${reportId}.pdf`, buffer };
+    return { ...view, rows };
+  }
+
+  async buildPdf(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
+    const fullView = await this.loadFullCatalogView(customerId, reportId, query, user);
+    const buffer = await buildFormattedReportPdf(fullView);
+    const filename = formatReportFilename(fullView.report?.name || reportId, fullView.dateRange?.to, 'pdf');
+    return { filename, buffer };
+  }
+
+  async buildExcel(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
+    const fullView = await this.loadFullCatalogView(customerId, reportId, query, user);
+    const buffer = await buildFormattedReportExcel(fullView);
+    const filename = formatReportFilename(fullView.report?.name || reportId, fullView.dateRange?.to, 'xlsx');
+    return { filename, buffer };
+  }
+
+  async buildCsv(customerId: number, reportId: string, query: QueryReportDto, user?: any) {
+    const fullView = await this.loadFullCatalogView(customerId, reportId, query, user);
+    const buffer = buildFormattedReportCsv(fullView);
+    const filename = formatReportFilename(fullView.report?.name || reportId, fullView.dateRange?.to, 'csv');
+    return { filename, buffer };
   }
 }

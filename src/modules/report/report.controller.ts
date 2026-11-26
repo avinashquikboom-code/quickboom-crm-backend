@@ -11,6 +11,7 @@ import {
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ReportService } from './report.service';
+import { EmployeeLeadStageReportService } from './employee-lead-stage-report.service';
 import { QueryReportDto, ExportReportDto } from './dto/report.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -23,7 +24,10 @@ import { isUserSuperAdmin } from '../../common/utils/role.util';
 @UseGuards(JwtAuthGuard, CustomerGuard)
 @Controller('reports')
 export class ReportController {
-  constructor(private readonly reportService: ReportService) {}
+  constructor(
+    private readonly reportService: ReportService,
+    private readonly employeeLeadStageService: EmployeeLeadStageReportService,
+  ) {}
 
   private resolveCustomerId(
     user: any,
@@ -72,6 +76,36 @@ export class ReportController {
     const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);
     const result = await this.reportService.buildPdf(targetCustomer, body.reportId || '', body, user);
     res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
+  }
+
+  @Post('export/excel')
+  @ApiOperation({ summary: 'Download a report as a formatted Excel (.xlsx) file' })
+  async exportExcel(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: ExportReportDto & { reportId?: string; department?: string },
+    @Res() res: Response,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);
+    const result = await this.reportService.buildExcel(targetCustomer, body.reportId || '', body, user);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
+  }
+
+  @Post('export/csv')
+  @ApiOperation({ summary: 'Download a report as a UTF-8 CSV file with formula-injection protection' })
+  async exportCsv(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: ExportReportDto & { reportId?: string; department?: string },
+    @Res() res: Response,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);
+    const result = await this.reportService.buildCsv(targetCustomer, body.reportId || '', body, user);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.buffer);
   }
@@ -145,5 +179,42 @@ export class ReportController {
   ) {
     const targetCustomer = this.resolveCustomerId(user, customerId, customerIdQuery);
     return this.reportService.exportReport(targetCustomer, body);
+  }
+
+  @Get('employee-lead-stage')
+  @ApiOperation({ summary: 'Employee-Wise Lead & Stage Report with dynamic stages, charts, and stage history' })
+  async getEmployeeLeadStageReport(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query() query: any,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, query?.customerId);
+    return this.employeeLeadStageService.getReport(targetCustomer, query, user);
+  }
+
+  @Get('employee-lead-stage/drilldown')
+  @ApiOperation({ summary: 'Paginated lead drill-down for an employee or stage count' })
+  async getEmployeeLeadStageDrilldown(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query() query: any,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, query?.customerId);
+    return this.employeeLeadStageService.getDrilldown(targetCustomer, query, user);
+  }
+
+  @Post('employee-lead-stage/export')
+  @ApiOperation({ summary: 'Export Employee-Wise Lead & Stage Report as PDF, Excel (.xlsx), or CSV' })
+  async exportEmployeeLeadStageReport(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Body() body: any,
+    @Res() res: Response,
+  ) {
+    const targetCustomer = this.resolveCustomerId(user, customerId, body?.customerId);
+    const result = await this.employeeLeadStageService.exportReport(targetCustomer, body || {}, user);
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
   }
 }
