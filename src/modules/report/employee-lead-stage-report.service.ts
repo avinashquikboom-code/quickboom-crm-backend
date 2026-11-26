@@ -134,6 +134,12 @@ export class EmployeeLeadStageReportService {
       const lastLastMonth = new Date(Date.UTC(y, m - 1, 0));
       fromStr = fmt(firstLastMonth);
       toStr = fmt(lastLastMonth);
+    } else if (normPreset === 'this_year') {
+      fromStr = fmt(new Date(Date.UTC(y, 0, 1)));
+      toStr = fmt(todayUtc);
+    } else if (normPreset === 'last_year') {
+      fromStr = fmt(new Date(Date.UTC(y - 1, 0, 1)));
+      toStr = fmt(new Date(Date.UTC(y - 1, 11, 31)));
     } else {
       if (dateFrom) fromStr = dateFrom.slice(0, 10);
       if (dateTo) toStr = dateTo.slice(0, 10);
