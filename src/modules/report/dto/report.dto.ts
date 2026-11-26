@@ -49,6 +49,11 @@ export class QueryReportDto {
   @IsString()
   reportId?: string;
 
+  @ApiPropertyOptional({ description: 'Employee ID filter' })
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
+
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -114,6 +119,10 @@ export class ExportReportDto {
   @IsOptional()
   @IsString()
   reportId?: string;
+
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
 
   @IsOptional()
   @Type(() => Number)

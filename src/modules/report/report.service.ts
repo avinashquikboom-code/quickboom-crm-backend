@@ -729,20 +729,39 @@ export class ReportService {
     const status = query.status || preset.status;
     let rows: Record<string, any>[] = [];
     let total = 0;
+    let leadsEmployees: Array<{ id: number; name: string }> = [];
 
     if (['ATTENDANCE', 'PAYROLL', 'LEAVES', 'EMPLOYEES', 'VISITS', 'REVENUE'].includes(report.type) && !preset.dateField) {
       const data = await this.getReportData(customerId, { ...query, type: report.type as any, status, page, limit });
       rows = data.items || [];
       total = data.pagination?.total || rows.length;
     } else if (report.type === 'LEADS') {
+      const empList = await this.prisma.employee.findMany({
+        where: { customerId },
+        select: { id: true, userId: true, firstName: true, lastName: true },
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      });
+      leadsEmployees = empList.map((e) => ({
+        id: e.id,
+        name: `${e.firstName || ''} ${e.lastName || ''}`.trim() || `Employee #${e.id}`,
+      }));
+
       const where: any = { customerId, deletedAt: null, createdAt: { gte: startDate, lte: endDate } };
       if (status && status !== 'ALL') where.status = status;
+      if (query.employeeId && query.employeeId !== 'ALL') {
+        const numEmpId = Number(query.employeeId);
+        const matchedEmp = empList.find((e) => e.id === numEmpId);
+        where.OR = [
+          { employeeId: numEmpId },
+          ...(matchedEmp?.userId ? [{ assignedToId: matchedEmp.userId }] : []),
+        ];
+      }
       const [items, count] = await Promise.all([
-        this.prisma.lead.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' }, include: { stage: true, assignedTo: { select: { firstName: true, lastName: true } } } }),
+        this.prisma.lead.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' }, include: { stage: true, employee: { select: { firstName: true, lastName: true } }, assignedTo: { select: { firstName: true, lastName: true } } } }),
         this.prisma.lead.count({ where }),
       ]);
       total = count;
-      rows = items.map((lead) => ({ name: `${lead.firstName} ${lead.lastName}`.trim(), company: lead.companyName || '—', phone: lead.phone || '—', status: lead.stage?.name || lead.status, source: lead.source, category: lead.category || '—', assigned: `${lead.assignedTo?.firstName || ''} ${lead.assignedTo?.lastName || ''}`.trim() || '—' }));
+      rows = items.map((lead) => ({ name: `${lead.firstName} ${lead.lastName}`.trim(), company: lead.companyName || '—', phone: lead.phone || '—', status: lead.stage?.name || lead.status, source: lead.source, category: lead.category || '—', assigned: `${lead.employee?.firstName || lead.assignedTo?.firstName || ''} ${lead.employee?.lastName || lead.assignedTo?.lastName || ''}`.trim() || '—' }));
     } else if (report.type === 'DEALS') {
       const where: any = { customerId, deletedAt: null, createdAt: { gte: startDate, lte: endDate } };
       if (preset.outcome === 'closed') where.OR = [{ isWon: true }, { isLost: true }];
@@ -838,6 +857,7 @@ export class ReportService {
       filters: { status: status || 'All', stage: preset.stage || query.department || 'All' },
       columns,
       rows,
+      ...(leadsEmployees.length ? { employees: leadsEmployees } : {}),
       summary: { records: total },
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) || 1 },
       generatedAt: new Date().toISOString(),
