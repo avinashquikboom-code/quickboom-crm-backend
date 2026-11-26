@@ -70,7 +70,7 @@ export class ReportController {
   async exportPdf(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
-    @Body() body: ExportReportDto & { reportId?: string; department?: string },
+    @Body() body: ExportReportDto,
     @Res() res: Response,
   ) {
     const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);
@@ -85,7 +85,7 @@ export class ReportController {
   async exportExcel(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
-    @Body() body: ExportReportDto & { reportId?: string; department?: string },
+    @Body() body: ExportReportDto,
     @Res() res: Response,
   ) {
     const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);
@@ -100,7 +100,7 @@ export class ReportController {
   async exportCsv(
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
-    @Body() body: ExportReportDto & { reportId?: string; department?: string },
+    @Body() body: ExportReportDto,
     @Res() res: Response,
   ) {
     const targetCustomer = this.resolveCustomerId(user, customerId, body.customerId);

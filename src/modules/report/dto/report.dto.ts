@@ -44,6 +44,11 @@ export class QueryReportDto {
   @IsString()
   search?: string;
 
+  @ApiPropertyOptional({ description: 'Catalog report ID' })
+  @IsOptional()
+  @IsString()
+  reportId?: string;
+
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
   @Type(() => Number)

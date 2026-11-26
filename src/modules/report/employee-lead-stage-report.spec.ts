@@ -22,17 +22,19 @@ describe('EmployeeLeadStageReportService', () => {
       findMany: jest.fn().mockResolvedValue([
         {
           id: 501, customerId: 1, firstName: 'Riya', lastName: 'Patel', title: 'Riya Patel', companyName: 'Riya Fitness',
-          phone: '9876543210', value: 25000, stageId: 2, status: 'HOT_LEAD', employeeId: 10, assignedToId: 100,
-          createdAt: now, updatedAt: now, nextFollowUpDate: now,
+          phone: '9876543210', email: 'riya@example.com', source: 'GOOGLE_PLACES', value: 25000, stageId: 2, status: 'HOT_LEAD', employeeId: 10, assignedToId: 100,
+          createdAt: now, updatedAt: now, nextFollowUpDate: now, workNotes: 'Called customer',
           stage: stages[1], employee: { id: 10, name: 'Aarav Sharma', department: { name: 'Sales' } },
-          assignedTo: { id: 100, name: 'Aarav Sharma' }, statusHistory: [{ fromStageId: 1, fromStatus: 'NEW', createdAt: now }],
+          assignedTo: { id: 100, name: 'Aarav Sharma' }, statusHistory: [{ fromStageId: 1, fromStatus: 'NEW', createdAt: now, notes: 'Moved to Hot' }],
+          visits: [{ date: now }], notes: [{ content: 'Requested quote' }],
         },
         {
           id: 502, customerId: 1, firstName: 'Karan', lastName: 'Mehta', title: 'Karan Mehta', companyName: 'Mehta Co',
-          phone: '9876500000', value: 40000, stageId: 5, status: 'WON', employeeId: 10, assignedToId: 100,
-          createdAt: now, updatedAt: now, nextFollowUpDate: null,
+          phone: '9876500000', email: 'karan@example.com', source: 'WEBSITE', value: 40000, stageId: 5, status: 'WON', employeeId: 10, assignedToId: 100,
+          createdAt: now, updatedAt: now, nextFollowUpDate: null, workNotes: 'Closed',
           stage: stages[4], employee: { id: 10, name: 'Aarav Sharma', department: { name: 'Sales' } },
-          assignedTo: { id: 100, name: 'Aarav Sharma' }, statusHistory: [{ fromStageId: 4, fromStatus: 'CUSTOM_DEMO', createdAt: now }],
+          assignedTo: { id: 100, name: 'Aarav Sharma' }, statusHistory: [{ fromStageId: 4, fromStatus: 'CUSTOM_DEMO', createdAt: now, notes: 'Deal won' }],
+          visits: [], notes: [],
         },
       ]),
     },
@@ -65,13 +67,21 @@ describe('EmployeeLeadStageReportService', () => {
     expect(drill.data.rows).toHaveLength(1);
     expect(drill.data.rows[0].isHotLead).toBe(true);
 
-    const pdf = await service.exportReport(1, { preset: 'today', format: 'pdf' }, { id: 1, role: 'COMPANY_ADMIN' });
+    const pdf = await service.exportReport(1, { preset: 'today', format: 'pdf', exportScope: 'all_complete' }, { id: 1, role: 'COMPANY_ADMIN' });
     expect(pdf.buffer.slice(0, 5).toString()).toBe('%PDF-');
 
-    const xlsx = await service.exportReport(1, { preset: 'today', format: 'excel' }, { id: 1, role: 'COMPANY_ADMIN' });
+    const stagePdf = await service.exportReport(1, { preset: 'today', format: 'pdf', exportScope: 'stage_wise' }, { id: 1, role: 'COMPANY_ADMIN' });
+    expect(stagePdf.buffer.slice(0, 5).toString()).toBe('%PDF-');
+
+    const indivPdf = await service.exportReport(1, { preset: 'today', format: 'pdf', exportScope: 'individual', exportEmployeeId: '10' }, { id: 1, role: 'COMPANY_ADMIN' });
+    expect(indivPdf.buffer.slice(0, 5).toString()).toBe('%PDF-');
+
+    const xlsx = await service.exportReport(1, { preset: 'today', format: 'excel', exportScope: 'all_complete' }, { id: 1, role: 'COMPANY_ADMIN' });
     expect(xlsx.buffer.slice(0, 2).toString()).toBe('PK');
 
-    const csv = await service.exportReport(1, { preset: 'today', format: 'csv' }, { id: 1, role: 'COMPANY_ADMIN' });
-    expect(csv.buffer.toString('utf8')).toContain('Aarav Sharma');
+    const csv = await service.exportReport(1, { preset: 'today', format: 'csv', exportScope: 'detailed' }, { id: 1, role: 'COMPANY_ADMIN' });
+    const csvText = csv.buffer.toString('utf8');
+    expect(csvText).toContain('Aarav Sharma');
+    expect(csvText).toContain('Requested quote');
   });
 });
