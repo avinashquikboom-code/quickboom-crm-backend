@@ -1695,5 +1695,400 @@ export class PaymentService {
       },
     };
   }
+
+  /**
+   * Returns App Store Connect IAP product IDs mapped to active plans and AI credit packs.
+   */
+  async getAppleIapProducts() {
+    const bundleId = process.env.APPLE_IAP_BUNDLE_ID || 'com.qbsuite.qbCustomer';
+    const plans = await this.prisma.plan.findMany({
+      where: { deletedAt: null, isActive: true },
+      orderBy: { monthlyPrice: 'asc' },
+    });
+
+    const planProducts = plans.flatMap((plan) => {
+      const codeSlug = String(plan.code || plan.id).toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      return [
+        {
+          planId: plan.id,
+          planCode: plan.code,
+          planName: plan.name,
+          billingCycle: 'MONTHLY',
+          productId: `${bundleId}.plan.${codeSlug}.monthly`,
+          price: Number(plan.monthlyPrice || 0),
+        },
+        {
+          planId: plan.id,
+          planCode: plan.code,
+          planName: plan.name,
+          billingCycle: 'YEARLY',
+          productId: `${bundleId}.plan.${codeSlug}.yearly`,
+          price: Number(plan.yearlyPrice || 0),
+        },
+      ];
+    });
+
+    const creditPacks = [
+      { credits: 10, price: 100, productId: `${bundleId}.aicredits.10` },
+      { credits: 25, price: 225, productId: `${bundleId}.aicredits.25` },
+      { credits: 50, price: 400, productId: `${bundleId}.aicredits.50` },
+      { credits: 100, price: 750, productId: `${bundleId}.aicredits.100` },
+    ];
+
+    return {
+      success: true,
+      data: {
+        bundleId,
+        planProducts,
+        creditPacks,
+      },
+    };
+  }
+
+  /**
+   * Verifies an Apple StoreKit 2 JWS signedTransactionInfo token using its embedded x5c certificate chain.
+   */
+  private verifyAppleJws(jws: string): Record<string, any> {
+    const parts = String(jws || '').split('.');
+    if (parts.length !== 3) {
+      throw new BadRequestException('Invalid Apple signed transaction format.');
+    }
+    const [headerB64, payloadB64, sigB64] = parts;
+    const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+
+    const x5c: string[] = Array.isArray(header?.x5c) ? header.x5c : [];
+    if (!x5c.length) {
+      throw new BadRequestException('Apple transaction JWS missing x5c certificate chain.');
+    }
+
+    const leafPem = `-----BEGIN CERTIFICATE-----\n${x5c[0].match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----`;
+    const leafCert = new crypto.X509Certificate(leafPem);
+
+    // Verify certificate chain links if intermediate/root certificates are present
+    for (let i = 0; i < x5c.length - 1; i++) {
+      const childPem = `-----BEGIN CERTIFICATE-----\n${x5c[i].match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----`;
+      const parentPem = `-----BEGIN CERTIFICATE-----\n${x5c[i + 1].match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----`;
+      const child = new crypto.X509Certificate(childPem);
+      const parent = new crypto.X509Certificate(parentPem);
+      if (!child.verify(parent.publicKey)) {
+        throw new BadRequestException('Apple certificate chain verification failed.');
+      }
+    }
+
+    const signatureValid = crypto.verify(
+      'sha256',
+      Buffer.from(`${headerB64}.${payloadB64}`),
+      { key: leafCert.publicKey, dsaEncoding: 'ieee-p1363' },
+      Buffer.from(sigB64, 'base64url'),
+    );
+
+    if (!signatureValid) {
+      throw new BadRequestException('Apple transaction JWS signature verification failed.');
+    }
+
+    return payload;
+  }
+
+  /**
+   * Verifies StoreKit 2 / App Store transaction on backend and activates subscription or AI credits idempotently.
+   */
+  async verifyAppleIapPayment(user: any, dto: any, reqCustomerId?: number) {
+    let customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if ((!customerId || isNaN(customerId)) && user?.id) {
+      const cust = await this.prisma.customer.findFirst({
+        where: {
+          OR: [
+            { users: { some: { id: Number(user.id) } } },
+            { employees: { some: { userId: Number(user.id) } } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (cust) customerId = cust.id;
+    }
+    if (!customerId || isNaN(customerId)) {
+      throw new ForbiddenException('User does not belong to any customer organization');
+    }
+
+    const expectedBundleId = process.env.APPLE_IAP_BUNDLE_ID || 'com.qbsuite.qbCustomer';
+    let verifiedTxId = String(dto.transactionId || '').trim();
+    let verifiedOriginalTxId = String(dto.originalTransactionId || verifiedTxId).trim();
+    let verifiedProductId = String(dto.productId || '').trim();
+    let environment = String(dto.environment || 'Production');
+
+    if (dto.signedTransactionInfo && String(dto.signedTransactionInfo).includes('.')) {
+      const decoded = this.verifyAppleJws(dto.signedTransactionInfo);
+      if (decoded.bundleId && decoded.bundleId !== expectedBundleId) {
+        throw new BadRequestException(`Apple bundleId mismatch (${decoded.bundleId}).`);
+      }
+      if (decoded.revocationDate) {
+        throw new BadRequestException('This Apple transaction has been refunded or revoked.');
+      }
+      if (decoded.transactionId) verifiedTxId = String(decoded.transactionId);
+      if (decoded.originalTransactionId) verifiedOriginalTxId = String(decoded.originalTransactionId);
+      if (decoded.productId) verifiedProductId = String(decoded.productId);
+      if (decoded.environment) environment = String(decoded.environment);
+    } else if (!dto.signedTransactionInfo) {
+      throw new BadRequestException('Signed StoreKit 2 transaction (signedTransactionInfo) is required for server verification.');
+    }
+
+    if (!verifiedTxId || !verifiedProductId) {
+      throw new BadRequestException('Invalid Apple transaction identifier or product ID.');
+    }
+
+    // Idempotency check: prevent duplicate processing for same transactionId
+    const existingPayment = await this.prisma.paymentHistory.findFirst({
+      where: { paymentId: verifiedTxId, customerId },
+    });
+    if (existingPayment && existingPayment.status === 'SUCCESS') {
+      const existingSub = existingPayment.subscriptionId
+        ? await this.prisma.customerSubscription.findUnique({
+            where: { id: existingPayment.subscriptionId },
+            include: { plan: true },
+          })
+        : null;
+      return {
+        success: true,
+        idempotent: true,
+        message: 'Apple IAP transaction already verified.',
+        data: {
+          payment: existingPayment,
+          subscription: existingSub,
+          transactionId: existingPayment.transactionId,
+          receiptNumber: existingPayment.invoiceUrl,
+          environment,
+        },
+      };
+    }
+
+    const purchaseType = dto.purchaseType || (verifiedProductId.includes('.aicredits.') ? 'AI_CREDITS' : 'SUBSCRIPTION');
+
+    if (purchaseType === 'AI_CREDITS') {
+      const packCredits = Number(dto.credits || verifiedProductId.split('.').pop() || 0);
+      if (!Number.isFinite(packCredits) || packCredits <= 0) {
+        throw new BadRequestException('Invalid AI credit pack.');
+      }
+      const orderNumber = `#QBIAP-${Date.now().toString(36).toUpperCase()}`;
+      const txnRef = `APPLE-${verifiedOriginalTxId}-${verifiedTxId}`;
+
+      const result = await this.prisma.$transaction(async (tx) => {
+        const payment = await tx.paymentHistory.create({
+          data: {
+            customerId,
+            planId: 0,
+            planName: `AI Credits (${packCredits})`,
+            orderNumber,
+            orderId: `APPLE_IAP_${verifiedProductId}`,
+            paymentId: verifiedTxId,
+            billingCycle: 'MONTHLY' as any,
+            amount: 0,
+            taxAmount: 0,
+            totalAmount: 0,
+            status: 'SUCCESS',
+            paymentMethod: PaymentMethod.OTHER,
+            transactionId: txnRef,
+          },
+        });
+        const receiptNo = `REC-${new Date().getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+        await tx.paymentHistory.update({
+          where: { id: payment.id },
+          data: { invoiceUrl: receiptNo },
+        });
+        if ((tx as any).aiCreditWallet?.upsert) {
+          await (tx as any).aiCreditWallet.upsert({
+            where: { customerId },
+            create: { customerId, balance: packCredits },
+            update: { balance: { increment: packCredits } },
+          });
+        }
+        return { payment: { ...payment, invoiceUrl: receiptNo }, receiptNo };
+      });
+
+      return {
+        success: true,
+        message: `Verified Apple IAP and added ${packCredits} AI credits.`,
+        data: {
+          payment: result.payment,
+          creditsAdded: packCredits,
+          transactionId: txnRef,
+          receiptNumber: result.receiptNo,
+          environment,
+        },
+      };
+    }
+
+    // Resolve Subscription Plan by planId or productId slug
+    let plan: any = null;
+    if (dto.planId != null) {
+      const numPlanId = Number(dto.planId);
+      if (!isNaN(numPlanId) && numPlanId > 0) {
+        plan = await this.prisma.plan.findFirst({ where: { id: numPlanId, deletedAt: null, isActive: true } });
+      }
+      if (!plan) {
+        plan = await this.prisma.plan.findFirst({
+          where: { code: String(dto.planId).trim().toUpperCase(), deletedAt: null, isActive: true },
+        });
+      }
+    }
+    if (!plan) {
+      const allPlans = await this.prisma.plan.findMany({ where: { deletedAt: null, isActive: true } });
+      plan = allPlans.find((p) => {
+        const slug = String(p.code || p.id).toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        return verifiedProductId.includes(`.plan.${slug}.`);
+      });
+    }
+    if (!plan) {
+      throw new BadRequestException('Matching subscription plan not found for Apple product.');
+    }
+
+    const cycle = dto.billingCycle || (verifiedProductId.endsWith('.yearly') ? SubscriptionBillingCycle.YEARLY : SubscriptionBillingCycle.MONTHLY);
+    const fullBasePrice = cycle === SubscriptionBillingCycle.YEARLY ? Number(plan.yearlyPrice) : Number(plan.monthlyPrice);
+    const fullTaxAmount = Math.round(fullBasePrice * 0.18);
+    const fullTotalAmount = fullBasePrice + fullTaxAmount;
+    const durationMonths = cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1;
+    const orderNumber = `#QBIAP-${Date.now().toString(36).toUpperCase()}`;
+    const txnRef = `APPLE-${verifiedOriginalTxId}-${verifiedTxId}`;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.paymentHistory.create({
+        data: {
+          customerId,
+          planId: plan.id,
+          planName: plan.name,
+          orderNumber,
+          orderId: `APPLE_IAP_${verifiedProductId}`,
+          paymentId: verifiedTxId,
+          billingCycle: cycle as any,
+          amount: fullBasePrice,
+          taxAmount: fullTaxAmount,
+          totalAmount: fullTotalAmount,
+          status: 'SUCCESS',
+          paymentMethod: PaymentMethod.OTHER,
+          transactionId: txnRef,
+        },
+      });
+
+      const subscriptionDates = resolvePlanSubscriptionDates(payment.createdAt, durationMonths, dto.activationDate);
+      let sub = await tx.customerSubscription.findFirst({
+        where: { customerId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const subData = {
+        planId: plan.id,
+        status: SubscriptionStatus.ACTIVE,
+        billingCycle: cycle as any,
+        startDate: subscriptionDates.startDate,
+        endDate: subscriptionDates.endDate,
+        duration: durationMonths,
+        durationUnit: 'MONTH' as const,
+        autoRenew: true,
+        customPrice: null,
+        customFeatures: null,
+        customUserLimit: null,
+        customLeadLimit: null,
+        customStorageLimit: null,
+      };
+
+      sub = sub
+        ? await tx.customerSubscription.update({ where: { id: sub.id }, data: subData, include: { plan: true } })
+        : await tx.customerSubscription.create({ data: { customerId, ...subData }, include: { plan: true } });
+
+      await tx.customerSubscription.updateMany({
+        where: {
+          customerId,
+          id: { not: sub.id },
+          status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL] },
+        },
+        data: { status: SubscriptionStatus.EXPIRED },
+      });
+
+      const receiptNo = `REC-${subscriptionDates.startDate.getFullYear()}-${String(payment.id).padStart(6, '0')}`;
+      await tx.paymentHistory.update({
+        where: { id: payment.id },
+        data: { subscriptionId: sub.id, invoiceUrl: receiptNo },
+      });
+
+      return { payment: { ...payment, subscriptionId: sub.id, invoiceUrl: receiptNo }, sub, receiptNo };
+    });
+
+    this.logger.log(`[APPLE_IAP_VERIFIED] customerId=${customerId} planId=${plan.id} txId=${verifiedTxId} env=${environment}`);
+
+    return {
+      success: true,
+      message: 'Apple In-App Purchase verified and subscription activated.',
+      data: {
+        payment: result.payment,
+        subscription: result.sub,
+        transactionId: txnRef,
+        receiptNumber: result.receiptNo,
+        environment,
+      },
+    };
+  }
+
+  /**
+   * Handles Apple App Store Server Notifications V2 (renewals, refunds, revocations).
+   */
+  async handleAppleWebhook(body: any) {
+    const signedPayload = body?.signedPayload;
+    if (!signedPayload) {
+      throw new BadRequestException('Missing signedPayload in Apple Server Notification.');
+    }
+    const notification = this.verifyAppleJws(signedPayload);
+    const notificationType = String(notification.notificationType || '').toUpperCase();
+    const txJws = notification?.data?.signedTransactionInfo;
+    const txInfo = txJws ? this.verifyAppleJws(txJws) : null;
+
+    this.logger.log(`[APPLE_WEBHOOK] type=${notificationType} txId=${txInfo?.transactionId || 'N/A'}`);
+
+    if (txInfo?.transactionId && (notificationType === 'REFUND' || notificationType === 'REVOKE')) {
+      await this.prisma.paymentHistory.updateMany({
+        where: { paymentId: String(txInfo.transactionId) },
+        data: { status: 'REFUNDED' },
+      });
+    }
+
+    return { received: true, notificationType };
+  }
+
+  /**
+   * Returns current payment status by orderId or paymentId for delayed confirmation checks.
+   */
+  async getPaymentStatus(user: any, reqCustomerId?: number, orderId?: string, paymentId?: string) {
+    const customerId = reqCustomerId != null && Number(reqCustomerId) > 0 ? Number(reqCustomerId) : Number(user?.customerId);
+    if (!orderId && !paymentId) {
+      throw new BadRequestException('orderId or paymentId is required.');
+    }
+
+    const record = await this.prisma.paymentHistory.findFirst({
+      where: {
+        ...(customerId ? { customerId } : {}),
+        OR: [
+          ...(paymentId ? [{ paymentId }, { transactionId: paymentId }] : []),
+          ...(orderId ? [{ orderId }, { orderNumber: orderId }] : []),
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      success: true,
+      data: record
+        ? {
+            found: true,
+            status: record.status,
+            orderId: record.orderId,
+            paymentId: record.paymentId,
+            transactionId: record.transactionId,
+            totalAmount: Number(record.totalAmount || 0),
+            receiptNumber: record.invoiceUrl,
+            paymentMethod: record.paymentMethod,
+            createdAt: record.createdAt,
+          }
+        : { found: false, status: 'PENDING' },
+    };
+  }
 }
 

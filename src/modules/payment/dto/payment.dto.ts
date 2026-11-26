@@ -185,3 +185,58 @@ export class UpdatePaymentSettingsDto {
   @IsString()
   webhookSecret?: string;
 }
+
+export class VerifyAppleIapDto {
+  @ApiProperty({ example: 'com.qbsuite.qbCustomer.plan.growth.monthly' })
+  @IsNotEmpty()
+  @IsString()
+  productId: string;
+
+  @ApiProperty({ example: '2000000123456789' })
+  @IsNotEmpty()
+  @IsString()
+  transactionId: string;
+
+  @ApiPropertyOptional({ example: '2000000123456789' })
+  @IsOptional()
+  @IsString()
+  originalTransactionId?: string;
+
+  @ApiPropertyOptional({ description: 'StoreKit 2 JWS signedTransactionInfo' })
+  @IsOptional()
+  @IsString()
+  signedTransactionInfo?: string;
+
+  @ApiPropertyOptional({ description: 'Base64 App Store receipt fallback' })
+  @IsOptional()
+  @IsString()
+  receiptData?: string;
+
+  @ApiPropertyOptional({ example: 'SUBSCRIPTION', enum: ['SUBSCRIPTION', 'AI_CREDITS'] })
+  @IsOptional()
+  @IsString()
+  purchaseType?: 'SUBSCRIPTION' | 'AI_CREDITS';
+
+  @ApiPropertyOptional({ example: 1, description: 'Plan ID for subscription purchases' })
+  @IsOptional()
+  planId?: number | string;
+
+  @ApiPropertyOptional({ enum: SubscriptionBillingCycle, default: SubscriptionBillingCycle.MONTHLY })
+  @IsOptional()
+  @IsEnum(SubscriptionBillingCycle)
+  billingCycle?: SubscriptionBillingCycle;
+
+  @ApiPropertyOptional({ example: 25, description: 'Credits count for AI_CREDITS purchases' })
+  @IsOptional()
+  credits?: number;
+
+  @ApiPropertyOptional({ example: '2026-11-26' })
+  @IsOptional()
+  @IsString()
+  activationDate?: string;
+
+  @ApiPropertyOptional({ example: 'Sandbox' })
+  @IsOptional()
+  @IsString()
+  environment?: string;
+}
