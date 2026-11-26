@@ -32,9 +32,11 @@ let cachedLogo: Buffer | null | undefined;
 function getQuikBoomLogoBuffer(): Buffer | null {
   if (cachedLogo !== undefined) return cachedLogo;
   const candidates = [
+    path.resolve(__dirname, '../../assets/logo.png'),
+    path.resolve(process.cwd(), 'dist/src/assets/logo.png'),
+    path.resolve(process.cwd(), 'src/assets/logo.png'),
     path.resolve(process.cwd(), 'uploads/logo.png'),
     path.resolve(process.cwd(), '../QuickBoom-Admin-Pannel-crm/public/logo.png'),
-    path.resolve(__dirname, '../../../../uploads/logo.png'),
   ];
   for (const p of candidates) {
     try {
@@ -71,8 +73,30 @@ function isNumericValue(val: any): boolean {
   return false;
 }
 
-function formatCellText(col: string, val: any): string {
-  if (val === null || val === undefined || val === '') return '—';
+function sanitizePdfText(input: string): string {
+  // PDFKit's built-in Helvetica only supports WinAnsi (Latin-1); strip emojis/non-Latin-1 glyphs
+  // so they never render as garbled UTF-16 surrogate pairs.
+  return input
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const ENUM_LABELS: Record<string, string> = {
+  GOOGLE_PLACES: 'Google Places',
+  WHATSAPP: 'WhatsApp',
+  WEBSITE: 'Website',
+  MANUAL: 'Manual',
+  CSV_IMPORT: 'CSV Import',
+  GOOGLE_ADS: 'Google Ads',
+  META_ADS: 'Meta Ads',
+};
+
+function formatCellText(col: string, val: any, forPdf = false): string {
+  if (val === null || val === undefined || val === '') return forPdf ? '-' : '—';
   if (typeof val === 'number' && Number.isFinite(val)) {
     if (CURRENCY_KEYS.has(col)) {
       return `INR ${val.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -85,7 +109,9 @@ function formatCellText(col: string, val: any): string {
   if (val instanceof Date) {
     return val.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   }
-  return String(val).replace(/\s+/g, ' ').trim();
+  const raw = String(val).replace(/\s+/g, ' ').trim();
+  const mapped = ENUM_LABELS[raw.toUpperCase()] || raw;
+  return forPdf ? (sanitizePdfText(mapped) || '-') : mapped;
 }
 
 function computeTotals(columns: string[], rows: Array<Record<string, any>>): Record<string, number> {
@@ -202,11 +228,11 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
       // Proportional column widths
       const weights = columns.map((col) => {
         const headerLen = humanizeColumnName(col).length;
-        const sampleMax = rows.slice(0, 25).reduce((m, r) => Math.max(m, formatCellText(col, r[col]).length), headerLen);
-        return Math.min(36, Math.max(8, sampleMax));
+        const sampleMax = rows.slice(0, 30).reduce((m, r) => Math.max(m, formatCellText(col, r[col], true).length), headerLen);
+        return Math.min(34, Math.max(10, sampleMax));
       });
       const totalWeight = weights.reduce((s, w) => s + w, 0) || 1;
-      const colWidths = weights.map((w) => Math.floor((w / totalWeight) * contentW));
+      const colWidths = weights.map((w) => Math.max(48, Math.floor((w / totalWeight) * contentW)));
       const diff = contentW - colWidths.reduce((s, w) => s + w, 0);
       if (colWidths.length) colWidths[0] += diff;
 
@@ -215,12 +241,15 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
         let cx = margin;
         columns.forEach((col, i) => {
           const isNum = rows.some((r) => isNumericValue(r[col]));
+          doc.save();
+          doc.rect(cx, topY, colWidths[i], 22).clip();
           doc.font('Helvetica-Bold').fontSize(8).fillColor('#FFFFFF').text(
             humanizeColumnName(col),
             cx + 5,
             topY + 7,
             { width: colWidths[i] - 10, align: isNum ? 'right' : 'left', ellipsis: true },
           );
+          doc.restore();
           cx += colWidths[i];
         });
         return topY + 22;
@@ -230,9 +259,9 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
 
       rows.forEach((row, idx) => {
         const rowHeights = columns.map((col, i) =>
-          doc.font('Helvetica').fontSize(8).heightOfString(formatCellText(col, row[col]), { width: Math.max(20, colWidths[i] - 10) }),
+          doc.font('Helvetica').fontSize(8).heightOfString(formatCellText(col, row[col], true), { width: Math.max(20, colWidths[i] - 10) }),
         );
-        const rowH = Math.max(20, Math.min(68, Math.max(...rowHeights) + 10));
+        const rowH = Math.max(20, Math.min(54, Math.max(...rowHeights) + 10));
 
         if (y + rowH > pageH - 46) {
           doc.addPage();
@@ -244,12 +273,15 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
         columns.forEach((col, i) => {
           const val = row[col];
           const isNum = isNumericValue(val);
+          doc.save();
+          doc.rect(cx, y, colWidths[i], rowH).clip();
           doc.font('Helvetica').fontSize(8).fillColor(TEXT_DARK).text(
-            formatCellText(col, val),
+            formatCellText(col, val, true),
             cx + 5,
             y + 5,
             { width: Math.max(20, colWidths[i] - 10), align: isNum ? 'right' : 'left', height: rowH - 8, ellipsis: true },
           );
+          doc.restore();
           cx += colWidths[i];
         });
         y += rowH;
@@ -264,13 +296,16 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
         doc.rect(margin, y, contentW, 22).fillAndStroke(BRAND_SOFT, '#CBE5D6');
         let cx = margin;
         columns.forEach((col, i) => {
-          const text = i === 0 ? 'TOTAL' : totals[col] !== undefined ? formatCellText(col, totals[col]) : '';
+          const text = i === 0 ? 'TOTAL' : totals[col] !== undefined ? formatCellText(col, totals[col], true) : '';
+          doc.save();
+          doc.rect(cx, y, colWidths[i], 22).clip();
           doc.font('Helvetica-Bold').fontSize(8).fillColor(BRAND_DARK).text(
             text,
             cx + 5,
             y + 7,
             { width: Math.max(20, colWidths[i] - 10), align: i === 0 ? 'left' : 'right', ellipsis: true },
           );
+          doc.restore();
           cx += colWidths[i];
         });
       }

@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezone.util';
 import { isUserAdmin } from '../../common/utils/role.util';
 import PDFDocument = require('pdfkit');
 import ExcelJS = require('exceljs');
+
+export type ExportScope = 'all_complete' | 'individual' | 'summary_only' | 'detailed' | 'stage_wise';
 
 export interface EmployeeLeadStageQuery {
   preset?: string;
@@ -19,6 +23,8 @@ export interface EmployeeLeadStageQuery {
   mode?: 'current' | 'transition';
   drillEmployeeId?: string;
   drillStageKey?: string;
+  exportScope?: ExportScope;
+  exportEmployeeId?: string;
 }
 
 const WEEKDAY_MAP: Record<string, number> = {
@@ -733,152 +739,410 @@ export class EmployeeLeadStageReportService {
     };
   }
 
+  private sanitizePdfText(input: any): string {
+    return String(input ?? '')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2013\u2014]/g, '-')
+      .replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim() || '-';
+  }
+
+  private getLogoBuffer(): Buffer | null {
+    const candidates = [
+      path.resolve(__dirname, '../../assets/logo.png'),
+      path.resolve(process.cwd(), 'dist/src/assets/logo.png'),
+      path.resolve(process.cwd(), 'src/assets/logo.png'),
+      path.resolve(process.cwd(), 'uploads/logo.png'),
+    ];
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) return fs.readFileSync(p);
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  private async getAllDetailedLeadRecords(
+    customerId: number,
+    query: EmployeeLeadStageQuery,
+    user?: any,
+  ) {
+    const range = this.resolveIstDateRange(query.preset, query.dateFrom, query.dateTo);
+    const dayFilter = query.dayOfWeek && query.dayOfWeek !== 'ALL' ? WEEKDAY_MAP[query.dayOfWeek.toUpperCase()] : undefined;
+    const deptFilter = query.departmentId && query.departmentId !== 'ALL' ? Number(query.departmentId) : undefined;
+    const stageFilter = query.stageKey && query.stageKey !== 'ALL' ? normalizeKey(query.stageKey) : undefined;
+    const exportEmpId = query.exportEmployeeId ? Number(query.exportEmployeeId) : undefined;
+    const selectedEmpIds = exportEmpId
+      ? [exportEmpId]
+      : String(query.employeeIds || '')
+          .split(',')
+          .map((v) => Number(v.trim()))
+          .filter((n) => Number.isInteger(n) && n > 0);
+
+    const [{ idToStage, byKey }, { employees, allEmployees }] = await Promise.all([
+      this.getActiveStages(customerId),
+      this.getEmployeesAndDepartments(customerId, user),
+    ]);
+
+    let targetEmployees = employees;
+    if (deptFilter) targetEmployees = targetEmployees.filter((e) => e.departmentId === deptFilter);
+    if (selectedEmpIds.length > 0) {
+      const set = new Set(selectedEmpIds);
+      targetEmployees = targetEmployees.filter((e) => set.has(e.id));
+    }
+
+    const targetEmpIds = new Set(targetEmployees.map((e) => e.id));
+    const userIdToEmployee = new Map<number, any>();
+    for (const emp of allEmployees) {
+      if (emp.userId) userIdToEmployee.set(emp.userId, emp);
+    }
+    const targetUserIds = new Set(targetEmployees.map((e) => e.userId).filter((id): id is number => Boolean(id)));
+    const admin = isUserAdmin(user);
+
+    const matchesEmp = (empId?: number | null, userId?: number | null) => {
+      if (!admin || selectedEmpIds.length > 0 || deptFilter) {
+        return Boolean((empId && targetEmpIds.has(empId)) || (userId && targetUserIds.has(userId)));
+      }
+      return true;
+    };
+
+    const records: any[] = [];
+    const seenLeadIds = new Set<number>();
+
+    if (query.mode === 'transition') {
+      const history = await this.prisma.leadStatusHistory.findMany({
+        where: {
+          lead: { customerId, deletedAt: null },
+          createdAt: { gte: range.start, lte: range.end },
+        },
+        include: {
+          lead: {
+            include: {
+              stage: true,
+              employee: true,
+              assignedTo: { select: { id: true, firstName: true, lastName: true } },
+              visits: { orderBy: { date: 'desc' }, take: 1 },
+              notes: { orderBy: { createdAt: 'desc' }, take: 1 },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      for (const h of history) {
+        if (dayFilter !== undefined && getIstWeekday(h.createdAt) !== dayFilter) continue;
+        const actorEmp = h.changedById ? userIdToEmployee.get(h.changedById) : undefined;
+        const empId = actorEmp?.id ?? h.lead?.employeeId;
+        if (!matchesEmp(empId, h.changedById ?? h.lead?.assignedToId)) continue;
+        const toSt = this.resolveHistoryStageName(h.toStageId, h.toStatus, idToStage, byKey);
+        if (stageFilter && toSt.key !== stageFilter) continue;
+        if (seenLeadIds.has(h.leadId)) continue;
+        seenLeadIds.add(h.leadId);
+
+        const fromSt = this.resolveHistoryStageName(h.fromStageId, h.fromStatus, idToStage, byKey);
+        const curSt = this.resolveLeadStageKey(h.lead, idToStage);
+        const empName = personDisplayName(actorEmp, personDisplayName(h.lead?.employee, personDisplayName(h.lead?.assignedTo, 'Unassigned')));
+        records.push({
+          leadId: h.leadId,
+          employeeId: empId || 0,
+          assignedEmployee: empName,
+          customerName: `${h.lead?.firstName || ''} ${h.lead?.lastName || ''}`.trim() || h.lead?.title || `Lead #${h.leadId}`,
+          businessName: h.lead?.companyName || '—',
+          mobileNumber: h.lead?.phone || '—',
+          emailAddress: h.lead?.email || '—',
+          leadSource: h.lead?.source || '—',
+          currentStage: curSt.name,
+          currentStageKey: curSt.key,
+          previousStage: fromSt.name,
+          leadAssignedDate: formatIstDate(h.lead?.createdAt),
+          stageUpdatedAtFormatted: formatIstDateTime(h.createdAt),
+          followUpDateFormatted: formatIstDate(h.lead?.nextFollowUpDate),
+          visitDateFormatted: formatIstDate(h.lead?.visits?.[0]?.date),
+          leadValue: Number(h.lead?.value || 0),
+          latestRemarks: h.notes || h.lead?.notes?.[0]?.content || h.lead?.workNotes || '—',
+        });
+      }
+    } else {
+      const leads = await this.prisma.lead.findMany({
+        where: {
+          customerId,
+          deletedAt: null,
+          createdAt: { gte: range.start, lte: range.end },
+        },
+        include: {
+          stage: true,
+          employee: true,
+          assignedTo: { select: { id: true, firstName: true, lastName: true } },
+          statusHistory: { orderBy: { createdAt: 'desc' }, take: 1 },
+          visits: { orderBy: { date: 'desc' }, take: 1 },
+          notes: { orderBy: { createdAt: 'desc' }, take: 1 },
+        },
+        orderBy: [{ employeeId: 'asc' }, { updatedAt: 'desc' }],
+      });
+
+      for (const lead of leads) {
+        if (dayFilter !== undefined && getIstWeekday(lead.createdAt) !== dayFilter) continue;
+        const empId = lead.employeeId ?? (lead.assignedToId ? userIdToEmployee.get(lead.assignedToId)?.id : undefined);
+        if (!matchesEmp(empId, lead.assignedToId)) continue;
+        const curSt = this.resolveLeadStageKey(lead, idToStage);
+        if (stageFilter && curSt.key !== stageFilter) continue;
+        if (seenLeadIds.has(lead.id)) continue;
+        seenLeadIds.add(lead.id);
+
+        const lastHist = lead.statusHistory?.[0];
+        const prevSt = lastHist
+          ? this.resolveHistoryStageName(lastHist.fromStageId, lastHist.fromStatus, idToStage, byKey)
+          : { name: '—' };
+
+        records.push({
+          leadId: lead.id,
+          employeeId: empId || 0,
+          assignedEmployee: personDisplayName(lead.employee, personDisplayName(lead.assignedTo, 'Unassigned')),
+          customerName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title || `Lead #${lead.id}`,
+          businessName: lead.companyName || '—',
+          mobileNumber: lead.phone || '—',
+          emailAddress: lead.email || '—',
+          leadSource: lead.source || '—',
+          currentStage: curSt.name,
+          currentStageKey: curSt.key,
+          previousStage: prevSt.name,
+          leadAssignedDate: formatIstDate(lead.createdAt),
+          stageUpdatedAtFormatted: formatIstDateTime(lastHist?.createdAt || lead.updatedAt),
+          followUpDateFormatted: formatIstDate(lead.nextFollowUpDate),
+          visitDateFormatted: formatIstDate(lead.visits?.[0]?.date),
+          leadValue: Number(lead.value || 0),
+          latestRemarks: lead.notes?.[0]?.content || lastHist?.notes || lead.workNotes || '—',
+        });
+      }
+    }
+
+    return records;
+  }
+
   async exportReport(
     customerId: number,
     query: EmployeeLeadStageQuery & { format?: 'pdf' | 'excel' | 'csv' },
     user?: any,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const format = (query.format || 'pdf').toLowerCase();
-    const [reportRes, drillRes] = await Promise.all([
-      this.getReport(customerId, query, user),
-      this.getDrilldown(customerId, { ...query, page: 1, limit: 100 }, user),
+    const scope: ExportScope = query.exportScope || (query.exportEmployeeId ? 'individual' : 'all_complete');
+    const scopedQuery: EmployeeLeadStageQuery = {
+      ...query,
+      ...(query.exportEmployeeId ? { employeeIds: String(query.exportEmployeeId) } : {}),
+    };
+
+    const [reportRes, allLeads] = await Promise.all([
+      this.getReport(customerId, scopedQuery, user),
+      this.getAllDetailedLeadRecords(customerId, scopedQuery, user),
     ]);
 
     const report = reportRes.data;
-    const leads = drillRes.data.rows;
     const fileDate = report.dateRange.to || getBusinessDate(new Date());
+    const scopeSlug = scope === 'individual' && report.employeeRows[0]
+      ? `Employee_${report.employeeRows[0].name.replace(/[^a-zA-Z0-9]+/g, '_')}`
+      : scope;
+
+    const leadColumns = [
+      'Lead ID', 'Customer Name', 'Business Name', 'Mobile Number', 'Email Address',
+      'Lead Source', 'Current Stage', 'Previous Stage', 'Lead Assigned Date',
+      'Stage Updated Date & Time', 'Follow-Up Date', 'Visit Date', 'Lead Value', 'Latest Remarks',
+    ];
+    const leadRowValues = (l: any) => [
+      l.leadId, l.customerName, l.businessName, l.mobileNumber, l.emailAddress,
+      l.leadSource, l.currentStage, l.previousStage, l.leadAssignedDate,
+      l.stageUpdatedAtFormatted, l.followUpDateFormatted, l.visitDateFormatted, l.leadValue, l.latestRemarks,
+    ];
 
     if (format === 'csv') {
-      const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const esc = (v: any) => {
+        let s = String(v ?? '');
+        if (/^[=+\-@\t\r]/.test(s) && !/^-\d+(\.\d+)?$/.test(s)) s = `'${s}`;
+        return `"${s.replace(/"/g, '""')}"`;
+      };
       const lines: string[] = [];
-      lines.push(['Employee-Wise Lead & Stage Report', `Period: ${report.dateRange.from} to ${report.dateRange.to} (IST)`].map(esc).join(','));
+      lines.push(['QuikBoom Employee-Wise Lead & Stage Report', `Scope: ${scope}`, `Period (IST): ${report.dateRange.from} to ${report.dateRange.to}`].map(esc).join(','));
       lines.push('');
-      lines.push(['Employee', 'Department', 'Assigned Leads', 'Worked On', 'Hot Deals', 'Won', 'Lost', 'Conversion %', ...report.stages.map((s) => s.name)].map(esc).join(','));
-      for (const r of report.employeeRows) {
-        lines.push([
-          r.name,
-          r.departmentName,
-          r.totalAssignedLeads,
-          r.totalLeadsWorkedOn,
-          r.hotDeals,
-          r.wonLeads,
-          r.lostLeads,
-          `${r.conversionRate}%`,
-          ...report.stages.map((s) => r.stageCounts[s.key] || 0),
-        ].map(esc).join(','));
+
+      if (scope !== 'stage_wise') {
+        lines.push(['Employee', 'Department', 'Assigned Leads', 'Worked On', 'Hot Deals', 'Won', 'Lost', 'Conversion %', ...report.stages.map((s) => s.name)].map(esc).join(','));
+        for (const r of report.employeeRows) {
+          lines.push([
+            r.name, r.departmentName, r.totalAssignedLeads, r.totalLeadsWorkedOn,
+            r.hotDeals, r.wonLeads, r.lostLeads, `${r.conversionRate}%`,
+            ...report.stages.map((s) => r.stageCounts[s.key] || 0),
+          ].map(esc).join(','));
+        }
+        lines.push('');
       }
-      lines.push('');
-      lines.push(['Customer Name', 'Business Name', 'Contact Number', 'Current Stage', 'Previous Stage', 'Assigned Employee', 'Stage Updated', 'Follow-Up Date', 'Lead Value'].map(esc).join(','));
-      for (const l of leads) {
-        lines.push([
-          l.customerName,
-          l.businessName,
-          l.contactNumber,
-          l.currentStage,
-          l.previousStage,
-          l.assignedEmployee,
-          l.stageUpdatedAtFormatted,
-          l.followUpDateFormatted,
-          l.leadValue,
-        ].map(esc).join(','));
+
+      if (scope === 'stage_wise') {
+        lines.push(['Stage', 'Lead Count'].map(esc).join(','));
+        for (const s of report.charts.stageDistribution || []) {
+          lines.push([s.stageName, s.count].map(esc).join(','));
+        }
+        lines.push('');
       }
+
+      if (scope !== 'summary_only') {
+        lines.push(['Assigned Employee', ...leadColumns].map(esc).join(','));
+        for (const l of allLeads) {
+          lines.push([l.assignedEmployee, ...leadRowValues(l)].map(esc).join(','));
+        }
+      }
+
       return {
-        buffer: Buffer.from(lines.join('\n'), 'utf8'),
-        filename: `employee-lead-stage-report-${fileDate}.csv`,
+        buffer: Buffer.from('\uFEFF' + lines.join('\n'), 'utf8'),
+        filename: `QuikBoom_Lead_Report_${scopeSlug}_${fileDate}.csv`,
         contentType: 'text/csv; charset=utf-8',
       };
     }
 
     if (format === 'excel' || format === 'xlsx') {
       const wb = new ExcelJS.Workbook();
-      wb.creator = 'QB Suite CRM';
+      wb.creator = 'QuikBoom CRM';
       wb.created = new Date();
 
-      const summarySheet = wb.addWorksheet('Summary');
-      summarySheet.addRow(['Employee-Wise Lead & Stage Report']);
-      summarySheet.addRow(['Date Range (IST)', `${report.dateRange.from} to ${report.dateRange.to}`]);
-      summarySheet.addRow(['Day Filter', report.dateRange.dayOfWeek]);
-      summarySheet.addRow([]);
-      summarySheet.addRow(['Metric', 'Value']);
-      summarySheet.addRow(['Total Assigned Leads', report.summary.totalAssignedLeads]);
-      summarySheet.addRow(['New Leads', report.summary.newLeads]);
-      summarySheet.addRow(['Total Leads Worked On', report.summary.totalLeadsWorkedOn]);
-      summarySheet.addRow(['Hot Deals', report.summary.hotDeals]);
-      summarySheet.addRow(['Follow-Up Leads', report.summary.followUpLeads]);
-      summarySheet.addRow(['Visits Scheduled', report.summary.visitsScheduled]);
-      summarySheet.addRow(['Visits Completed', report.summary.visitsCompleted]);
-      summarySheet.addRow(['Won Leads', report.summary.wonLeads]);
-      summarySheet.addRow(['Lost Leads', report.summary.lostLeads]);
-      summarySheet.addRow(['Conversion Rate (%)', `${report.summary.conversionRate}%`]);
+      const styleHeader = (row: ExcelJS.Row) => {
+        row.height = 22;
+        row.eachCell((c) => {
+          c.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF163A2E' } };
+          c.alignment = { vertical: 'middle', horizontal: 'left' };
+        });
+      };
 
-      const empSheet = wb.addWorksheet('Employee Breakdown');
-      empSheet.addRow([
-        'Employee',
-        'Department',
-        'Assigned Leads',
-        'Worked On',
-        'Hot Deals',
-        'Won',
-        'Lost',
-        'Conversion %',
-        ...report.stages.map((s) => s.name),
-      ]);
+      // 1. Overall Summary
+      const overall = wb.addWorksheet('Overall Summary');
+      overall.columns = [{ header: 'Metric', key: 'm', width: 32 }, { header: 'Value', key: 'v', width: 38 }];
+      styleHeader(overall.getRow(1));
+      overall.addRow({ m: 'Report Scope', v: scope });
+      overall.addRow({ m: 'Date Range (IST)', v: `${report.dateRange.from} to ${report.dateRange.to}` });
+      overall.addRow({ m: 'Day Filter', v: report.dateRange.dayOfWeek });
+      overall.addRow({ m: 'Total Assigned Leads', v: report.summary.totalAssignedLeads });
+      overall.addRow({ m: 'New Leads', v: report.summary.newLeads });
+      overall.addRow({ m: 'Total Leads Worked On', v: report.summary.totalLeadsWorkedOn });
+      overall.addRow({ m: 'Hot Deals', v: report.summary.hotDeals });
+      overall.addRow({ m: 'Follow-Up Leads', v: report.summary.followUpLeads });
+      overall.addRow({ m: 'Visits Scheduled', v: report.summary.visitsScheduled });
+      overall.addRow({ m: 'Visits Completed', v: report.summary.visitsCompleted });
+      overall.addRow({ m: 'Won Leads', v: report.summary.wonLeads });
+      overall.addRow({ m: 'Lost Leads', v: report.summary.lostLeads });
+      overall.addRow({ m: 'Conversion Rate (%)', v: report.summary.conversionRate });
+
+      // 2. Employee-Wise Summary
+      const empSummary = wb.addWorksheet('Employee-Wise Summary');
+      const empHeaders = ['Employee', 'Department', 'Assigned Leads', 'Worked On', 'Hot Deals', 'Won', 'Lost', 'Conversion %', ...report.stages.map((s) => s.name)];
+      styleHeader(empSummary.addRow(empHeaders));
+      empSummary.views = [{ state: 'frozen', ySplit: 1 }];
       for (const r of report.employeeRows) {
-        empSheet.addRow([
-          r.name,
-          r.departmentName,
-          r.totalAssignedLeads,
-          r.totalLeadsWorkedOn,
-          r.hotDeals,
-          r.wonLeads,
-          r.lostLeads,
-          `${r.conversionRate}%`,
+        empSummary.addRow([
+          r.name, r.departmentName, r.totalAssignedLeads, r.totalLeadsWorkedOn,
+          r.hotDeals, r.wonLeads, r.lostLeads, r.conversionRate,
           ...report.stages.map((s) => r.stageCounts[s.key] || 0),
         ]);
       }
+      empHeaders.forEach((_, i) => { empSummary.getColumn(i + 1).width = i < 2 ? 24 : 15; });
 
-      const histSheet = wb.addWorksheet('Stage History');
-      histSheet.addRow(['Lead ID', 'Customer', 'Business', 'Previous Stage', 'New Stage', 'Employee', 'Date & Time (IST)', 'Notes']);
-      for (const h of report.stageHistory) {
-        histSheet.addRow([h.leadId, h.customerName, h.businessName, h.previousStage, h.newStage, h.employeeName, h.changedAtFormatted, h.notes]);
+      // 3. Stage-Wise Breakdown
+      const stageSheet = wb.addWorksheet('Stage-Wise Breakdown');
+      styleHeader(stageSheet.addRow(['Stage Name', 'Stage Key', 'Lead Count', 'Total Lead Value (INR)']));
+      for (const s of report.charts.stageDistribution || []) {
+        const stageVal = allLeads.filter((l) => l.currentStageKey === s.stageKey).reduce((sum, l) => sum + Number(l.leadValue || 0), 0);
+        stageSheet.addRow([s.stageName, s.stageKey, s.count, stageVal]);
+      }
+      [26, 20, 14, 22].forEach((w, i) => { stageSheet.getColumn(i + 1).width = w; });
+
+      // 4. All Lead Records
+      if (scope !== 'summary_only') {
+        const allSheet = wb.addWorksheet('All Lead Records');
+        styleHeader(allSheet.addRow(['Assigned Employee', ...leadColumns]));
+        allSheet.views = [{ state: 'frozen', ySplit: 1 }];
+        allSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, allLeads.length + 1), column: leadColumns.length + 1 } };
+        for (const l of allLeads) {
+          allSheet.addRow([l.assignedEmployee, ...leadRowValues(l)]);
+        }
+        for (let i = 1; i <= leadColumns.length + 1; i++) {
+          allSheet.getColumn(i).width = i === 1 || i === 3 || i === 4 || i === 15 ? 24 : 16;
+        }
       }
 
-      const leadsSheet = wb.addWorksheet('Lead Records');
-      leadsSheet.addRow(['Lead ID', 'Customer Name', 'Business Name', 'Contact', 'Current Stage', 'Previous Stage', 'Assigned Employee', 'Stage Updated', 'Follow-Up Date', 'Lead Value']);
-      for (const l of leads) {
-        leadsSheet.addRow([l.leadId, l.customerName, l.businessName, l.contactNumber, l.currentStage, l.previousStage, l.assignedEmployee, l.stageUpdatedAtFormatted, l.followUpDateFormatted, l.leadValue]);
+      // 5. Individual Employee Sheets (for all_complete, detailed, individual)
+      if (scope === 'all_complete' || scope === 'detailed' || scope === 'individual') {
+        const usedNames = new Set<string>(['Overall Summary', 'Employee-Wise Summary', 'Stage-Wise Breakdown', 'All Lead Records']);
+        for (const emp of report.employeeRows) {
+          const empLeads = allLeads.filter((l) => l.employeeId === emp.employeeId);
+          if (scope !== 'individual' && empLeads.length === 0 && emp.totalAssignedLeads === 0) continue;
+          let baseName = emp.name.replace(/[\\/*?:[\]]/g, '').trim().slice(0, 26) || `Emp_${emp.employeeId}`;
+          let sheetName = baseName;
+          let n = 1;
+          while (usedNames.has(sheetName)) {
+            sheetName = `${baseName.slice(0, 24)}_${n++}`;
+          }
+          usedNames.add(sheetName);
+
+          const ws = wb.addWorksheet(sheetName);
+          ws.addRow([`Employee: ${emp.name} (${emp.employeeCode})`, `Department: ${emp.departmentName}`]);
+          ws.addRow([`Assigned: ${emp.totalAssignedLeads}`, `Worked On: ${emp.totalLeadsWorkedOn}`, `Hot Deals: ${emp.hotDeals}`, `Won: ${emp.wonLeads}`, `Lost: ${emp.lostLeads}`, `Conversion: ${emp.conversionRate}%`]);
+          ws.addRow([]);
+          styleHeader(ws.addRow(leadColumns));
+          ws.views = [{ state: 'frozen', ySplit: 4 }];
+          for (const l of empLeads) {
+            ws.addRow(leadRowValues(l));
+          }
+          for (let i = 1; i <= leadColumns.length; i++) {
+            ws.getColumn(i).width = i === 2 || i === 3 || i === 14 ? 24 : 15;
+          }
+        }
       }
 
       const buf = Buffer.from(await wb.xlsx.writeBuffer());
       return {
         buffer: buf,
-        filename: `employee-lead-stage-report-${fileDate}.xlsx`,
+        filename: `QuikBoom_Lead_Report_${scopeSlug}_${fileDate}.xlsx`,
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       };
     }
 
-    // Default: Branded PDF
+    // Default: Branded Landscape PDF with Employee-Wise Summary + Detailed Lead Tables
+    const logo = this.getLogoBuffer();
     const pdfBuf = await new Promise<Buffer>((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 36, size: 'A4', layout: 'landscape', bufferPages: true });
+      const doc = new PDFDocument({ margin: 28, size: 'A4', layout: 'landscape', bufferPages: true });
       const chunks: Buffer[] = [];
       doc.on('data', (c) => chunks.push(c));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
       const pageW = doc.page.width;
-      const margin = 36;
+      const pageH = doc.page.height;
+      const margin = 28;
       const contentW = pageW - margin * 2;
 
       doc.rect(0, 0, pageW, 74).fill('#163A2E');
-      doc.rect(0, 74, pageW, 4).fill('#20C466');
-      doc.font('Helvetica-Bold').fontSize(18).fillColor('#FFFFFF').text('Employee-Wise Lead & Stage Report', margin, 20);
-      doc.font('Helvetica').fontSize(9.5).fillColor('#CBD5E1').text(
-        `Period: ${report.dateRange.from} to ${report.dateRange.to} (Asia/Kolkata)   |   Day Filter: ${report.dateRange.dayOfWeek}`,
-        margin,
-        46,
+      doc.rect(0, 74, pageW, 3.5).fill('#20C466');
+
+      let titleX = margin;
+      if (logo) {
+        try {
+          doc.roundedRect(margin, 14, 46, 46, 8).fill('#FFFFFF');
+          doc.image(logo, margin + 4, 18, { fit: [38, 38], align: 'center', valign: 'center' });
+          titleX = margin + 58;
+        } catch {
+          /* ignore */
+        }
+      }
+
+      doc.font('Helvetica-Bold').fontSize(16).fillColor('#FFFFFF').text('Employee-Wise Lead & Stage Report', titleX, 18);
+      doc.font('Helvetica').fontSize(9).fillColor('#CBD5E1').text(
+        `Period: ${report.dateRange.from} to ${report.dateRange.to} (Asia/Kolkata)  |  Day: ${report.dateRange.dayOfWeek}  |  Mode: ${scope.replace('_', ' ').toUpperCase()}`,
+        titleX,
+        42,
       );
 
-      let y = 94;
+      let y = 90;
       const kpis = [
         ['Assigned', report.summary.totalAssignedLeads],
         ['Worked On', report.summary.totalLeadsWorkedOn],
@@ -890,57 +1154,133 @@ export class EmployeeLeadStageReportService {
       const boxW = (contentW - 25) / 6;
       kpis.forEach(([label, val], idx) => {
         const x = margin + idx * (boxW + 5);
-        doc.roundedRect(x, y, boxW, 44, 6).fillAndStroke('#F0F7F4', '#CBE5D6');
-        doc.font('Helvetica').fontSize(8).fillColor('#475569').text(String(label), x + 8, y + 8, { width: boxW - 16 });
-        doc.font('Helvetica-Bold').fontSize(13).fillColor('#163A2E').text(String(val), x + 8, y + 21, { width: boxW - 16 });
+        doc.roundedRect(x, y, boxW, 40, 6).fillAndStroke('#F0F7F4', '#CBE5D6');
+        doc.font('Helvetica').fontSize(7.5).fillColor('#475569').text(String(label), x + 8, y + 7, { width: boxW - 16 });
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#163A2E').text(String(val), x + 8, y + 19, { width: boxW - 16 });
       });
+      y += 52;
 
-      y += 60;
-      doc.font('Helvetica-Bold').fontSize(11).fillColor('#163A2E').text('Employee Stage Breakdown', margin, y);
-      y += 18;
+      const pdfCols = [
+        { key: 'leadId', label: 'ID', w: 34 },
+        { key: 'customerName', label: 'Customer', w: 74 },
+        { key: 'businessName', label: 'Business', w: 88 },
+        { key: 'mobileNumber', label: 'Mobile', w: 66 },
+        { key: 'leadSource', label: 'Source', w: 58 },
+        { key: 'currentStage', label: 'Current Stage', w: 68 },
+        { key: 'previousStage', label: 'Prev Stage', w: 62 },
+        { key: 'leadAssignedDate', label: 'Assigned', w: 56 },
+        { key: 'stageUpdatedAtFormatted', label: 'Updated (IST)', w: 78 },
+        { key: 'followUpDateFormatted', label: 'Follow-Up', w: 56 },
+        { key: 'visitDateFormatted', label: 'Visit Date', w: 54 },
+        { key: 'leadValue', label: 'Value', w: 46 },
+        { key: 'latestRemarks', label: 'Remarks', w: contentW - 740 },
+      ];
 
-      const stageCols = report.stages.slice(0, 6);
-      const colWidths = [130, 80, 55, 55, 50, 55, ...stageCols.map(() => Math.floor((contentW - 425) / Math.max(1, stageCols.length)))];
-      const headers = ['Employee', 'Department', 'Assigned', 'Worked', 'Won', 'Conv %', ...stageCols.map((s) => s.name)];
-
-      doc.rect(margin, y, contentW, 20).fill('#163A2E');
-      let cx = margin + 4;
-      headers.forEach((h, i) => {
-        doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#FFFFFF').text(h, cx, y + 6, { width: colWidths[i] - 6, ellipsis: true });
-        cx += colWidths[i];
-      });
-      y += 22;
-
-      report.employeeRows.forEach((r, idx) => {
-        if (y > doc.page.height - 60) {
-          doc.addPage();
-          y = 40;
+      const drawLeadTableHeader = (topY: number) => {
+        doc.rect(margin, topY, contentW, 20).fill('#163A2E');
+        let cx = margin;
+        for (const c of pdfCols) {
+          doc.save();
+          doc.rect(cx, topY, c.w, 20).clip();
+          doc.font('Helvetica-Bold').fontSize(7).fillColor('#FFFFFF').text(c.label, cx + 3, topY + 6, { width: c.w - 6, ellipsis: true });
+          doc.restore();
+          cx += c.w;
         }
-        if (idx % 2 === 1) doc.rect(margin, y, contentW, 18).fill('#F8FAFC');
-        const vals = [
-          r.name,
-          r.departmentName,
-          String(r.totalAssignedLeads),
-          String(r.totalLeadsWorkedOn),
-          String(r.wonLeads),
-          `${r.conversionRate}%`,
-          ...stageCols.map((s) => String(r.stageCounts[s.key] || 0)),
-        ];
-        let rx = margin + 4;
-        vals.forEach((v, i) => {
-          doc.font('Helvetica').fontSize(7.5).fillColor('#0F172A').text(v, rx, y + 5, { width: colWidths[i] - 6, ellipsis: true });
-          rx += colWidths[i];
+        return topY + 20;
+      };
+
+      const drawLeadRows = (leadsSubset: any[], startY: number): number => {
+        let curY = drawLeadTableHeader(startY);
+        leadsSubset.forEach((l, idx) => {
+          const rowH = 22;
+          if (curY + rowH > pageH - 40) {
+            doc.addPage();
+            curY = drawLeadTableHeader(32);
+          }
+          doc.rect(margin, curY, contentW, rowH).fillAndStroke(idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF', '#E2E8E5');
+          let cx = margin;
+          for (const c of pdfCols) {
+            const rawVal = c.key === 'leadValue' ? `INR ${Number(l[c.key] || 0).toLocaleString('en-IN')}` : l[c.key];
+            const txt = this.sanitizePdfText(rawVal);
+            doc.save();
+            doc.rect(cx, curY, c.w, rowH).clip();
+            doc.font('Helvetica').fontSize(6.8).fillColor('#0F172A').text(txt, cx + 3, curY + 5, { width: c.w - 6, height: rowH - 6, ellipsis: true });
+            doc.restore();
+            cx += c.w;
+          }
+          curY += rowH;
         });
-        y += 18;
-      });
+        return curY + 10;
+      };
+
+      if (scope === 'summary_only') {
+        const stageCols = report.stages.slice(0, 6);
+        const colWidths = [130, 80, 55, 55, 50, 55, ...stageCols.map(() => Math.floor((contentW - 425) / Math.max(1, stageCols.length)))];
+        const headers = ['Employee', 'Department', 'Assigned', 'Worked', 'Won', 'Conv %', ...stageCols.map((s) => s.name)];
+        doc.rect(margin, y, contentW, 20).fill('#163A2E');
+        let cx = margin + 4;
+        headers.forEach((h, i) => {
+          doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#FFFFFF').text(this.sanitizePdfText(h), cx, y + 6, { width: colWidths[i] - 6, ellipsis: true });
+          cx += colWidths[i];
+        });
+        y += 22;
+        report.employeeRows.forEach((r, idx) => {
+          if (y > pageH - 50) { doc.addPage(); y = 36; }
+          if (idx % 2 === 1) doc.rect(margin, y, contentW, 18).fill('#F8FAFC');
+          const vals = [r.name, r.departmentName, r.totalAssignedLeads, r.totalLeadsWorkedOn, r.wonLeads, `${r.conversionRate}%`, ...stageCols.map((s) => r.stageCounts[s.key] || 0)];
+          let rx = margin + 4;
+          vals.forEach((v, i) => {
+            doc.font('Helvetica').fontSize(7.5).fillColor('#0F172A').text(this.sanitizePdfText(v), rx, y + 5, { width: colWidths[i] - 6, ellipsis: true });
+            rx += colWidths[i];
+          });
+          y += 18;
+        });
+      } else if (scope === 'stage_wise') {
+        for (const st of report.stages) {
+          const stLeads = allLeads.filter((l) => l.currentStageKey === st.key);
+          if (!stLeads.length) continue;
+          if (y + 52 > pageH - 40) { doc.addPage(); y = 32; }
+          doc.roundedRect(margin, y, contentW, 22, 5).fillAndStroke('#F0F7F4', '#CBE5D6');
+          doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#163A2E').text(`${this.sanitizePdfText(st.name)}  (${stLeads.length} Leads)`, margin + 10, y + 6);
+          y += 26;
+          y = drawLeadRows(stLeads, y);
+        }
+      } else {
+        // all_complete, detailed, individual: Group by Employee with Summary + Detailed Table
+        for (const emp of report.employeeRows) {
+          const empLeads = allLeads.filter((l) => l.employeeId === emp.employeeId);
+          if (scope !== 'individual' && empLeads.length === 0 && emp.totalAssignedLeads === 0) continue;
+          if (y + 64 > pageH - 40) { doc.addPage(); y = 32; }
+
+          doc.roundedRect(margin, y, contentW, 30, 6).fillAndStroke('#F0F7F4', '#CBE5D6');
+          doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#163A2E').text(
+            `${this.sanitizePdfText(emp.name)} (${this.sanitizePdfText(emp.departmentName)})`,
+            margin + 10,
+            y + 5,
+          );
+          doc.font('Helvetica').fontSize(8).fillColor('#334155').text(
+            `Assigned: ${emp.totalAssignedLeads}  |  Worked On: ${emp.totalLeadsWorkedOn}  |  Hot Deals: ${emp.hotDeals}  |  Won: ${emp.wonLeads}  |  Lost: ${emp.lostLeads}  |  Conversion: ${emp.conversionRate}%`,
+            margin + 10,
+            y + 17,
+          );
+          y += 34;
+
+          if (empLeads.length > 0) {
+            y = drawLeadRows(empLeads, y);
+          } else {
+            doc.font('Helvetica').fontSize(8).fillColor('#64748B').text('No detailed lead records match the selected filters.', margin + 8, y + 4);
+            y += 20;
+          }
+        }
+      }
 
       const range = doc.bufferedPageRange();
       for (let i = 0; i < range.count; i += 1) {
         doc.switchToPage(i);
         doc.font('Helvetica').fontSize(8).fillColor('#64748B').text(
-          `Generated by QB Suite CRM   |   Page ${i + 1} of ${range.count}`,
+          `Generated by QuikBoom CRM (Asia/Kolkata)   |   Page ${i + 1} of ${range.count}`,
           margin,
-          doc.page.height - 28,
+          pageH - 24,
           { align: 'right', width: contentW },
         );
       }
@@ -949,7 +1289,7 @@ export class EmployeeLeadStageReportService {
 
     return {
       buffer: pdfBuf,
-      filename: `employee-lead-stage-report-${fileDate}.pdf`,
+      filename: `QuikBoom_Lead_Report_${scopeSlug}_${fileDate}.pdf`,
       contentType: 'application/pdf',
     };
   }
