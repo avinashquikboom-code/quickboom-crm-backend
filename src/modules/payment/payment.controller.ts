@@ -13,6 +13,7 @@ import {
   CreateRazorpayOrderDto,
   VerifyRazorpayPaymentDto,
   SendPaymentReminderDto,
+  VerifyAppleIapDto,
 } from './dto/payment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CustomerGuard } from '../../common/guards/customer.guard';
@@ -94,6 +95,44 @@ export class PaymentController {
   async getPaymentHistory(@CurrentUser() user: any, @Req() req: any) {
     const customerId = req?.customerId || user?.customerId;
     return this.paymentService.getPaymentHistory(user, customerId);
+  }
+
+  @Get('apple/products')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get Apple App Store IAP product IDs mapped to plans and AI credit packs' })
+  async getAppleIapProducts() {
+    return this.paymentService.getAppleIapProducts();
+  }
+
+  @Post('apple/verify')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify Apple StoreKit 2 transaction JWS and activate subscription or AI credits' })
+  async verifyAppleIap(
+    @CurrentUser() user: any,
+    @Req() req: any,
+    @Body() dto: VerifyAppleIapDto,
+  ) {
+    const customerId = req?.customerId || user?.customerId;
+    return this.paymentService.verifyAppleIapPayment(user, dto, customerId);
+  }
+
+  @Post('apple/webhook')
+  @ApiOperation({ summary: 'Apple App Store Server Notifications V2 webhook handler' })
+  async handleAppleWebhook(@Body() body: any) {
+    return this.paymentService.handleAppleWebhook(body);
+  }
+
+  @Get('status')
+  @UseGuards(JwtAuthGuard, CustomerGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Check payment status by orderId or paymentId for delayed/pending confirmation' })
+  async getPaymentStatus(@CurrentUser() user: any, @Req() req: any) {
+    const customerId = req?.customerId || user?.customerId;
+    const orderId = req?.query?.orderId as string | undefined;
+    const paymentId = req?.query?.paymentId as string | undefined;
+    return this.paymentService.getPaymentStatus(user, customerId, orderId, paymentId);
   }
 
   @Post('remind')
