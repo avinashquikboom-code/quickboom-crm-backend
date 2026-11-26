@@ -152,7 +152,7 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
 
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
-      margin: 32,
+      margin: 28,
       size: 'A4',
       layout: landscape ? 'landscape' : 'portrait',
       bufferPages: true,
@@ -164,7 +164,8 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
 
     const pageW = doc.page.width;
     const pageH = doc.page.height;
-    const margin = 32;
+    const margin = 28;
+    const bottomLimit = pageH - 42;
     const contentW = pageW - margin * 2;
 
     // Header Banner
@@ -247,7 +248,7 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
             humanizeColumnName(col),
             cx + 5,
             topY + 7,
-            { width: colWidths[i] - 10, align: isNum ? 'right' : 'left', ellipsis: true },
+            { width: colWidths[i] - 10, align: isNum ? 'right' : 'left', lineBreak: false, ellipsis: true },
           );
           doc.restore();
           cx += colWidths[i];
@@ -261,11 +262,11 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
         const rowHeights = columns.map((col, i) =>
           doc.font('Helvetica').fontSize(8).heightOfString(formatCellText(col, row[col], true), { width: Math.max(20, colWidths[i] - 10) }),
         );
-        const rowH = Math.max(20, Math.min(54, Math.max(...rowHeights) + 10));
+        const rowH = Math.max(18, Math.min(52, Math.ceil(Math.max(...rowHeights)) + 8));
 
-        if (y + rowH > pageH - 46) {
+        if (y + rowH > bottomLimit) {
           doc.addPage();
-          y = drawTableHeader(36);
+          y = drawTableHeader(margin);
         }
 
         doc.rect(margin, y, contentW, rowH).fillAndStroke(idx % 2 === 1 ? ROW_ALT : '#FFFFFF', BORDER);
@@ -278,20 +279,21 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
           doc.font('Helvetica').fontSize(8).fillColor(TEXT_DARK).text(
             formatCellText(col, val, true),
             cx + 5,
-            y + 5,
-            { width: Math.max(20, colWidths[i] - 10), align: isNum ? 'right' : 'left', height: rowH - 8, ellipsis: true },
+            y + 4,
+            { width: Math.max(20, colWidths[i] - 10), align: isNum ? 'right' : 'left', height: rowH - 6, ellipsis: true },
           );
           doc.restore();
           cx += colWidths[i];
         });
         y += rowH;
+        doc.y = y;
       });
 
       // Totals Row if any numeric columns exist
       if (Object.keys(totals).length > 0) {
-        if (y + 24 > pageH - 46) {
+        if (y + 22 > bottomLimit) {
           doc.addPage();
-          y = drawTableHeader(36);
+          y = drawTableHeader(margin);
         }
         doc.rect(margin, y, contentW, 22).fillAndStroke(BRAND_SOFT, '#CBE5D6');
         let cx = margin;
@@ -303,30 +305,34 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
             text,
             cx + 5,
             y + 7,
-            { width: Math.max(20, colWidths[i] - 10), align: i === 0 ? 'left' : 'right', ellipsis: true },
+            { width: Math.max(20, colWidths[i] - 10), align: i === 0 ? 'left' : 'right', lineBreak: false, ellipsis: true },
           );
           doc.restore();
           cx += colWidths[i];
         });
+        y += 22;
+        doc.y = y;
       }
     }
 
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i += 1) {
       doc.switchToPage(i);
-      const footerY = pageH - 28;
+      // Allow footer text below body bottomLimit without triggering PDFKit auto-pagination
+      doc.page.margins.bottom = 0;
+      const footerY = pageH - 24;
       doc.moveTo(margin, footerY - 6).lineTo(pageW - margin, footerY - 6).strokeColor(BORDER).lineWidth(0.75).stroke();
       doc.font('Helvetica').fontSize(8).fillColor(TEXT_MUTED).text(
         `${companyName}  •  QuikBoom CRM Report`,
         margin,
         footerY,
-        { width: contentW / 2, align: 'left' },
+        { width: contentW / 2, align: 'left', lineBreak: false },
       );
       doc.font('Helvetica').fontSize(8).fillColor(TEXT_MUTED).text(
         `Page ${i + 1} of ${range.count}`,
         margin + contentW / 2,
         footerY,
-        { width: contentW / 2, align: 'right' },
+        { width: contentW / 2, align: 'right', lineBreak: false },
       );
     }
 

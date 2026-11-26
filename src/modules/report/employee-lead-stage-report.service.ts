@@ -1125,6 +1125,7 @@ export class EmployeeLeadStageReportService {
       const pageW = doc.page.width;
       const pageH = doc.page.height;
       const margin = 28;
+      const bottomLimit = pageH - 40;
       const contentW = pageW - margin * 2;
 
       doc.rect(0, 0, pageW, 74).fill('#163A2E');
@@ -1188,7 +1189,7 @@ export class EmployeeLeadStageReportService {
         for (const c of pdfCols) {
           doc.save();
           doc.rect(cx, topY, c.w, 20).clip();
-          doc.font('Helvetica-Bold').fontSize(7).fillColor('#FFFFFF').text(c.label, cx + 3, topY + 6, { width: c.w - 6, ellipsis: true });
+          doc.font('Helvetica-Bold').fontSize(7).fillColor('#FFFFFF').text(c.label, cx + 3, topY + 6, { width: c.w - 6, lineBreak: false, ellipsis: true });
           doc.restore();
           cx += c.w;
         }
@@ -1198,10 +1199,15 @@ export class EmployeeLeadStageReportService {
       const drawLeadRows = (leadsSubset: any[], startY: number): number => {
         let curY = drawLeadTableHeader(startY);
         leadsSubset.forEach((l, idx) => {
-          const rowH = 22;
-          if (curY + rowH > pageH - 40) {
+          const textHeights = pdfCols.map((c) => {
+            const rawVal = c.key === 'leadValue' ? `INR ${Number(l[c.key] || 0).toLocaleString('en-IN')}` : l[c.key];
+            return doc.font('Helvetica').fontSize(6.8).heightOfString(this.sanitizePdfText(rawVal), { width: Math.max(12, c.w - 6) });
+          });
+          const rowH = Math.max(18, Math.min(44, Math.ceil(Math.max(...textHeights)) + 8));
+
+          if (curY + rowH > bottomLimit) {
             doc.addPage();
-            curY = drawLeadTableHeader(32);
+            curY = drawLeadTableHeader(margin);
           }
           doc.rect(margin, curY, contentW, rowH).fillAndStroke(idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF', '#E2E8E5');
           let cx = margin;
@@ -1210,44 +1216,50 @@ export class EmployeeLeadStageReportService {
             const txt = this.sanitizePdfText(rawVal);
             doc.save();
             doc.rect(cx, curY, c.w, rowH).clip();
-            doc.font('Helvetica').fontSize(6.8).fillColor('#0F172A').text(txt, cx + 3, curY + 5, { width: c.w - 6, height: rowH - 6, ellipsis: true });
+            doc.font('Helvetica').fontSize(6.8).fillColor('#0F172A').text(txt, cx + 3, curY + 4, { width: Math.max(12, c.w - 6), height: rowH - 6, ellipsis: true });
             doc.restore();
             cx += c.w;
           }
           curY += rowH;
+          doc.y = curY;
         });
-        return curY + 10;
+        return curY + 8;
       };
 
       if (scope === 'summary_only') {
         const stageCols = report.stages.slice(0, 6);
         const colWidths = [130, 80, 55, 55, 50, 55, ...stageCols.map(() => Math.floor((contentW - 425) / Math.max(1, stageCols.length)))];
         const headers = ['Employee', 'Department', 'Assigned', 'Worked', 'Won', 'Conv %', ...stageCols.map((s) => s.name)];
-        doc.rect(margin, y, contentW, 20).fill('#163A2E');
-        let cx = margin + 4;
-        headers.forEach((h, i) => {
-          doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#FFFFFF').text(this.sanitizePdfText(h), cx, y + 6, { width: colWidths[i] - 6, ellipsis: true });
-          cx += colWidths[i];
-        });
-        y += 22;
+        const drawSummaryHeader = (topY: number) => {
+          doc.rect(margin, topY, contentW, 20).fill('#163A2E');
+          let cx = margin + 4;
+          headers.forEach((h, i) => {
+            doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#FFFFFF').text(this.sanitizePdfText(h), cx, topY + 6, { width: colWidths[i] - 6, lineBreak: false, ellipsis: true });
+            cx += colWidths[i];
+          });
+          return topY + 20;
+        };
+        y = drawSummaryHeader(y);
         report.employeeRows.forEach((r, idx) => {
-          if (y > pageH - 50) { doc.addPage(); y = 36; }
+          if (y + 18 > bottomLimit) { doc.addPage(); y = drawSummaryHeader(margin); }
           if (idx % 2 === 1) doc.rect(margin, y, contentW, 18).fill('#F8FAFC');
           const vals = [r.name, r.departmentName, r.totalAssignedLeads, r.totalLeadsWorkedOn, r.wonLeads, `${r.conversionRate}%`, ...stageCols.map((s) => r.stageCounts[s.key] || 0)];
           let rx = margin + 4;
           vals.forEach((v, i) => {
-            doc.font('Helvetica').fontSize(7.5).fillColor('#0F172A').text(this.sanitizePdfText(v), rx, y + 5, { width: colWidths[i] - 6, ellipsis: true });
+            doc.font('Helvetica').fontSize(7.5).fillColor('#0F172A').text(this.sanitizePdfText(v), rx, y + 5, { width: colWidths[i] - 6, lineBreak: false, ellipsis: true });
             rx += colWidths[i];
           });
           y += 18;
+          doc.y = y;
         });
       } else if (scope === 'stage_wise') {
         for (const st of report.stages) {
           const stLeads = allLeads.filter((l) => l.currentStageKey === st.key);
           if (!stLeads.length) continue;
-          if (y + 52 > pageH - 40) { doc.addPage(); y = 32; }
+          // Keep stage heading + table header + at least first row together
+          if (y + 68 > bottomLimit) { doc.addPage(); y = margin; }
           doc.roundedRect(margin, y, contentW, 22, 5).fillAndStroke('#F0F7F4', '#CBE5D6');
-          doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#163A2E').text(`${this.sanitizePdfText(st.name)}  (${stLeads.length} Leads)`, margin + 10, y + 6);
+          doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#163A2E').text(`${this.sanitizePdfText(st.name)}  (${stLeads.length} Leads)`, margin + 10, y + 6, { lineBreak: false });
           y += 26;
           y = drawLeadRows(stLeads, y);
         }
@@ -1256,26 +1268,31 @@ export class EmployeeLeadStageReportService {
         for (const emp of report.employeeRows) {
           const empLeads = allLeads.filter((l) => l.employeeId === emp.employeeId);
           if (scope !== 'individual' && empLeads.length === 0 && emp.totalAssignedLeads === 0) continue;
-          if (y + 64 > pageH - 40) { doc.addPage(); y = 32; }
+          const neededHeight = empLeads.length > 0 ? 74 : 46;
+          if (y + neededHeight > bottomLimit) { doc.addPage(); y = margin; }
 
           doc.roundedRect(margin, y, contentW, 30, 6).fillAndStroke('#F0F7F4', '#CBE5D6');
           doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#163A2E').text(
             `${this.sanitizePdfText(emp.name)} (${this.sanitizePdfText(emp.departmentName)})`,
             margin + 10,
             y + 5,
+            { lineBreak: false },
           );
           doc.font('Helvetica').fontSize(8).fillColor('#334155').text(
             `Assigned: ${emp.totalAssignedLeads}  |  Worked On: ${emp.totalLeadsWorkedOn}  |  Hot Deals: ${emp.hotDeals}  |  Won: ${emp.wonLeads}  |  Lost: ${emp.lostLeads}  |  Conversion: ${emp.conversionRate}%`,
             margin + 10,
             y + 17,
+            { lineBreak: false },
           );
           y += 34;
+          doc.y = y;
 
           if (empLeads.length > 0) {
             y = drawLeadRows(empLeads, y);
           } else {
-            doc.font('Helvetica').fontSize(8).fillColor('#64748B').text('No detailed lead records match the selected filters.', margin + 8, y + 4);
-            y += 20;
+            doc.font('Helvetica').fontSize(8).fillColor('#64748B').text('No detailed lead records match the selected filters.', margin + 8, y + 2, { lineBreak: false });
+            y += 18;
+            doc.y = y;
           }
         }
       }
@@ -1283,11 +1300,12 @@ export class EmployeeLeadStageReportService {
       const range = doc.bufferedPageRange();
       for (let i = 0; i < range.count; i += 1) {
         doc.switchToPage(i);
+        doc.page.margins.bottom = 0;
         doc.font('Helvetica').fontSize(8).fillColor('#64748B').text(
           `Generated by QuikBoom CRM (Asia/Kolkata)   |   Page ${i + 1} of ${range.count}`,
           margin,
-          pageH - 24,
-          { align: 'right', width: contentW },
+          pageH - 22,
+          { align: 'right', width: contentW, lineBreak: false },
         );
       }
       doc.end();
