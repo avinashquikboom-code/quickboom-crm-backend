@@ -1594,6 +1594,9 @@ model LeaveRequest {
   exceptionalReason   String?
   approvedAt          DateTime?
   cancelledAt         DateTime?
+  appliedBySource     String        @default("EMPLOYEE")
+  appliedById         Int?
+  appliedByName       String?
   reason              String?
   attachmentUrl       String?
   status              RequestStatus @default(PENDING)
@@ -2808,6 +2811,7 @@ enum RequestStatus {
   PENDING
   APPROVED
   REJECTED
+  CANCELLED
 }
 
 enum OvertimeType {

@@ -52,6 +52,16 @@ export class TelecallerTargetsController {
     return this.service.upsertPolicy(req.user, customerId, dto);
   }
 
+  @Post('policy')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  upsertPolicyPost(
+    @Request() req: any,
+    @Query('customerId') customerId: string | undefined,
+    @Body() dto: UpsertTelecallerTargetPolicyDto,
+  ) {
+    return this.service.upsertPolicy(req.user, customerId, dto);
+  }
+
   @Post('assignments')
   @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
   assignTargets(

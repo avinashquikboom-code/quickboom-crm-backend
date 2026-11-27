@@ -912,6 +912,13 @@ export class LeaveService {
     const currentYear = fromStart.getFullYear();
     const isUnlimited = leaveType.code === 'UL' || leaveType.name.toLowerCase().includes('unpaid');
 
+    const isAdminActor = !isEmpUser;
+    const appliedBySource = isAdminActor ? 'ADMIN' : 'EMPLOYEE';
+    const appliedById = user?.id ? Number(user.id) : null;
+    const appliedByName = isAdminActor
+      ? (`${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || 'Admin')
+      : (`${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Employee');
+
     // 5. Pre-check available balance before submission (Available = Allocated - Used/Approved)
     if (!isUnlimited) {
       const existingBalance = await this.prisma.employeeLeaveBalance.findFirst({
@@ -926,14 +933,14 @@ export class LeaveService {
       const used = existingBalance ? existingBalance.usedDays : 0.0;
       const available = Math.max(0, allocated - used);
 
-      if (available < days) {
+      if (available < days && !(isAdminActor && dto.isExceptional)) {
         throw new BadRequestException(
           `Insufficient ${leaveType.name} balance. Available: ${available} day(s), Requested: ${days} day(s).`,
         );
       }
     }
 
-    // 6. Create leave application with status = PENDING (DO NOT DEDUCT BALANCE)
+    // 6. Create leave application
     const created = await this.prisma.leaveRequest.create({
       data: {
         customerId: numCustomerId,
@@ -952,8 +959,11 @@ export class LeaveService {
         leaveHours: validation.leaveHours,
         workingHours: validation.workingHours,
         applicationDeadline: validation.applicationDeadline,
-        isExceptional: !isEmpUser && Boolean(dto.isExceptional),
-        exceptionalReason: !isEmpUser && dto.isExceptional ? dto.exceptionalReason?.trim() || null : null,
+        isExceptional: isAdminActor && Boolean(dto.isExceptional),
+        exceptionalReason: isAdminActor && dto.isExceptional ? dto.exceptionalReason?.trim() || null : null,
+        appliedBySource,
+        appliedById,
+        appliedByName,
         reason: dto.reason?.trim() || null,
         status: RequestStatus.PENDING,
       },
@@ -962,6 +972,34 @@ export class LeaveService {
         leaveType: true,
       },
     });
+
+    if ((this.prisma as any).auditLog?.create) {
+      await (this.prisma as any).auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          userId: appliedById,
+          userName: appliedByName,
+          userRole: user?.role || (isAdminActor ? 'ADMIN' : 'EMPLOYEE'),
+          source: isAdminActor ? 'ADMIN_PANEL' : 'MOBILE_APP',
+          action: 'CREATE',
+          module: 'Leave',
+          entityType: 'LeaveRequest',
+          entityId: String(created.id),
+          description: `${appliedBySource === 'ADMIN' ? 'Admin' : 'Employee'} ${appliedByName} applied for ${days} day(s) of ${leaveType.name}`,
+          details: { durationType, halfDaySession, days, appliedBySource },
+        },
+      }).catch(() => {});
+    }
+
+    // Auto-approve when applied by an authorized Admin on behalf of an employee
+    if (isAdminActor) {
+      return this.approveLeave(user, numCustomerId, created.id, {
+        isExceptional: Boolean(dto.isExceptional),
+        exceptionalReason: dto.isExceptional
+          ? (dto.exceptionalReason?.trim() || 'Applied and approved by Admin')
+          : undefined,
+      });
+    }
 
     if (this.notificationService) {
       const empName = created.employee
@@ -1056,8 +1094,8 @@ export class LeaveService {
       const currentUsed = balance ? balance.usedDays : 0.0;
       const available = isUnlimited ? 999 : Math.max(0, allocated - currentUsed);
 
-      // 4. Verify sufficient balance
-      if (!isUnlimited && available < requestedDays) {
+      // 4. Verify sufficient balance (unless unlimited or admin exceptional override)
+      if (!isUnlimited && available < requestedDays && !isExceptional) {
         throw new BadRequestException(
           `Insufficient ${leave.leaveType?.name || 'leave'} balance to approve this request. Available: ${available} day(s), Requested: ${requestedDays} day(s).`,
         );
@@ -1327,19 +1365,21 @@ export class LeaveService {
     return this.prisma.$transaction(async (tx) => {
       const leave = await tx.leaveRequest.findFirst({
         where: { id, customerId: numCustomerId },
-        include: { employee: true, leaveType: true },
+        include: { employee: { include: { shift: true } }, leaveType: true },
       });
 
       if (!leave) {
         throw new NotFoundException(`Leave request #${id} not found`);
       }
 
-      if (leave.status === RequestStatus.REJECTED) {
+      if (leave.status === RequestStatus.REJECTED || leave.status === RequestStatus.CANCELLED) {
         throw new BadRequestException('Leave request is already rejected or cancelled');
       }
 
+      const wasApproved = leave.status === RequestStatus.APPROVED;
+
       // If leave was APPROVED, restore the deducted leave balance
-      if (leave.status === RequestStatus.APPROVED) {
+      if (wasApproved) {
         const currentYear = leave.fromDate.getFullYear();
         const balance = await tx.employeeLeaveBalance.findFirst({
           where: {
@@ -1362,20 +1402,106 @@ export class LeaveService {
             },
           });
         }
+
+        // Recalculate affected attendance records
+        const { start: dayStart } = getBusinessDayRange(getBusinessDate(leave.fromDate));
+        const { end: dayEnd } = getBusinessDayRange(getBusinessDate(leave.toDate));
+        const affectedAttendances = await tx.attendance.findMany({
+          where: {
+            employeeId: leave.employeeId,
+            OR: [
+              { leaveRequestId: leave.id },
+              { date: { gte: dayStart, lte: dayEnd } },
+            ],
+          },
+        });
+
+        if (leave.durationType === 'HALF_DAY') {
+          const attPolicy = await tx.attendancePolicy.findFirst({
+            where: { customerId: numCustomerId, isActive: true },
+            orderBy: { updatedAt: 'desc' },
+          });
+          const latePolicy = (tx as any).lateMarkPolicy?.findUnique
+            ? await (tx as any).lateMarkPolicy.findUnique({ where: { customerId: numCustomerId } })
+            : null;
+          const shift = leave.employee?.shift || null;
+
+          for (const att of affectedAttendances) {
+            let nextIsLate = att.isLate;
+            let nextLateMinutes = att.lateMinutes;
+            let nextLateDeduction = att.lateDeduction;
+            if (att.punchIn && shift?.startTime) {
+              const lateEval = evaluateLatePunch({
+                punchIn: att.punchIn,
+                shift,
+                policy: latePolicy || { isEnabled: false, deductionRatePerMin: 1, gracePeriodMinutes: 0, currency: 'INR' },
+                workingDaysPerWeek: attPolicy?.workingDaysPerWeek || 5,
+                employeeId: leave.employeeId,
+              });
+              nextIsLate = lateEval.isLate;
+              nextLateMinutes = lateEval.lateMinutes;
+              nextLateDeduction = lateEval.deduction;
+            }
+            await tx.attendance.update({
+              where: { id: att.id },
+              data: {
+                isHalfDayLeave: false,
+                halfDaySession: null,
+                leaveRequestId: null,
+                isLate: nextIsLate,
+                lateMinutes: nextLateMinutes,
+                lateDeduction: nextLateDeduction,
+                status: !att.punchIn
+                  ? AttendanceStatus.ABSENT
+                  : nextIsLate
+                    ? AttendanceStatus.LATE
+                    : AttendanceStatus.PRESENT,
+              },
+            });
+          }
+        } else {
+          for (const att of affectedAttendances) {
+            if (att.status === AttendanceStatus.LEAVE && !att.punchIn) {
+              await tx.attendance.update({
+                where: { id: att.id },
+                data: { status: AttendanceStatus.ABSENT, leaveRequestId: null },
+              });
+            }
+          }
+        }
       }
 
       const updated = await tx.leaveRequest.update({
         where: { id },
         data: {
-          status: RequestStatus.REJECTED,
+          status: RequestStatus.CANCELLED,
+          cancelledAt: new Date(),
           rejectionReason: 'Cancelled by Administrator / Employee',
           approvedById: user?.id || null,
         },
       });
 
+      if ((tx as any).auditLog?.create) {
+        await (tx as any).auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            userId: user?.id || null,
+            userName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || 'Admin',
+            userRole: user?.role || 'ADMIN',
+            source: 'ADMIN_PANEL',
+            action: 'CANCEL',
+            module: 'Leave',
+            entityType: 'LeaveRequest',
+            entityId: String(id),
+            description: `Leave request #${id} cancelled${wasApproved ? ' (balance restored and attendance recalculated)' : ''}`,
+            details: { wasApproved, durationType: leave.durationType, days: leave.days },
+          },
+        }).catch(() => {});
+      }
+
       return {
         success: true,
-        message: 'Leave request cancelled successfully. Any deducted balance has been restored.',
+        message: 'Leave request cancelled successfully. Any deducted balance has been restored and attendance recalculated.',
         data: updated,
       };
     });
