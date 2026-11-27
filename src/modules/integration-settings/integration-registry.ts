@@ -198,6 +198,28 @@ export const INTEGRATION_REGISTRY: IntegrationDefinition[] = [
         secret: true,
         required: true,
       },
+      {
+        key: "speechEngineId",
+        label: "ELEVENLABS_SPEECH_ENGINE_ID",
+        group: "config",
+        required: true,
+        placeholder: "Speech Engine / Agent ID",
+      },
+      {
+        key: "voiceId",
+        label: "ELEVENLABS_VOICE_ID",
+        group: "config",
+        placeholder: "Optional",
+      },
+      {
+        key: "speechEnginePort",
+        label: "ELEVENLABS_SPEECH_ENGINE_PORT",
+        group: "config",
+        type: "number",
+        min: 1024,
+        max: 65535,
+        placeholder: "3101",
+      },
     ],
   },
   {
