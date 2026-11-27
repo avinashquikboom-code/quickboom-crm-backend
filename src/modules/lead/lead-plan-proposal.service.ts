@@ -32,6 +32,7 @@ type PlanProposalLeadContext = {
   firstName: string;
   lastName: string;
   title: string;
+  companyName?: string | null;
   customerRequirements: string | null;
   planPreferenceReady: boolean;
   planPreferenceType: string | null;
@@ -174,11 +175,26 @@ export class LeadPlanProposalService {
     await this.assertLead(customerId, leadId);
     // Plans are global catalog entries in the current schema; no tenant-specific
     // availability setting exists. Return only active, non-deleted plans.
-    return this.prisma.plan.findMany({
+    const rows = await this.prisma.plan.findMany({
       where: { isActive: true, deletedAt: null },
-      select: { id: true, name: true, description: true, monthlyPrice: true, yearlyPrice: true, features: true },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        description: true,
+        monthlyPrice: true,
+        yearlyPrice: true,
+        userLimit: true,
+        leadLimit: true,
+        storageLimit: true,
+        features: true,
+      },
       orderBy: { name: 'asc' },
     });
+    return rows.map((row) => ({
+      ...row,
+      storageLimit: row.storageLimit != null ? Number(row.storageLimit) : null,
+    }));
   }
 
   async createStandardDraft(customerId: number, leadId: number, userId: number, dto: CreateStandardPlanProposalDto) {
@@ -215,13 +231,37 @@ export class LeadPlanProposalService {
     const snapshot = this.snapshotFromRecord(record);
     const company = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, companyName: true } });
     const saved = (record.customConfig || {}) as Record<string, unknown>;
+    const customerName =
+      typeof saved.recipientName === 'string' && saved.recipientName.trim()
+        ? saved.recipientName
+        : `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title;
+    const businessName =
+      typeof saved.businessName === 'string' && saved.businessName.trim()
+        ? saved.businessName
+        : lead.companyName || lead.title || customerName;
     return generatePlanProposalPdfBuffer({
       proposalNo: `PLAN-${leadId}-${record.version}`,
-      leadName: typeof saved.recipientName === 'string' ? saved.recipientName : `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title,
+      leadId,
+      leadName: customerName,
+      businessName,
       companyName: typeof saved.issuerName === 'string' ? saved.issuerName : company?.companyName || company?.name || '',
-      planName: snapshot.planName, planPrice: snapshot.planPrice, proposalType: record.proposalType,
-      features: snapshot.features, customerRequirements: record.customerRequirements || undefined,
-      discount: record.discount || undefined, validUntil: snapshot.validUntil, terms: snapshot.terms,
+      planName: snapshot.planName,
+      planCode: typeof saved.planCode === 'string' ? saved.planCode : undefined,
+      description: typeof saved.description === 'string' ? saved.description : undefined,
+      billingCycle: typeof saved.billingCycle === 'string' ? saved.billingCycle : undefined,
+      monthlyPrice: typeof saved.monthlyPrice === 'number' ? saved.monthlyPrice : undefined,
+      yearlyPrice: typeof saved.yearlyPrice === 'number' ? saved.yearlyPrice : undefined,
+      userLimit: typeof saved.userLimit === 'number' ? saved.userLimit : undefined,
+      leadLimit: typeof saved.leadLimit === 'number' ? saved.leadLimit : undefined,
+      storageLimit: typeof saved.storageLimit === 'number' ? saved.storageLimit : undefined,
+      storageUnit: typeof saved.storageUnit === 'string' ? saved.storageUnit : undefined,
+      planPrice: snapshot.planPrice,
+      proposalType: record.proposalType,
+      features: snapshot.features,
+      customerRequirements: record.customerRequirements || undefined,
+      discount: record.discount || undefined,
+      validUntil: snapshot.validUntil,
+      terms: snapshot.terms,
       customSummary: snapshot.customSummary,
     });
   }
@@ -273,37 +313,97 @@ export class LeadPlanProposalService {
 
   async createCustomProposal(customerId: number, leadId: number, userId: number, dto: CreateCustomPlanProposalDto) {
     const lead = await this.assertLead(customerId, leadId);
-    this.assertReadyToSend(lead, 'CUSTOM');
-    const version = await this.nextVersion(leadId);
-    const snapshot = this.buildCustomSnapshot(dto.config, lead.customerRequirements);
-    const record = await this.prisma.leadPlanProposal.create({
-      data: {
-        customerId,
-        leadId,
-        version,
-        proposalType: 'CUSTOM',
-        status: 'DRAFT',
-        planName: snapshot.planName,
-        planPrice: snapshot.planPrice,
-        currency: 'INR',
-        customerRequirements: lead.customerRequirements,
-        customConfig: this.toJson(snapshot.customConfig ?? {}),
-        discount: dto.config.discount || 0,
-        validUntil: snapshot.validUntil ? new Date(snapshot.validUntil) : undefined,
-        terms: snapshot.terms,
-        createdById: userId || null,
-        idempotencyKey: `plan-proposal:${leadId}:v${version}:custom`,
-      },
+    const reqText = (dto.customerRequirements ?? dto.config.description ?? lead.customerRequirements ?? '').trim();
+    const company = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, companyName: true } });
+    const recipientName = `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title;
+    const businessName = lead.companyName || lead.title || recipientName;
+    const issuerName = company?.companyName || company?.name || '';
+    const snapshot = this.buildCustomSnapshot(dto.config, reqText || null, { recipientName, businessName, issuerName });
+
+    const record = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Lead" WHERE id = ${leadId} AND "customerId" = ${customerId} FOR UPDATE`;
+      if (dto.idempotencyKey && !dto.proposalId) {
+        const existingByKey = await tx.leadPlanProposal.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+        if (existingByKey) {
+          if (existingByKey.customerId !== customerId || existingByKey.leadId !== leadId) {
+            throw new BadRequestException('Request key is already in use.');
+          }
+          return existingByKey;
+        }
+      }
+
+      if (dto.proposalId) {
+        const existingDraft = await tx.leadPlanProposal.findFirst({
+          where: { id: dto.proposalId, customerId, leadId },
+        });
+        if (!existingDraft) throw new NotFoundException('Plan proposal not found');
+        if (existingDraft.status === 'DRAFT') {
+          return tx.leadPlanProposal.update({
+            where: { id: existingDraft.id },
+            data: {
+              planId: dto.config.planId || null,
+              planName: snapshot.planName,
+              planPrice: snapshot.planPrice,
+              customerRequirements: reqText || existingDraft.customerRequirements,
+              customConfig: this.toJson(snapshot.customConfig ?? {}),
+              discount: dto.config.discount || 0,
+              validUntil: snapshot.validUntil ? new Date(snapshot.validUntil) : undefined,
+              terms: snapshot.terms,
+            },
+          });
+        }
+      }
+
+      const latest = await tx.leadPlanProposal.findFirst({
+        where: { leadId },
+        orderBy: { version: 'desc' },
+        select: { version: true },
+      });
+      const version = (latest?.version || 0) + 1;
+      const created = await tx.leadPlanProposal.create({
+        data: {
+          customerId,
+          leadId,
+          version,
+          proposalType: 'CUSTOM',
+          status: 'DRAFT',
+          planId: dto.config.planId || null,
+          planName: snapshot.planName,
+          planPrice: snapshot.planPrice,
+          currency: 'INR',
+          customerRequirements: reqText || null,
+          customConfig: this.toJson(snapshot.customConfig ?? {}),
+          discount: dto.config.discount || 0,
+          validUntil: snapshot.validUntil ? new Date(snapshot.validUntil) : undefined,
+          terms: snapshot.terms,
+          createdById: userId || null,
+          idempotencyKey: dto.idempotencyKey || `plan-proposal:${leadId}:v${version}:custom`,
+        },
+      });
+      await tx.lead.update({
+        where: { id: leadId },
+        data: {
+          activePlanProposalType: 'CUSTOM',
+          planPreferenceType: 'CUSTOM',
+          planPreferenceReady: true,
+          ...(reqText ? { customerRequirements: reqText } : {}),
+        },
+      });
+      return created;
     });
-    await this.prisma.lead.update({
-      where: { id: leadId },
-      data: { activePlanProposalType: 'CUSTOM', planPreferenceType: 'CUSTOM' },
-    });
+
     if (dto.sendImmediately === false) {
       return { proposal: record, delivered: false };
     }
-    const proposalNo = `PLAN-${leadId}-${version}`;
-    return this.deliverProposal(customerId, leadId, userId, record.id, { email: true, whatsapp: true }, snapshot, proposalNo);
+    const proposalNo = `PLAN-${leadId}-${record.version}`;
+    const hasExplicitChannel = dto.email !== undefined || dto.whatsapp !== undefined;
+    const channels = hasExplicitChannel
+      ? { email: dto.email === true, whatsapp: dto.whatsapp === true }
+      : { email: true, whatsapp: true };
+    return this.deliverProposal(customerId, leadId, userId, record.id, channels, snapshot, proposalNo, false, {
+      emailAddress: dto.emailAddress,
+      phoneNumber: dto.phoneNumber,
+    });
   }
 
   async sendDraft(customerId: number, leadId: number, proposalId: number, userId: number) {
@@ -535,18 +635,33 @@ export class LeadPlanProposalService {
     if (record.proposalType === 'CUSTOM') {
       return this.buildCustomSnapshot(
         {
-          planName: record.planName,
+          planId: record.planId ?? cfg.planId,
+          planName: record.planName || '',
+          planCode: cfg.planCode,
+          description: cfg.description,
+          monthlyPrice: cfg.monthlyPrice,
+          yearlyPrice: cfg.yearlyPrice,
+          billingCycle: cfg.billingCycle,
           customPrice: Number(record.planPrice || 0) + Number(record.discount || 0),
-          discount: record.discount,
+          discount: record.discount ?? undefined,
           modules: cfg.modules,
           userLimit: cfg.userLimit,
+          leadLimit: cfg.leadLimit,
+          storageLimit: cfg.storageLimit,
+          storageUnit: cfg.storageUnit,
           whatsappLimit: cfg.whatsappLimit,
           emailLimit: cfg.emailLimit,
           additionalServices: cfg.additionalServices,
+          features: cfg.features,
           validUntil: record.validUntil ? new Date(record.validUntil).toISOString().slice(0, 10) : undefined,
-          terms: record.terms,
+          terms: record.terms ?? undefined,
         } as CustomPlanProposalConfigDto,
         record.customerRequirements,
+        {
+          recipientName: cfg.recipientName,
+          businessName: cfg.businessName,
+          issuerName: cfg.issuerName,
+        },
       );
     }
     return {
@@ -572,14 +687,51 @@ export class LeadPlanProposalService {
     };
   }
 
-  private buildCustomSnapshot(config: CustomPlanProposalConfigDto, requirements?: string | null): PlanProposalSnapshot {
+  private formatStructuredFeatures(rawFeatures?: Array<{ name: string; quantity?: string; description?: string } | string>): string[] {
+    if (!Array.isArray(rawFeatures)) return [];
+    return rawFeatures
+      .map((item) => {
+        if (typeof item === 'string') return item.trim();
+        if (!item || typeof item !== 'object') return '';
+        const name = String(item.name || '').trim();
+        if (!name) return '';
+        const qty = String(item.quantity || '').trim();
+        const desc = String(item.description || '').trim();
+        const head = qty ? `${qty} × ${name}` : name;
+        return desc ? `${head} — ${desc}` : head;
+      })
+      .filter(Boolean);
+  }
+
+  private buildCustomSnapshot(
+    config: CustomPlanProposalConfigDto,
+    requirements?: string | null,
+    meta?: { recipientName?: string; businessName?: string; issuerName?: string },
+  ): PlanProposalSnapshot {
     const discount = Number(config.discount || 0);
-    const price = Math.max(0, Number(config.customPrice) - discount);
+    const billingCycle = config.billingCycle === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+    const rawBasePrice =
+      config.customPrice !== undefined && config.customPrice !== null
+        ? Number(config.customPrice)
+        : billingCycle === 'YEARLY'
+          ? Number(config.yearlyPrice ?? config.monthlyPrice ?? 0)
+          : Number(config.monthlyPrice ?? config.yearlyPrice ?? 0);
+    const price = Math.max(0, rawBasePrice - discount);
     const modules = config.modules || [];
     const services = config.additionalServices || [];
+    const formattedFeatures = this.formatStructuredFeatures(config.features);
+    const storageText = config.storageLimit
+      ? `${config.storageLimit} ${config.storageUnit || 'GB'}`
+      : null;
     const customSummary = [
+      config.planCode ? `Code: ${config.planCode}` : null,
+      `Billing Cycle: ${billingCycle}`,
+      config.monthlyPrice != null ? `Monthly: INR ${Number(config.monthlyPrice).toLocaleString('en-IN')}` : null,
+      config.yearlyPrice != null ? `Yearly: INR ${Number(config.yearlyPrice).toLocaleString('en-IN')}` : null,
+      config.userLimit ? `Seats: ${config.userLimit}` : null,
+      config.leadLimit ? `Lead Limit: ${config.leadLimit}` : null,
+      storageText ? `Storage: ${storageText}` : null,
       modules.length ? `Modules: ${modules.join(', ')}` : null,
-      config.userLimit ? `Users: ${config.userLimit}` : null,
       config.whatsappLimit ? `WhatsApp limit: ${config.whatsappLimit}/month` : null,
       config.emailLimit ? `Email limit: ${config.emailLimit}/month` : null,
       services.length ? `Add-ons: ${services.join(', ')}` : null,
@@ -587,17 +739,34 @@ export class LeadPlanProposalService {
       .filter(Boolean)
       .join(' • ');
     return {
+      planId: config.planId,
       planName: config.planName,
       planPrice: price,
-      validUntil: config.validUntil,
-      terms: config.terms,
+      features: formattedFeatures,
+      validUntil: config.validUntil || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+      terms:
+        config.terms ||
+        'Pricing is exclusive of applicable taxes. This customized proposal is valid exclusively for the named customer.',
       customSummary,
       customConfig: {
+        planId: config.planId,
+        planCode: config.planCode,
+        description: config.description,
+        monthlyPrice: config.monthlyPrice ?? rawBasePrice,
+        yearlyPrice: config.yearlyPrice ?? rawBasePrice,
+        billingCycle,
         modules: config.modules,
         userLimit: config.userLimit,
+        leadLimit: config.leadLimit,
+        storageLimit: config.storageLimit,
+        storageUnit: config.storageUnit || 'GB',
         whatsappLimit: config.whatsappLimit,
         emailLimit: config.emailLimit,
         additionalServices: config.additionalServices,
+        features: config.features || formattedFeatures,
+        ...(meta?.recipientName ? { recipientName: meta.recipientName } : {}),
+        ...(meta?.businessName ? { businessName: meta.businessName } : {}),
+        ...(meta?.issuerName ? { issuerName: meta.issuerName } : {}),
       },
       requirements,
     };
@@ -647,6 +816,7 @@ export class LeadPlanProposalService {
         firstName: true,
         lastName: true,
         title: true,
+        companyName: true,
         customerRequirements: true,
         planPreferenceReady: true,
         planPreferenceType: true,
@@ -665,6 +835,6 @@ export class LeadPlanProposalService {
 
   isProposalStageToken(stageKey?: string | null, status?: string | null): boolean {
     const token = normalizeStageToken(stageKey || status || '');
-    return token === 'PROPOSAL' || token === 'PROPOSAL_SENT';
+    return token === 'PROPOSAL' || token === 'PROPOSAL_SEND' || token === 'PROPOSAL_SENT';
   }
 }

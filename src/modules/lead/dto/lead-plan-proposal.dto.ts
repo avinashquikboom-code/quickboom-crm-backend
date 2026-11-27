@@ -28,11 +28,62 @@ export class SetPlanPreferenceDto {
   readyToPropose?: boolean;
 }
 
+export class CustomPlanFeatureDto {
+  @ApiProperty({ example: 'Reels' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiPropertyOptional({ example: '4' })
+  @IsOptional()
+  @IsString()
+  quantity?: string;
+
+  @ApiPropertyOptional({ example: 'Monthly promotional reels' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
 export class CustomPlanProposalConfigDto {
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  planId?: number;
+
   @ApiProperty({ example: 'Growth Plus CRM Bundle' })
   @IsString()
   @IsNotEmpty()
   planName: string;
+
+  @ApiPropertyOptional({ example: 'CUST-101-01' })
+  @IsOptional()
+  @IsString()
+  planCode?: string;
+
+  @ApiPropertyOptional({ example: 'Customized CRM and social growth package' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ example: 9999 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  monthlyPrice?: number;
+
+  @ApiPropertyOptional({ example: 95990 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  yearlyPrice?: number;
+
+  @ApiPropertyOptional({ example: 'MONTHLY', enum: ['MONTHLY', 'YEARLY'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['MONTHLY', 'YEARLY'])
+  billingCycle?: 'MONTHLY' | 'YEARLY';
 
   @ApiPropertyOptional({ type: [String], example: ['CRM', 'WhatsApp', 'Email'] })
   @IsOptional()
@@ -45,6 +96,24 @@ export class CustomPlanProposalConfigDto {
   @Type(() => Number)
   @IsNumber()
   userLimit?: number;
+
+  @ApiPropertyOptional({ example: 1000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  leadLimit?: number;
+
+  @ApiPropertyOptional({ example: 10 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  storageLimit?: number;
+
+  @ApiPropertyOptional({ example: 'GB', enum: ['MB', 'GB'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['MB', 'GB'])
+  storageUnit?: 'MB' | 'GB';
 
   @ApiPropertyOptional({ example: 5000 })
   @IsOptional()
@@ -64,10 +133,16 @@ export class CustomPlanProposalConfigDto {
   @IsString({ each: true })
   additionalServices?: string[];
 
-  @ApiProperty({ example: 19999 })
+  @ApiPropertyOptional({ type: [CustomPlanFeatureDto] })
+  @IsOptional()
+  @IsArray()
+  features?: Array<CustomPlanFeatureDto | string>;
+
+  @ApiPropertyOptional({ example: 19999 })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  customPrice: number;
+  customPrice?: number;
 
   @ApiPropertyOptional({ example: 1500 })
   @IsOptional()
@@ -96,6 +171,42 @@ export class CreateCustomPlanProposalDto {
   @IsOptional()
   @IsBoolean()
   sendImmediately?: boolean;
+
+  @ApiPropertyOptional({ example: 12 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  proposalId?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customerRequirements?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  email?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  whatsapp?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  emailAddress?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
 }
 
 export class ResendPlanProposalDto {
