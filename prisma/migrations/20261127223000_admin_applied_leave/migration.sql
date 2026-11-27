@@ -1,0 +1,7 @@
+-- Admin-Applied Leave & Cancellation Support
+ALTER TYPE "RequestStatus" ADD VALUE IF NOT EXISTS 'CANCELLED';
+
+ALTER TABLE "LeaveRequest"
+  ADD COLUMN IF NOT EXISTS "appliedBySource" TEXT NOT NULL DEFAULT 'EMPLOYEE',
+  ADD COLUMN IF NOT EXISTS "appliedById" INTEGER,
+  ADD COLUMN IF NOT EXISTS "appliedByName" TEXT;
