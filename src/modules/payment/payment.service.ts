@@ -120,17 +120,22 @@ export class PaymentService {
 
     this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /payments/razorpay/order\ncustomerId: ${customerId}\nrequestedPlanId: ${dto.planId}`);
 
+    const proposalCtx = dto.proposalId
+      ? await this.resolveProposalForPayment(customerId, dto.proposalId)
+      : null;
+
     // Resolve plan by numeric ID or code (e.g. BASIC, STANDARD, PREMIUM)
     let plan: any = null;
-    const numPlanId = Number(dto.planId);
+    const requestedPlanRef = proposalCtx?.planId ?? dto.planId;
+    const numPlanId = Number(requestedPlanRef);
     if (!isNaN(numPlanId) && numPlanId > 0) {
       plan = await this.prisma.plan.findFirst({
         where: { id: numPlanId, deletedAt: null, isActive: true },
       });
     }
 
-    if (!plan && dto.planId != null && String(dto.planId).trim().length > 0) {
-      const codeUpper = String(dto.planId).trim().toUpperCase();
+    if (!plan && requestedPlanRef != null && String(requestedPlanRef).trim().length > 0) {
+      const codeUpper = String(requestedPlanRef).trim().toUpperCase();
       plan = await this.prisma.plan.findFirst({
         where: {
           code: codeUpper,
@@ -140,15 +145,23 @@ export class PaymentService {
       });
     }
 
+    if (!plan && proposalCtx) {
+      plan = await this.prisma.plan.findFirst({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { id: 'asc' },
+      });
+    }
+
     this.logger.log(`[PLAN_API_DEBUG]\ndatabaseResult: ${plan ? `Plan #${plan.id} (${plan.name}, active=${plan.isActive})` : 'NULL'}`);
 
     if (!plan) {
       throw new BadRequestException('This subscription plan is no longer available. Please refresh the plans.');
     }
 
-    const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
-    const fullBasePrice =
-      cycle === SubscriptionBillingCycle.YEARLY
+    const cycle = proposalCtx?.billingCycle || dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
+    const fullBasePrice = proposalCtx
+      ? proposalCtx.agreedPrice
+      : cycle === SubscriptionBillingCycle.YEARLY
         ? Number(plan.yearlyPrice)
         : Number(plan.monthlyPrice);
 
@@ -188,9 +201,10 @@ export class PaymentService {
       notes: {
         customerId: String(customerId),
         planId: String(plan.id),
-        planName: plan.name,
+        planName: proposalCtx?.planName || plan.name,
         billingCycle: cycle,
         paymentOption,
+        ...(proposalCtx ? { proposalId: String(proposalCtx.proposalId) } : {}),
         ...(dto.activationDate ? { activationDate: String(dto.activationDate) } : {}),
       },
     };
@@ -298,25 +312,37 @@ export class PaymentService {
       throw new ForbiddenException('User does not belong to any customer organization');
     }
 
-    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /payments/razorpay/verify\ncustomerId: ${customerId}\nplanId: ${dto.planId}`);
+    this.logger.log(`[PLAN_API_DEBUG]\nendpoint: /payments/razorpay/verify\ncustomerId: ${customerId}\nplanId: ${dto.planId}\nproposalId: ${dto.proposalId ?? 'NONE'}`);
+
+    const proposalCtx = dto.proposalId
+      ? await this.resolveProposalForPayment(customerId, dto.proposalId, true)
+      : null;
 
     // Resolve plan by numeric ID or code
     let plan: any = null;
-    const numPlanId = Number(dto.planId);
+    const requestedPlanRef = proposalCtx?.planId ?? dto.planId;
+    const numPlanId = Number(requestedPlanRef);
     if (!isNaN(numPlanId) && numPlanId > 0) {
       plan = await this.prisma.plan.findFirst({
         where: { id: numPlanId, deletedAt: null, isActive: true },
       });
     }
 
-    if (!plan && dto.planId != null && String(dto.planId).trim().length > 0) {
-      const codeUpper = String(dto.planId).trim().toUpperCase();
+    if (!plan && requestedPlanRef != null && String(requestedPlanRef).trim().length > 0) {
+      const codeUpper = String(requestedPlanRef).trim().toUpperCase();
       plan = await this.prisma.plan.findFirst({
         where: {
           code: codeUpper,
           deletedAt: null,
           isActive: true,
         },
+      });
+    }
+
+    if (!plan && proposalCtx) {
+      plan = await this.prisma.plan.findFirst({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { id: 'asc' },
       });
     }
 
@@ -370,9 +396,10 @@ export class PaymentService {
 
     this.logger.log(`[SUBSCRIPTION_ACTIVATE] customerId=${customerId}, planId=${plan.id}`);
 
-    const cycle = dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
-    const fullBasePrice =
-      cycle === SubscriptionBillingCycle.YEARLY
+    const cycle = proposalCtx?.billingCycle || dto.billingCycle || SubscriptionBillingCycle.MONTHLY;
+    const fullBasePrice = proposalCtx
+      ? proposalCtx.agreedPrice
+      : cycle === SubscriptionBillingCycle.YEARLY
         ? Number(plan.yearlyPrice)
         : Number(plan.monthlyPrice);
     const fullTaxAmount = Math.round(fullBasePrice * 0.18);
@@ -421,7 +448,7 @@ export class PaymentService {
           data: {
             customerId,
             planId: plan.id,
-            planName: plan.name,
+            planName: proposalCtx?.planName || plan.name,
             orderNumber,
             orderId: dto.razorpay_order_id,
             paymentId: dto.razorpay_payment_id,
@@ -462,11 +489,11 @@ export class PaymentService {
             duration: cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1,
             durationUnit: 'MONTH',
             autoRenew: true,
-            customPrice: null,
-            customFeatures: null,
-            customUserLimit: null,
-            customLeadLimit: null,
-            customStorageLimit: null,
+            customPrice: proposalCtx ? proposalCtx.agreedPrice : null,
+            customFeatures: proposalCtx ? (proposalCtx.effectiveFeatures as any) : null,
+            customUserLimit: proposalCtx?.userLimit ?? null,
+            customLeadLimit: proposalCtx?.leadLimit ?? null,
+            customStorageLimit: proposalCtx?.storageLimitBytes != null ? BigInt(proposalCtx.storageLimitBytes) : null,
           },
           include: { plan: true },
         });
@@ -482,11 +509,11 @@ export class PaymentService {
             duration: cycle === SubscriptionBillingCycle.YEARLY ? 12 : 1,
             durationUnit: 'MONTH',
             autoRenew: true,
-            customPrice: null,
-            customFeatures: null,
-            customUserLimit: null,
-            customLeadLimit: null,
-            customStorageLimit: null,
+            customPrice: proposalCtx ? proposalCtx.agreedPrice : null,
+            customFeatures: proposalCtx ? (proposalCtx.effectiveFeatures as any) : null,
+            customUserLimit: proposalCtx?.userLimit ?? null,
+            customLeadLimit: proposalCtx?.leadLimit ?? null,
+            customStorageLimit: proposalCtx?.storageLimitBytes != null ? BigInt(proposalCtx.storageLimitBytes) : null,
           },
           include: { plan: true },
         });
@@ -738,8 +765,15 @@ export class PaymentService {
         `[INVOICE_STATUS] totalAmount: ${fullTotalAmount} totalPaid: ${clampedPaid} balance: ${remainingBal} status: ${invoiceStatus} invoiceNo: ${finalInvoiceNo}`,
       );
 
-      // 6. Provision Plan Entitlements strictly from purchased plan features
-      const serviceQuotas = extractDeliverableQuotas(plan.features);
+      // 6. Provision Plan Entitlements strictly from purchased plan / proposal features
+      const serviceQuotas = extractDeliverableQuotas(proposalCtx?.effectiveFeatures || plan.features);
+
+      if (proposalCtx && (tx as any).leadPlanProposal?.update) {
+        await (tx as any).leadPlanProposal.update({
+          where: { id: proposalCtx.proposalId },
+          data: { status: 'ACCEPTED' },
+        });
+      }
 
       for (const sq of serviceQuotas) {
         if (sq.totalQty <= 0) continue;
@@ -2088,6 +2122,92 @@ export class PaymentService {
             createdAt: record.createdAt,
           }
         : { found: false, status: 'PENDING' },
+    };
+  }
+
+  private async resolveProposalForPayment(
+    customerId: number,
+    proposalIdRaw: unknown,
+    allowAlreadyAccepted = false,
+  ) {
+    const proposalId = Number(proposalIdRaw);
+    if (!proposalId || isNaN(proposalId)) {
+      throw new BadRequestException('Invalid proposal ID.');
+    }
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true, leadId: true, email: true, phone: true },
+    });
+    if (!customer) throw new NotFoundException('Customer organization not found');
+
+    let leadId = customer.leadId || null;
+    if (!leadId && (customer.email || customer.phone)) {
+      const matched = await this.prisma.lead.findFirst({
+        where: {
+          deletedAt: null,
+          OR: [
+            ...(customer.email ? [{ email: { equals: customer.email, mode: 'insensitive' as const } }] : []),
+            ...(customer.phone ? [{ phone: customer.phone }] : []),
+          ],
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      });
+      leadId = matched?.id || null;
+    }
+
+    const proposal = leadId
+      ? await this.prisma.leadPlanProposal.findFirst({
+          where: { id: proposalId, leadId },
+        })
+      : null;
+
+    if (!proposal) {
+      throw new NotFoundException('Proposal not found for this customer.');
+    }
+
+    if (!allowAlreadyAccepted && (proposal.status === 'ACCEPTED' || proposal.status === 'CONVERTED')) {
+      throw new BadRequestException('Payment for this proposal has already been recorded.');
+    }
+
+    const cfg = (proposal.customConfig || {}) as Record<string, any>;
+    const rawFeatures = Array.isArray(cfg.features) ? cfg.features : [];
+    const effectiveFeatures = rawFeatures
+      .map((item: any) => {
+        if (typeof item === 'string') return item.trim();
+        if (item && typeof item === 'object') {
+          const name = String(item.name || '').trim();
+          const qty = String(item.quantity || '').trim();
+          return qty ? `${qty} ${name}`.trim() : name;
+        }
+        return '';
+      })
+      .filter(Boolean);
+
+    const storageUnit = String(cfg.storageUnit || 'GB').toUpperCase();
+    const rawStorage = cfg.storageLimit != null ? Number(cfg.storageLimit) : null;
+    const storageLimitBytes =
+      cfg.storageLimitBytes != null
+        ? Number(cfg.storageLimitBytes)
+        : rawStorage != null && !isNaN(rawStorage)
+          ? Math.round(rawStorage * (storageUnit === 'MB' ? 1024 * 1024 : 1024 * 1024 * 1024))
+          : null;
+
+    const billingCycle =
+      String(cfg.billingCycle || 'MONTHLY').toUpperCase() === 'YEARLY'
+        ? SubscriptionBillingCycle.YEARLY
+        : SubscriptionBillingCycle.MONTHLY;
+
+    return {
+      proposalId: proposal.id,
+      planId: proposal.planId,
+      planName: proposal.planName || 'Custom Plan',
+      agreedPrice: Number(proposal.planPrice || 0),
+      billingCycle,
+      effectiveFeatures,
+      userLimit: cfg.userLimit != null ? Number(cfg.userLimit) : null,
+      leadLimit: cfg.leadLimit != null ? Number(cfg.leadLimit) : null,
+      storageLimitBytes,
     };
   }
 }

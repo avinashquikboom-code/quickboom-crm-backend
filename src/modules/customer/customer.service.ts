@@ -18,6 +18,7 @@ import {
 import { ScheduleService } from '../schedule/schedule.service';
 import { WorkService } from '../work/work.service';
 import { QBIdGenerator } from '../auth/qb-id.generator';
+import { generatePlanProposalPdfBuffer } from '../../common/utils/plan-proposal-pdf.util';
 import { calculatePlanExpiry, calculateSubscriptionStartDate } from '../../common/utils/subscription-date.util';
 import { isUserSuperAdmin, isUserAdmin, isUserAdminOrStaff } from '../../common/utils/role.util';
 import { ResetCustomerDataDto } from './dto/reset-customer.dto';
@@ -4656,5 +4657,170 @@ export class CustomerService {
 
   async getCustomerProfile(userId: number, explicitCustomerId?: number | string) {
     return this.getMe({ id: userId, customerId: explicitCustomerId });
+  }
+
+  private async resolveCustomerOriginLead(customerId: number) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true, name: true, companyName: true, email: true, phone: true, leadId: true },
+    });
+    if (!customer) throw new NotFoundException('Customer account not found');
+    let leadId = customer.leadId || null;
+    if (!leadId && (customer.email || customer.phone)) {
+      const matchedLead = await this.prisma.lead.findFirst({
+        where: {
+          deletedAt: null,
+          OR: [
+            ...(customer.email ? [{ email: { equals: customer.email, mode: 'insensitive' as const } }] : []),
+            ...(customer.phone ? [{ phone: customer.phone }] : []),
+          ],
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      });
+      leadId = matchedLead?.id || null;
+    }
+    return { customer, leadId };
+  }
+
+  async getCustomerProposals(customerId: number) {
+    const { customer, leadId } = await this.resolveCustomerOriginLead(customerId);
+    if (!leadId) return [];
+
+    const [proposals, activeSub, successfulPayments] = await Promise.all([
+      this.prisma.leadPlanProposal.findMany({
+        where: { leadId, status: { not: 'DRAFT' } },
+        orderBy: [{ version: 'desc' }, { id: 'desc' }],
+        include: {
+          plan: true,
+          createdBy: { select: { id: true, firstName: true, lastName: true } },
+        },
+      }),
+      this.prisma.customerSubscription.findFirst({
+        where: { customerId, deletedAt: null, status: SubscriptionStatus.ACTIVE },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.paymentHistory.findMany({
+        where: { customerId, status: 'SUCCESS' },
+        select: { id: true, planId: true, totalAmount: true, createdAt: true },
+      }),
+    ]);
+
+    const totalPaid = successfulPayments.reduce((s, p) => s + Number(p.totalAmount || 0), 0);
+
+    return proposals.map((p) => {
+      const cfg = (p.customConfig || {}) as Record<string, any>;
+      const rawFeatures = Array.isArray(cfg.features)
+        ? cfg.features
+        : Array.isArray(p.plan?.features)
+          ? (p.plan!.features as any[])
+          : [];
+      const features = rawFeatures.map((item) => {
+        if (typeof item === 'string') return { name: item, quantity: '', description: '' };
+        if (item && typeof item === 'object') {
+          return {
+            name: String(item.name || ''),
+            quantity: String(item.quantity || ''),
+            description: String(item.description || ''),
+          };
+        }
+        return { name: String(item || ''), quantity: '', description: '' };
+      }).filter((f) => f.name);
+
+      const billingCycle = String(cfg.billingCycle || 'MONTHLY').toUpperCase() === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+      const agreedPrice = Number(p.planPrice ?? 0);
+      const isAccepted = p.status === 'ACCEPTED' || p.status === 'CONVERTED';
+      const alreadyPaid =
+        isAccepted ||
+        Boolean(
+          activeSub &&
+            (p.planId ? activeSub.planId === p.planId : true) &&
+            totalPaid > 0,
+        );
+
+      return {
+        id: p.id,
+        leadId: p.leadId,
+        customerId: customer.id,
+        version: p.version,
+        proposalNo: `PLAN-${p.leadId}-${p.version}`,
+        proposalType: p.proposalType,
+        status: alreadyPaid ? 'ACCEPTED' : p.status,
+        planId: p.planId,
+        planName: p.planName || p.plan?.name || 'Custom Plan',
+        planCode: cfg.planCode || p.plan?.code || null,
+        description: cfg.description || p.customerRequirements || p.plan?.description || '',
+        agreedPrice,
+        billingCycle,
+        monthlyPrice: cfg.monthlyPrice ?? p.plan?.monthlyPrice ?? agreedPrice,
+        yearlyPrice: cfg.yearlyPrice ?? p.plan?.yearlyPrice ?? agreedPrice,
+        userLimit: cfg.userLimit ?? p.plan?.userLimit ?? null,
+        leadLimit: cfg.leadLimit ?? p.plan?.leadLimit ?? null,
+        storageLimit: cfg.storageLimit ?? (p.plan?.storageLimit != null ? Number(p.plan.storageLimit) : null),
+        storageUnit: cfg.storageUnit || (cfg.storageLimit ? 'GB' : 'BYTES'),
+        features,
+        discount: Number(p.discount || 0),
+        validUntil: p.validUntil ? new Date(p.validUntil).toISOString().slice(0, 10) : null,
+        terms: p.terms || '',
+        proposalDate: (p.sentAt || p.createdAt).toISOString(),
+        createdAt: p.createdAt.toISOString(),
+        emailStatus: p.emailStatus,
+        whatsappStatus: p.whatsappStatus,
+        alreadyPaid,
+        totalPaid,
+        createdByName: p.createdBy
+          ? `${p.createdBy.firstName || ''} ${p.createdBy.lastName || ''}`.trim()
+          : 'Sales Team',
+      };
+    });
+  }
+
+  async getCustomerProposalPdf(customerId: number, proposalId: number): Promise<Buffer> {
+    const { customer, leadId } = await this.resolveCustomerOriginLead(customerId);
+    if (!leadId) throw new NotFoundException('Proposal not found');
+
+    const record = await this.prisma.leadPlanProposal.findFirst({
+      where: { id: proposalId, leadId },
+    });
+    if (!record) throw new NotFoundException('Proposal not found for this customer');
+
+    const cfg = (record.customConfig || {}) as Record<string, any>;
+    const rawFeatures = Array.isArray(cfg.features) ? cfg.features : [];
+    const features = rawFeatures
+      .map((item: any) => {
+        if (typeof item === 'string') return item;
+        if (!item || typeof item !== 'object') return '';
+        const name = String(item.name || '').trim();
+        const qty = String(item.quantity || '').trim();
+        const desc = String(item.description || '').trim();
+        const head = qty ? `${qty} × ${name}` : name;
+        return desc ? `${head} — ${desc}` : head;
+      })
+      .filter(Boolean);
+
+    return generatePlanProposalPdfBuffer({
+      proposalNo: `PLAN-${leadId}-${record.version}`,
+      leadId,
+      leadName: typeof cfg.recipientName === 'string' && cfg.recipientName ? cfg.recipientName : customer.name,
+      businessName: typeof cfg.businessName === 'string' && cfg.businessName ? cfg.businessName : customer.companyName || customer.name,
+      companyName: typeof cfg.issuerName === 'string' && cfg.issuerName ? cfg.issuerName : 'QuikBoom CRM',
+      planName: record.planName || 'Custom Plan',
+      planCode: typeof cfg.planCode === 'string' ? cfg.planCode : undefined,
+      description: typeof cfg.description === 'string' ? cfg.description : undefined,
+      billingCycle: typeof cfg.billingCycle === 'string' ? cfg.billingCycle : undefined,
+      monthlyPrice: typeof cfg.monthlyPrice === 'number' ? cfg.monthlyPrice : undefined,
+      yearlyPrice: typeof cfg.yearlyPrice === 'number' ? cfg.yearlyPrice : undefined,
+      userLimit: typeof cfg.userLimit === 'number' ? cfg.userLimit : undefined,
+      leadLimit: typeof cfg.leadLimit === 'number' ? cfg.leadLimit : undefined,
+      storageLimit: typeof cfg.storageLimit === 'number' ? cfg.storageLimit : undefined,
+      storageUnit: typeof cfg.storageUnit === 'string' ? cfg.storageUnit : undefined,
+      planPrice: Number(record.planPrice || 0),
+      proposalType: record.proposalType,
+      features,
+      customerRequirements: record.customerRequirements || undefined,
+      discount: record.discount || undefined,
+      validUntil: record.validUntil ? new Date(record.validUntil).toISOString().slice(0, 10) : undefined,
+      terms: record.terms || undefined,
+    });
   }
 }

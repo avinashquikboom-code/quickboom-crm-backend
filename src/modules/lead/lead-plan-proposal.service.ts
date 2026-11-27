@@ -222,7 +222,19 @@ export class LeadPlanProposalService {
         proposalType: 'DEFAULT', status: 'DRAFT', planId: plan.id, planName: plan.name,
         planPrice: dto.billingCycle === 'YEARLY' ? plan.yearlyPrice : plan.monthlyPrice,
         customerRequirements: lead.customerRequirements, idempotencyKey: dto.idempotencyKey,
-        customConfig: this.toJson({ features: this.parsePlanFeatures(plan.features), description: plan.description, billingCycle: dto.billingCycle, recipientName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title, issuerName: company?.companyName || company?.name || '' }),
+        customConfig: this.toJson({
+          planCode: plan.code,
+          monthlyPrice: plan.monthlyPrice,
+          yearlyPrice: plan.yearlyPrice,
+          userLimit: plan.userLimit,
+          leadLimit: plan.leadLimit,
+          storageLimitBytes: plan.storageLimit != null ? Number(plan.storageLimit) : null,
+          features: this.parsePlanFeatures(plan.features),
+          description: plan.description,
+          billingCycle: dto.billingCycle,
+          recipientName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title,
+          issuerName: company?.companyName || company?.name || '',
+        }),
       } });
       if (!lead.planPreferenceReady) {
         await tx.lead.update({

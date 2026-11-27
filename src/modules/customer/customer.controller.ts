@@ -8,6 +8,7 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UseGuards,
   ForbiddenException,
   BadRequestException,
@@ -103,6 +104,33 @@ export class CustomerController {
   @ApiOperation({ summary: 'Get profile of current authenticated customer (alias)' })
   async getProfile(@CurrentUser() user: any) {
     return this.customerService.getMe(user);
+  }
+
+  @Get(['proposals', '/customer/proposals'])
+  @ApiOperation({ summary: 'Get proposals sent to the authenticated customer' })
+  async getMyProposals(@CurrentUser() user: any) {
+    const cid = Number(user?.customerId);
+    if (!cid || isNaN(cid)) {
+      throw new ForbiddenException('Valid customer context required');
+    }
+    return this.customerService.getCustomerProposals(cid);
+  }
+
+  @Get(['proposals/:proposalId/pdf', '/customer/proposals/:proposalId/pdf'])
+  @ApiOperation({ summary: 'Download proposal PDF for authenticated customer' })
+  async getMyProposalPdf(
+    @CurrentUser() user: any,
+    @Param('proposalId') proposalId: string,
+    @Res() response: any,
+  ) {
+    const cid = Number(user?.customerId);
+    if (!cid || isNaN(cid)) {
+      throw new ForbiddenException('Valid customer context required');
+    }
+    const pdf = await this.customerService.getCustomerProposalPdf(cid, Number(proposalId));
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `inline; filename="proposal-${proposalId}.pdf"`);
+    response.send(pdf);
   }
 
   @Get(`${NUMERIC_CUSTOMER_ID}/mobile-permissions`)
