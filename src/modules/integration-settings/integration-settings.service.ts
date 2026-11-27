@@ -34,6 +34,7 @@ import {
   resolveCleanAccessToken,
 } from "../whatsapp/whatsapp.util";
 import { integrationDefinition } from "./integration-registry";
+import { describeElevenLabsError } from "./elevenlabs-errors";
 
 export enum IntegrationProvider {
   RAZORPAY = "RAZORPAY",
@@ -2491,9 +2492,15 @@ export class IntegrationSettingsService {
             if (tokenRes?.token) {
               agentInfo = " Speech Engine ID verified.";
             }
-          } catch {
-            agentInfo =
-              " Note: Speech Engine ID could not issue a session token.";
+          } catch (engineErr: any) {
+            const { status, detail, reason } =
+              describeElevenLabsError(engineErr);
+            this.logger.warn(
+              `[ELEVENLABS_ENGINE_TEST_FAILED] status=${status ?? "n/a"} engine=${speechEngineId} detail=${detail}`,
+            );
+            throw new BadRequestException(
+              `ElevenLabs API key is valid, but the Speech Engine check failed. ${reason}`,
+            );
           }
         }
 

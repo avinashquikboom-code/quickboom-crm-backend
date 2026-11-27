@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { ElevenLabsClient, SpeechEngine, type SpeechEngineSession } from '@elevenlabs/elevenlabs-js';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
 import { NexusOrchestratorService } from './nexus-orchestrator.service';
+import { describeElevenLabsError } from '../integration-settings/elevenlabs-errors';
 
 type VoiceBinding = { user: any; expiresAt: number; used: boolean };
 type VoiceSession = { user: any; session: SpeechEngineSession; lastActive: number; controller: AbortController };
@@ -68,8 +69,9 @@ export class NexusVoiceService implements OnModuleDestroy {
       this.bindings.set(bindingId, { user, expiresAt: Date.now() + 60_000, used: false });
       return { token: token.token, bindingId, voiceId: config.voiceId || null };
     } catch (error: any) {
-      this.logger.warn(`[NEXUS_VOICE_TOKEN_FAILED] ${error?.name || 'Error'}`);
-      throw new BadRequestException('Could not start the ElevenLabs voice session. Check the Speech Engine settings and try again.');
+      const { status, detail, reason } = describeElevenLabsError(error);
+      this.logger.warn(`[NEXUS_VOICE_TOKEN_FAILED] status=${status ?? 'n/a'} engine=${config.speechEngineId} detail=${detail}`);
+      throw new BadRequestException(`Could not start the ElevenLabs voice session. ${reason}`);
     }
   }
 
