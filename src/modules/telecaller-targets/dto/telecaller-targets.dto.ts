@@ -181,6 +181,31 @@ export class UpsertTelecallerTargetPolicyDto {
   @IsInt()
   @Min(1)
   maxRetryAttempts?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minConnectedCalls?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxConnectedCalls?: number;
+}
+
+export class UpsertRewardSlabsDto {
+  @ApiProperty({ type: 'array' })
+  @IsArray()
+  slabs: Array<{
+    label: string;
+    minCalls: number;
+    maxCalls?: number | null;
+    rewardPoints: number;
+    sortOrder?: number;
+    isActive?: boolean;
+  }>;
 }
 
 export class RecordCallEventDto {
