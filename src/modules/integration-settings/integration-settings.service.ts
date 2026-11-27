@@ -2498,9 +2498,14 @@ export class IntegrationSettingsService {
             this.logger.warn(
               `[ELEVENLABS_ENGINE_TEST_FAILED] status=${status ?? "n/a"} engine=${speechEngineId} detail=${detail}`,
             );
-            throw new BadRequestException(
-              `ElevenLabs API key is valid, but the Speech Engine check failed. ${reason}`,
-            );
+            // API key itself is valid for TTS/Voices; keep integration CONNECTED with an actionable note
+            // unless the caller explicitly provided a new speechEngineId to validate.
+            if (dto?.config?.speechEngineId) {
+              throw new BadRequestException(
+                `ElevenLabs API key is valid, but the Speech Engine check failed. ${reason}`,
+              );
+            }
+            agentInfo = ` Note: Speech Engine check skipped (${reason})`;
           }
         }
 
