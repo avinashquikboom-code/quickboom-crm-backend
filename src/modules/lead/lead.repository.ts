@@ -1,4 +1,5 @@
 import { createStageOutbox } from './lead-stage-outbox';
+import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezone.util';
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import { PhotoLookupCache } from '../data-capture/photo-lookup-cache';
@@ -898,7 +899,7 @@ export class LeadRepository {
 
   async findAll(
     customerId: number | string | undefined,
-    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; stageKey?: string; assignedToId?: string | number; employeeIds?: string; departmentId?: string; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
+    options: { page?: number; limit?: number; search?: string; status?: string; stageId?: string | number; stageKey?: string; assignedToId?: string | number; employeeIds?: string; departmentId?: string; createdFrom?: string; priority?: string; source?: string; category?: string; from?: string; to?: string; dateFilter?: string; followUps?: boolean; captureJobId?: string; leadId?: string; includeCounts?: boolean },
     user?: any,
   ) {
     const numCustomerId = Number(customerId ?? user?.customerId);
@@ -1062,7 +1063,27 @@ export class LeadRepository {
         else pipelineFilters.push({ id: -1 });
       }
     }
-    if (pipelineFilters.length) andConditions.push(...pipelineFilters);
+    const normDateFilter = String(options.dateFilter || '').trim().toLowerCase();
+    let historicalRange: { start: Date; end: Date } | null = null;
+    if (normDateFilter === 'today') {
+      const r = getBusinessDayRange(getBusinessDate(new Date()));
+      historicalRange = { start: r.start, end: r.end };
+    } else if (normDateFilter === 'yesterday') {
+      const todayStr = getBusinessDate(new Date());
+      const [yy, mm, dd] = todayStr.split('-').map(Number);
+      const yest = new Date(Date.UTC(yy, mm - 1, dd - 1));
+      const r = getBusinessDayRange(yest.toISOString().slice(0, 10));
+      historicalRange = { start: r.start, end: r.end };
+    } else if (normDateFilter === 'custom' && (options.from || options.to)) {
+      const fromStr = options.from ? String(options.from).slice(0, 10) : getBusinessDate(new Date());
+      const toStr = options.to ? String(options.to).slice(0, 10) : fromStr;
+      historicalRange = {
+        start: getBusinessDayRange(fromStr).start,
+        end: getBusinessDayRange(toStr).end,
+      };
+    }
+
+    if (pipelineFilters.length && !historicalRange) andConditions.push(...pipelineFilters);
 
     // Employee IDs and user IDs are different namespaces. Resolve the selected
     // employee records within the workspace before matching legacy user assignments.
@@ -1121,16 +1142,29 @@ export class LeadRepository {
       andConditions.push({ id: { in: captures.map((capture) => capture.importedLeadId).filter((id): id is number => id != null) } });
     }
 
-    const createdAt: { gte?: Date; lte?: Date } = {};
-    if (options.from) {
-      const from = new Date(options.from);
-      if (!isNaN(from.getTime())) createdAt.gte = from;
+    if (historicalRange) {
+      const { start, end } = historicalRange;
+      andConditions.push({
+        OR: [
+          { createdAt: { gte: start, lte: end } },
+          { statusHistory: { some: { createdAt: { gte: start, lte: end } } } },
+          { timeline: { some: { createdAt: { gte: start, lte: end } } } },
+          { notes: { some: { createdAt: { gte: start, lte: end } } } },
+          { visits: { some: { createdAt: { gte: start, lte: end } } } },
+        ],
+      });
+    } else {
+      const createdAt: { gte?: Date; lte?: Date } = {};
+      if (options.from) {
+        const from = new Date(options.from);
+        if (!isNaN(from.getTime())) createdAt.gte = from;
+      }
+      if (options.to) {
+        const to = new Date(options.to);
+        if (!isNaN(to.getTime())) createdAt.lte = to;
+      }
+      if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
     }
-    if (options.to) {
-      const to = new Date(options.to);
-      if (!isNaN(to.getTime())) createdAt.lte = to;
-    }
-    if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
 
     if (options.followUps) {
       andConditions.push({
@@ -1244,6 +1278,63 @@ export class LeadRepository {
       await this.attachPlacePhotos(data, false);
       await this.resolveMissingLeadVisitedAndWonEmployees(data);
       if (options.followUps) await this.attachFollowUpContext(data);
+    }
+
+    if (historicalRange && Array.isArray(data) && data.length > 0 && this.prisma?.leadStatusHistory) {
+      const { end } = historicalRange;
+      const leadIds = data.map((l) => l.id);
+      const [allHist, allStages] = await Promise.all([
+        this.prisma.leadStatusHistory.findMany({
+          where: { leadId: { in: leadIds } },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        }),
+        this.prisma.leadStage.findMany({
+          where: { deletedAt: null, OR: [{ customerId: numCustomerId }, { customerId: null }] },
+        }),
+      ]);
+      const stageById = new Map<number, any>(allStages.map((s) => [s.id, s]));
+      const stageByKey = new Map<string, any>(allStages.map((s) => [String(s.key || '').toUpperCase(), s]));
+      const histByLead = new Map<number, any[]>();
+      for (const h of allHist) {
+        if (!histByLead.has(h.leadId)) histByLead.set(h.leadId, []);
+        histByLead.get(h.leadId)!.push(h);
+      }
+
+      data = data.map((lead) => {
+        const list = histByLead.get(lead.id) || [];
+        const beforeOrAtEnd = list.filter((h) => h.createdAt <= end);
+        let histStageId = lead.stageId;
+        let histStatus = lead.status;
+        if (beforeOrAtEnd.length > 0) {
+          const last = beforeOrAtEnd[beforeOrAtEnd.length - 1];
+          histStageId = last.toStageId ?? lead.stageId;
+          histStatus = last.toStatus ?? lead.status;
+        } else if (list.length > 0) {
+          // Lead had transitions only AFTER end; its stage at end was the earliest transition's fromStage/fromStatus
+          const firstAfter = list[0];
+          histStageId = firstAfter.fromStageId ?? (firstAfter.fromStatus ? stageByKey.get(String(firstAfter.fromStatus).toUpperCase())?.id : undefined) ?? lead.stageId;
+          histStatus = firstAfter.fromStatus ?? lead.status;
+        }
+        const resolvedStage = (histStageId ? stageById.get(histStageId) : null) || stageByKey.get(String(histStatus || '').toUpperCase()) || lead.stage;
+        return {
+          ...lead,
+          stageId: resolvedStage?.id ?? histStageId,
+          status: histStatus,
+          stage: resolvedStage,
+        };
+      });
+
+      // Apply stage/status filter against the resolved historical stage when dateFilter is active
+      const filterStageId = options.stageId && options.stageId !== 'ALL' ? Number(options.stageId) : null;
+      const filterStatus = options.status && options.status.toUpperCase() !== 'ALL' ? normalizeLeadStatus(options.status) : null;
+      if (filterStageId || filterStatus) {
+        data = data.filter((lead) => {
+          if (filterStageId) return Number(lead.stageId) === filterStageId;
+          const stKey = String(lead.stage?.key || lead.status || '').toUpperCase();
+          return stKey === filterStatus;
+        });
+        total = data.length;
+      }
     }
 
     return {
