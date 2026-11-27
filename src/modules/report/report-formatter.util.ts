@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import PDFDocument = require('pdfkit');
 import ExcelJS = require('exceljs');
+import { drawPdfHeaderLogo, getOfficialLogoBuffer, applyExcelBranding } from '../../common/utils/report-branding.util';
 
 export interface CatalogReportPayload {
   report: { id?: string; name: string; description?: string; category?: string };
@@ -147,7 +148,7 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
     minute: '2-digit',
     hour12: true,
   });
-  const logo = getQuikBoomLogoBuffer();
+  const logo = getOfficialLogoBuffer();
   const totals = computeTotals(columns, rows);
 
   return new Promise<Buffer>((resolve, reject) => {
@@ -172,16 +173,13 @@ export async function buildFormattedReportPdf(view: CatalogReportPayload): Promi
     doc.rect(0, 0, pageW, 82).fill(BRAND_DARK);
     doc.rect(0, 82, pageW, 3.5).fill(BRAND_ACCENT);
 
-    let titleX = margin;
-    if (logo) {
-      try {
-        doc.roundedRect(margin, 16, 48, 48, 8).fill('#FFFFFF');
-        doc.image(logo, margin + 4, 20, { fit: [40, 40], align: 'center', valign: 'center' });
-        titleX = margin + 60;
-      } catch {
-        /* ignore invalid image */
-      }
-    }
+    const { textStartX: titleX } = drawPdfHeaderLogo(doc, {
+      x: margin,
+      y: 18,
+      maxWidth: 44,
+      maxHeight: 44,
+      customLogoBuffer: logo,
+    });
 
     doc.font('Helvetica-Bold').fontSize(17).fillColor('#FFFFFF').text(view.report?.name || 'Report', titleX, 20, {
       width: contentW - (titleX - margin) - 180,
@@ -368,9 +366,12 @@ export async function buildFormattedReportExcel(view: CatalogReportPayload): Pro
   });
 
   const detail = wb.addWorksheet('Detailed Records');
-  detail.addRow([`${companyName} — ${view.report?.name || 'Report'}`]);
-  detail.addRow([`Period: ${view.dateRange?.from || '—'} to ${view.dateRange?.to || '—'} (Asia/Kolkata) | Records: ${rows.length}`]);
-  detail.addRow([]);
+  applyExcelBranding(
+    wb,
+    detail,
+    `${companyName} — ${view.report?.name || 'Report'}`,
+    `Period: ${view.dateRange?.from || '—'} to ${view.dateRange?.to || '—'} (Asia/Kolkata) | Records: ${rows.length}`,
+  );
 
   if (columns.length > 0) {
     const headerRow = detail.addRow(columns.map(humanizeColumnName));

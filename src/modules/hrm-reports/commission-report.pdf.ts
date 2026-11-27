@@ -1,5 +1,6 @@
 import PDFDocument = require('pdfkit');
 import { CommissionLine, CommissionSummary } from './commission-report.calculator';
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 
 const inr = (amount: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(amount || 0);
 
@@ -20,8 +21,9 @@ export function renderCommissionReportPdf(input: {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
     doc.rect(0, 0, doc.page.width, 64).fill('#163A2E');
-    doc.fillColor('#FFFFFF').fontSize(16).font('Helvetica-Bold').text(input.company, 36, 16);
-    doc.fontSize(10).font('Helvetica').text('EMPLOYEE MONTHLY COMMISSION REPORT', 36, 38);
+    const { textStartX } = drawPdfHeaderLogo(doc, { x: 36, y: 12, maxWidth: 40, maxHeight: 40 });
+    doc.fillColor('#FFFFFF').fontSize(16).font('Helvetica-Bold').text(input.company, textStartX, 16);
+    doc.fontSize(10).font('Helvetica').text('EMPLOYEE MONTHLY COMMISSION REPORT', textStartX, 38);
     doc.fontSize(9).text(input.period, 320, 24, { align: 'right', width: 230 });
     doc.fillColor(input.provisional ? '#92400E' : '#166534').fontSize(9).text(input.provisional ? 'PROVISIONAL — pending commission or payroll is not final' : 'FINAL — uses the stored commission ledger', 36, 76);
     doc.fillColor('#172B24').fontSize(10).text(`${input.employeeName} · ${input.employeeCode} · ${input.department}`, 36, 94);

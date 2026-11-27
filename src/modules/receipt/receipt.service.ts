@@ -9,6 +9,7 @@ import { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 
 const inrCurrencyFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -362,11 +363,12 @@ export class ReceiptService {
         const lightBg = '#F8FAFC';
 
         // Header & Company Info (x = 40 to 555)
-        doc.fillColor(primaryColor).fontSize(20).font(boldFont).text('QUIKBOOM CRM', 40, 40);
+        const { textStartX } = drawPdfHeaderLogo(doc, { x: 40, y: 40, maxWidth: 42, maxHeight: 42 });
+        doc.fillColor(primaryColor).fontSize(20).font(boldFont).text('QB Suite CRM', textStartX, 40);
         doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-          .text('QuikBoom Marketing Solutions Pvt Ltd', 40, 62)
-          .text('Dynasty Business Park, Andheri-Kurla Road, Mumbai, Maharashtra 400059', 40, 74)
-          .text('GSTIN: 27AABCT3518Q1Z4 | PAN: AABCT3518Q | State Code: 27', 40, 86);
+          .text('QuikBoom Marketing Solutions Pvt Ltd', textStartX, 62)
+          .text('Dynasty Business Park, Andheri-Kurla Road, Mumbai, Maharashtra 400059', textStartX, 74)
+          .text('GSTIN: 27AABCT3518Q1Z4 | PAN: AABCT3518Q | State Code: 27', textStartX, 86);
 
         doc.fillColor(darkColor).fontSize(16).font(boldFont).text('PAYMENT RECEIPT', 300, 40, { width: 255, align: 'right' });
         doc.fillColor(primaryColor).fontSize(10).font(boldFont).text(receiptNo, 300, 60, { width: 255, align: 'right' });

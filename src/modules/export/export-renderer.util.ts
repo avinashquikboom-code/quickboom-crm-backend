@@ -1,5 +1,6 @@
 import PDFDocument = require('pdfkit');
 import * as ExcelJS from 'exceljs';
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 import JSZip = require('jszip');
 import { ExportColumnDef, isSensitiveExportKey } from './export-schemas';
 
@@ -281,11 +282,12 @@ export async function renderQuikBoomPdf(ctx: ExportRenderContext): Promise<Buffe
     const drawHeaderBanner = () => {
       doc.save();
       doc.rect(startX, 32, pageWidth, 56).fill('#123D32');
-      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(13).text(ctx.companyName || 'QB SUITE — QUIK BOOM MARKETING AGENCY', startX + 14, 42, {
-        width: pageWidth - 180,
+      const { textStartX } = drawPdfHeaderLogo(doc, { x: startX + 10, y: 40, maxWidth: 40, maxHeight: 40 });
+      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(13).text(ctx.companyName || 'QB SUITE', textStartX, 42, {
+        width: pageWidth - 180 - (textStartX - startX),
       });
-      doc.fillColor('#A7F3D0').font('Helvetica').fontSize(9).text(ctx.title, startX + 14, 60, {
-        width: pageWidth - 180,
+      doc.fillColor('#A7F3D0').font('Helvetica').fontSize(9).text(ctx.title, textStartX, 60, {
+        width: pageWidth - 180 - (textStartX - startX),
       });
       doc.fillColor('#E2E8E5').font('Helvetica').fontSize(8).text(`Generated: ${generatedStr} IST`, startX + pageWidth - 170, 44, {
         width: 156,

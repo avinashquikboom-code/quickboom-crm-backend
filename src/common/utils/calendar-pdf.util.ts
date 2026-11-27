@@ -1,4 +1,5 @@
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from './report-branding.util';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -74,10 +75,11 @@ export async function generateCalendarAppointmentPdfBuffer(
       const company = data.companyName || 'QUIKBOOM Digital Marketing Agency';
 
       // Header & Branding
-      doc.fillColor(primaryColor).fontSize(20).font(boldFont).text('QUIKBOOM CRM', 40, 40);
+      const { textStartX } = drawPdfHeaderLogo(doc, { x: 40, y: 40, maxWidth: 40, maxHeight: 40 });
+      doc.fillColor(primaryColor).fontSize(20).font(boldFont).text('QB Suite CRM', textStartX, 40);
       doc.fillColor(grayColor).fontSize(8.5).font(regularFont)
-        .text(company, 40, 62)
-        .text('Customer Calendar & Appointment Scheduling', 40, 74);
+        .text(company, textStartX, 62)
+        .text('Customer Calendar & Appointment Scheduling', textStartX, 74);
 
       doc.fillColor(darkColor).fontSize(16).font(boldFont).text('MEETING CONFIRMATION', 300, 40, { width: 255, align: 'right' });
       doc.fillColor(primaryColor).fontSize(10).font(boldFont).text(apptNo, 300, 60, { width: 255, align: 'right' });
