@@ -13,9 +13,13 @@ export enum PaymentOption {
 }
 
 export class CreateRazorpayOrderDto {
-  @ApiProperty({ example: 1, description: 'Plan ID from database' })
-  @IsNotEmpty()
-  planId: number | string;
+  @ApiPropertyOptional({ example: 1, description: 'Plan ID from database' })
+  @IsOptional()
+  planId?: number | string;
+
+  @ApiPropertyOptional({ example: 12, description: 'Optional LeadPlanProposal ID to pay agreed proposal pricing' })
+  @IsOptional()
+  proposalId?: number | string;
 
   @ApiPropertyOptional({ enum: SubscriptionBillingCycle, default: SubscriptionBillingCycle.MONTHLY })
   @IsOptional()
@@ -61,9 +65,13 @@ export class VerifyRazorpayPaymentDto {
   @IsString()
   razorpay_signature: string;
 
-  @ApiProperty({ example: 1, description: 'Plan ID purchased' })
-  @IsNotEmpty()
-  planId: number | string;
+  @ApiPropertyOptional({ example: 1, description: 'Plan ID purchased' })
+  @IsOptional()
+  planId?: number | string;
+
+  @ApiPropertyOptional({ example: 12, description: 'Optional LeadPlanProposal ID purchased' })
+  @IsOptional()
+  proposalId?: number | string;
 
   @ApiPropertyOptional({ enum: SubscriptionBillingCycle, default: SubscriptionBillingCycle.MONTHLY })
   @IsOptional()
