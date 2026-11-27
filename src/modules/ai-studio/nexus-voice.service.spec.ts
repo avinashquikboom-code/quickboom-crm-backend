@@ -59,7 +59,12 @@ describe('NexusVoiceService session lifecycle', () => {
 
   it('fails closed when ElevenLabs voice is disabled or unavailable', async () => {
     integrations.getElevenLabsConfig.mockResolvedValue({ isEnabled: false, apiKey: '', speechEngineId: '' });
+    await expect(service.getSessionToken({ id: 4, customerId: 12 })).rejects.toThrow('Configure the ElevenLabs API key');
 
-    await expect(service.getSessionToken({ id: 4, customerId: 12 })).rejects.toThrow('not configured or enabled');
+    integrations.getElevenLabsConfig.mockResolvedValue({ isEnabled: false, apiKey: 'key', speechEngineId: '' });
+    await expect(service.getSessionToken({ id: 4, customerId: 12 })).rejects.toThrow('ELEVENLABS_SPEECH_ENGINE_ID');
+
+    integrations.getElevenLabsConfig.mockResolvedValue({ isEnabled: false, apiKey: 'key', speechEngineId: 'seng_1' });
+    await expect(service.getSessionToken({ id: 4, customerId: 12 })).rejects.toThrow('Enable ElevenLabs');
   });
 });
