@@ -191,10 +191,14 @@ export class LeadPlanProposalService {
       },
       orderBy: { name: 'asc' },
     });
-    return rows.map((row) => ({
-      ...row,
-      storageLimit: row.storageLimit != null ? Number(row.storageLimit) : null,
-    }));
+    return rows.map((row) => {
+      const storageLimitBytes = row.storageLimit != null ? Number(row.storageLimit) : null;
+      return {
+        ...row,
+        storageLimit: storageLimitBytes,
+        storageLimitBytes,
+      };
+    });
   }
 
   async createStandardDraft(customerId: number, leadId: number, userId: number, dto: CreateStandardPlanProposalDto) {
