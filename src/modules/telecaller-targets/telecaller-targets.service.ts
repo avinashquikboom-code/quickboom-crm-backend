@@ -24,6 +24,7 @@ import {
   AssignTelecallerTargetDto,
   RecordCallEventDto,
   UpdateTelecallerTargetDto,
+  UpsertRewardSlabsDto,
   UpsertTelecallerTargetPolicyDto,
 } from './dto/telecaller-targets.dto';
 import {
@@ -123,6 +124,8 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
           '3': 'overallScore',
         },
         maxRetryAttempts: 3,
+        minConnectedCalls: 60,
+        maxConnectedCalls: 70,
       }
     );
   }
@@ -144,6 +147,8 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         whatsappLanguageCode: dto.whatsappLanguageCode ?? 'en_US',
         whatsappVariableMapping: dto.whatsappVariableMapping ?? undefined,
         maxRetryAttempts: dto.maxRetryAttempts ?? 3,
+        minConnectedCalls: dto.minConnectedCalls ?? 60,
+        maxConnectedCalls: dto.maxConnectedCalls ?? 70,
       },
       update: {
         ...(dto.adjustForHalfDayLeave !== undefined ? { adjustForHalfDayLeave: dto.adjustForHalfDayLeave } : {}),
@@ -157,8 +162,228 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         ...(dto.whatsappLanguageCode !== undefined ? { whatsappLanguageCode: dto.whatsappLanguageCode } : {}),
         ...(dto.whatsappVariableMapping !== undefined ? { whatsappVariableMapping: dto.whatsappVariableMapping } : {}),
         ...(dto.maxRetryAttempts !== undefined ? { maxRetryAttempts: dto.maxRetryAttempts } : {}),
+        ...(dto.minConnectedCalls !== undefined ? { minConnectedCalls: dto.minConnectedCalls } : {}),
+        ...(dto.maxConnectedCalls !== undefined ? { maxConnectedCalls: dto.maxConnectedCalls } : {}),
       },
     });
+  }
+
+  private defaultRewardSlabs() {
+    return [
+      { id: 0, label: '120 Calls (Target)', minCalls: 120, maxCalls: 120, rewardPoints: 100, sortOrder: 1 },
+      { id: 0, label: '121 – 150 Calls', minCalls: 121, maxCalls: 150, rewardPoints: 150, sortOrder: 2 },
+      { id: 0, label: '151 – 200 Calls', minCalls: 151, maxCalls: 200, rewardPoints: 250, sortOrder: 3 },
+      { id: 0, label: '200+ Calls', minCalls: 201, maxCalls: null, rewardPoints: 400, sortOrder: 4 },
+    ];
+  }
+
+  async getRewardSlabs(user: any, customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const rows = await this.prisma.telecallerRewardSlab.findMany({
+      where: { customerId: numCustomerId, isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { minCalls: 'asc' }],
+    });
+    return {
+      success: true,
+      data: rows.length > 0 ? rows : this.defaultRewardSlabs(),
+    };
+  }
+
+  async upsertRewardSlabs(user: any, customerId: number | string | undefined, dto: UpsertRewardSlabsDto) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const slabs = Array.isArray(dto.slabs) ? dto.slabs : [];
+    const saved = await this.prisma.$transaction(async (tx) => {
+      await tx.telecallerRewardSlab.updateMany({
+        where: { customerId: numCustomerId, isActive: true },
+        data: { isActive: false },
+      });
+      const created = [];
+      for (let i = 0; i < slabs.length; i++) {
+        const s = slabs[i];
+        const row = await tx.telecallerRewardSlab.create({
+          data: {
+            customerId: numCustomerId,
+            label: String(s.label || `${s.minCalls}+ Calls`).trim(),
+            minCalls: Math.max(1, Number(s.minCalls) || 1),
+            maxCalls: s.maxCalls != null && s.maxCalls !== ('' as any) ? Number(s.maxCalls) : null,
+            rewardPoints: Math.max(0, Number(s.rewardPoints) || 0),
+            sortOrder: s.sortOrder ?? i + 1,
+            isActive: s.isActive !== false,
+          },
+        });
+        created.push(row);
+      }
+      return created;
+    });
+    return { success: true, data: saved };
+  }
+
+  private async evaluateAndCreditCallRewards(
+    customerId: number,
+    employeeId: number,
+    businessDate: string,
+    totalCalls: number,
+    connectedCalls: number,
+    callTarget: number,
+  ) {
+    const { data: slabs } = await this.getRewardSlabs({ customerId }, customerId);
+    const sorted = [...slabs].sort((a, b) => a.minCalls - b.minCalls);
+    let matched: any = null;
+    for (const slab of sorted) {
+      if (totalCalls >= slab.minCalls) {
+        matched = slab;
+      }
+    }
+    if (!matched && callTarget > 0 && totalCalls >= callTarget && sorted.length > 0) {
+      matched = sorted[0];
+    }
+    if (!matched) return null;
+
+    const isExtraBonus = matched.minCalls > (sorted[0]?.minCalls ?? callTarget);
+    const title = isExtraBonus ? 'Extra Calls Bonus' : 'Daily Call Target Completed';
+    const idempotencyKey = `call_reward:${customerId}:${employeeId}:${businessDate}`;
+
+    return this.prisma.telecallerRewardLedger.upsert({
+      where: { idempotencyKey },
+      create: {
+        customerId,
+        employeeId,
+        businessDate,
+        title,
+        totalCalls,
+        connectedCalls,
+        points: matched.rewardPoints,
+        status: 'CREDITED',
+        slabId: matched.id > 0 ? matched.id : null,
+        idempotencyKey,
+      },
+      update: {
+        title,
+        totalCalls,
+        connectedCalls,
+        points: matched.rewardPoints,
+        slabId: matched.id > 0 ? matched.id : null,
+      },
+    });
+  }
+
+  async getMyDailyRewards(user: any, customerId?: number | string) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const employee = await this.resolveEmployeeForUser(user, numCustomerId);
+    const policy = await this.getPolicy({ customerId: numCustomerId }, numCustomerId);
+    const { data: slabs } = await this.getRewardSlabs({ customerId: numCustomerId }, numCustomerId);
+
+    if (!employee) {
+      return {
+        success: true,
+        data: {
+          businessDate: getBusinessDate(new Date()),
+          targetCalls: 0,
+          totalCalls: 0,
+          connectedCalls: 0,
+          minConnectedCalls: policy.minConnectedCalls ?? 60,
+          maxConnectedCalls: policy.maxConnectedCalls ?? 70,
+          todayInquiries: 0,
+          todayVisits: 0,
+          targetCompleted: false,
+          earnedPoints: 0,
+          slabs: slabs.map((s) => ({ ...s, isCurrent: false })),
+          history: [],
+          callVerificationLimitation: CALL_VERIFICATION_LIMITATION,
+        },
+      };
+    }
+
+    const businessDate = this.resolveShiftBusinessDate(new Date(), employee.shift);
+    const { perf, stats } = await this.computeAndSaveDailySnapshot(
+      numCustomerId,
+      employee.id,
+      businessDate,
+    );
+
+    const callMetric = perf.metrics.find((m) => m.metricKey === 'OUTGOING_CALLS' && !m.excluded);
+    const targetCalls = callMetric ? Number(callMetric.effectiveTarget || 0) : 0;
+    const totalCalls = stats.outgoingCalls;
+    const connectedCalls = stats.connectedCalls;
+    const todayInquiries = stats.newLeadsCreated;
+    const todayVisits = stats.visitsScheduled + stats.visitsCompleted;
+    const targetCompleted = targetCalls > 0 && totalCalls >= targetCalls;
+
+    await this.evaluateAndCreditCallRewards(
+      numCustomerId,
+      employee.id,
+      businessDate,
+      totalCalls,
+      connectedCalls,
+      targetCalls,
+    );
+
+    const todayLedger = await this.prisma.telecallerRewardLedger.findFirst({
+      where: { customerId: numCustomerId, employeeId: employee.id, businessDate },
+    });
+
+    const history = await this.prisma.telecallerRewardLedger.findMany({
+      where: { customerId: numCustomerId, employeeId: employee.id },
+      orderBy: [{ businessDate: 'desc' }, { createdAt: 'desc' }],
+      take: 30,
+    });
+
+    const sortedSlabs = [...slabs].sort((a, b) => a.minCalls - b.minCalls);
+    let currentSlabIdx = -1;
+    for (let i = 0; i < sortedSlabs.length; i++) {
+      if (totalCalls >= sortedSlabs[i].minCalls) currentSlabIdx = i;
+    }
+
+    return {
+      success: true,
+      data: {
+        businessDate,
+        targetCalls,
+        totalCalls,
+        connectedCalls,
+        minConnectedCalls: policy.minConnectedCalls ?? 60,
+        maxConnectedCalls: policy.maxConnectedCalls ?? 70,
+        todayInquiries,
+        todayVisits,
+        targetCompleted,
+        earnedPoints: todayLedger?.points ?? 0,
+        slabs: sortedSlabs.map((s, idx) => ({
+          ...s,
+          isCurrent: idx === currentSlabIdx,
+        })),
+        history,
+        callVerificationLimitation: CALL_VERIFICATION_LIMITATION,
+      },
+    };
+  }
+
+  async getRewardHistory(
+    user: any,
+    customerId?: number | string,
+    query?: { employeeId?: number; fromDate?: string; toDate?: string },
+  ) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const admin = isUserAdmin(user);
+    const selfEmp = await this.resolveEmployeeForUser(user, numCustomerId);
+    const employeeId = admin && query?.employeeId ? Number(query.employeeId) : (!admin ? selfEmp?.id : undefined);
+
+    const rows = await this.prisma.telecallerRewardLedger.findMany({
+      where: {
+        customerId: numCustomerId,
+        ...(employeeId ? { employeeId } : {}),
+        ...(query?.fromDate || query?.toDate
+          ? {
+              businessDate: {
+                ...(query.fromDate ? { gte: query.fromDate } : {}),
+                ...(query.toDate ? { lte: query.toDate } : {}),
+              },
+            }
+          : {}),
+      },
+      orderBy: [{ businessDate: 'desc' }, { createdAt: 'desc' }],
+      take: 100,
+    });
+    return { success: true, data: rows };
   }
 
   async assignTargets(user: any, customerId: number | string | undefined, dto: AssignTelecallerTargetDto) {
@@ -890,6 +1115,14 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       orderBy: [{ businessDate: 'desc' }, { reportVersion: 'desc' }],
     });
 
+    const rewardLedgers = await this.prisma.telecallerRewardLedger.findMany({
+      where: {
+        customerId: numCustomerId,
+        employeeId: { in: employees.map((e) => e.id) },
+        businessDate: { gte: fromDate, lte: toDate },
+      },
+    });
+
     const rows = employees
       .map((emp) => {
         const empSnaps = snapshots.filter((s) => s.employeeId === emp.id);
@@ -921,6 +1154,9 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
                   : 'NOT_STARTED';
 
         const latestReport = reports.find((r) => r.employeeId === emp.id);
+        const rewardPoints = rewardLedgers
+          .filter((rl) => rl.employeeId === emp.id)
+          .reduce((sum, rl) => sum + Number(rl.points || 0), 0);
         return {
           employeeId: emp.id,
           employeeCode: emp.employeeCode,
@@ -932,6 +1168,7 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
           actualAchievements: round2(achieved),
           pendingTargets: pending,
           overallScore,
+          rewardPoints,
           callConnectionRate: latest?.callConnectionRate ?? 0,
           leadConversionRate: latest?.leadConversionRate ?? 0,
           status,

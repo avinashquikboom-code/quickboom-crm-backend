@@ -4741,6 +4741,8 @@ model TelecallerTargetPolicy {
   whatsappLanguageCode      String   @default("en_US")
   whatsappVariableMapping   Json?
   maxRetryAttempts          Int      @default(3)
+  minConnectedCalls         Int      @default(60)
+  maxConnectedCalls         Int      @default(70)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
   customer                  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -4877,4 +4879,39 @@ model DailyPerformanceReport {
   @@index([customerId, businessDate])
   @@index([emailStatus, whatsappStatus, nextRetryAt])
   @@map("daily_performance_reports")
+}
+
+model TelecallerRewardSlab {
+  id           Int      @id @default(autoincrement())
+  customerId   Int
+  label        String
+  minCalls     Int
+  maxCalls     Int?
+  rewardPoints Int
+  sortOrder    Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([customerId, isActive, sortOrder])
+  @@map("telecaller_reward_slabs")
+}
+
+model TelecallerRewardLedger {
+  id             Int      @id @default(autoincrement())
+  customerId     Int
+  employeeId     Int
+  businessDate   String
+  title          String
+  totalCalls     Int      @default(0)
+  connectedCalls Int      @default(0)
+  points         Int      @default(0)
+  status         String   @default("CREDITED")
+  slabId         Int?
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([customerId, employeeId, businessDate])
+  @@map("telecaller_reward_ledgers")
 }

@@ -22,6 +22,7 @@ import {
   AssignTelecallerTargetDto,
   RecordCallEventDto,
   UpdateTelecallerTargetDto,
+  UpsertRewardSlabsDto,
   UpsertTelecallerTargetPolicyDto,
 } from './dto/telecaller-targets.dto';
 
@@ -118,6 +119,51 @@ export class TelecallerTargetsController {
   @Get('my/today')
   getMyTodayTargets(@Request() req: any, @Query('customerId') customerId?: string) {
     return this.service.getMyTodayTargets(req.user, customerId);
+  }
+
+  @Get('my/daily-rewards')
+  getMyDailyRewards(@Request() req: any, @Query('customerId') customerId?: string) {
+    return this.service.getMyDailyRewards(req.user, customerId);
+  }
+
+  @Get('rewards/slabs')
+  getRewardSlabs(@Request() req: any, @Query('customerId') customerId?: string) {
+    return this.service.getRewardSlabs(req.user, customerId);
+  }
+
+  @Put('rewards/slabs')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  upsertRewardSlabs(
+    @Request() req: any,
+    @Query('customerId') customerId: string | undefined,
+    @Body() dto: UpsertRewardSlabsDto,
+  ) {
+    return this.service.upsertRewardSlabs(req.user, customerId, dto);
+  }
+
+  @Post('rewards/slabs')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  upsertRewardSlabsPost(
+    @Request() req: any,
+    @Query('customerId') customerId: string | undefined,
+    @Body() dto: UpsertRewardSlabsDto,
+  ) {
+    return this.service.upsertRewardSlabs(req.user, customerId, dto);
+  }
+
+  @Get('rewards/history')
+  getRewardHistory(
+    @Request() req: any,
+    @Query('customerId') customerId?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    return this.service.getRewardHistory(req.user, customerId, {
+      employeeId: employeeId ? Number(employeeId) : undefined,
+      fromDate,
+      toDate,
+    });
   }
 
   @Get('my/analysis')
