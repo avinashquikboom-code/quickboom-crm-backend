@@ -1,7 +1,7 @@
 -- Telecaller Target and Performance Management System
 CREATE TABLE IF NOT EXISTS "telecaller_target_policies" (
   "id" SERIAL PRIMARY KEY,
-  "customerId" INTEGER NOT NULL UNIQUE REFERENCES "Customer"("id") ON DELETE CASCADE,
+  "customerId" INTEGER NOT NULL UNIQUE REFERENCES "customers"("id") ON DELETE CASCADE,
   "adjustForHalfDayLeave" BOOLEAN NOT NULL DEFAULT true,
   "excludeFullDayLeave" BOOLEAN NOT NULL DEFAULT true,
   "excludeHolidays" BOOLEAN NOT NULL DEFAULT true,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS "telecaller_target_policies" (
 
 CREATE TABLE IF NOT EXISTS "telecaller_target_assignments" (
   "id" SERIAL PRIMARY KEY,
-  "customerId" INTEGER NOT NULL REFERENCES "Customer"("id") ON DELETE CASCADE,
+  "customerId" INTEGER NOT NULL REFERENCES "customers"("id") ON DELETE CASCADE,
   "employeeId" INTEGER REFERENCES "Employee"("id") ON DELETE CASCADE,
   "departmentId" INTEGER,
   "metricKey" TEXT NOT NULL,
@@ -62,7 +62,7 @@ CREATE INDEX IF NOT EXISTS "telecaller_target_histories_assign_idx"
 
 CREATE TABLE IF NOT EXISTS "telecaller_activity_events" (
   "id" SERIAL PRIMARY KEY,
-  "customerId" INTEGER NOT NULL REFERENCES "Customer"("id") ON DELETE CASCADE,
+  "customerId" INTEGER NOT NULL REFERENCES "customers"("id") ON DELETE CASCADE,
   "employeeId" INTEGER NOT NULL REFERENCES "Employee"("id") ON DELETE CASCADE,
   "metricKey" TEXT NOT NULL,
   "eventType" TEXT NOT NULL,
@@ -83,7 +83,7 @@ CREATE INDEX IF NOT EXISTS "telecaller_activity_events_lookup_idx"
 
 CREATE TABLE IF NOT EXISTS "daily_performance_snapshots" (
   "id" SERIAL PRIMARY KEY,
-  "customerId" INTEGER NOT NULL REFERENCES "Customer"("id") ON DELETE CASCADE,
+  "customerId" INTEGER NOT NULL REFERENCES "customers"("id") ON DELETE CASCADE,
   "employeeId" INTEGER NOT NULL REFERENCES "Employee"("id") ON DELETE CASCADE,
   "businessDate" TEXT NOT NULL,
   "shiftId" INTEGER,
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS "daily_performance_snapshots" (
 
 CREATE TABLE IF NOT EXISTS "daily_performance_reports" (
   "id" SERIAL PRIMARY KEY,
-  "customerId" INTEGER NOT NULL REFERENCES "Customer"("id") ON DELETE CASCADE,
+  "customerId" INTEGER NOT NULL REFERENCES "customers"("id") ON DELETE CASCADE,
   "employeeId" INTEGER NOT NULL REFERENCES "Employee"("id") ON DELETE CASCADE,
   "businessDate" TEXT NOT NULL,
   "reportVersion" INTEGER NOT NULL DEFAULT 1,
