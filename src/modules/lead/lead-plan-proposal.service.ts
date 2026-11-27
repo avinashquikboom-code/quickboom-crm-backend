@@ -199,7 +199,6 @@ export class LeadPlanProposalService {
 
   async createStandardDraft(customerId: number, leadId: number, userId: number, dto: CreateStandardPlanProposalDto) {
     const lead = await this.assertLead(customerId, leadId);
-    this.assertReadyToSend(lead, 'DEFAULT');
     if (dto.idempotencyKey.length > 128) throw new BadRequestException('Invalid request key.');
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Lead" WHERE id = ${leadId} AND "customerId" = ${customerId} FOR UPDATE`;
@@ -221,6 +220,16 @@ export class LeadPlanProposalService {
         customerRequirements: lead.customerRequirements, idempotencyKey: dto.idempotencyKey,
         customConfig: this.toJson({ features: this.parsePlanFeatures(plan.features), description: plan.description, billingCycle: dto.billingCycle, recipientName: `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.title, issuerName: company?.companyName || company?.name || '' }),
       } });
+      if (!lead.planPreferenceReady) {
+        await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            planPreferenceType: 'DEFAULT',
+            planPreferenceReady: true,
+            activePlanProposalType: 'DEFAULT',
+          },
+        });
+      }
       return { proposal };
     });
   }
