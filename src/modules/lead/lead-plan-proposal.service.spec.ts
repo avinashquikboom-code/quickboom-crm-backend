@@ -55,10 +55,74 @@ describe('LeadPlanProposalService', () => {
     await expect(service.sendDefaultPlan(1, 10, 99)).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('isProposalStageToken accepts PROPOSAL and PROPOSAL_SENT', () => {
+  it('isProposalStageToken accepts PROPOSAL, PROPOSAL_SEND, and PROPOSAL_SENT', () => {
     expect(service.isProposalStageToken('PROPOSAL', null)).toBe(true);
+    expect(service.isProposalStageToken('proposal_send', null)).toBe(true);
     expect(service.isProposalStageToken('proposal_sent', null)).toBe(true);
     expect(service.isProposalStageToken('FOLLOW_UP', null)).toBe(false);
+  });
+
+  it('creates customer-specific custom proposal draft with idempotency without mutating global Plan', async () => {
+    const row: any = {
+      id: 22,
+      customerId: 1,
+      firstName: 'Ravi',
+      lastName: 'Patel',
+      title: 'Ravi Travels',
+      companyName: 'Ravi Travels Pvt Ltd',
+      planPreferenceReady: false,
+      customerRequirements: null,
+      planPreferenceType: null,
+    };
+    prisma.lead.findFirst.mockResolvedValue(row);
+    const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 22 }]),
+      leadPlanProposal: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 91, ...data })),
+      },
+      lead: { update: jest.fn().mockResolvedValue(row) },
+    };
+    prisma.$transaction = jest.fn((fn) => fn(tx));
+    prisma.customer.findUnique.mockResolvedValue({ name: 'QuikBoom' });
+
+    const dto = {
+      idempotencyKey: 'custom-req-22',
+      sendImmediately: false,
+      config: {
+        planId: 4,
+        planName: 'Enterprise Custom',
+        planCode: 'CUST-22-01',
+        description: 'Tailored package for Ravi Travels',
+        monthlyPrice: 12000,
+        yearlyPrice: 120000,
+        billingCycle: 'MONTHLY' as const,
+        userLimit: 10,
+        leadLimit: 2500,
+        storageLimit: 20,
+        storageUnit: 'GB' as const,
+        features: [{ name: 'Reels', quantity: '4', description: 'Monthly reels' }],
+      },
+    };
+
+    const res1 = await service.createCustomProposal(1, 22, 7, dto);
+    expect((res1 as any).delivered).toBe(false);
+    expect(res1.proposal.status).toBe('DRAFT');
+    expect(res1.proposal.planPrice).toBe(12000);
+    expect(res1.proposal.customConfig).toMatchObject({
+      planCode: 'CUST-22-01',
+      billingCycle: 'MONTHLY',
+      userLimit: 10,
+      leadLimit: 2500,
+      storageLimit: 20,
+      storageUnit: 'GB',
+    });
+
+    tx.leadPlanProposal.findUnique.mockResolvedValue(res1.proposal);
+    const res2 = await service.createCustomProposal(1, 22, 7, dto);
+    expect(res2.proposal.id).toBe(91);
+    expect(tx.leadPlanProposal.create).toHaveBeenCalledTimes(1);
   });
   it.each([
     [false, true, '', '919999999999'],

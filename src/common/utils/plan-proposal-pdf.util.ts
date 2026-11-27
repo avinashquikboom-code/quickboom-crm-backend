@@ -2,9 +2,20 @@ import PDFDocument = require('pdfkit');
 
 export interface PlanProposalPdfData {
   proposalNo: string;
+  leadId?: number;
   leadName: string;
+  businessName?: string;
   companyName: string;
   planName: string;
+  planCode?: string;
+  description?: string;
+  billingCycle?: string;
+  monthlyPrice?: number;
+  yearlyPrice?: number;
+  userLimit?: number;
+  leadLimit?: number;
+  storageLimit?: number;
+  storageUnit?: string;
   planPrice: number;
   currency?: string;
   proposalType: string;
@@ -119,7 +130,12 @@ export async function generatePlanProposalPdfBuffer(data: PlanProposalPdfData): 
       .font('Helvetica')
       .fontSize(9)
       .fillColor(TEXT_SECONDARY)
-      .text(data.companyName || '—', margin + 14, y + 46, { width: colWidth - 28 });
+      .text(
+        `${data.businessName || data.companyName || '—'}${data.leadId ? `  •  Lead #${data.leadId}` : ''}`,
+        margin + 14,
+        y + 46,
+        { width: colWidth - 28 },
+      );
 
     const rightCardX = margin + colWidth + colGap;
     doc
@@ -134,13 +150,18 @@ export async function generatePlanProposalPdfBuffer(data: PlanProposalPdfData): 
       .font('Helvetica-Bold')
       .fontSize(11)
       .fillColor(BRAND_DARK)
-      .text(data.planName || 'Custom Plan', rightCardX + 14, y + 26, { width: colWidth - 28 });
+      .text(
+        `${data.planName || 'Custom Plan'}${data.planCode ? ` (${data.planCode})` : ''}`,
+        rightCardX + 14,
+        y + 26,
+        { width: colWidth - 28 },
+      );
     doc
       .font('Helvetica')
       .fontSize(9)
       .fillColor(TEXT_SECONDARY)
       .text(
-        `Type: ${data.proposalType || 'STANDARD'}${data.validUntil ? `  •  Valid Until: ${data.validUntil}` : ''}`,
+        `Cycle: ${data.billingCycle || data.proposalType || 'STANDARD'}${data.validUntil ? `  •  Valid: ${data.validUntil}` : ''}`,
         rightCardX + 14,
         y + 46,
         { width: colWidth - 28 },
