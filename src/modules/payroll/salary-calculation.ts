@@ -127,7 +127,14 @@ export function nonServiceDays(year: number, month: number, joiningDate?: Date |
 }
 
 type AttendanceMark = { date: Date | string; status?: string | null };
-type LeaveMark = { from: Date | string; to: Date | string; unpaid: boolean };
+type LeaveMark = {
+  from: Date | string;
+  to: Date | string;
+  unpaid: boolean;
+  durationType?: string | null;
+  halfDaySession?: string | null;
+  days?: number | null;
+};
 
 function covers(day: Date, from?: Date | null, to?: Date | null) {
   if (!from || !to) return false;
@@ -159,6 +166,9 @@ export function countPayableAttendance(input: {
     from: asUtcDay(leave.from),
     to: asUtcDay(leave.to),
     unpaid: leave.unpaid,
+    isHalfDay:
+      String(leave.durationType || '').toUpperCase() === 'HALF_DAY' ||
+      Number(leave.days) === 0.5,
   }));
 
   let workingDays = 0;
@@ -175,8 +185,12 @@ export function countPayableAttendance(input: {
     if ((joining && date < joining) || (exit && date > exit)) continue;
     const scheduled = isScheduledWorkday(date, input.shiftDays, input.workingDaysPerWeek ?? 5);
     const status = marks.get(keyOf(date)) || '';
-    const paidLeave = leaves.some((leave) => !leave.unpaid && covers(date, leave.from, leave.to));
-    const unpaidLeave = leaves.some((leave) => leave.unpaid && covers(date, leave.from, leave.to));
+    const dayLeaves = leaves.filter((leave) => covers(date, leave.from, leave.to));
+    const fullPaidLeave = dayLeaves.some((l) => !l.unpaid && !l.isHalfDay);
+    const fullUnpaidLeave = dayLeaves.some((l) => l.unpaid && !l.isHalfDay);
+    const halfPaidLeaves = dayLeaves.filter((l) => !l.unpaid && l.isHalfDay).length;
+    const halfUnpaidLeaves = dayLeaves.filter((l) => l.unpaid && l.isHalfDay).length;
+
     if (!scheduled) {
       weeklyOffDays += 1;
       continue;
@@ -186,13 +200,28 @@ export function countPayableAttendance(input: {
       holidayDays += 1;
       continue;
     }
-    if (paidLeave) {
+    if (fullPaidLeave) {
       paidLeaveDays += 1;
       continue;
     }
-    if (unpaidLeave || status === 'ABSENT') {
-      if (unpaidLeave) unpaidLeaveDays += 1;
+    if (fullUnpaidLeave || (status === 'ABSENT' && halfPaidLeaves === 0 && halfUnpaidLeaves === 0)) {
+      if (fullUnpaidLeave) unpaidLeaveDays += 1;
       else absentDays += 1;
+      continue;
+    }
+    // Half-day leave(s) on this day: never double-deduct against HALF_DAY attendance status
+    if (halfPaidLeaves > 0 || halfUnpaidLeaves > 0) {
+      const leaveFraction = Math.min(1, (halfPaidLeaves + halfUnpaidLeaves) * 0.5);
+      paidLeaveDays += Math.min(1, halfPaidLeaves * 0.5);
+      unpaidLeaveDays += Math.min(1, halfUnpaidLeaves * 0.5);
+      const remainingFraction = Math.max(0, 1 - leaveFraction);
+      if (remainingFraction > 0) {
+        if (status === 'PRESENT' || status === 'LATE' || status === 'REMOTE' || status === 'WFH' || status === 'HALF_DAY') {
+          presentDays += remainingFraction;
+        } else {
+          absentDays += remainingFraction;
+        }
+      }
       continue;
     }
     if (status === 'HALF_DAY') {
@@ -430,6 +459,8 @@ export function calculatePerMinuteLateDeduction(input: {
     lateRatePerMinute?: number | null;
     lateGraceMinutes?: number | null;
     status?: string | null;
+    isHalfDayLeave?: boolean | null;
+    halfDaySession?: string | null;
   }>;
   shift?: {
     startTime?: string | null;
@@ -439,7 +470,14 @@ export function calculatePerMinuteLateDeduction(input: {
     isNightShift?: boolean | null;
   } | null;
   policy?: LateMarkPolicyInput | null;
-  leaves?: Array<{ from: Date | string; to: Date | string; unpaid?: boolean }>;
+  leaves?: Array<{
+    from: Date | string;
+    to: Date | string;
+    unpaid?: boolean;
+    durationType?: string | null;
+    halfDaySession?: string | null;
+    days?: number | null;
+  }>;
   holidays?: Array<{ date: Date | string }>;
   workingDaysPerWeek?: number;
   employeeId?: number;
@@ -483,6 +521,7 @@ export function calculatePerMinuteLateDeduction(input: {
   const leaves = (input.leaves || []).map((l) => ({
     from: asUtcDay(l.from),
     to: asUtcDay(l.to),
+    isHalfDay: l.durationType === 'HALF_DAY' || Number(l.days) === 0.5,
   }));
 
   const holidayKeys = new Set(
@@ -534,9 +573,9 @@ export function calculatePerMinuteLateDeduction(input: {
     // 3. Exclude public holidays
     if (holidayKeys.has(dateKey) || ['HOLIDAY', 'WEEKLY_OFF', 'LEAVE'].includes(att.status || '')) continue;
 
-    // 4. Exclude approved full-day leave
-    const onLeave = leaves.some((l) => covers(attDate, l.from, l.to));
-    if (onLeave) continue;
+    // 4. Exclude approved full-day leave (half-day leave still evaluates late-mark on the working half)
+    const onFullDayLeave = leaves.some((l) => !l.isHalfDay && covers(attDate, l.from, l.to));
+    if (onFullDayLeave) continue;
 
     // 5. Must have punch-in or stored lateMinutes
     if (!att.punchIn && !att.lateMinutes) continue;
@@ -549,11 +588,15 @@ export function calculatePerMinuteLateDeduction(input: {
   const currentEvaluation = att.punchIn ? evaluateLatePunch({
     punchIn: att.punchIn, shift: input.shift, policy,
     isHoliday: holidayKeys.has(dateKey) || att.status === 'HOLIDAY',
-    isApprovedLeave: onLeave, workingDaysPerWeek: input.workingDaysPerWeek,
+    isApprovedLeave: onFullDayLeave, workingDaysPerWeek: input.workingDaysPerWeek,
     employeeId: input.employeeId, employeeRole: input.employeeRole,
   }) : null;
+  if (att.isHalfDayLeave && storedMinutes === 0 && storedDeduction === 0) {
+    // On an approved half-day leave, a 0 stored lateMinutes means on-time for the applicable working half.
+    continue;
+  }
   if ((storedMinutes > 0 || storedDeduction > 0) &&
-      (!currentEvaluation || (Number(att.lateGraceMinutes) === 0 && storedMinutes === currentEvaluation.lateMinutes))) {
+      (att.isHalfDayLeave || !currentEvaluation || (Number(att.lateGraceMinutes) === 0 && storedMinutes === currentEvaluation.lateMinutes))) {
     const rateUsed = storedRate > 0 ? storedRate : ratePerMinute;
     let dailyDeduction = storedDeduction > 0 ? storedDeduction : Math.round(storedMinutes * rateUsed * 100) / 100;
     if (maxDaily !== null && dailyDeduction > maxDaily) dailyDeduction = maxDaily;

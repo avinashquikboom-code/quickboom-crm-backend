@@ -5,6 +5,7 @@ import { ContactExtractor } from '../../common/utils/contact-extractor.util';
 import { PhotoLookupCache } from '../data-capture/photo-lookup-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationSettingsService } from '../integration-settings/integration-settings.service';
+import { TelecallerTargetsService } from '../telecaller-targets/telecaller-targets.service';
 import {
   CheckDuplicateDto,
   ConvertLeadDto,
@@ -91,6 +92,7 @@ export class LeadRepository {
   constructor(
     private prisma: PrismaService,
     @Optional() @Inject(IntegrationSettingsService) private integrationSettings?: IntegrationSettingsService,
+    @Optional() private readonly telecallerTargetsService?: TelecallerTargetsService,
   ) {}
 
   async create(
@@ -459,6 +461,21 @@ export class LeadRepository {
         notes: `Lead created via ${dto.source || 'WEBSITE'}`,
       },
     });
+
+    if (this.telecallerTargetsService) {
+      const creatorEmpId = lead.createdByEmployeeId || lead.employeeId || employeeId;
+      this.telecallerTargetsService
+        .recordActivityEvent({
+          customerId: numCustomerId,
+          employeeId: creatorEmpId,
+          metricKey: 'NEW_LEADS_CREATED',
+          eventType: 'LEAD_CREATED',
+          entityType: 'Lead',
+          entityId: lead.id,
+          idempotencyKey: `lead_created:${lead.id}`,
+        })
+        .catch(() => {});
+    }
 
     return lead;
   }
@@ -2709,6 +2726,42 @@ export class LeadRepository {
       await writeTransition(this.prisma);
     }
 
+    if (this.telecallerTargetsService) {
+      const actorEmp = numUserId
+        ? await this.prisma.employee.findFirst({
+            where: { userId: numUserId, customerId: numCustomerId },
+            select: { id: true },
+          })
+        : null;
+      const actorEmpId = actorEmp?.id || (await this.prisma.lead.findUnique({ where: { id: numId }, select: { employeeId: true } }))?.employeeId;
+
+      if (toStatus === LeadStatus.PROPOSAL_SENT || String(toStatus) === 'PROPOSAL_SENT') {
+        this.telecallerTargetsService
+          .recordActivityEvent({
+            customerId: numCustomerId,
+            employeeId: actorEmpId,
+            metricKey: 'PROPOSALS_SENT',
+            eventType: 'PROPOSAL_SENT',
+            entityType: 'Lead',
+            entityId: numId,
+            idempotencyKey: `proposal_sent:${numId}`,
+          })
+          .catch(() => {});
+      } else if (toStatus === LeadStatus.WON || String(toStatus) === 'WON') {
+        this.telecallerTargetsService
+          .recordActivityEvent({
+            customerId: numCustomerId,
+            employeeId: actorEmpId,
+            metricKey: 'LEADS_WON',
+            eventType: 'LEAD_WON',
+            entityType: 'Lead',
+            entityId: numId,
+            idempotencyKey: `lead_won:${numId}`,
+          })
+          .catch(() => {});
+      }
+    }
+
     const isVisitScheduled =
       toStatus === LeadStatus.VISIT_SCHEDULED ||
       (toStatus as string) === 'VISIT_SCHEDULED' ||
@@ -2959,7 +3012,7 @@ export class LeadRepository {
       }
     }
 
-    await this.logTimeline(
+    const timelineRow = await this.logTimeline(
       numLeadId,
       scheduleOnly ? 'FOLLOW_UP_SCHEDULED' : 'FOLLOW_UP_CALL',
       scheduleOnly
@@ -2976,6 +3029,40 @@ export class LeadRepository {
         nextFollowUpTime: dto.nextFollowUpTime,
       },
     );
+
+    if (!scheduleOnly && this.telecallerTargetsService) {
+      const actorEmp = await this.prisma.employee.findFirst({
+        where: { userId: numUserId, customerId: numCustomerId },
+        select: { id: true },
+      });
+      const empId = actorEmp?.id || lead.employeeId;
+      const eventUnique = timelineRow?.id || `${numLeadId}:${Date.now()}`;
+      this.telecallerTargetsService
+        .recordActivityEvent({
+          customerId: numCustomerId,
+          employeeId: empId,
+          metricKey: 'FOLLOW_UPS_COMPLETED',
+          eventType: 'FOLLOW_UP_COMPLETED',
+          entityType: 'LeadActivityTimeline',
+          entityId: eventUnique,
+          idempotencyKey: `followup:${eventUnique}`,
+        })
+        .catch(() => {});
+      if (type === 'CALL') {
+        this.telecallerTargetsService
+          .recordActivityEvent({
+            customerId: numCustomerId,
+            employeeId: empId,
+            metricKey: 'OUTGOING_CALLS',
+            eventType: 'CRM_CALL_LOGGED',
+            entityType: 'LeadActivityTimeline',
+            entityId: eventUnique,
+            idempotencyKey: `followup_call:${eventUnique}`,
+            callStatus: 'OUTGOING',
+          })
+          .catch(() => {});
+      }
+    }
 
     return this.findOne(numCustomerId, numLeadId);
   }

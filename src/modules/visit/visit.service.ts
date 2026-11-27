@@ -10,6 +10,7 @@ import { NotificationService } from '../notification/notification.service';
 import { generateCalendarAppointmentPdfBuffer } from '../../common/utils/calendar-pdf.util';
 import { LeadRepository } from '../lead/lead.repository';
 import { LeadService } from '../lead/lead.service';
+import { TelecallerTargetsService } from '../telecaller-targets/telecaller-targets.service';
 
 @Injectable()
 export class VisitService {
@@ -37,6 +38,7 @@ export class VisitService {
     @Optional() private readonly notificationService?: NotificationService,
     @Optional() private readonly leadRepository?: LeadRepository,
     @Optional() @Inject(forwardRef(() => LeadService)) private readonly leadService?: LeadService,
+    @Optional() private readonly telecallerTargetsService?: TelecallerTargetsService,
   ) {}
 
   private async notifyAssignedEmployeeVisitScheduled(visit: any) {
@@ -747,6 +749,20 @@ export class VisitService {
 
     const isCompleted = updated.status === VisitStatus.COMPLETED;
     const finalVisitedByName = isCompleted ? actualEmpName : null;
+
+    if (isCompleted && !wasCompleted && this.telecallerTargetsService && numCustomerId > 0) {
+      this.telecallerTargetsService
+        .recordActivityEvent({
+          customerId: numCustomerId,
+          employeeId: updated.employeeId,
+          metricKey: 'VISITS_COMPLETED',
+          eventType: 'VISIT_COMPLETED',
+          entityType: 'Visit',
+          entityId: updated.id,
+          idempotencyKey: `visit_completed:${updated.id}`,
+        })
+        .catch(() => {});
+    }
 
     if (
       isCompleted &&

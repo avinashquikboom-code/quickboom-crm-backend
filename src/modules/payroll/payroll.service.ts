@@ -425,6 +425,9 @@ export class PayrollService {
               from: leave.fromDate,
               to: leave.toDate,
               unpaid: code === 'UL' || code === 'LOP' || name.includes('unpaid') || name.includes('loss of pay') || name.includes('lop'),
+              durationType: leave.durationType,
+              halfDaySession: leave.halfDaySession,
+              days: leave.days,
             };
           }),
         });
@@ -486,6 +489,9 @@ export class PayrollService {
             from: leave.fromDate,
             to: leave.toDate,
             unpaid: leave.leaveType?.code === 'UL' || leave.leaveType?.code === 'LOP',
+            durationType: leave.durationType,
+            halfDaySession: leave.halfDaySession,
+            days: leave.days,
           })),
           holidays: publicHolidays,
           workingDaysPerWeek: attendancePolicy?.workingDaysPerWeek || 5,
