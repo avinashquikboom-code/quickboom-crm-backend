@@ -6,6 +6,7 @@ import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezon
 import { isUserAdmin } from '../../common/utils/role.util';
 import PDFDocument = require('pdfkit');
 import ExcelJS = require('exceljs');
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 
 export type ExportScope = 'all_complete' | 'individual' | 'summary_only' | 'detailed' | 'stage_wise';
 
@@ -1114,7 +1115,6 @@ export class EmployeeLeadStageReportService {
     }
 
     // Default: Branded Landscape PDF with Employee-Wise Summary + Detailed Lead Tables
-    const logo = this.getLogoBuffer();
     const pdfBuf = await new Promise<Buffer>((resolve, reject) => {
       const doc = new PDFDocument({ margin: 28, size: 'A4', layout: 'landscape', bufferPages: true });
       const chunks: Buffer[] = [];
@@ -1131,16 +1131,7 @@ export class EmployeeLeadStageReportService {
       doc.rect(0, 0, pageW, 74).fill('#163A2E');
       doc.rect(0, 74, pageW, 3.5).fill('#20C466');
 
-      let titleX = margin;
-      if (logo) {
-        try {
-          doc.roundedRect(margin, 14, 46, 46, 8).fill('#FFFFFF');
-          doc.image(logo, margin + 4, 18, { fit: [38, 38], align: 'center', valign: 'center' });
-          titleX = margin + 58;
-        } catch {
-          /* ignore */
-        }
-      }
+      const { textStartX: titleX } = drawPdfHeaderLogo(doc, { x: margin, y: 15, maxWidth: 44, maxHeight: 44 });
 
       doc.font('Helvetica-Bold').fontSize(16).fillColor('#FFFFFF').text('Employee-Wise Lead & Stage Report', titleX, 18);
       doc.font('Helvetica').fontSize(9).fillColor('#CBD5E1').text(

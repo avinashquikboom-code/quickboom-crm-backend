@@ -1,5 +1,6 @@
 import { InvoiceStatus, SubscriptionBillingCycle, SubscriptionStatus } from '@prisma/client';
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 import * as fs from 'fs';
 import * as path from 'path';
 import { formatInrCurrency } from '../receipt/receipt.service';
@@ -188,17 +189,7 @@ export async function generateInvoicePaymentReceiptPdfBuffer(params: {
 
     // Header brand strip
     doc.rect(0, 0, doc.page.width, 84).fill('#173D30');
-    const logoPath = [
-      path.join(process.cwd(), 'dist/src/assets/images/logo.png'),
-      path.join(process.cwd(), 'dist/assets/images/logo.png'),
-      path.join(process.cwd(), 'src/assets/images/logo.png'),
-    ].find((candidate) => fs.existsSync(candidate));
-    if (logoPath) {
-      try {
-        doc.roundedRect(45, 14, 112, 56, 5).fill('#FFFFFF');
-        doc.image(logoPath, 51, 18, { fit: [100, 48], align: 'center', valign: 'center' });
-      } catch {}
-    }
+    drawPdfHeaderLogo(doc, { x: 45, y: 18, maxWidth: 48, maxHeight: 48 });
 
     doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(20).text('PAYMENT RECEIPT', 45, 24, { align: 'right' });
     doc.font('Helvetica').fontSize(10).fillColor('#A7F3D0').text(`Receipt No: ${params.receiptNo}`, 45, 50, { align: 'right' });

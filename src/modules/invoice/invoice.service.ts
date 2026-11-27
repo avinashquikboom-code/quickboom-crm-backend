@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 import { formatInrCurrency } from '../receipt/receipt.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -1135,17 +1136,19 @@ export class InvoiceService {
         const rightWidth = 245;
 
         // Header & Company Info
+        const { textStartX } = drawPdfHeaderLogo(doc, { x: leftX, y: 40, maxWidth: 42, maxHeight: 42 });
+        const brandWidth = Math.max(160, leftWidth - (textStartX - leftX));
         doc
           .fillColor(primaryColor)
           .fontSize(20)
           .font(boldFont)
-          .text(INVOICE_ISSUER.brand, leftX, 40, { width: leftWidth });
+          .text(INVOICE_ISSUER.brand, textStartX, 40, { width: brandWidth });
         doc
           .fillColor(darkColor)
           .fontSize(10)
           .font(boldFont)
-          .text(INVOICE_ISSUER.companyName, leftX, 65, {
-            width: leftWidth,
+          .text(INVOICE_ISSUER.companyName, textStartX, 65, {
+            width: brandWidth,
             lineGap: 1,
           });
         doc

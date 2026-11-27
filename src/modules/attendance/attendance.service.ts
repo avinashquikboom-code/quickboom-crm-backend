@@ -8,8 +8,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
+import { TelecallerTargetsService } from '../telecaller-targets/telecaller-targets.service';
 import { evaluateLatePunch, dateToMinutesInIST, parseTimeStringToMinutes } from '../payroll/salary-calculation';
 import { classifyPunchOut, scheduledCheckout } from './attendance-classification';
+import { computeShiftHalfDayBreakdown } from '../leave/half-day-leave.util';
 import { PunchAttendanceDto, QueryAttendanceHistoryDto } from './dto/punch.dto';
 import { AttendanceStatus } from '@prisma/client';
 import {
@@ -45,6 +47,7 @@ export class AttendanceService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly telecallerTargetsService?: TelecallerTargetsService,
   ) {}
 
   private async getAuthenticatedEmployee(user: any, customerId?: number | string) {
@@ -509,6 +512,20 @@ isRemoteActive: ${isRemoteActive}`);
     }
 
     const assignedShift = await this.resolveShiftAtPunch(employee, now);
+    const approvedTodayLeaves = this.prisma.leaveRequest?.findMany
+      ? await this.prisma.leaveRequest.findMany({
+          where: {
+            employeeId: employee.id,
+            status: 'APPROVED',
+            fromDate: { lte: todayEnd },
+            toDate: { gte: todayStart },
+          },
+          select: { id: true, durationType: true, halfDaySession: true, days: true },
+        })
+      : [];
+    const halfDayLeave = approvedTodayLeaves.find(
+      (l) => l.durationType === 'HALF_DAY' || Number(l.days) === 0.5,
+    );
     const lateEvaluation = await this.evaluatePunchLateness({ ...employee, shift: assignedShift }, policy, now);
     const isLatePunchIn = lateEvaluation.isLate;
     const lateMinutesCount = lateEvaluation.lateMinutes;
@@ -553,6 +570,9 @@ isRemoteActive: ${isRemoteActive}`);
             lateDeduction: lateEvaluation.deduction,
             lateRatePerMinute: lateEvaluation.ratePerMinute,
             lateGraceMinutes: lateEvaluation.gracePeriodMinutes,
+            isHalfDayLeave: Boolean(halfDayLeave),
+            halfDaySession: halfDayLeave?.halfDaySession || null,
+            leaveRequestId: halfDayLeave?.id || null,
             workMode,
             locationStatus,
             officeId: office.id,
@@ -577,6 +597,9 @@ isRemoteActive: ${isRemoteActive}`);
             lateDeduction: lateEvaluation.deduction,
             lateRatePerMinute: lateEvaluation.ratePerMinute,
             lateGraceMinutes: lateEvaluation.gracePeriodMinutes,
+            isHalfDayLeave: Boolean(halfDayLeave),
+            halfDaySession: halfDayLeave?.halfDaySession || null,
+            leaveRequestId: halfDayLeave?.id || null,
             workMode,
             locationStatus,
             officeId: office.id,
@@ -753,6 +776,8 @@ punchInAtSaved: ${attendance.punchIn?.toISOString()}`);
         workedHours: actualWorkingHours,
         policy,
         shift: employee.shift,
+        isHalfDayLeave: Boolean((attendance as any).isHalfDayLeave),
+        halfDaySession: (attendance as any).halfDaySession || null,
       });
 
       const updated = await tx.attendance.update({
@@ -795,6 +820,10 @@ result: SUCCESS`);
 
       const punchInIso = attendance.punchIn ? attendance.punchIn.toISOString() : null;
       const punchOutIso = updated.punchOut ? updated.punchOut.toISOString() : null;
+
+      this.telecallerTargetsService
+        ?.onFinalShiftPunchOut(employee.customerId, employee.id, dateStr)
+        .catch((err) => console.warn(`[TELECALLER_REPORT] punchOut trigger failed: ${err?.message}`));
 
       return {
         success: true,
@@ -1504,6 +1533,7 @@ result: SUCCESS`);
     let isHoliday = false;
     let isApprovedLeave = false;
     let latePolicy: any = null;
+    let effectiveShift = employee.shift;
     try {
       if ((this.prisma as any).publicHoliday?.findFirst) {
         const holiday = await (this.prisma as any).publicHoliday.findFirst({
@@ -1512,7 +1542,35 @@ result: SUCCESS`);
         });
         isHoliday = Boolean(holiday);
       }
-      if (this.prisma.leaveRequest?.findFirst) {
+      if (this.prisma.leaveRequest?.findMany) {
+        const leaves = await this.prisma.leaveRequest.findMany({
+          where: {
+            employeeId: employee.id,
+            status: 'APPROVED',
+            fromDate: { lte: end },
+            toDate: { gte: start },
+          },
+          select: { id: true, durationType: true, halfDaySession: true, days: true },
+        });
+        const hasFullDay =
+          leaves.some((l) => l.durationType !== 'HALF_DAY' && Number(l.days) !== 0.5) ||
+          (leaves.some((l) => l.halfDaySession === 'FIRST_HALF') &&
+            leaves.some((l) => l.halfDaySession === 'SECOND_HALF'));
+        isApprovedLeave = hasFullDay;
+
+        if (!hasFullDay) {
+          const firstHalfLeave = leaves.find(
+            (l) => (l.durationType === 'HALF_DAY' || Number(l.days) === 0.5) && l.halfDaySession === 'FIRST_HALF',
+          );
+          if (firstHalfLeave && employee.shift?.startTime) {
+            const breakdown = computeShiftHalfDayBreakdown(schedulePunch, employee.shift, attendancePolicy);
+            effectiveShift = {
+              ...employee.shift,
+              startTime: breakdown.secondHalfStartLabel,
+            };
+          }
+        }
+      } else if (this.prisma.leaveRequest?.findFirst) {
         const leave = await this.prisma.leaveRequest.findFirst({
           where: {
             employeeId: employee.id,
@@ -1520,9 +1578,19 @@ result: SUCCESS`);
             fromDate: { lte: end },
             toDate: { gte: start },
           },
-          select: { id: true },
+          select: { id: true, durationType: true, halfDaySession: true, days: true },
         });
-        isApprovedLeave = Boolean(leave);
+        if (leave) {
+          const isHalf = leave.durationType === 'HALF_DAY' || Number(leave.days) === 0.5;
+          isApprovedLeave = !isHalf;
+          if (isHalf && leave.halfDaySession === 'FIRST_HALF' && employee.shift?.startTime) {
+            const breakdown = computeShiftHalfDayBreakdown(schedulePunch, employee.shift, attendancePolicy);
+            effectiveShift = {
+              ...employee.shift,
+              startTime: breakdown.secondHalfStartLabel,
+            };
+          }
+        }
       }
       if ((this.prisma as any).lateMarkPolicy?.findUnique) {
         latePolicy = await (this.prisma as any).lateMarkPolicy.findUnique({ where: { customerId } });
@@ -1533,7 +1601,7 @@ result: SUCCESS`);
     }
     return evaluateLatePunch({
       punchIn,
-      shift: employee.shift?.startTime ? employee.shift : null,
+      shift: effectiveShift?.startTime ? effectiveShift : null,
       policy: latePolicy || {
         isEnabled: false,
         deductionRatePerMin: 1,

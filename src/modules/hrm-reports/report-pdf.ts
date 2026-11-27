@@ -1,4 +1,5 @@
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 
 export function renderReportPdf(input: {
   title: string;
@@ -20,8 +21,9 @@ export function renderReportPdf(input: {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
     doc.rect(0, 0, doc.page.width, 72).fill('#163A2E');
-    doc.fillColor('#FFFFFF').fontSize(16).text(input.companyName || 'QB Suite', 36, 22);
-    doc.fontSize(10).text(input.title, 36, 44);
+    const { textStartX } = drawPdfHeaderLogo(doc, { x: 36, y: 15, maxWidth: 42, maxHeight: 42 });
+    doc.fillColor('#FFFFFF').fontSize(16).text(input.companyName || 'QB Suite', textStartX, 22);
+    doc.fontSize(10).text(input.title, textStartX, 44);
     doc.fillColor('#172B24').fontSize(12).text(input.employeeName, 36, 92);
     doc.fontSize(9).fillColor('#64748B');
     doc.text(`${input.employeeCode}  ·  ${input.department}  ·  ${input.designation}`);

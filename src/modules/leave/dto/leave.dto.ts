@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateLeaveDto {
   @ApiPropertyOptional({ example: 1, description: 'Employee ID (optional if authenticated as employee)' })
@@ -28,10 +28,44 @@ export class CreateLeaveDto {
   @IsOptional()
   days?: number;
 
+  @ApiPropertyOptional({ example: 'HALF_DAY', enum: ['FULL_DAY', 'HALF_DAY'] })
+  @IsString()
+  @IsIn(['FULL_DAY', 'HALF_DAY'])
+  @IsOptional()
+  durationType?: 'FULL_DAY' | 'HALF_DAY';
+
+  @ApiPropertyOptional({ example: 'FIRST_HALF', enum: ['FIRST_HALF', 'SECOND_HALF'] })
+  @IsString()
+  @IsIn(['FIRST_HALF', 'SECOND_HALF'])
+  @IsOptional()
+  halfDaySession?: 'FIRST_HALF' | 'SECOND_HALF';
+
+  @ApiPropertyOptional({ example: false })
+  @IsBoolean()
+  @IsOptional()
+  isExceptional?: boolean;
+
+  @ApiPropertyOptional({ example: 'Medical emergency approved by HR' })
+  @IsString()
+  @IsOptional()
+  exceptionalReason?: string;
+
   @ApiPropertyOptional({ example: 'Family function' })
   @IsString()
   @IsOptional()
   reason?: string;
+}
+
+export class ApproveLeaveDto {
+  @ApiPropertyOptional({ example: false })
+  @IsBoolean()
+  @IsOptional()
+  isExceptional?: boolean;
+
+  @ApiPropertyOptional({ example: 'Approved as exception by HR manager' })
+  @IsString()
+  @IsOptional()
+  exceptionalReason?: string;
 }
 
 export class RejectLeaveDto {

@@ -1,4 +1,5 @@
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from './report-branding.util';
 
 export interface PlanProposalPdfData {
   proposalNo: string;
@@ -72,17 +73,19 @@ export async function generatePlanProposalPdfBuffer(data: PlanProposalPdfData): 
     doc.rect(0, 0, pageWidth, 96).fill(BRAND_DARK);
     doc.rect(0, 96, pageWidth, 4).fill(BRAND_ACCENT);
 
+    const { textStartX } = drawPdfHeaderLogo(doc, { x: margin, y: 24, maxWidth: 48, maxHeight: 48 });
+
     doc
       .font('Helvetica-Bold')
       .fontSize(20)
       .fillColor('#FFFFFF')
-      .text('PLAN PROPOSAL', margin, 26);
+      .text('PLAN PROPOSAL', textStartX, 26);
 
     doc
       .font('Helvetica')
       .fontSize(10)
       .fillColor('#CBD5E1')
-      .text(data.companyName || 'QB Suite CRM', margin, 54);
+      .text(data.companyName || 'QB Suite CRM', textStartX, 54);
 
     // Reference & Date Pill on Right
     const refBoxWidth = 175;

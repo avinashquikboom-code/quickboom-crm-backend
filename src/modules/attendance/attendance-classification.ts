@@ -43,6 +43,9 @@ export function classifyPunchOut(input: {
     breakDurationMinutes?: number | null;
     halfDayThresholdHours?: number | null;
   } | null;
+  isHalfDayLeave?: boolean | null;
+  halfDaySession?: string | null;
+  halfWorkingHours?: number | null;
 }): { status: AttendanceStatus; isLate: boolean; isHalfDay: boolean } {
   const current = input.currentStatus as AttendanceStatus;
   const isLate = Boolean(input.isLate || current === AttendanceStatus.LATE);
@@ -50,6 +53,12 @@ export function classifyPunchOut(input: {
   // persisted enum values. Do not replace an explicit non-working classification.
   if (['LEAVE', 'HOLIDAY', 'WEEKLY_OFF', 'ABSENT'].includes(current)) {
     return { status: current, isLate, isHalfDay: false };
+  }
+
+  // Approved half-day leave: employee is only expected to complete their working half
+  // without early punch-out penalties for the approved leave half.
+  if (input.isHalfDayLeave) {
+    return { status: AttendanceStatus.HALF_DAY, isLate, isHalfDay: true };
   }
 
   const worked = Math.max(0, Number(input.workedHours) || 0);

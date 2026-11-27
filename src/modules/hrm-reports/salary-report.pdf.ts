@@ -1,5 +1,6 @@
 import PDFDocument = require('pdfkit');
 import { SalaryReportData } from './salary-report.calculator';
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
@@ -23,8 +24,9 @@ export function renderSalaryReportPdf(data: SalaryReportData): Promise<Buffer> {
 
     // 1. BRAND HEADER BAR
     doc.rect(0, 0, pageWidth, 74).fill('#163A2E');
-    doc.fillColor('#FFFFFF').fontSize(18).font('Helvetica-Bold').text(data.company.name || 'QB Suite', 36, 18);
-    doc.fontSize(11).font('Helvetica').text('EMPLOYEE MONTHLY SALARY SUMMARY', 36, 42);
+    const { textStartX } = drawPdfHeaderLogo(doc, { x: 36, y: 16, maxWidth: 42, maxHeight: 42 });
+    doc.fillColor('#FFFFFF').fontSize(18).font('Helvetica-Bold').text(data.company.name || 'QB Suite', textStartX, 18);
+    doc.fontSize(11).font('Helvetica').text('EMPLOYEE MONTHLY SALARY SUMMARY', textStartX, 42);
 
     // Document identifier on top right
     doc.fontSize(9).font('Helvetica-Bold').text(data.period.periodLabel, 300, 24, { align: 'right', width: contentWidth - 264 });

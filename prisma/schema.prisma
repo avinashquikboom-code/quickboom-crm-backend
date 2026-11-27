@@ -148,6 +148,11 @@ model Customer {
   overtimeNotificationEvents  OvertimeNotificationEvent[]
   hrmMonthlyCycles            HrmMonthlyCycle[]
   hrmCommissionSnapshots      HrmCommissionMonthlySnapshot[]
+  telecallerTargetPolicy      TelecallerTargetPolicy?
+  telecallerTargets           TelecallerTargetAssignment[]
+  telecallerActivityEvents    TelecallerActivityEvent[]
+  dailyPerformanceSnapshots   DailyPerformanceSnapshot[]
+  dailyPerformanceReports     DailyPerformanceReport[]
 
   @@index([deletedAt])
   @@index([isActive])
@@ -1474,6 +1479,10 @@ model Employee {
   hrmNotificationDeliveries  HrmNotificationDelivery[]
   overtimeNotificationEvents OvertimeNotificationEvent[]
   hrmCommissionSnapshots     HrmCommissionMonthlySnapshot[]
+  telecallerTargets          TelecallerTargetAssignment[]
+  telecallerActivityEvents   TelecallerActivityEvent[]
+  dailyPerformanceSnapshots  DailyPerformanceSnapshot[]
+  dailyPerformanceReports    DailyPerformanceReport[]
 
   @@unique([customerId, employeeCode])
   @@index([customerId])
@@ -1496,6 +1505,9 @@ model Attendance {
   lateDeduction             Float             @default(0)
   lateRatePerMinute         Float             @default(0)
   lateGraceMinutes          Int               @default(0)
+  isHalfDayLeave            Boolean           @default(false)
+  halfDaySession            String?
+  leaveRequestId            Int?
   workMode                  String?           @default("OFFICE")
   locationStatus            String?           @default("INSIDE_RADIUS")
   status                    AttendanceStatus  @default(PRESENT)
@@ -1561,20 +1573,34 @@ model LeaveType {
 }
 
 model LeaveRequest {
-  id              Int           @id @default(autoincrement())
-  customerId      Int
-  employeeId      Int
-  leaveTypeId     Int
-  fromDate        DateTime
-  toDate          DateTime
-  days            Int           @default(1)
-  reason          String?
-  attachmentUrl   String?
-  status          RequestStatus @default(PENDING)
-  rejectionReason String?
-  approvedById    Int?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                  Int           @id @default(autoincrement())
+  customerId          Int
+  employeeId          Int
+  leaveTypeId         Int
+  fromDate            DateTime
+  toDate              DateTime
+  days                Float         @default(1.0)
+  durationType        String        @default("FULL_DAY")
+  halfDaySession      String?
+  shiftId             Int?
+  shiftStartTime      String?
+  shiftEndTime        String?
+  halfStartTime       String?
+  halfEndTime         String?
+  leaveHours          Float?
+  workingHours        Float?
+  applicationDeadline DateTime?
+  isExceptional       Boolean       @default(false)
+  exceptionalReason   String?
+  approvedAt          DateTime?
+  cancelledAt         DateTime?
+  reason              String?
+  attachmentUrl       String?
+  status              RequestStatus @default(PENDING)
+  rejectionReason     String?
+  approvedById        Int?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType       LeaveType     @relation(fields: [leaveTypeId], references: [id])
 
@@ -1716,8 +1742,10 @@ model LeavePolicy {
   allowProbationLeave         Boolean         @default(false)
   includeHolidaysInLeave      Boolean         @default(false)
   includeWeekendsInLeave      Boolean         @default(false)
-  minNoticePeriodDays         Int             @default(2)
-  maxConsecutiveDays          Int             @default(10)
+  minNoticePeriodDays                         Int             @default(2)
+  sameDaySecondHalfCutoffHours                Float           @default(2.0)
+  requireFirstHalfPunchInForSameDaySecondHalf Boolean         @default(true)
+  maxConsecutiveDays                          Int             @default(10)
   requiresManagerApproval     Boolean         @default(true)
   requiresHrApproval          Boolean         @default(true)
   requiresAttachmentAboveDays Int             @default(3)
@@ -4693,4 +4721,156 @@ model HrmCommissionMonthlySnapshot {
   @@unique([customerId, employeeId, year, month])
   @@index([customerId, year, month])
   @@map("hrm_commission_monthly_snapshots")
+}
+
+model TelecallerTargetPolicy {
+  id                        Int      @id @default(autoincrement())
+  customerId                Int      @unique
+  adjustForHalfDayLeave     Boolean  @default(true)
+  excludeFullDayLeave       Boolean  @default(true)
+  excludeHolidays           Boolean  @default(true)
+  excludeWeeklyOff          Boolean  @default(true)
+  autoSendOnFinalPunchOut   Boolean  @default(true)
+  emailTemplateKey          String?
+  emailSubjectTemplate      String?
+  whatsappTemplateName      String?
+  whatsappLanguageCode      String   @default("en_US")
+  whatsappVariableMapping   Json?
+  maxRetryAttempts          Int      @default(3)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  customer                  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("telecaller_target_policies")
+}
+
+model TelecallerTargetAssignment {
+  id            Int                       @id @default(autoincrement())
+  customerId    Int
+  employeeId    Int?
+  departmentId  Int?
+  metricKey     String
+  metricLabel   String
+  periodType    String                    @default("DAILY") // DAILY | WEEKLY | MONTHLY
+  targetValue   Float
+  weightage     Float?
+  effectiveDate DateTime
+  expiryDate    DateTime?
+  recurrence    String                    @default("RECURRING") // ONE_TIME | RECURRING
+  isOverride    Boolean                   @default(false)
+  isActive      Boolean                   @default(true)
+  assignedById  Int?
+  notes         String?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  customer      Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee      Employee?                 @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  history       TelecallerTargetHistory[]
+
+  @@index([customerId, employeeId, periodType, isActive])
+  @@index([customerId, departmentId, periodType, isActive])
+  @@index([customerId, metricKey, effectiveDate])
+  @@map("telecaller_target_assignments")
+}
+
+model TelecallerTargetHistory {
+  id           Int                        @id @default(autoincrement())
+  assignmentId Int
+  customerId   Int
+  changedById  Int?
+  action       String                     // CREATED | UPDATED | DEACTIVATED | OVERRIDE_SET
+  previousData Json?
+  newData      Json
+  reason       String?
+  createdAt    DateTime                   @default(now())
+  assignment   TelecallerTargetAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId, createdAt])
+  @@index([customerId, createdAt])
+  @@map("telecaller_target_histories")
+}
+
+model TelecallerActivityEvent {
+  id              Int       @id @default(autoincrement())
+  customerId      Int
+  employeeId      Int
+  metricKey       String
+  eventType       String
+  entityType      String
+  entityId        String
+  idempotencyKey  String    @unique
+  occurredAt      DateTime  @default(now())
+  businessDate    String
+  callStatus      String?   // OUTGOING | CONNECTED | MISSED | NO_ANSWER | BUSY
+  durationSeconds Int?
+  isVerified      Boolean   @default(true)
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee        Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, employeeId, businessDate, metricKey])
+  @@index([customerId, businessDate])
+  @@map("telecaller_activity_events")
+}
+
+model DailyPerformanceSnapshot {
+  id                 Int       @id @default(autoincrement())
+  customerId         Int
+  employeeId         Int
+  businessDate       String
+  shiftId            Int?
+  shiftName          String?
+  attendanceStatus   String?
+  punchIn            DateTime?
+  punchOut           DateTime?
+  workingHours       Float     @default(0)
+  isHalfDayLeave     Boolean   @default(false)
+  isFullDayLeave     Boolean   @default(false)
+  isHoliday          Boolean   @default(false)
+  isWeeklyOff        Boolean   @default(false)
+  overallScore       Float     @default(0)
+  callConnectionRate Float     @default(0)
+  leadConversionRate Float     @default(0)
+  metricBreakdown    Json
+  totals             Json
+  snapshotVersion    Int       @default(1)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  customer           Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee           Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId, businessDate])
+  @@index([customerId, businessDate])
+  @@map("daily_performance_snapshots")
+}
+
+model DailyPerformanceReport {
+  id               Int       @id @default(autoincrement())
+  customerId       Int
+  employeeId       Int
+  businessDate     String
+  reportVersion    Int       @default(1)
+  triggerKey       String    @unique
+  pdfUrl           String?
+  pdfStorageKey    String?
+  emailStatus      String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  emailAttempts    Int       @default(0)
+  emailError       String?
+  emailSentAt      DateTime?
+  whatsappStatus   String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  whatsappAttempts Int       @default(0)
+  whatsappError    String?
+  whatsappSentAt   DateTime?
+  nextRetryAt      DateTime?
+  snapshotData     Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, employeeId, businessDate, reportVersion])
+  @@index([customerId, businessDate])
+  @@index([emailStatus, whatsappStatus, nextRetryAt])
+  @@map("daily_performance_reports")
 }

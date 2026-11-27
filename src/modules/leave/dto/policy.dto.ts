@@ -265,6 +265,16 @@ export class UpsertLeavePolicyDto {
   @IsOptional()
   minNoticePeriodDays?: number;
 
+  @ApiPropertyOptional({ example: 2.0 })
+  @IsNumber()
+  @IsOptional()
+  sameDaySecondHalfCutoffHours?: number;
+
+  @ApiPropertyOptional({ example: true })
+  @IsBoolean()
+  @IsOptional()
+  requireFirstHalfPunchInForSameDaySecondHalf?: boolean;
+
   @ApiPropertyOptional({ example: 10 })
   @IsNumber()
   @IsOptional()

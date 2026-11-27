@@ -17,6 +17,7 @@ import {
   CreateLeaveDto,
   RejectLeaveDto,
   AdjustLeaveBalanceDto,
+  ApproveLeaveDto,
 } from './dto/leave.dto';
 import { CreateHolidayDto, UpdateHolidayDto } from './dto/holiday.dto';
 import {
@@ -172,6 +173,37 @@ export class LeaveController {
   // =========================================================
   // 2. LEAVE REQUESTS
   // =========================================================
+  @Get('preview')
+  @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
+  @ApiOperation({ summary: 'Preview shift-based leave timings, deadline, validation, and salary deduction' })
+  async previewLeave(
+    @CurrentUser() user: any,
+    @CurrentCustomer() customerId: number | string | undefined,
+    @Query('customerId') customerIdQuery?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('leaveTypeId') leaveTypeId?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('durationType') durationType?: 'FULL_DAY' | 'HALF_DAY',
+    @Query('halfDaySession') halfDaySession?: 'FIRST_HALF' | 'SECOND_HALF',
+    @Query('isExceptional') isExceptional?: string,
+  ) {
+    const isSuperAdmin = isUserSuperAdmin(user);
+    const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
+    if (!isSuperAdmin && !targetCustomerId) {
+      throw new ForbiddenException('User does not belong to any customer');
+    }
+    return this.leaveService.previewLeave(user, targetCustomerId, {
+      employeeId: employeeId ? Number(employeeId) : undefined,
+      leaveTypeId: leaveTypeId ? Number(leaveTypeId) : undefined,
+      fromDate,
+      toDate,
+      durationType,
+      halfDaySession,
+      isExceptional: isExceptional === 'true',
+    });
+  }
+
   @Get('requests')
   @RequirePermissions({ module: 'LEAVE', action: 'VIEW' })
   @ApiOperation({ summary: 'Get filtered leave applications' })
@@ -266,11 +298,12 @@ export class LeaveController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto?: ApproveLeaveDto,
     @Query('customerId') customerIdQuery?: string,
   ) {
     const isSuperAdmin = isUserSuperAdmin(user);
     const targetCustomerId = isSuperAdmin ? (customerIdQuery || customerId) : user?.customerId;
-    return this.leaveService.approveLeave(user, targetCustomerId, id);
+    return this.leaveService.approveLeave(user, targetCustomerId, id, dto);
   }
 
   @Patch(':id/approve')
@@ -280,9 +313,10 @@ export class LeaveController {
     @CurrentUser() user: any,
     @CurrentCustomer() customerId: number | string | undefined,
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto?: ApproveLeaveDto,
     @Query('customerId') customerIdQuery?: string,
   ) {
-    return this.approveLeave(user, customerId, id, customerIdQuery);
+    return this.approveLeave(user, customerId, id, dto, customerIdQuery);
   }
 
   @Patch('requests/:id/reject')

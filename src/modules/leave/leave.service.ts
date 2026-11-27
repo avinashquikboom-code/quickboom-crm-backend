@@ -12,7 +12,14 @@ import {
   CreateLeaveDto,
   RejectLeaveDto,
   AdjustLeaveBalanceDto,
+  ApproveLeaveDto,
 } from './dto/leave.dto';
+import {
+  computeShiftHalfDayBreakdown,
+  validateHalfDayLeaveApplication,
+} from './half-day-leave.util';
+import { getBusinessDate, getBusinessDayRange } from '../../common/utils/timezone.util';
+import { agreedMonthlySalary, SALARY_DAY_DIVISOR, evaluateLatePunch } from '../payroll/salary-calculation';
 import { CreateHolidayDto, UpdateHolidayDto } from './dto/holiday.dto';
 import {
   UpsertAttendancePolicyDto,
@@ -627,6 +634,125 @@ export class LeaveService {
     };
   }
 
+  async previewLeave(
+    user: any,
+    customerId: number | string | undefined,
+    query: {
+      employeeId?: number;
+      leaveTypeId?: number;
+      fromDate?: string;
+      toDate?: string;
+      durationType?: 'FULL_DAY' | 'HALF_DAY';
+      halfDaySession?: 'FIRST_HALF' | 'SECOND_HALF';
+      isExceptional?: boolean;
+    },
+  ) {
+    const numCustomerId = await this.resolveCustomerId(customerId);
+    const isEmpUser = user && (String(user.role).toUpperCase() === 'EMPLOYEE' || user.roleType === 'EMPLOYEE');
+
+    let employeeId = query.employeeId;
+    if (isEmpUser || !employeeId) {
+      const selfEmp = user?.employee || (user?.id
+        ? await this.prisma.employee.findFirst({
+            where: { userId: user.id, customerId: numCustomerId },
+          })
+        : null);
+      if (selfEmp) employeeId = selfEmp.id;
+    }
+    if (!employeeId) throw new BadRequestException('Valid employeeId is required');
+
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: Number(employeeId), customerId: numCustomerId },
+      include: { shift: true, salaryStructures: { orderBy: { effectiveFrom: 'desc' }, take: 1 } },
+    });
+    if (!employee) throw new NotFoundException(`Employee #${employeeId} not found`);
+
+    const targetDateStr = query.fromDate || getBusinessDate(new Date());
+    const toDateStr = query.toDate || targetDateStr;
+    const durationType = query.durationType === 'HALF_DAY' ? 'HALF_DAY' : 'FULL_DAY';
+    const halfDaySession = query.halfDaySession === 'SECOND_HALF' ? 'SECOND_HALF' : 'FIRST_HALF';
+
+    const [attendancePolicy, leavePolicy, salaryPolicy, leaveType] = await Promise.all([
+      this.prisma.attendancePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true, OR: [{ officeId: employee.officeId }, { officeId: null }] },
+        orderBy: [{ officeId: 'desc' }, { updatedAt: 'desc' }],
+      }),
+      this.prisma.leavePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true, OR: [{ officeId: employee.officeId }, { officeId: null }] },
+        orderBy: [{ officeId: 'desc' }, { updatedAt: 'desc' }],
+      }),
+      this.prisma.salaryPolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true, OR: [{ officeId: employee.officeId }, { officeId: null }] },
+        orderBy: [{ officeId: 'desc' }, { updatedAt: 'desc' }],
+      }),
+      query.leaveTypeId
+        ? this.prisma.leaveType.findFirst({ where: { id: Number(query.leaveTypeId), customerId: numCustomerId } })
+        : Promise.resolve(null),
+    ]);
+
+    const breakdown = computeShiftHalfDayBreakdown(targetDateStr, employee.shift, attendancePolicy);
+    const { start: dayStart, end: dayEnd } = getBusinessDayRange(breakdown.dateStr);
+    const dayAttendance = await this.prisma.attendance.findFirst({
+      where: { employeeId: employee.id, date: { gte: dayStart, lte: dayEnd } },
+      select: { punchIn: true },
+    });
+    const hasFirstHalfPunchIn = Boolean(
+      dayAttendance?.punchIn && new Date(dayAttendance.punchIn).getTime() <= breakdown.firstHalfEndAt.getTime(),
+    );
+
+    const validation = validateHalfDayLeaveApplication({
+      now: new Date(),
+      fromDate: targetDateStr,
+      toDate: toDateStr,
+      durationType,
+      halfDaySession: durationType === 'HALF_DAY' ? halfDaySession : null,
+      breakdown,
+      leavePolicy,
+      hasFirstHalfPunchIn,
+      isAdminOverride: !isEmpUser && Boolean(query.isExceptional),
+      exceptionalReason: 'Preview',
+    });
+
+    const monthlySalary = agreedMonthlySalary(employee.salaryStructures?.[0]);
+    const workingDaysPerMonth = Number(salaryPolicy?.workingDaysPerMonth || SALARY_DAY_DIVISOR);
+    const dailySalary = workingDaysPerMonth > 0 ? Math.round((monthlySalary / workingDaysPerMonth) * 100) / 100 : 0;
+    const isUnpaid = Boolean(
+      leaveType && (leaveType.code === 'UL' || leaveType.code === 'LOP' || leaveType.name.toLowerCase().includes('unpaid')),
+    );
+    const halfDayPct = Number(salaryPolicy?.halfDayDeductionPct ?? 50) / 100;
+    const estimatedSalaryDeduction = isUnpaid
+      ? Math.round(dailySalary * (durationType === 'HALF_DAY' ? halfDayPct : 1) * 100) / 100
+      : 0;
+
+    return {
+      success: true,
+      data: {
+        date: breakdown.dateStr,
+        durationType,
+        halfDaySession: durationType === 'HALF_DAY' ? halfDaySession : null,
+        shiftId: breakdown.shiftId,
+        shiftName: breakdown.shiftName,
+        shiftStartTime: breakdown.shiftStartTime,
+        shiftEndTime: breakdown.shiftEndTime,
+        isNightShift: breakdown.isNightShift,
+        breakDurationMinutes: breakdown.breakDurationMinutes,
+        firstHalf: `${breakdown.firstHalfStartLabel} – ${breakdown.firstHalfEndLabel}`,
+        secondHalf: `${breakdown.secondHalfStartLabel} – ${breakdown.secondHalfEndLabel}`,
+        expectedPunchIn: validation.expectedPunchIn,
+        expectedPunchOut: validation.expectedPunchOut,
+        workingHours: validation.workingHours,
+        leaveHours: validation.leaveHours,
+        applicationDeadline: validation.applicationDeadline?.toISOString() || null,
+        canApply: validation.valid,
+        validationMessage: validation.error || null,
+        hasFirstHalfPunchIn,
+        dailySalary,
+        estimatedSalaryDeduction,
+        isPaidLeave: !isUnpaid,
+      },
+    };
+  }
+
   async createLeave(user: any, customerId: number | string | undefined, dto: CreateLeaveDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
 
@@ -666,6 +792,7 @@ export class LeaveService {
 
     const employee = await this.prisma.employee.findFirst({
       where: { id: employeeId, customerId: numCustomerId },
+      include: { shift: true },
     });
     if (!employee) {
       throw new NotFoundException(`Employee #${employeeId} not found`);
@@ -717,8 +844,70 @@ export class LeaveService {
     const toStart = new Date(dto.toDate);
     toStart.setHours(0, 0, 0, 0);
 
-    const calculatedDays = Math.max(1, Math.round((toStart.getTime() - fromStart.getTime()) / (1000 * 60 * 60 * 24)) + 1);
-    const days = dto.days && dto.days > 0 ? Number(dto.days) : calculatedDays;
+    const durationType = dto.durationType === 'HALF_DAY' ? 'HALF_DAY' : 'FULL_DAY';
+    const halfDaySession = durationType === 'HALF_DAY' ? (dto.halfDaySession || 'FIRST_HALF') : null;
+
+    const [attendancePolicy, leavePolicy] = await Promise.all([
+      this.prisma.attendancePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true, OR: [{ officeId: employee.officeId }, { officeId: null }] },
+        orderBy: [{ officeId: 'desc' }, { updatedAt: 'desc' }],
+      }),
+      this.prisma.leavePolicy.findFirst({
+        where: { customerId: numCustomerId, isActive: true, OR: [{ officeId: employee.officeId }, { officeId: null }] },
+        orderBy: [{ officeId: 'desc' }, { updatedAt: 'desc' }],
+      }),
+    ]);
+
+    const breakdown = computeShiftHalfDayBreakdown(fromStart, employee.shift, attendancePolicy);
+    const { start: dayStart, end: dayEnd } = getBusinessDayRange(breakdown.dateStr);
+    const dayAttendance = await this.prisma.attendance.findFirst({
+      where: { employeeId, date: { gte: dayStart, lte: dayEnd } },
+      select: { punchIn: true },
+    });
+    const hasFirstHalfPunchIn = Boolean(
+      dayAttendance?.punchIn && new Date(dayAttendance.punchIn).getTime() <= breakdown.firstHalfEndAt.getTime(),
+    );
+
+    const validation = validateHalfDayLeaveApplication({
+      now: new Date(),
+      fromDate: fromStart,
+      toDate: toStart,
+      durationType,
+      halfDaySession,
+      breakdown,
+      leavePolicy,
+      hasFirstHalfPunchIn,
+      isAdminOverride: !isEmpUser && Boolean(dto.isExceptional),
+      exceptionalReason: dto.exceptionalReason,
+    });
+
+    if (!validation.valid) {
+      throw new BadRequestException(validation.error || 'Invalid leave application.');
+    }
+
+    // Prevent duplicate or overlapping leave applications
+    const overlapping = await this.prisma.leaveRequest.findMany({
+      where: {
+        customerId: numCustomerId,
+        employeeId,
+        status: { in: [RequestStatus.PENDING, RequestStatus.APPROVED] },
+        fromDate: { lte: toDate },
+        toDate: { gte: fromDate },
+      },
+      select: { id: true, durationType: true, halfDaySession: true },
+    });
+    const hasConflict = overlapping.some((existing) => {
+      if (durationType === 'FULL_DAY' || existing.durationType === 'FULL_DAY') return true;
+      return existing.halfDaySession === halfDaySession;
+    });
+    if (hasConflict) {
+      throw new ConflictException('A leave request already exists for this date and session.');
+    }
+
+    const calculatedDays = durationType === 'HALF_DAY'
+      ? 0.5
+      : Math.max(1, Math.round((toStart.getTime() - fromStart.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+    const days = durationType === 'HALF_DAY' ? 0.5 : (dto.days && dto.days > 0 ? Number(dto.days) : calculatedDays);
 
     const currentYear = fromStart.getFullYear();
     const isUnlimited = leaveType.code === 'UL' || leaveType.name.toLowerCase().includes('unpaid');
@@ -752,7 +941,19 @@ export class LeaveService {
         leaveTypeId: leaveType.id,
         fromDate,
         toDate,
-        days: Math.round(days),
+        days,
+        durationType,
+        halfDaySession,
+        shiftId: breakdown.shiftId,
+        shiftStartTime: breakdown.shiftStartTime,
+        shiftEndTime: breakdown.shiftEndTime,
+        halfStartTime: validation.halfStartTime,
+        halfEndTime: validation.halfEndTime,
+        leaveHours: validation.leaveHours,
+        workingHours: validation.workingHours,
+        applicationDeadline: validation.applicationDeadline,
+        isExceptional: !isEmpUser && Boolean(dto.isExceptional),
+        exceptionalReason: !isEmpUser && dto.isExceptional ? dto.exceptionalReason?.trim() || null : null,
         reason: dto.reason?.trim() || null,
         status: RequestStatus.PENDING,
       },
@@ -807,15 +1008,21 @@ export class LeaveService {
     };
   }
 
-  async approveLeave(user: any, customerId: number | string | undefined, id: number) {
+  async approveLeave(user: any, customerId: number | string | undefined, id: number, dto?: ApproveLeaveDto) {
     const numCustomerId = await this.resolveCustomerId(customerId);
+    const isExceptional = Boolean(dto?.isExceptional);
+    const exceptionalReason = dto?.exceptionalReason?.trim() || null;
+
+    if (isExceptional && !exceptionalReason) {
+      throw new BadRequestException('Exceptional approval reason is required when overriding leave rules.');
+    }
 
     // Atomic transaction for leave approval + balance deduction
     const result = await this.prisma.$transaction(async (tx) => {
       // 1. Fetch leave application inside transaction
       const leave = await tx.leaveRequest.findFirst({
         where: { id, customerId: numCustomerId },
-        include: { employee: true, leaveType: true },
+        include: { employee: { include: { shift: true } }, leaveType: true },
       });
 
       if (!leave) {
@@ -888,30 +1095,128 @@ export class LeaveService {
         data: {
           status: RequestStatus.APPROVED,
           approvedById: user?.id || null,
+          approvedAt: new Date(),
           rejectionReason: null,
+          ...(isExceptional
+            ? {
+                isExceptional: true,
+                exceptionalReason,
+              }
+            : {}),
         },
         include: { employee: true, leaveType: true },
       });
 
-      // 7. Check if leave covers today, and update today's attendance record
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
+      if ((isExceptional || leave.isExceptional) && (tx as any).auditLog?.create) {
+        await (tx as any).auditLog.create({
+          data: {
+            customerId: numCustomerId,
+            userId: user?.id || null,
+            userName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || 'Admin',
+            userRole: user?.role || 'ADMIN',
+            source: 'ADMIN_PANEL',
+            action: 'APPROVE',
+            module: 'Leave',
+            entityType: 'LeaveRequest',
+            entityId: String(id),
+            description: `Exceptional approval for ${leave.durationType} leave (#${id})`,
+            details: {
+              isExceptional: true,
+              exceptionalReason: exceptionalReason || leave.exceptionalReason,
+              durationType: leave.durationType,
+              halfDaySession: leave.halfDaySession,
+            },
+          },
+        });
+      }
 
-      if (leave.fromDate <= todayEnd && leave.toDate >= today) {
-        const todayAtt = await tx.attendance.findFirst({
+      // 7. Recalculate affected attendance record (half-day or full-day)
+      if (leave.durationType === 'HALF_DAY') {
+        const leaveDateStr = getBusinessDate(leave.fromDate);
+        const { start: dayStart, end: dayEnd } = getBusinessDayRange(leaveDateStr);
+        const existingAtt = await tx.attendance.findFirst({
           where: {
             employeeId: leave.employeeId,
-            date: { gte: today, lte: todayEnd },
+            date: { gte: dayStart, lte: dayEnd },
           },
         });
 
-        if (todayAtt && !todayAtt.punchIn) {
-          await tx.attendance.update({
-            where: { id: todayAtt.id },
-            data: { status: AttendanceStatus.LEAVE },
+        if (existingAtt) {
+          const attPolicy = await tx.attendancePolicy.findFirst({
+            where: { customerId: numCustomerId, isActive: true },
+            orderBy: { updatedAt: 'desc' },
           });
+          const latePolicy = (tx as any).lateMarkPolicy?.findUnique
+            ? await (tx as any).lateMarkPolicy.findUnique({ where: { customerId: numCustomerId } })
+            : null;
+          const shift = leave.employee?.shift || null;
+          const breakdown = computeShiftHalfDayBreakdown(leaveDateStr, shift, attPolicy);
+
+          if (existingAtt.punchIn) {
+            let nextIsLate = existingAtt.isLate;
+            let nextLateMinutes = existingAtt.lateMinutes;
+            let nextLateDeduction = existingAtt.lateDeduction;
+
+            if (leave.halfDaySession === 'FIRST_HALF' && shift?.startTime) {
+              const lateEval = evaluateLatePunch({
+                punchIn: existingAtt.punchIn,
+                shift: { ...shift, startTime: breakdown.secondHalfStartLabel },
+                policy: latePolicy || { isEnabled: false, deductionRatePerMin: 1, gracePeriodMinutes: 0, currency: 'INR' },
+                workingDaysPerWeek: attPolicy?.workingDaysPerWeek || 5,
+                employeeId: leave.employeeId,
+              });
+              nextIsLate = lateEval.isLate;
+              nextLateMinutes = lateEval.lateMinutes;
+              nextLateDeduction = lateEval.deduction;
+            }
+
+            await tx.attendance.update({
+              where: { id: existingAtt.id },
+              data: {
+                isHalfDayLeave: true,
+                halfDaySession: leave.halfDaySession,
+                leaveRequestId: leave.id,
+                isLate: nextIsLate,
+                lateMinutes: nextLateMinutes,
+                lateDeduction: nextLateDeduction,
+                status: existingAtt.punchOut
+                  ? AttendanceStatus.HALF_DAY
+                  : nextIsLate
+                    ? AttendanceStatus.LATE
+                    : AttendanceStatus.PRESENT,
+              },
+            });
+          } else {
+            await tx.attendance.update({
+              where: { id: existingAtt.id },
+              data: {
+                isHalfDayLeave: true,
+                halfDaySession: leave.halfDaySession,
+                leaveRequestId: leave.id,
+              },
+            });
+          }
+        }
+      } else {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        if (leave.fromDate <= todayEnd && leave.toDate >= today) {
+          const todayAtt = await tx.attendance.findFirst({
+            where: {
+              employeeId: leave.employeeId,
+              date: { gte: today, lte: todayEnd },
+            },
+          });
+
+          if (todayAtt && !todayAtt.punchIn) {
+            await tx.attendance.update({
+              where: { id: todayAtt.id },
+              data: { status: AttendanceStatus.LEAVE },
+            });
+          }
         }
       }
 
@@ -1983,6 +2288,8 @@ export class LeaveService {
       includeHolidaysInLeave: dto.includeHolidaysInLeave ?? false,
       includeWeekendsInLeave: dto.includeWeekendsInLeave ?? false,
       minNoticePeriodDays: dto.minNoticePeriodDays ?? 2,
+      sameDaySecondHalfCutoffHours: dto.sameDaySecondHalfCutoffHours ?? 2.0,
+      requireFirstHalfPunchInForSameDaySecondHalf: dto.requireFirstHalfPunchInForSameDaySecondHalf ?? true,
       maxConsecutiveDays: dto.maxConsecutiveDays ?? 10,
       requiresManagerApproval: dto.requiresManagerApproval ?? true,
       requiresHrApproval: dto.requiresHrApproval ?? true,

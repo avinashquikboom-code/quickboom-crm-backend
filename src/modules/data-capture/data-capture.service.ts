@@ -1,6 +1,7 @@
 import { S3Service } from '../s3/s3.service';
 import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException, HttpException, HttpStatus, Inject, Optional, forwardRef, OnModuleInit } from '@nestjs/common';
 import PDFDocument = require('pdfkit');
+import { drawPdfHeaderLogo } from '../../common/utils/report-branding.util';
 import { RecordCreatedFrom } from '@prisma/client';
 import { Response } from 'express';
 import { isUserAdmin, isUserSuperAdmin } from '../../common/utils/role.util';
@@ -4193,8 +4194,11 @@ export class DataCaptureService implements OnModuleInit {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
       const generated = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      doc.fontSize(16).fillColor('#163A2E').text('QB Suite');
-      doc.fontSize(10).fillColor('#172B24').text(company);
+      const { textStartX } = drawPdfHeaderLogo(doc, { x: 36, y: 34, maxWidth: 40, maxHeight: 40 });
+      doc.fontSize(16).fillColor('#163A2E').text('QB Suite', textStartX, 36);
+      doc.fontSize(10).fillColor('#172B24').text(company, textStartX, 56);
+      doc.x = 36;
+      doc.y = 84;
       doc.moveDown(0.3);
       doc.fontSize(14).text('Capture History');
       doc.fontSize(9).fillColor('#718078').text(`Period: ${query.dateFrom || 'All'} to ${query.dateTo || 'All'}`);
