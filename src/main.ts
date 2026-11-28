@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { blockPrivateUploads } from './common/utils/block-private-uploads.util';
 import helmet from 'helmet';
 import { join } from 'path';
 
@@ -19,6 +20,7 @@ async function bootstrap() {
 
   // Serve locally uploaded banner images (fallback when S3 is unavailable)
   // Files saved to <project_root>/uploads/ are reachable at /uploads/<path>
+  app.use('/uploads', blockPrivateUploads);
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 
   // Security & Cross-Origin Policy
