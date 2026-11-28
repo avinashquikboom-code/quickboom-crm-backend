@@ -198,6 +198,18 @@ export class HiringService {
       orderBy: { name: 'asc' },
     });
 
+    // Public endpoint: expose only the id and name needed by the dropdowns.
+    const designations = await this.prisma.designation.findMany({
+      where: { customerId: form.customerId, isActive: true, audience: 'EMPLOYEE' },
+      select: { id: true, name: true, departmentId: true },
+      orderBy: { name: 'asc' },
+    });
+    const employees = await this.prisma.employee.findMany({
+      where: { customerId: form.customerId, status: 'ACTIVE' },
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+
     return {
       success: true,
       data: {
@@ -207,6 +219,8 @@ export class HiringService {
         companyName: customer?.companyName || customer?.name || 'QB Suite',
         fieldConfig: form.fieldConfig || this.defaultFieldConfig(),
         departments,
+        designations,
+        referrers: employees.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}`.trim() })),
       },
     };
   }
@@ -289,6 +303,33 @@ export class HiringService {
         })
       : null;
 
+    const designationId = dto.designationId ? Number(dto.designationId) : null;
+    const designation = designationId
+      ? await this.prisma.designation.findFirst({
+          where: { id: designationId, customerId: form.customerId, isActive: true, audience: 'EMPLOYEE' },
+          select: { name: true, departmentId: true },
+        })
+      : null;
+    if (designationId && (!designation || (designation.departmentId && designation.departmentId !== dept?.id))) {
+      throw new BadRequestException('Please select a valid role for the chosen department.');
+    }
+
+    const referredById = dto.referredById ? Number(dto.referredById) : null;
+    const referrer = referredById
+      ? await this.prisma.employee.findFirst({
+          where: { id: referredById, customerId: form.customerId, status: 'ACTIVE' },
+          select: { firstName: true, lastName: true },
+        })
+      : null;
+    if (referredById && !referrer) {
+      throw new BadRequestException('Please select a valid employee in Referred By.');
+    }
+
+    const workLink = dto.workLink?.trim() || null;
+    if (workLink && !/^https?:\/\/\S+$/i.test(workLink)) {
+      throw new BadRequestException('Work link must start with http:// or https://');
+    }
+
     const resume = await this.storePrivateResume(form.customerId, file);
 
     const app = await this.prisma.$transaction(async (tx) => {
@@ -306,6 +347,10 @@ export class HiringService {
           currentSalary: dto.currentSalary !== undefined && dto.currentSalary !== '' ? Number(dto.currentSalary) : null,
           expectedSalary: dto.expectedSalary !== undefined && dto.expectedSalary !== '' ? Number(dto.expectedSalary) : null,
           experience: dto.experience?.trim() || null,
+          candidateAddress: dto.candidateAddress?.trim() || null,
+          appliedRole: designation?.name ?? null,
+          referredBy: referrer ? `${referrer.firstName} ${referrer.lastName}`.trim() : null,
+          workLink,
           resumeKey: resume.resumeKey,
           resumeUrl: resume.resumeUrl,
           resumeFilename: resume.resumeFilename,
@@ -872,6 +917,7 @@ export class HiringService {
         'Candidate Name', 'Mobile Number', 'Email Address', 'Department',
         'Interview Date', 'Interview Time', 'Current Salary', 'Expected Salary',
         'Experience', 'Interview Status', 'Remarks', 'Application Date', 'Source',
+        'Address', 'Applied Role', 'Referred By', 'Work Link',
       ];
       const headerRow = ws.getRow(startRow);
       headerRow.values = headers;
@@ -882,6 +928,7 @@ export class HiringService {
           r.candidateName, `${r.countryCode} ${r.mobileNumber}`, r.email, r.departmentName || '',
           r.interviewDate || '', r.interviewTime || '', r.currentSalary ?? '', r.expectedSalary ?? '',
           r.experience || '', r.interviewStatus, r.remarks || '', String(r.appliedAt).slice(0, 10), r.source,
+          r.candidateAddress || '', r.appliedRole || '', r.referredBy || '', r.workLink || '',
         ]),
       );
       return {
@@ -932,12 +979,14 @@ export class HiringService {
     const header = [
       'Candidate Name', 'Mobile Number', 'Email', 'Department', 'Interview Date', 'Interview Time',
       'Current Salary', 'Expected Salary', 'Experience', 'Interview Status', 'Remarks', 'Application Date', 'Source',
+      'Address', 'Applied Role', 'Referred By', 'Work Link',
     ].join(',');
     const lines = rows.map((r) =>
       [
         r.candidateName, `${r.countryCode} ${r.mobileNumber}`, r.email, r.departmentName || '',
         r.interviewDate || '', r.interviewTime || '', r.currentSalary ?? '', r.expectedSalary ?? '',
         r.experience || '', r.interviewStatus, r.remarks || '', String(r.appliedAt).slice(0, 10), r.source,
+        r.candidateAddress || '', r.appliedRole || '', r.referredBy || '', r.workLink || '',
       ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','),
     );
     return {

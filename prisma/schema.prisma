@@ -5013,6 +5013,10 @@ model CandidateApplication {
   currentSalary       Float?
   expectedSalary      Float?
   experience          String?
+  candidateAddress    String?
+  appliedRole         String?
+  referredBy          String?
+  workLink            String?
   resumeKey           String?
   resumeUrl           String?
   resumeFilename      String?

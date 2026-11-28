@@ -12,6 +12,14 @@ describe('HiringService', () => {
         findMany: jest.fn().mockResolvedValue([{ id: 10, name: 'Sales' }]),
         findFirst: jest.fn().mockResolvedValue({ id: 10, name: 'Sales' }),
       },
+      designation: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      employee: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       hiringForm: {
         create: jest.fn().mockImplementation(async ({ data }) => ({ id: 1, ...data })),
         findUnique: jest.fn(),
