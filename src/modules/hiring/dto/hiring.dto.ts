@@ -11,6 +11,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -121,6 +122,26 @@ export class PublicSubmitApplicationDto {
   @IsOptional()
   @IsString()
   experience?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  candidateAddress?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  designationId?: number | string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  referredById?: number | string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  workLink?: string;
 
   /** Honeypot spam-protection field; must remain empty */
   @ApiPropertyOptional()
