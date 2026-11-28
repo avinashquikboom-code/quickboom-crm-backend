@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -177,34 +178,28 @@ export class HiringService {
     const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
     const storageKey = `private-resumes/${customerId}/${safeName}`;
 
+    const stored = { resumeKey: storageKey, resumeUrl: null, resumeFilename: file.originalname };
+
     if (this.s3Service) {
       try {
-        const uploaded = await (this.s3Service as any).uploadBuffer?.(
-          file.buffer,
-          storageKey,
-          file.mimetype,
-        );
-        if (uploaded?.url || uploaded?.key) {
-          return {
-            resumeKey: uploaded.key || storageKey,
-            resumeUrl: uploaded.url || null,
-            resumeFilename: file.originalname,
-          };
-        }
+        await this.s3Service.uploadPrivatePdf(file.buffer, storageKey, file.mimetype);
+        return stored;
       } catch (err: any) {
         this.logger.warn(`S3 private resume upload fallback to local disk: ${err?.message}`);
       }
     }
 
-    const dir = path.join(process.cwd(), 'uploads', 'private-resumes', String(customerId));
-    fs.mkdirSync(dir, { recursive: true });
-    const fullPath = path.join(dir, safeName);
-    fs.writeFileSync(fullPath, file.buffer);
-    return {
-      resumeKey: storageKey,
-      resumeUrl: null,
-      resumeFilename: file.originalname,
-    };
+    try {
+      const dir = path.join(process.cwd(), 'uploads', 'private-resumes', String(customerId));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, safeName), file.buffer);
+    } catch (err: any) {
+      this.logger.error(`Resume storage failed: ${err?.message}`);
+      throw new ServiceUnavailableException(
+        'We could not save your resume right now. Please try again later.',
+      );
+    }
+    return stored;
   }
 
   async submitPublicApplication(
@@ -580,6 +575,16 @@ export class HiringService {
         buffer: fs.readFileSync(localPath),
         filename: app.resumeFilename || path.basename(app.resumeKey),
       };
+    }
+    if (!app.resumeUrl && this.s3Service) {
+      try {
+        return {
+          buffer: await this.s3Service.readPrivateObject(app.resumeKey),
+          filename: app.resumeFilename || path.basename(app.resumeKey),
+        };
+      } catch (err: any) {
+        this.logger.warn(`S3 private resume read failed: ${err?.message}`);
+      }
     }
     if (app.resumeUrl) {
       const resp = await fetch(app.resumeUrl);
