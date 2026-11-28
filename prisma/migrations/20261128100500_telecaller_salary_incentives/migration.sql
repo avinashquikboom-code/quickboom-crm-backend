@@ -1,0 +1,28 @@
+-- Telecaller Reward Points & Salary Incentive System
+ALTER TABLE "telecaller_target_policies"
+  ADD COLUMN IF NOT EXISTS "rewardsEnabled" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "rewardPointsPerDay" INTEGER NOT NULL DEFAULT 100,
+  ADD COLUMN IF NOT EXISTS "pointsPerRupee" DOUBLE PRECISION NOT NULL DEFAULT 10,
+  ADD COLUMN IF NOT EXISTS "rewardEligibilityMode" TEXT NOT NULL DEFAULT 'ALL_MANDATORY',
+  ADD COLUMN IF NOT EXISTS "rewardEffectiveDate" TIMESTAMP(3);
+
+ALTER TABLE "telecaller_reward_ledgers"
+  ADD COLUMN IF NOT EXISTS "assignedTarget" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "actualAchievement" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "achievementPct" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "pointsPerRupee" DOUBLE PRECISION NOT NULL DEFAULT 10,
+  ADD COLUMN IF NOT EXISTS "incentiveAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "payrollMonth" INTEGER,
+  ADD COLUMN IF NOT EXISTS "payrollYear" INTEGER,
+  ADD COLUMN IF NOT EXISTS "payrollId" INTEGER,
+  ADD COLUMN IF NOT EXISTS "payrollItemId" INTEGER,
+  ADD COLUMN IF NOT EXISTS "isAdjustment" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "adjustmentReason" TEXT,
+  ADD COLUMN IF NOT EXISTS "updatedById" INTEGER;
+
+CREATE INDEX IF NOT EXISTS "telecaller_reward_ledgers_payroll_idx"
+  ON "telecaller_reward_ledgers" ("customerId", "employeeId", "payrollYear", "payrollMonth", "status");
+
+ALTER TABLE "PayrollItem"
+  ADD COLUMN IF NOT EXISTS "telecallerIncentive" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "telecallerIncentiveDetails" JSONB;

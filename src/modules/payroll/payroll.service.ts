@@ -212,6 +212,8 @@ export class PayrollService {
       commission: pi?.commission ?? 0,
       overtime: pi?.overtime ?? 0,
       reimbursement: pi?.reimbursement ?? 0,
+      telecallerIncentive: Number(pi?.telecallerIncentive ?? 0),
+      telecallerIncentiveDetails: pi?.telecallerIncentiveDetails ?? null,
       pf: pi?.pf ?? 0,
       esi: pi?.esi ?? 0,
       professionalTax: pi?.professionalTax ?? 0,
@@ -504,13 +506,53 @@ export class PayrollService {
         const lateRatePerMinute = lateCalc.lateRatePerMinute;
         const lateMarkBreakdown = lateCalc.breakdown;
 
+        const rewardRows = (tx as any).telecallerRewardLedger?.findMany
+          ? await (tx as any).telecallerRewardLedger.findMany({
+              where: {
+                customerId: numCustomerId,
+                employeeId: emp.id,
+                payrollMonth: month,
+                payrollYear: year,
+                OR: [
+                  { status: 'EARNED' },
+                  { status: 'INCLUDED_IN_PAYROLL', payrollId: payroll.id },
+                ],
+              },
+            })
+          : [];
+        const telecallerIncentive = Math.round(
+          rewardRows.reduce((sum: number, row: any) => sum + (Number(row.incentiveAmount) || 0), 0) * 100,
+        ) / 100;
+        const totalRewardPoints = rewardRows.reduce((sum: number, row: any) => sum + (Number(row.points) || 0), 0);
+        const adjustmentIncentive = Math.round(
+          rewardRows
+            .filter((row: any) => row.isAdjustment)
+            .reduce((sum: number, row: any) => sum + (Number(row.incentiveAmount) || 0), 0) * 100,
+        ) / 100;
+        const completedTargetDays = new Set(
+          rewardRows.filter((row: any) => !row.isAdjustment).map((row: any) => row.businessDate),
+        ).size;
+        const pointsPerRupeeUsed = rewardRows.length > 0 ? Number(rewardRows[0].pointsPerRupee || 10) : 10;
+        const telecallerIncentiveDetails = rewardRows.length > 0
+          ? {
+              eligibleWorkingDays: attendance.workingDays,
+              completedDays: completedTargetDays,
+              totalEarnedPoints: totalRewardPoints,
+              pointsPerRupee: pointsPerRupeeUsed,
+              grossIncentive: Math.round((telecallerIncentive - adjustmentIncentive) * 100) / 100,
+              adjustments: adjustmentIncentive,
+              finalIncentive: telecallerIncentive,
+            }
+          : null;
+        (emp as any)._rewardLedgerIds = rewardRows.map((r: any) => r.id);
+
         const statutory = pf + esi + profTax + tds + otherDeductions + loanDeduction + lateDeduction + penaltyDeduction;
         const extraOvertime = overtimeRequestIds.length ? Math.max(0, overtime - structureOvertime) : 0;
         const settlement = settleMonthlySalary({
           monthlySalary,
           lopDays: attendance.lopDays,
           otherDeductions: statutory,
-          extraEarnings: reimbursement + extraOvertime,
+          extraEarnings: reimbursement + extraOvertime + telecallerIncentive,
         });
 
         totalGross += settlement.gross;
@@ -530,6 +572,8 @@ export class PayrollService {
           overtime: structureOvertime + extraOvertime,
           otherEarnings,
           reimbursement,
+          telecallerIncentive,
+          telecallerIncentiveDetails: telecallerIncentiveDetails as any,
           pf,
           esi,
           professionalTax: profTax,
@@ -572,14 +616,22 @@ export class PayrollService {
         data: itemsData,
       });
 
-      if (tx.overtimeRequest?.updateMany && tx.payrollItem?.findMany) {
+      if (tx.payrollItem?.findMany) {
         const savedItems = await tx.payrollItem.findMany({ where: { payrollId: payroll.id }, select: { id: true, employeeId: true } });
         for (const item of savedItems) {
-          const requestIds = (employees.find((employee) => employee.id === item.employeeId) as any)?._overtimeRequestIds || [];
-          if (requestIds.length) {
+          const empObj = employees.find((employee) => employee.id === item.employeeId) as any;
+          const requestIds = empObj?._overtimeRequestIds || [];
+          if (requestIds.length && tx.overtimeRequest?.updateMany) {
             await tx.overtimeRequest.updateMany({
               where: { id: { in: requestIds }, payrollStatus: { not: 'PAID' } },
               data: { payrollStatus: 'PROCESSED', payrollItemId: item.id, payrollId: payroll.id },
+            });
+          }
+          const rewardLedgerIds = empObj?._rewardLedgerIds || [];
+          if (rewardLedgerIds.length && (tx as any).telecallerRewardLedger?.updateMany) {
+            await (tx as any).telecallerRewardLedger.updateMany({
+              where: { id: { in: rewardLedgerIds }, status: { not: 'PAID' } },
+              data: { status: 'INCLUDED_IN_PAYROLL', payrollItemId: item.id, payrollId: payroll.id },
             });
           }
         }
@@ -962,6 +1014,13 @@ export class PayrollService {
           await tx.overtimeRequest.updateMany({
             where: { payrollItemId: item.id, payrollStatus: 'PROCESSED' },
             data: { payrollStatus: 'PAID' },
+          });
+        }
+
+        if ((tx as any).telecallerRewardLedger?.updateMany) {
+          await (tx as any).telecallerRewardLedger.updateMany({
+            where: { payrollItemId: item.id, status: 'INCLUDED_IN_PAYROLL' },
+            data: { status: 'PAID' },
           });
         }
       }

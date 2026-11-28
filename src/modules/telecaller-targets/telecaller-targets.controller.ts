@@ -19,8 +19,10 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { TelecallerTargetsService } from './telecaller-targets.service';
 import {
+  AdjustTelecallerRewardDto,
   AssignTelecallerTargetDto,
   RecordCallEventDto,
+  ReverseTelecallerRewardDto,
   UpdateTelecallerTargetDto,
   UpsertRewardSlabsDto,
   UpsertTelecallerTargetPolicyDto,
@@ -164,6 +166,27 @@ export class TelecallerTargetsController {
       fromDate,
       toDate,
     });
+  }
+
+  @Post('rewards/adjust')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  adjustReward(
+    @Request() req: any,
+    @Query('customerId') customerId: string | undefined,
+    @Body() dto: AdjustTelecallerRewardDto,
+  ) {
+    return this.service.adjustReward(req.user, customerId, dto);
+  }
+
+  @Post('rewards/:id/reverse')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  reverseReward(
+    @Request() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('customerId') customerId: string | undefined,
+    @Body() dto: ReverseTelecallerRewardDto,
+  ) {
+    return this.service.reverseReward(req.user, customerId, id, dto);
   }
 
   @Get('my/analysis')

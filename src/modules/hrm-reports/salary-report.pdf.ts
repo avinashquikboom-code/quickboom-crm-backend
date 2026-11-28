@@ -117,9 +117,9 @@ export function renderSalaryReportPdf(data: SalaryReportData): Promise<Buffer> {
       ['Special Allowance', data.earnings.specialAllowance],
       ['Approved Overtime Earnings', data.earnings.overtime],
       ['Approved Reimbursements', data.earnings.reimbursement],
+      ['Telecaller Target Incentive', data.earnings.telecallerIncentive ?? 0],
       ['Commission & Incentives', data.earnings.commission],
       ['Performance Bonus', data.earnings.bonus],
-      ['Other Earnings', data.earnings.otherEarnings],
     ];
 
     let earnY = y + 32;
@@ -133,6 +133,24 @@ export function renderSalaryReportPdf(data: SalaryReportData): Promise<Buffer> {
     doc.rect(36, y + 198, halfWidth, 32).fill('#ECFDF5');
     doc.fillColor('#065F46').fontSize(9).font('Helvetica-Bold').text('GROSS EARNINGS', 46, y + 208);
     doc.fillColor('#065F46').fontSize(10).text(formatCurrency(data.earnings.grossSalary), 36 + halfWidth - 95, y + 208, { align: 'right', width: 85 });
+
+    if (data.performanceIncentives && data.performanceIncentives.finalIncentive > 0) {
+      const pi = data.performanceIncentives;
+      const piY = y + 240;
+      doc.rect(36, piY, contentWidth, 56).fill('#F0FDF4');
+      doc.rect(36, piY, contentWidth, 56).stroke('#BBF7D0');
+      doc.fillColor('#166534').fontSize(8.5).font('Helvetica-Bold').text('PERFORMANCE INCENTIVES', 46, piY + 8);
+      doc.fillColor('#0F172A').fontSize(7.8).font('Helvetica').text(
+        `Eligible Days: ${pi.eligibleWorkingDays}   |   Target Completed Days: ${pi.completedDays}   |   Earned Points: ${pi.totalEarnedPoints}   |   Rate: ${pi.pointsPerRupee} pts = ₹1`,
+        46,
+        piY + 23,
+      );
+      doc.text(
+        `Gross Incentive: ${formatCurrency(pi.grossIncentive)}   |   Adjustments: ${formatCurrency(pi.adjustments)}   |   Final Incentive Included: ${formatCurrency(pi.finalIncentive)}`,
+        46,
+        piY + 37,
+      );
+    }
 
     // DEDUCTIONS BOX
     const dedX = 36 + halfWidth + 12;

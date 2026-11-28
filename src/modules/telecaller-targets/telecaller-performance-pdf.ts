@@ -34,6 +34,14 @@ export interface DailyPerformancePdfInput {
   callVerificationLimitation?: string | null;
   summaryNotes?: string[];
   improvementAreas?: string[];
+  rewardSummary?: {
+    eligibility: string;
+    pointsToday: number;
+    incentiveToday: number;
+    monthlyPoints: number;
+    monthlyIncentive: number;
+    pointsPerRupee: number;
+  };
 }
 
 export function renderDailyPerformancePdf(input: DailyPerformancePdfInput): Promise<Buffer> {
@@ -223,6 +231,28 @@ export function renderDailyPerformancePdf(input: DailyPerformancePdfInput): Prom
         doc.font('Helvetica').fontSize(8.5).fillColor('#991B1B').text(`• ${area}`, 42, y, { width: contentWidth - 12 });
         y += 13;
       });
+    }
+
+    if (input.rewardSummary) {
+      y += 8;
+      ensureSpace(64);
+      doc.roundedRect(36, y, contentWidth, 54, 6).fillAndStroke('#ECFDF5', '#A7F3D0');
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#065F46').text('Daily Reward & Salary Incentive Summary', 48, y + 8);
+      doc
+        .font('Helvetica')
+        .fontSize(8.5)
+        .fillColor('#0F172A')
+        .text(
+          `Eligibility: ${input.rewardSummary.eligibility}   |   Points Today: +${input.rewardSummary.pointsToday} pts   |   Incentive Today: ₹${input.rewardSummary.incentiveToday.toFixed(2)}`,
+          48,
+          y + 23,
+        );
+      doc.text(
+        `Monthly Accumulated: ${input.rewardSummary.monthlyPoints} pts (₹${input.rewardSummary.monthlyIncentive.toFixed(2)})   |   Rate: ${input.rewardSummary.pointsPerRupee} pts = ₹1`,
+        48,
+        y + 37,
+      );
+      y += 62;
     }
 
     const pages = doc.bufferedPageRange();

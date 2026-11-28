@@ -193,6 +193,62 @@ export class UpsertTelecallerTargetPolicyDto {
   @IsInt()
   @Min(0)
   maxConnectedCalls?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  rewardsEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  rewardPointsPerDay?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0.1)
+  pointsPerRupee?: number;
+
+  @ApiPropertyOptional({ enum: ['ALL_MANDATORY', 'CALL_TARGET_ONLY'] })
+  @IsOptional()
+  @IsIn(['ALL_MANDATORY', 'CALL_TARGET_ONLY'])
+  rewardEligibilityMode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  rewardEffectiveDate?: string;
+}
+
+export class AdjustTelecallerRewardDto {
+  @ApiProperty()
+  @IsInt()
+  employeeId: number;
+
+  @ApiProperty()
+  @IsString()
+  businessDate: string;
+
+  @ApiProperty()
+  @IsInt()
+  points: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  incentiveAmount?: number;
+
+  @ApiProperty()
+  @IsString()
+  reason: string;
+}
+
+export class ReverseTelecallerRewardDto {
+  @ApiProperty()
+  @IsString()
+  reason: string;
 }
 
 export class UpsertRewardSlabsDto {
