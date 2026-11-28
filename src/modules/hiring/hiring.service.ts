@@ -79,6 +79,33 @@ export class HiringService {
     };
   }
 
+  private parseExpiryEndOfDayIst(raw?: string | null): Date | null {
+    if (!raw || !String(raw).trim()) return null;
+    const str = String(raw).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+      return new Date(`${str}T23:59:59.999+05:30`);
+    }
+    const parsed = new Date(str);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed;
+  }
+
+  private effectiveExpiryDate(expiresAt?: Date | string | null): Date | null {
+    if (!expiresAt) return null;
+    const d = new Date(expiresAt);
+    if (Number.isNaN(d.getTime())) return null;
+    // Normalize legacy midnight-UTC dates to 11:59:59 PM IST of that date
+    if (
+      d.getUTCHours() === 0 &&
+      d.getUTCMinutes() === 0 &&
+      d.getUTCSeconds() === 0
+    ) {
+      const datePart = d.toISOString().slice(0, 10);
+      return new Date(`${datePart}T23:59:59.999+05:30`);
+    }
+    return d;
+  }
+
   async createForm(user: any, customerId: number | string | undefined, dto: CreateHiringFormDto) {
     const numCustomerId = await this.resolveCustomerId(user, customerId);
     const token = crypto.randomBytes(24).toString('base64url');
@@ -91,7 +118,7 @@ export class HiringService {
         departmentIds: dto.departmentIds?.length ? (dto.departmentIds.map(Number) as any) : undefined,
         fieldConfig: (dto.fieldConfig || this.defaultFieldConfig()) as any,
         isActive: dto.isActive !== false,
-        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+        expiresAt: this.parseExpiryEndOfDayIst(dto.expiresAt),
         createdById: user?.id ? Number(user.id) : null,
       },
     });
@@ -122,17 +149,36 @@ export class HiringService {
         ...(dto.departmentIds !== undefined ? { departmentIds: dto.departmentIds as any } : {}),
         ...(dto.fieldConfig !== undefined ? { fieldConfig: dto.fieldConfig as any } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-        ...(dto.expiresAt !== undefined ? { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null } : {}),
+        ...(dto.expiresAt !== undefined ? { expiresAt: this.parseExpiryEndOfDayIst(dto.expiresAt) } : {}),
       },
     });
     return { success: true, data: updated };
+  }
+
+  async deleteForm(user: any, customerId: number | string | undefined, id: number) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const existing = await this.prisma.hiringForm.findFirst({
+      where: { id, customerId: numCustomerId },
+    });
+    if (!existing) throw new NotFoundException(`Hiring form #${id} not found`);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.candidateApplication.updateMany({
+        where: { hiringFormId: id },
+        data: { hiringFormId: null },
+      });
+      await tx.hiringForm.delete({ where: { id } });
+    });
+
+    return { success: true, message: 'Hiring form deleted successfully.' };
   }
 
   async getPublicFormByToken(token: string) {
     const form = await this.prisma.hiringForm.findUnique({ where: { token } });
     if (!form) throw new NotFoundException('Hiring form not found.');
     if (!form.isActive) throw new BadRequestException('This hiring form is currently closed.');
-    if (form.expiresAt && new Date(form.expiresAt) < new Date()) {
+    const effectiveExpiry = this.effectiveExpiryDate(form.expiresAt);
+    if (effectiveExpiry && effectiveExpiry < new Date()) {
       throw new BadRequestException('This hiring form has expired.');
     }
 
@@ -216,7 +262,8 @@ export class HiringService {
     const form = await this.prisma.hiringForm.findUnique({ where: { token } });
     if (!form) throw new NotFoundException('Hiring form not found.');
     if (!form.isActive) throw new BadRequestException('This hiring form is no longer accepting applications.');
-    if (form.expiresAt && new Date(form.expiresAt) < new Date()) {
+    const effectiveExpiry = this.effectiveExpiryDate(form.expiresAt);
+    if (effectiveExpiry && effectiveExpiry < new Date()) {
       throw new BadRequestException('This hiring form has expired.');
     }
 
@@ -496,6 +543,37 @@ export class HiringService {
     }
 
     return { success: true, data: updated };
+  }
+
+  /** Permanently deletes candidates; interviews, history and notification logs cascade. */
+  async deleteApplications(user: any, customerId: number | string | undefined, ids: number[]) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const rows = await this.prisma.candidateApplication.findMany({
+      where: { id: { in: ids }, customerId: numCustomerId },
+      select: { id: true, resumeKey: true },
+    });
+    if (!rows.length) throw new NotFoundException('No matching applications found to delete.');
+
+    const { count } = await this.prisma.candidateApplication.deleteMany({
+      where: { id: { in: rows.map((r) => r.id) }, customerId: numCustomerId },
+    });
+
+    // Remove resume files only after the records are gone. A cleanup failure is logged, not fatal.
+    for (const { resumeKey } of rows) {
+      if (!resumeKey) continue;
+      try {
+        fs.rmSync(path.join(process.cwd(), 'uploads', resumeKey), { force: true });
+      } catch (err: any) {
+        this.logger.warn(`Local resume cleanup failed: ${err?.message}`);
+      }
+      await this.s3Service?.deleteFile(resumeKey);
+    }
+
+    return {
+      success: true,
+      message: `${count} application${count === 1 ? '' : 's'} deleted.`,
+      data: { deletedCount: count },
+    };
   }
 
   async scheduleInterview(
