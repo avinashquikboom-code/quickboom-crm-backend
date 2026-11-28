@@ -712,6 +712,90 @@ QUIKBOOM Digital Marketing Agency`,
   <p style="color: #94a3b8; font-size: 12px;">Sent via <strong>{{companyName}}</strong> &bull; Subscriptions</p>
 </div>`,
   },
+  {
+    key: 'daily_performance_poor',
+    name: 'Daily Telecaller Performance - Poor',
+    category: 'HR',
+    subject: '🚨 Daily Performance Report ({{reportDate}}) - Needs Attention',
+    description: 'Sent at 10:00 PM IST when daily telecaller target achievement is below poor threshold (<70%)',
+    supportedVariables: ['companyName', 'employeeName', 'reportDate', 'assignedTarget', 'completedCalls', 'remainingTarget', 'achievement', 'points', 'incentive', 'logoUrl'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #fecaca; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #fee2e2;">
+    <img src="{{logoUrl}}" alt="{{companyName}}" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
+  </div>
+  <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px;">
+    <strong style="color: #991b1b; font-size: 15px;">🚨 Performance Classification: Poor ({{achievement}}%)</strong>
+  </div>
+  <p style="color: #334155; font-size: 14px;">Hello <strong>{{employeeName}}</strong>,</p>
+  <p style="color: #475569; font-size: 14px;">Here is your daily telecaller performance summary for <strong>{{reportDate}}</strong>:</p>
+  <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Assigned Target</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{assignedTarget}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Completed Calls</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{completedCalls}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Remaining Target</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #dc2626;">{{remainingTarget}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Achievement</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #dc2626;">{{achievement}}%</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Reward Points</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{points}} pts</td></tr>
+    <tr><td style="padding: 8px; color: #64748b;">Salary Incentive</td><td style="padding: 8px; font-weight: bold; text-align: right;">₹{{incentive}}</td></tr>
+  </table>
+  <p style="color: #475569; font-size: 13px;">Your detailed A4 performance report is attached as a PDF. Please review the improvement areas for tomorrow.</p>
+  <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">Regards,<br /><strong>{{companyName}}</strong></p>
+</div>`,
+  },
+  {
+    key: 'daily_performance_average',
+    name: 'Daily Telecaller Performance - Average',
+    category: 'HR',
+    subject: '⭐ Daily Performance Report ({{reportDate}}) - Average ({{achievement}}%)',
+    description: 'Sent at 10:00 PM IST when daily telecaller target achievement is between 70% and <100%',
+    supportedVariables: ['companyName', 'employeeName', 'reportDate', 'assignedTarget', 'completedCalls', 'remainingTarget', 'achievement', 'points', 'incentive', 'logoUrl'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #fde68a; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #fef3c7;">
+    <img src="{{logoUrl}}" alt="{{companyName}}" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
+  </div>
+  <div style="background-color: #fffbeb; border-left: 4px solid #d97706; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px;">
+    <strong style="color: #92400e; font-size: 15px;">⭐ Performance Classification: Average ({{achievement}}%)</strong>
+  </div>
+  <p style="color: #334155; font-size: 14px;">Hello <strong>{{employeeName}}</strong>,</p>
+  <p style="color: #475569; font-size: 14px;">Here is your daily telecaller performance summary for <strong>{{reportDate}}</strong>. Keep improving to unlock your daily target rewards!</p>
+  <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Assigned Target</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{assignedTarget}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Completed Calls</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{completedCalls}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Remaining Target</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #d97706;">{{remainingTarget}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Achievement</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #d97706;">{{achievement}}%</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Reward Points</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{points}} pts</td></tr>
+    <tr><td style="padding: 8px; color: #64748b;">Salary Incentive</td><td style="padding: 8px; font-weight: bold; text-align: right;">₹{{incentive}}</td></tr>
+  </table>
+  <p style="color: #475569; font-size: 13px;">Your detailed A4 performance report is attached as a PDF.</p>
+  <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">Regards,<br /><strong>{{companyName}}</strong></p>
+</div>`,
+  },
+  {
+    key: 'daily_performance_good',
+    name: 'Daily Telecaller Performance - Good',
+    category: 'HR',
+    subject: '🏆 Target Achieved! Daily Performance Report ({{reportDate}})',
+    description: 'Sent at 10:00 PM IST when daily telecaller target achievement is 100% or above',
+    supportedVariables: ['companyName', 'employeeName', 'reportDate', 'assignedTarget', 'completedCalls', 'remainingTarget', 'achievement', 'points', 'incentive', 'logoUrl'],
+    body: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #bbf7d0; border-radius: 12px; background-color: #ffffff;">
+  <div style="text-align: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #dcfce7;">
+    <img src="{{logoUrl}}" alt="{{companyName}}" style="max-height: 44px; width: auto; display: inline-block; border: 0;" />
+  </div>
+  <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px;">
+    <strong style="color: #166534; font-size: 15px;">🏆 Target Achieved! Performance: Good ({{achievement}}%)</strong>
+  </div>
+  <p style="color: #334155; font-size: 14px;">Congratulations <strong>{{employeeName}}</strong>!</p>
+  <p style="color: #475569; font-size: 14px;">You completed your daily telecaller target for <strong>{{reportDate}}</strong> and earned <strong>{{points}} points</strong> worth <strong>₹{{incentive}}</strong>.</p>
+  <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px;">
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Assigned Target</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{assignedTarget}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Completed Calls</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right;">{{completedCalls}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Remaining Target</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #16a34a;">{{remainingTarget}}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Achievement</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #16a34a;">{{achievement}}%</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Reward Points Earned</td><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold; text-align: right; color: #16a34a;">+{{points}} pts</td></tr>
+    <tr><td style="padding: 8px; color: #64748b;">Salary Incentive Earned</td><td style="padding: 8px; font-weight: bold; text-align: right; color: #16a34a;">₹{{incentive}}</td></tr>
+  </table>
+  <p style="color: #475569; font-size: 13px;">Your detailed A4 performance report is attached as a PDF.</p>
+  <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">Regards,<br /><strong>{{companyName}}</strong></p>
+</div>`,
+  },
 ];
 
 export const TELECALLER_STATUS_TO_TEMPLATE_KEY: Record<string, string> = {

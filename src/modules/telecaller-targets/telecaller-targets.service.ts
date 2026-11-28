@@ -11,8 +11,11 @@ import {
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { EmailTemplateService, PREDEFINED_SYSTEM_TEMPLATES, resolvePublicLogoUrl } from '../email/email-template.service';
+import { renderEmailTemplate } from '../email/email-template.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { S3Service } from '../s3/s3.service';
+import { NotificationService } from '../notification/notification.service';
 import { isUserAdmin } from '../../common/utils/role.util';
 import {
   formatTimeInTimezone,
@@ -44,13 +47,18 @@ const CALL_VERIFICATION_LIMITATION =
 export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelecallerTargetsService.name);
   private retryTimer: NodeJS.Timeout | null = null;
+  private scheduleTimer: NodeJS.Timeout | null = null;
+  private startupRecoveryTimer: NodeJS.Timeout | null = null;
   private retryBusy = false;
+  private scheduleBusy = false;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly emailService?: EmailService,
     @Optional() private readonly whatsappService?: WhatsappService,
     @Optional() private readonly s3Service?: S3Service,
+    @Optional() private readonly notificationService?: NotificationService,
+    @Optional() private readonly emailTemplateService?: EmailTemplateService,
   ) {}
 
   onModuleInit() {
@@ -59,10 +67,25 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Telecaller report retry tick failed: ${err?.message}`),
       );
     }, 5 * 60_000);
+
+    this.scheduleTimer = setInterval(() => {
+      this.checkAndRunScheduledDailyReports().catch((err) =>
+        this.logger.warn(`Telecaller 10PM scheduler tick failed: ${err?.message}`),
+      );
+    }, 60_000);
+
+    // Recover missed scheduled runs after server restart
+    this.startupRecoveryTimer = setTimeout(() => {
+      this.checkAndRunScheduledDailyReports().catch((err) =>
+        this.logger.warn(`Telecaller startup schedule recovery failed: ${err?.message}`),
+      );
+    }, 10_000);
   }
 
   onModuleDestroy() {
     if (this.retryTimer) clearInterval(this.retryTimer);
+    if (this.scheduleTimer) clearInterval(this.scheduleTimer);
+    if (this.startupRecoveryTimer) clearTimeout(this.startupRecoveryTimer);
   }
 
   private async resolveCustomerId(user: any, customerId?: number | string): Promise<number> {
@@ -115,16 +138,38 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         excludeFullDayLeave: true,
         excludeHolidays: true,
         excludeWeeklyOff: true,
-        autoSendOnFinalPunchOut: true,
+        autoSendOnFinalPunchOut: false,
+        reportDeliveryTime: '22:00',
+        reportTimezone: 'Asia/Kolkata',
+        poorThresholdPct: 70,
+        goodThresholdPct: 100,
+        emailEnabled: true,
+        whatsappEnabled: true,
+        pushEnabled: true,
         emailTemplateKey: null,
         emailSubjectTemplate: 'Daily Performance Report - {{employeeName}} ({{reportDate}})',
+        emailTemplatePoor: 'daily_performance_poor',
+        emailTemplateAverage: 'daily_performance_average',
+        emailTemplateGood: 'daily_performance_good',
         whatsappTemplateName: null,
+        whatsappTemplatePoor: 'daily_performance_poor',
+        whatsappTemplateAverage: 'daily_performance_average',
+        whatsappTemplateGood: 'daily_performance_good',
         whatsappLanguageCode: 'en_US',
         whatsappVariableMapping: {
           '1': 'employeeName',
           '2': 'reportDate',
           '3': 'overallScore',
         },
+        pushTitlePoor: '🚨 Poor Performance',
+        pushBodyPoor:
+          'You achieved {{achievement}}% of your daily target. Your target is incomplete. Check WhatsApp and Email for your detailed report.',
+        pushTitleAverage: '⭐ Average Performance',
+        pushBodyAverage:
+          'You achieved {{achievement}}% of your daily target. Keep improving! Check WhatsApp and Email for your detailed report.',
+        pushTitleGood: '🏆 Target Achieved!',
+        pushBodyGood:
+          'Congratulations! You completed {{achievement}}% of your target and earned {{points}} points worth ₹{{incentive}}. Check WhatsApp and Email for details.',
         maxRetryAttempts: 3,
         minConnectedCalls: 60,
         maxConnectedCalls: 70,
@@ -147,12 +192,31 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         excludeFullDayLeave: dto.excludeFullDayLeave ?? true,
         excludeHolidays: dto.excludeHolidays ?? true,
         excludeWeeklyOff: dto.excludeWeeklyOff ?? true,
-        autoSendOnFinalPunchOut: dto.autoSendOnFinalPunchOut ?? true,
+        autoSendOnFinalPunchOut: dto.autoSendOnFinalPunchOut ?? false,
+        reportDeliveryTime: dto.reportDeliveryTime ?? '22:00',
+        reportTimezone: dto.reportTimezone ?? 'Asia/Kolkata',
+        poorThresholdPct: dto.poorThresholdPct ?? 70,
+        goodThresholdPct: dto.goodThresholdPct ?? 100,
+        emailEnabled: dto.emailEnabled ?? true,
+        whatsappEnabled: dto.whatsappEnabled ?? true,
+        pushEnabled: dto.pushEnabled ?? true,
         emailTemplateKey: dto.emailTemplateKey ?? null,
         emailSubjectTemplate: dto.emailSubjectTemplate ?? null,
+        emailTemplatePoor: dto.emailTemplatePoor ?? 'daily_performance_poor',
+        emailTemplateAverage: dto.emailTemplateAverage ?? 'daily_performance_average',
+        emailTemplateGood: dto.emailTemplateGood ?? 'daily_performance_good',
         whatsappTemplateName: dto.whatsappTemplateName ?? null,
+        whatsappTemplatePoor: dto.whatsappTemplatePoor ?? 'daily_performance_poor',
+        whatsappTemplateAverage: dto.whatsappTemplateAverage ?? 'daily_performance_average',
+        whatsappTemplateGood: dto.whatsappTemplateGood ?? 'daily_performance_good',
         whatsappLanguageCode: dto.whatsappLanguageCode ?? 'en_US',
         whatsappVariableMapping: dto.whatsappVariableMapping ?? undefined,
+        pushTitlePoor: dto.pushTitlePoor ?? null,
+        pushBodyPoor: dto.pushBodyPoor ?? null,
+        pushTitleAverage: dto.pushTitleAverage ?? null,
+        pushBodyAverage: dto.pushBodyAverage ?? null,
+        pushTitleGood: dto.pushTitleGood ?? null,
+        pushBodyGood: dto.pushBodyGood ?? null,
         maxRetryAttempts: dto.maxRetryAttempts ?? 3,
         minConnectedCalls: dto.minConnectedCalls ?? 60,
         maxConnectedCalls: dto.maxConnectedCalls ?? 70,
@@ -168,11 +232,30 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         ...(dto.excludeHolidays !== undefined ? { excludeHolidays: dto.excludeHolidays } : {}),
         ...(dto.excludeWeeklyOff !== undefined ? { excludeWeeklyOff: dto.excludeWeeklyOff } : {}),
         ...(dto.autoSendOnFinalPunchOut !== undefined ? { autoSendOnFinalPunchOut: dto.autoSendOnFinalPunchOut } : {}),
+        ...(dto.reportDeliveryTime !== undefined ? { reportDeliveryTime: dto.reportDeliveryTime } : {}),
+        ...(dto.reportTimezone !== undefined ? { reportTimezone: dto.reportTimezone } : {}),
+        ...(dto.poorThresholdPct !== undefined ? { poorThresholdPct: dto.poorThresholdPct } : {}),
+        ...(dto.goodThresholdPct !== undefined ? { goodThresholdPct: dto.goodThresholdPct } : {}),
+        ...(dto.emailEnabled !== undefined ? { emailEnabled: dto.emailEnabled } : {}),
+        ...(dto.whatsappEnabled !== undefined ? { whatsappEnabled: dto.whatsappEnabled } : {}),
+        ...(dto.pushEnabled !== undefined ? { pushEnabled: dto.pushEnabled } : {}),
         ...(dto.emailTemplateKey !== undefined ? { emailTemplateKey: dto.emailTemplateKey } : {}),
         ...(dto.emailSubjectTemplate !== undefined ? { emailSubjectTemplate: dto.emailSubjectTemplate } : {}),
+        ...(dto.emailTemplatePoor !== undefined ? { emailTemplatePoor: dto.emailTemplatePoor } : {}),
+        ...(dto.emailTemplateAverage !== undefined ? { emailTemplateAverage: dto.emailTemplateAverage } : {}),
+        ...(dto.emailTemplateGood !== undefined ? { emailTemplateGood: dto.emailTemplateGood } : {}),
         ...(dto.whatsappTemplateName !== undefined ? { whatsappTemplateName: dto.whatsappTemplateName } : {}),
+        ...(dto.whatsappTemplatePoor !== undefined ? { whatsappTemplatePoor: dto.whatsappTemplatePoor } : {}),
+        ...(dto.whatsappTemplateAverage !== undefined ? { whatsappTemplateAverage: dto.whatsappTemplateAverage } : {}),
+        ...(dto.whatsappTemplateGood !== undefined ? { whatsappTemplateGood: dto.whatsappTemplateGood } : {}),
         ...(dto.whatsappLanguageCode !== undefined ? { whatsappLanguageCode: dto.whatsappLanguageCode } : {}),
         ...(dto.whatsappVariableMapping !== undefined ? { whatsappVariableMapping: dto.whatsappVariableMapping } : {}),
+        ...(dto.pushTitlePoor !== undefined ? { pushTitlePoor: dto.pushTitlePoor } : {}),
+        ...(dto.pushBodyPoor !== undefined ? { pushBodyPoor: dto.pushBodyPoor } : {}),
+        ...(dto.pushTitleAverage !== undefined ? { pushTitleAverage: dto.pushTitleAverage } : {}),
+        ...(dto.pushBodyAverage !== undefined ? { pushBodyAverage: dto.pushBodyAverage } : {}),
+        ...(dto.pushTitleGood !== undefined ? { pushTitleGood: dto.pushTitleGood } : {}),
+        ...(dto.pushBodyGood !== undefined ? { pushBodyGood: dto.pushBodyGood } : {}),
         ...(dto.maxRetryAttempts !== undefined ? { maxRetryAttempts: dto.maxRetryAttempts } : {}),
         ...(dto.minConnectedCalls !== undefined ? { minConnectedCalls: dto.minConnectedCalls } : {}),
         ...(dto.maxConnectedCalls !== undefined ? { maxConnectedCalls: dto.maxConnectedCalls } : {}),
@@ -1591,29 +1674,234 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /**
-   * Idempotent background trigger invoked only on final shift punch-out.
-   */
-  async onFinalShiftPunchOut(customerId: number, employeeId: number, businessDate: string) {
+  classifyPerformance(overallScore: number, policy?: any): 'POOR' | 'AVERAGE' | 'GOOD' {
+    const poorThreshold = Number(policy?.poorThresholdPct ?? 70);
+    const goodThreshold = Number(policy?.goodThresholdPct ?? 100);
+    if (overallScore >= goodThreshold) return 'GOOD';
+    if (overallScore >= poorThreshold) return 'AVERAGE';
+    return 'POOR';
+  }
+
+  private getIstDateAndTime(now = new Date()): { businessDate: string; timeHHmm: string } {
+    const datePart = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+    const timePart = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(now);
+    return { businessDate: datePart, timeHHmm: timePart };
+  }
+
+  private applyVars(template: string, vars: Record<string, string | number>): string {
+    let out = template || '';
+    for (const [k, v] of Object.entries(vars)) {
+      out = out.replace(new RegExp(`{{\\s*${k}\\s*}}`, 'g'), String(v ?? ''));
+    }
+    return out;
+  }
+
+  async checkAndRunScheduledDailyReports(now = new Date()) {
+    if (this.scheduleBusy) return;
+    this.scheduleBusy = true;
+    try {
+      const { businessDate, timeHHmm } = this.getIstDateAndTime(now);
+      const customers = await this.prisma.customer.findMany({
+        select: { id: true },
+      });
+
+      for (const c of customers) {
+        const policy = await this.getPolicy({ customerId: c.id }, c.id);
+        const deliveryTime = policy.reportDeliveryTime || '22:00';
+        if (timeHHmm < deliveryTime) continue;
+
+        const existingRun = await this.prisma.dailyPerformanceScheduleRun.findUnique({
+          where: { customerId_businessDate: { customerId: c.id, businessDate } },
+        });
+        if (existingRun && (existingRun.status === 'COMPLETED' || existingRun.status === 'RUNNING')) {
+          continue;
+        }
+
+        await this.runScheduledDailyReportsForTenant(c.id, businessDate, { deliveryTime });
+      }
+    } finally {
+      this.scheduleBusy = false;
+    }
+  }
+
+  async runScheduledDailyReportsForTenant(
+    customerId: number,
+    businessDate: string,
+    opts?: { deliveryTime?: string; force?: boolean },
+  ) {
     const policy = await this.getPolicy({ customerId }, customerId);
-    if (!policy.autoSendOnFinalPunchOut) return null;
+    const deliveryTime = opts?.deliveryTime || policy.reportDeliveryTime || '22:00';
 
-    const latestVersionRow = await this.prisma.dailyPerformanceReport.findFirst({
-      where: { customerId, employeeId, businessDate },
-      orderBy: { reportVersion: 'desc' },
-      select: { id: true, reportVersion: true, snapshotData: true },
-    });
-
-    const computed = await this.computeAndSaveDailySnapshot(customerId, employeeId, businessDate);
-    if (!computed.perf.assignedTargetsCount && !computed.stats.outgoingCalls) {
-      return null;
+    if (!opts?.force) {
+      const existingRun = await this.prisma.dailyPerformanceScheduleRun.findUnique({
+        where: { customerId_businessDate: { customerId, businessDate } },
+      });
+      if (existingRun && existingRun.status === 'COMPLETED') {
+        return { skipped: true, reason: 'Already completed for this date', run: existingRun };
+      }
     }
 
-    // Finalize daily reward eligibility after final shift punch-out
-    const callMetric = computed.perf.metrics.find((m) => m.metricKey === 'OUTGOING_CALLS' && !m.excluded);
+    const runRow = await this.prisma.dailyPerformanceScheduleRun.upsert({
+      where: { customerId_businessDate: { customerId, businessDate } },
+      create: {
+        customerId,
+        businessDate,
+        scheduledTime: deliveryTime,
+        status: 'RUNNING',
+      },
+      update: {
+        scheduledTime: deliveryTime,
+        status: 'RUNNING',
+        errorMessage: null,
+      },
+    });
+
+    let processedCount = 0;
+    let skippedCount = 0;
+
+    try {
+      const employees = await this.prisma.employee.findMany({
+        where: { customerId, status: 'ACTIVE' },
+        include: { shift: true, department: true, designation: true },
+      });
+
+      for (const emp of employees) {
+        const computed = await this.computeAndSaveDailySnapshot(customerId, emp.id, businessDate);
+        const activeMetrics = computed.perf.metrics.filter((m) => !m.excluded);
+        if (activeMetrics.length === 0) {
+          skippedCount++;
+          continue;
+        }
+
+        const shiftEnd = computed.breakdown?.shiftEndTime || emp.shift?.endTime || '19:00';
+        const att = computed.attendance;
+        const shiftContinuesBeyond = Boolean(att && !att.punchOut && shiftEnd > deliveryTime);
+        const isProvisional = shiftContinuesBeyond;
+
+        const callMetric = activeMetrics.find((m) => m.metricKey === 'OUTGOING_CALLS');
+        const allMandatoryCompleted =
+          computed.perf.assignedTargetsCount > 0 &&
+          computed.perf.completedTargetsCount === computed.perf.assignedTargetsCount;
+
+        const assignedTargetSum = activeMetrics.reduce((s, m) => s + Number(m.effectiveTarget || 0), 0);
+        const actualAchievementSum = activeMetrics.reduce((s, m) => s + Number(m.actual || 0), 0);
+
+        await this.evaluateAndCreditCallRewards(
+          customerId,
+          emp.id,
+          businessDate,
+          computed.stats.outgoingCalls,
+          computed.stats.connectedCalls,
+          callMetric ? Number(callMetric.effectiveTarget || 0) : 0,
+          {
+            allMandatoryCompleted,
+            assignedTargetSum,
+            actualAchievementSum,
+            achievementPct: computed.perf.overallScore,
+            isFinalized: !isProvisional,
+          },
+        );
+
+        const classification = this.classifyPerformance(computed.perf.overallScore, policy);
+        const triggerKey = `scheduled:${customerId}:${emp.id}:${businessDate}`;
+
+        const existingReport = await this.prisma.dailyPerformanceReport.findUnique({
+          where: { triggerKey },
+        });
+        if (existingReport) {
+          skippedCount++;
+          continue;
+        }
+
+        const latestVersionRow = await this.prisma.dailyPerformanceReport.findFirst({
+          where: { customerId, employeeId: emp.id, businessDate },
+          orderBy: { reportVersion: 'desc' },
+          select: { reportVersion: true },
+        });
+        const nextVersion = latestVersionRow ? latestVersionRow.reportVersion + 1 : 1;
+
+        const report = await this.prisma.dailyPerformanceReport.create({
+          data: {
+            customerId,
+            employeeId: emp.id,
+            businessDate,
+            reportVersion: nextVersion,
+            triggerKey,
+            classification,
+            isProvisional,
+            finalizedAt: isProvisional ? null : new Date(),
+            emailStatus: policy.emailEnabled === false ? 'SKIPPED' : 'PENDING',
+            whatsappStatus: policy.whatsappEnabled === false ? 'SKIPPED' : 'PENDING',
+            pushStatus: policy.pushEnabled === false ? 'SKIPPED' : 'PENDING',
+            snapshotData: {
+              overallScore: computed.perf.overallScore,
+              classification,
+              isProvisional,
+              callConnectionRate: computed.perf.callConnectionRate,
+              leadConversionRate: computed.perf.leadConversionRate,
+              metrics: computed.perf.metrics,
+              stats: computed.stats,
+            } as any,
+          },
+        });
+
+        await this.dispatchReportDeliveries(report.id);
+        processedCount++;
+      }
+
+      const completed = await this.prisma.dailyPerformanceScheduleRun.update({
+        where: { id: runRow.id },
+        data: {
+          status: 'COMPLETED',
+          processedCount,
+          skippedCount,
+          completedAt: new Date(),
+        },
+      });
+      return { success: true, run: completed };
+    } catch (error: any) {
+      await this.prisma.dailyPerformanceScheduleRun.update({
+        where: { id: runRow.id },
+        data: {
+          status: 'FAILED',
+          processedCount,
+          skippedCount,
+          errorMessage: error?.message || 'Scheduled run failed',
+          completedAt: new Date(),
+        },
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Called on final punch-out: does NOT send duplicate reports (replaced by 10:00 PM schedule).
+   * Only finalizes a provisional report and its reward ledger if the shift continued past 10:00 PM.
+   */
+  async finalizeProvisionalReportAfterShift(customerId: number, employeeId: number, businessDate: string) {
+    const provisionalReport = await this.prisma.dailyPerformanceReport.findFirst({
+      where: { customerId, employeeId, businessDate, isProvisional: true },
+      orderBy: { reportVersion: 'desc' },
+    });
+    if (!provisionalReport) return null;
+
+    const computed = await this.computeAndSaveDailySnapshot(customerId, employeeId, businessDate);
+    const activeMetrics = computed.perf.metrics.filter((m) => !m.excluded);
+    const callMetric = activeMetrics.find((m) => m.metricKey === 'OUTGOING_CALLS');
     const allMandatoryCompleted =
       computed.perf.assignedTargetsCount > 0 &&
       computed.perf.completedTargetsCount === computed.perf.assignedTargetsCount;
+
     await this.evaluateAndCreditCallRewards(
       customerId,
       employeeId,
@@ -1628,34 +1916,33 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       },
     );
 
-    const nextVersion = latestVersionRow ? latestVersionRow.reportVersion + 1 : 1;
-    const triggerKey = `perf-report:${customerId}:${employeeId}:${businessDate}:v${nextVersion}`;
+    const policy = await this.getPolicy({ customerId }, customerId);
+    const classification = this.classifyPerformance(computed.perf.overallScore, policy);
 
-    try {
-      const report = await this.prisma.dailyPerformanceReport.create({
-        data: {
-          customerId,
-          employeeId,
-          businessDate,
-          reportVersion: nextVersion,
-          triggerKey,
-          emailStatus: 'PENDING',
-          whatsappStatus: 'PENDING',
-          snapshotData: {
-            overallScore: computed.perf.overallScore,
-            callConnectionRate: computed.perf.callConnectionRate,
-            leadConversionRate: computed.perf.leadConversionRate,
-            metrics: computed.perf.metrics,
-            stats: computed.stats,
-          } as any,
-        },
-      });
-      await this.dispatchReportDeliveries(report.id);
-      return report;
-    } catch (error: any) {
-      if (error?.code === 'P2002') return null;
-      throw error;
-    }
+    return this.prisma.dailyPerformanceReport.update({
+      where: { id: provisionalReport.id },
+      data: {
+        isProvisional: false,
+        finalizedAt: new Date(),
+        classification,
+        snapshotData: {
+          overallScore: computed.perf.overallScore,
+          classification,
+          isProvisional: false,
+          callConnectionRate: computed.perf.callConnectionRate,
+          leadConversionRate: computed.perf.leadConversionRate,
+          metrics: computed.perf.metrics,
+          stats: computed.stats,
+        } as any,
+      },
+    });
+  }
+
+  /**
+   * Legacy hook kept for backwards compatibility; punch-out report delivery is replaced by 10:00 PM schedule.
+   */
+  async onFinalShiftPunchOut(customerId: number, employeeId: number, businessDate: string) {
+    return this.finalizeProvisionalReportAfterShift(customerId, employeeId, businessDate);
   }
 
   async generateReportPdfBuffer(reportId: number): Promise<{ buffer: Buffer; filename: string; report: any }> {
@@ -1699,6 +1986,7 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       report.businessDate,
     );
 
+    const classification = this.classifyPerformance(computed.perf.overallScore, policy);
     const buffer = await renderDailyPerformancePdf({
       companyName: report.customer?.companyName || report.customer?.name || 'QB Suite',
       reportDate: report.businessDate,
@@ -1714,6 +2002,8 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       punchOutText: att?.punchOut ? `${formatTimeInTimezone(new Date(att.punchOut))} IST` : 'N/A',
       workingHoursText: `${Number(att?.workingHours || 0).toFixed(2)} hrs`,
       overallScore: computed.perf.overallScore,
+      classification,
+      isProvisional: Boolean(report.isProvisional),
       callConnectionRate: computed.perf.callConnectionRate,
       leadConversionRate: computed.perf.leadConversionRate,
       metrics: computed.perf.metrics,
@@ -1738,7 +2028,7 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async dispatchReportDeliveries(reportId: number, channels?: Array<'EMAIL' | 'WHATSAPP'>) {
+  async dispatchReportDeliveries(reportId: number, channels?: Array<'EMAIL' | 'WHATSAPP' | 'PUSH'>) {
     const { buffer, filename, report } = await this.generateReportPdfBuffer(reportId);
     const policy = await this.getPolicy({ customerId: report.customerId }, report.customerId);
     const emp = report.employee;
@@ -1757,10 +2047,49 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const sendEmail = !channels || channels.includes('EMAIL');
-    const sendWa = !channels || channels.includes('WHATSAPP');
+    const sendEmail = (!channels || channels.includes('EMAIL')) && policy.emailEnabled !== false;
+    const sendWa = (!channels || channels.includes('WHATSAPP')) && policy.whatsappEnabled !== false;
+    const sendPush = (!channels || channels.includes('PUSH')) && policy.pushEnabled !== false;
+
     const snapshotData = (report.snapshotData as any) || {};
-    const score = Number(snapshotData.overallScore ?? 0).toFixed(1);
+    const scoreNum = Number(snapshotData.overallScore ?? 0);
+    const score = scoreNum.toFixed(1);
+    const classification: 'POOR' | 'AVERAGE' | 'GOOD' =
+      (report.classification as any) || this.classifyPerformance(scoreNum, policy);
+
+    const metricsList = Array.isArray(snapshotData.metrics) ? snapshotData.metrics.filter((m: any) => !m.excluded) : [];
+    const assignedTarget = metricsList.reduce((s: number, m: any) => s + Number(m.effectiveTarget || 0), 0);
+    const completedCalls = Number(snapshotData.stats?.outgoingCalls ?? metricsList.reduce((s: number, m: any) => s + Number(m.actual || 0), 0));
+    const remainingTarget = Math.max(0, Math.round(assignedTarget - completedCalls));
+
+    const todayLedger = await this.prisma.telecallerRewardLedger.findFirst({
+      where: {
+        customerId: report.customerId,
+        employeeId: report.employeeId,
+        businessDate: report.businessDate,
+        status: { not: 'REVERSED' },
+      },
+    });
+    const points = todayLedger?.points ?? 0;
+    const incentive = Number(todayLedger?.incentiveAmount ?? 0).toFixed(2);
+    const employeeName = `${emp.firstName} ${emp.lastName}`.trim();
+    const companyName = report.customer?.companyName || report.customer?.name || 'QB Suite';
+    const logoUrl = resolvePublicLogoUrl(report.customer?.logo);
+
+    const vars: Record<string, string | number> = {
+      companyName,
+      employeeName,
+      reportDate: report.businessDate,
+      assignedTarget,
+      completedCalls,
+      remainingTarget,
+      achievement: score,
+      overallScore: score,
+      points,
+      incentive,
+      classification,
+      logoUrl,
+    };
 
     if (sendEmail && report.emailStatus !== 'SENT') {
       if (!emp.email || !this.emailService) {
@@ -1770,15 +2099,48 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         });
       } else {
         try {
-          const subject = (policy.emailSubjectTemplate || 'Daily Performance Report - {{employeeName}} ({{reportDate}})')
-            .replace('{{employeeName}}', `${emp.firstName} ${emp.lastName}`.trim())
-            .replace('{{reportDate}}', report.businessDate)
-            .replace('{{overallScore}}', `${score}%`);
+          const emailTplKey =
+            classification === 'POOR'
+              ? policy.emailTemplatePoor || 'daily_performance_poor'
+              : classification === 'AVERAGE'
+                ? policy.emailTemplateAverage || 'daily_performance_average'
+                : policy.emailTemplateGood || 'daily_performance_good';
+
+          let subject = this.applyVars(
+            policy.emailSubjectTemplate || 'Daily Performance Report - {{employeeName}} ({{reportDate}})',
+            vars,
+          );
+          let html = '';
+
+          if (this.emailTemplateService) {
+            const dbTpl = await this.emailTemplateService.findByKey(emailTplKey, report.customerId).catch(() => null);
+            if (dbTpl) {
+              const rendered = renderEmailTemplate(
+                { subject: dbTpl.subject || subject, body: dbTpl.body },
+                vars as Record<string, any>,
+              );
+              subject = rendered.subject;
+              html = rendered.body;
+            }
+          }
+          if (!html) {
+            const sysTpl = PREDEFINED_SYSTEM_TEMPLATES.find((t) => t.key === emailTplKey);
+            if (sysTpl) {
+              const rendered = renderEmailTemplate(
+                { subject: sysTpl.subject, body: sysTpl.body },
+                vars as Record<string, any>,
+              );
+              subject = rendered.subject;
+              html = rendered.body;
+            } else {
+              html = `<p>Hello ${employeeName},</p><p>Please find attached your Daily Target &amp; Performance Report for <strong>${report.businessDate}</strong>.</p><p><strong>Classification:</strong> ${classification} (${score}%)</p>`;
+            }
+          }
 
           await this.emailService.sendEmail({
             to: emp.email,
             subject,
-            html: `<p>Hello ${emp.firstName},</p><p>Please find attached your Daily Target &amp; Performance Report for <strong>${report.businessDate}</strong> (v${report.reportVersion}).</p><p><strong>Overall Performance Score:</strong> ${score}%</p>`,
+            html,
             attachments: [{ filename, content: buffer }],
           } as any);
 
@@ -1814,16 +2176,28 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         });
       } else {
         try {
+          const waTplName =
+            classification === 'POOR'
+              ? policy.whatsappTemplatePoor || policy.whatsappTemplateName || 'daily_performance_poor'
+              : classification === 'AVERAGE'
+                ? policy.whatsappTemplateAverage || policy.whatsappTemplateName || 'daily_performance_average'
+                : policy.whatsappTemplateGood || policy.whatsappTemplateName || 'daily_performance_good';
+
           let waRes: any;
-          if (policy.whatsappTemplateName) {
+          if (waTplName) {
             const params = [
-              { type: 'text' as const, text: `${emp.firstName} ${emp.lastName}`.trim() },
+              { type: 'text' as const, text: employeeName },
               { type: 'text' as const, text: report.businessDate },
+              { type: 'text' as const, text: String(assignedTarget) },
+              { type: 'text' as const, text: String(completedCalls) },
+              { type: 'text' as const, text: String(remainingTarget) },
               { type: 'text' as const, text: `${score}%` },
+              { type: 'text' as const, text: String(points) },
+              { type: 'text' as const, text: `₹${incentive}` },
             ];
             waRes = await this.whatsappService.sendTemplate(
               emp.phone,
-              policy.whatsappTemplateName,
+              waTplName,
               params,
               policy.whatsappLanguageCode || 'en_US',
               undefined,
@@ -1841,13 +2215,15 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
                   }
                 : undefined,
             );
-          } else {
+          }
+
+          if (!waRes?.success && (!waTplName || waRes?.error?.toLowerCase?.().includes('template'))) {
             waRes = await this.whatsappService.sendDocumentMessage({
               to: emp.phone,
               pdfBuffer: buffer,
               pdfUrl: pdfUrl || undefined,
               filename,
-              caption: `Daily Performance Report (${report.businessDate}) - Score: ${score}%`,
+              caption: `Daily Performance Report (${report.businessDate}) - ${classification} (${score}%) | Points: ${points} | Incentive: ₹${incentive}`,
               requireDocument: true,
             });
           }
@@ -1887,7 +2263,119 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    if (sendPush && report.pushStatus !== 'SENT') {
+      if (!emp.userId || !this.notificationService) {
+        await this.prisma.dailyPerformanceReport.update({
+          where: { id: reportId },
+          data: {
+            pushStatus: 'SKIPPED',
+            pushError: !emp.userId ? 'No employee user account linked' : 'Notification service unavailable',
+          },
+        });
+      } else {
+        try {
+          const defaultPush =
+            classification === 'POOR'
+              ? {
+                  title: '🚨 Poor Performance',
+                  body: 'You achieved {{achievement}}% of your daily target. Your target is incomplete. Check WhatsApp and Email for your detailed report.',
+                }
+              : classification === 'AVERAGE'
+                ? {
+                    title: '⭐ Average Performance',
+                    body: 'You achieved {{achievement}}% of your daily target. Keep improving! Check WhatsApp and Email for your detailed report.',
+                  }
+                : {
+                    title: '🏆 Target Achieved!',
+                    body: 'Congratulations! You completed {{achievement}}% of your target and earned {{points}} points worth ₹{{incentive}}. Check WhatsApp and Email for details.',
+                  };
+
+          const rawTitle =
+            classification === 'POOR'
+              ? policy.pushTitlePoor || defaultPush.title
+              : classification === 'AVERAGE'
+                ? policy.pushTitleAverage || defaultPush.title
+                : policy.pushTitleGood || defaultPush.title;
+
+          const rawBody =
+            classification === 'POOR'
+              ? policy.pushBodyPoor || defaultPush.body
+              : classification === 'AVERAGE'
+                ? policy.pushBodyAverage || defaultPush.body
+                : policy.pushBodyGood || defaultPush.body;
+
+          const title = this.applyVars(rawTitle, vars);
+          const body = this.applyVars(rawBody, vars);
+
+          await this.notificationService.sendPushNotification({
+            userId: emp.userId,
+            customerId: report.customerId,
+            title,
+            body,
+            type: 'DAILY_PERFORMANCE_REPORT',
+            data: {
+              type: 'DAILY_PERFORMANCE_REPORT',
+              route: '/telecaller-performance',
+              businessDate: report.businessDate,
+              classification,
+              reportId: String(report.id),
+            },
+          });
+
+          await this.prisma.dailyPerformanceReport.update({
+            where: { id: reportId },
+            data: {
+              pushStatus: 'SENT',
+              pushAttempts: { increment: 1 },
+              pushSentAt: new Date(),
+              pushError: null,
+            },
+          });
+        } catch (err: any) {
+          await this.prisma.dailyPerformanceReport.update({
+            where: { id: reportId },
+            data: {
+              pushStatus: 'FAILED',
+              pushAttempts: { increment: 1 },
+              pushError: err?.message || 'Push delivery failed',
+              nextRetryAt: new Date(Date.now() + 5 * 60_000),
+            },
+          });
+        }
+      }
+    }
+
     return this.prisma.dailyPerformanceReport.findUnique({ where: { id: reportId } });
+  }
+
+  async getReportDeliveryHistory(
+    user: any,
+    customerId: number | string | undefined,
+    query: { businessDate?: string; employeeId?: number; classification?: string },
+  ) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const reports = await this.prisma.dailyPerformanceReport.findMany({
+      where: {
+        customerId: numCustomerId,
+        ...(query.businessDate ? { businessDate: query.businessDate } : {}),
+        ...(query.employeeId ? { employeeId: Number(query.employeeId) } : {}),
+        ...(query.classification ? { classification: query.classification } : {}),
+      },
+      include: {
+        employee: {
+          select: { id: true, firstName: true, lastName: true, employeeCode: true, email: true, phone: true },
+        },
+      },
+      orderBy: [{ businessDate: 'desc' }, { id: 'desc' }],
+      take: 100,
+    });
+    return { success: true, data: reports };
+  }
+
+  async triggerScheduledReportsManually(user: any, customerId: number | string | undefined, businessDate?: string) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    const targetDate = businessDate || this.getIstDateAndTime().businessDate;
+    return this.runScheduledDailyReportsForTenant(numCustomerId, targetDate, { force: true });
   }
 
   async processPendingReportRetries() {
@@ -1898,7 +2386,7 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       const pending = await this.prisma.dailyPerformanceReport.findMany({
         where: {
           nextRetryAt: { lte: now },
-          OR: [{ emailStatus: 'FAILED' }, { whatsappStatus: 'FAILED' }],
+          OR: [{ emailStatus: 'FAILED' }, { whatsappStatus: 'FAILED' }, { pushStatus: 'FAILED' }],
         },
         take: 10,
       });
@@ -1906,9 +2394,10 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       for (const r of pending) {
         const policy = await this.getPolicy({ customerId: r.customerId }, r.customerId);
         const maxAttempts = Number(policy.maxRetryAttempts || 3);
-        const channels: Array<'EMAIL' | 'WHATSAPP'> = [];
+        const channels: Array<'EMAIL' | 'WHATSAPP' | 'PUSH'> = [];
         if (r.emailStatus === 'FAILED' && r.emailAttempts < maxAttempts) channels.push('EMAIL');
         if (r.whatsappStatus === 'FAILED' && r.whatsappAttempts < maxAttempts) channels.push('WHATSAPP');
+        if (r.pushStatus === 'FAILED' && r.pushAttempts < maxAttempts) channels.push('PUSH');
 
         if (channels.length === 0) {
           await this.prisma.dailyPerformanceReport.update({

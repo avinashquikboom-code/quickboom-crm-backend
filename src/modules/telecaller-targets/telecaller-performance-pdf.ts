@@ -18,6 +18,8 @@ export interface DailyPerformancePdfInput {
   punchOutText: string;
   workingHoursText: string;
   overallScore: number;
+  classification?: 'POOR' | 'AVERAGE' | 'GOOD';
+  isProvisional?: boolean;
   callConnectionRate: number;
   leadConversionRate: number;
   metrics: CalculatedMetricPerformance[];
@@ -62,11 +64,21 @@ export function renderDailyPerformancePdf(input: DailyPerformancePdfInput): Prom
     const bottomLimit = doc.page.height - 56;
 
     // Header Banner
+    const classification =
+      input.classification ||
+      (input.overallScore >= 100 ? 'GOOD' : input.overallScore >= 70 ? 'AVERAGE' : 'POOR');
+    const classBadge =
+      classification === 'GOOD'
+        ? { label: 'GOOD PERFORMANCE', bg: '#DCFCE7', border: '#16A34A', text: '#15803D' }
+        : classification === 'AVERAGE'
+          ? { label: 'AVERAGE PERFORMANCE', bg: '#FEF3C7', border: '#D97706', text: '#B45309' }
+          : { label: 'POOR PERFORMANCE', bg: '#FEE2E2', border: '#DC2626', text: '#B91C1C' };
+
     let y = drawStandardPdfHeader(doc, {
       companyName: input.companyName || 'QB Suite',
       title: 'Daily Telecaller Target & Performance Report',
-      rightLine1: `Date: ${input.reportDate}`,
-      rightLine2: `Version v${input.reportVersion}`,
+      rightLine1: `Date: ${input.reportDate}${input.isProvisional ? ' (Provisional)' : ''}`,
+      rightLine2: `Version v${input.reportVersion} · ${classification}`,
       bannerHeight: 74,
       bannerColor: '#107569',
       marginX: 36,
@@ -74,6 +86,13 @@ export function renderDailyPerformancePdf(input: DailyPerformancePdfInput): Prom
     });
     doc.roundedRect(36, y, contentWidth, 74, 6).fillAndStroke('#F8FAFC', '#E2E8F0');
     doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(11).text(input.employeeName, 48, y + 10);
+    // Performance Classification Pill (Red / Orange / Green)
+    doc.roundedRect(pageWidth - 196, y + 8, 148, 20, 4).fillAndStroke(classBadge.bg, classBadge.border);
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(8)
+      .fillColor(classBadge.text)
+      .text(classBadge.label, pageWidth - 196, y + 14, { width: 148, align: 'center' });
     doc
       .font('Helvetica')
       .fontSize(8.5)
