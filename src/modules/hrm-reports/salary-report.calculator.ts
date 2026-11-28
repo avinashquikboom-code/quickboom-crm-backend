@@ -61,8 +61,18 @@ export interface SalaryReportData {
     overtime: number;
     reimbursement: number;
     otherEarnings: number;
+    telecallerIncentive?: number;
     grossSalary: number;
   };
+  performanceIncentives?: {
+    eligibleWorkingDays: number;
+    completedDays: number;
+    totalEarnedPoints: number;
+    pointsPerRupee: number;
+    grossIncentive: number;
+    adjustments: number;
+    finalIncentive: number;
+  } | null;
   deductions: {
     lopDays: number;
     lopDeduction: number;
@@ -364,8 +374,44 @@ export async function calculateEmployeeSalaryReport(
   const lateMarks = lateCalculation.lateDaysCount;
   const lateDeduction = lateCalculation.totalLateDeduction;
 
+  const rewardRows = (prisma as any).telecallerRewardLedger?.findMany
+    ? await (prisma as any).telecallerRewardLedger.findMany({
+        where: {
+          customerId,
+          employeeId: numEmpId,
+          payrollMonth: month,
+          payrollYear: year,
+          status: { in: ['EARNED', 'INCLUDED_IN_PAYROLL', 'PAID', 'CREDITED'] },
+        },
+      })
+    : [];
+  const telecallerIncentive = Math.round(
+    rewardRows.reduce((s: number, r: any) => s + (Number(r.incentiveAmount) || 0), 0) * 100,
+  ) / 100;
+  const totalEarnedPoints = rewardRows.reduce((s: number, r: any) => s + (Number(r.points) || 0), 0);
+  const adjustmentIncentive = Math.round(
+    rewardRows
+      .filter((r: any) => r.isAdjustment)
+      .reduce((s: number, r: any) => s + (Number(r.incentiveAmount) || 0), 0) * 100,
+  ) / 100;
+  const completedDays = new Set(
+    rewardRows.filter((r: any) => !r.isAdjustment).map((r: any) => r.businessDate),
+  ).size;
+  const pointsPerRupee = rewardRows.length > 0 ? Number(rewardRows[0].pointsPerRupee || 10) : 10;
+  const performanceIncentives = rewardRows.length > 0
+    ? {
+        eligibleWorkingDays: attendanceMetrics.workingDays,
+        completedDays,
+        totalEarnedPoints,
+        pointsPerRupee,
+        grossIncentive: Math.round((telecallerIncentive - adjustmentIncentive) * 100) / 100,
+        adjustments: adjustmentIncentive,
+        finalIncentive: telecallerIncentive,
+      }
+    : null;
+
   const statutory = pf + esi + professionalTax + tds + otherDeductions + loanDeduction + lateDeduction;
-  const extraEarnings = approvedReimbursements + (overtimeEarnings - structureOvertime);
+  const extraEarnings = approvedReimbursements + (overtimeEarnings - structureOvertime) + telecallerIncentive;
 
   const settlement = settleMonthlySalary({
     monthlySalary: registeredSalary,
@@ -427,8 +473,10 @@ export async function calculateEmployeeSalaryReport(
       overtime: overtimeEarnings,
       reimbursement: approvedReimbursements,
       otherEarnings,
+      telecallerIncentive,
       grossSalary: settlement.gross,
     },
+    performanceIncentives,
     deductions: {
       lopDays: attendanceMetrics.lopDays,
       lopDeduction: settlement.lopDeduction,

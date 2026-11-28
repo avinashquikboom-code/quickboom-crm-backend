@@ -21,8 +21,10 @@ import {
 } from '../../common/utils/timezone.util';
 import { computeShiftHalfDayBreakdown } from '../leave/half-day-leave.util';
 import {
+  AdjustTelecallerRewardDto,
   AssignTelecallerTargetDto,
   RecordCallEventDto,
+  ReverseTelecallerRewardDto,
   UpdateTelecallerTargetDto,
   UpsertRewardSlabsDto,
   UpsertTelecallerTargetPolicyDto,
@@ -126,6 +128,11 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         maxRetryAttempts: 3,
         minConnectedCalls: 60,
         maxConnectedCalls: 70,
+        rewardsEnabled: true,
+        rewardPointsPerDay: 100,
+        pointsPerRupee: 10,
+        rewardEligibilityMode: 'ALL_MANDATORY',
+        rewardEffectiveDate: null,
       }
     );
   }
@@ -149,6 +156,11 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         maxRetryAttempts: dto.maxRetryAttempts ?? 3,
         minConnectedCalls: dto.minConnectedCalls ?? 60,
         maxConnectedCalls: dto.maxConnectedCalls ?? 70,
+        rewardsEnabled: dto.rewardsEnabled ?? true,
+        rewardPointsPerDay: dto.rewardPointsPerDay ?? 100,
+        pointsPerRupee: dto.pointsPerRupee ?? 10,
+        rewardEligibilityMode: dto.rewardEligibilityMode ?? 'ALL_MANDATORY',
+        rewardEffectiveDate: dto.rewardEffectiveDate ? new Date(dto.rewardEffectiveDate) : null,
       },
       update: {
         ...(dto.adjustForHalfDayLeave !== undefined ? { adjustForHalfDayLeave: dto.adjustForHalfDayLeave } : {}),
@@ -164,6 +176,11 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         ...(dto.maxRetryAttempts !== undefined ? { maxRetryAttempts: dto.maxRetryAttempts } : {}),
         ...(dto.minConnectedCalls !== undefined ? { minConnectedCalls: dto.minConnectedCalls } : {}),
         ...(dto.maxConnectedCalls !== undefined ? { maxConnectedCalls: dto.maxConnectedCalls } : {}),
+        ...(dto.rewardsEnabled !== undefined ? { rewardsEnabled: dto.rewardsEnabled } : {}),
+        ...(dto.rewardPointsPerDay !== undefined ? { rewardPointsPerDay: dto.rewardPointsPerDay } : {}),
+        ...(dto.pointsPerRupee !== undefined ? { pointsPerRupee: dto.pointsPerRupee } : {}),
+        ...(dto.rewardEligibilityMode !== undefined ? { rewardEligibilityMode: dto.rewardEligibilityMode } : {}),
+        ...(dto.rewardEffectiveDate !== undefined ? { rewardEffectiveDate: dto.rewardEffectiveDate ? new Date(dto.rewardEffectiveDate) : null } : {}),
       },
     });
   }
@@ -225,7 +242,31 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     totalCalls: number,
     connectedCalls: number,
     callTarget: number,
+    opts?: {
+      allMandatoryCompleted?: boolean;
+      assignedTargetSum?: number;
+      actualAchievementSum?: number;
+      achievementPct?: number;
+      isFinalized?: boolean;
+    },
   ) {
+    const policy = await this.getPolicy({ customerId }, customerId);
+    if (policy.rewardsEnabled === false) return null;
+    if (policy.rewardEffectiveDate) {
+      const effStr = getBusinessDate(new Date(policy.rewardEffectiveDate));
+      if (businessDate < effStr) return null;
+    }
+
+    const mode = (policy.rewardEligibilityMode || 'ALL_MANDATORY').toUpperCase();
+    const isEligible =
+      mode === 'CALL_TARGET_ONLY'
+        ? callTarget > 0 && totalCalls >= callTarget
+        : opts?.allMandatoryCompleted !== undefined
+          ? opts.allMandatoryCompleted
+          : callTarget > 0 && totalCalls >= callTarget;
+
+    if (!isEligible) return null;
+
     const { data: slabs } = await this.getRewardSlabs({ customerId }, customerId);
     const sorted = [...slabs].sort((a, b) => a.minCalls - b.minCalls);
     let matched: any = null;
@@ -234,15 +275,27 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         matched = slab;
       }
     }
-    if (!matched && callTarget > 0 && totalCalls >= callTarget && sorted.length > 0) {
-      matched = sorted[0];
-    }
-    if (!matched) return null;
 
-    const isExtraBonus = matched.minCalls > (sorted[0]?.minCalls ?? callTarget);
+    const points = matched ? Number(matched.rewardPoints || 0) : Number(policy.rewardPointsPerDay ?? 100);
+    if (points <= 0) return null;
+
+    const pointsPerRupee = Math.max(0.1, Number(policy.pointsPerRupee ?? 10));
+    const incentiveAmount = round2(points / pointsPerRupee);
+    const payrollYear = Number(businessDate.slice(0, 4));
+    const payrollMonth = Number(businessDate.slice(5, 7));
+
+    const isExtraBonus = matched && matched.minCalls > (sorted[0]?.minCalls ?? callTarget);
     const title = isExtraBonus ? 'Extra Calls Bonus' : 'Daily Call Target Completed';
     const idempotencyKey = `call_reward:${customerId}:${employeeId}:${businessDate}`;
 
+    const existing = await this.prisma.telecallerRewardLedger.findUnique({
+      where: { idempotencyKey },
+    });
+    if (existing && ['INCLUDED_IN_PAYROLL', 'PAID', 'REVERSED'].includes(existing.status)) {
+      return existing;
+    }
+
+    const nextStatus = opts?.isFinalized ? 'EARNED' : 'PENDING';
     return this.prisma.telecallerRewardLedger.upsert({
       where: { idempotencyKey },
       create: {
@@ -252,19 +305,143 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         title,
         totalCalls,
         connectedCalls,
-        points: matched.rewardPoints,
-        status: 'CREDITED',
-        slabId: matched.id > 0 ? matched.id : null,
+        assignedTarget: opts?.assignedTargetSum ?? callTarget,
+        actualAchievement: opts?.actualAchievementSum ?? totalCalls,
+        achievementPct: opts?.achievementPct ?? (callTarget > 0 ? round2((totalCalls / callTarget) * 100) : 100),
+        points,
+        pointsPerRupee,
+        incentiveAmount,
+        status: nextStatus,
+        slabId: matched?.id > 0 ? matched.id : null,
+        payrollMonth,
+        payrollYear,
         idempotencyKey,
       },
       update: {
         title,
         totalCalls,
         connectedCalls,
-        points: matched.rewardPoints,
-        slabId: matched.id > 0 ? matched.id : null,
+        assignedTarget: opts?.assignedTargetSum ?? callTarget,
+        actualAchievement: opts?.actualAchievementSum ?? totalCalls,
+        achievementPct: opts?.achievementPct ?? (callTarget > 0 ? round2((totalCalls / callTarget) * 100) : 100),
+        points,
+        pointsPerRupee,
+        incentiveAmount,
+        status: nextStatus,
+        slabId: matched?.id > 0 ? matched.id : null,
       },
     });
+  }
+
+  private async getMonthlyRewardSummary(customerId: number, employeeId: number, businessDate: string) {
+    const payrollYear = Number(businessDate.slice(0, 4));
+    const payrollMonth = Number(businessDate.slice(5, 7));
+    const rows = await this.prisma.telecallerRewardLedger.findMany({
+      where: {
+        customerId,
+        employeeId,
+        payrollYear,
+        payrollMonth,
+        status: { not: 'REVERSED' },
+      },
+    });
+    const monthlyPoints = rows.reduce((s, r) => s + Number(r.points || 0), 0);
+    const monthlyIncentive = round2(rows.reduce((s, r) => s + Number(r.incentiveAmount || 0), 0));
+    const paidIncentive = round2(
+      rows.filter((r) => r.status === 'PAID').reduce((s, r) => s + Number(r.incentiveAmount || 0), 0),
+    );
+    const pendingIncentive = round2(
+      rows
+        .filter((r) => ['PENDING', 'EARNED', 'INCLUDED_IN_PAYROLL', 'CREDITED'].includes(r.status))
+        .reduce((s, r) => s + Number(r.incentiveAmount || 0), 0),
+    );
+    const completedTargetDays = new Set(rows.filter((r) => !r.isAdjustment).map((r) => r.businessDate)).size;
+    return { monthlyPoints, monthlyIncentive, paidIncentive, pendingIncentive, completedTargetDays };
+  }
+
+  async adjustReward(user: any, customerId: number | string | undefined, dto: AdjustTelecallerRewardDto) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    if (!dto.reason?.trim()) throw new BadRequestException('Adjustment reason is required');
+    const policy = await this.getPolicy({ customerId: numCustomerId }, numCustomerId);
+    const pointsPerRupee = Math.max(0.1, Number(policy.pointsPerRupee ?? 10));
+    const incentiveAmount =
+      dto.incentiveAmount !== undefined ? round2(dto.incentiveAmount) : round2(dto.points / pointsPerRupee);
+    const payrollYear = Number(dto.businessDate.slice(0, 4));
+    const payrollMonth = Number(dto.businessDate.slice(5, 7));
+
+    const entry = await this.prisma.telecallerRewardLedger.create({
+      data: {
+        customerId: numCustomerId,
+        employeeId: Number(dto.employeeId),
+        businessDate: dto.businessDate,
+        title: 'Admin Reward Adjustment',
+        points: Number(dto.points),
+        pointsPerRupee,
+        incentiveAmount,
+        status: 'EARNED',
+        payrollMonth,
+        payrollYear,
+        isAdjustment: true,
+        adjustmentReason: dto.reason.trim(),
+        updatedById: user?.id ? Number(user.id) : null,
+        idempotencyKey: `reward_adj:${numCustomerId}:${dto.employeeId}:${Date.now()}`,
+      },
+    });
+
+    if ((this.prisma as any).auditLog?.create) {
+      await (this.prisma as any).auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          userId: user?.id || null,
+          userName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || 'Admin',
+          userRole: user?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'ADJUST',
+          module: 'TelecallerRewards',
+          entityType: 'TelecallerRewardLedger',
+          entityId: String(entry.id),
+          description: `Adjusted reward by ${dto.points} pts (₹${incentiveAmount}) for emp #${dto.employeeId}: ${dto.reason.trim()}`,
+          details: entry as any,
+        },
+      }).catch(() => {});
+    }
+    return { success: true, data: entry };
+  }
+
+  async reverseReward(user: any, customerId: number | string | undefined, id: number, dto: ReverseTelecallerRewardDto) {
+    const numCustomerId = await this.resolveCustomerId(user, customerId);
+    if (!dto.reason?.trim()) throw new BadRequestException('Reversal reason is required');
+    const existing = await this.prisma.telecallerRewardLedger.findFirst({
+      where: { id, customerId: numCustomerId },
+    });
+    if (!existing) throw new NotFoundException(`Reward entry #${id} not found`);
+
+    const updated = await this.prisma.telecallerRewardLedger.update({
+      where: { id },
+      data: {
+        status: 'REVERSED',
+        adjustmentReason: dto.reason.trim(),
+        updatedById: user?.id ? Number(user.id) : null,
+      },
+    });
+
+    if ((this.prisma as any).auditLog?.create) {
+      await (this.prisma as any).auditLog.create({
+        data: {
+          customerId: numCustomerId,
+          userId: user?.id || null,
+          userName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || 'Admin',
+          userRole: user?.role || 'ADMIN',
+          source: 'ADMIN_PANEL',
+          action: 'REVERSE',
+          module: 'TelecallerRewards',
+          entityType: 'TelecallerRewardLedger',
+          entityId: String(id),
+          description: `Reversed reward #${id} (${existing.points} pts / ₹${existing.incentiveAmount}): ${dto.reason.trim()}`,
+        },
+      }).catch(() => {});
+    }
+    return { success: true, data: updated };
   }
 
   async getMyDailyRewards(user: any, customerId?: number | string) {
@@ -272,6 +449,7 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     const employee = await this.resolveEmployeeForUser(user, numCustomerId);
     const policy = await this.getPolicy({ customerId: numCustomerId }, numCustomerId);
     const { data: slabs } = await this.getRewardSlabs({ customerId: numCustomerId }, numCustomerId);
+    const pointsPerRupee = Math.max(0.1, Number(policy.pointsPerRupee ?? 10));
 
     if (!employee) {
       return {
@@ -287,6 +465,15 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
           todayVisits: 0,
           targetCompleted: false,
           earnedPoints: 0,
+          earnedIncentive: 0,
+          rewardStatus: 'NOT_ELIGIBLE',
+          monthlyPoints: 0,
+          monthlyIncentive: 0,
+          completedTargetDays: 0,
+          paidIncentive: 0,
+          pendingIncentive: 0,
+          pointsPerRupee,
+          rewardsEnabled: policy.rewardsEnabled !== false,
           slabs: slabs.map((s) => ({ ...s, isCurrent: false })),
           history: [],
           callVerificationLimitation: CALL_VERIFICATION_LIMITATION,
@@ -295,7 +482,7 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const businessDate = this.resolveShiftBusinessDate(new Date(), employee.shift);
-    const { perf, stats } = await this.computeAndSaveDailySnapshot(
+    const { perf, stats, attendance } = await this.computeAndSaveDailySnapshot(
       numCustomerId,
       employee.id,
       businessDate,
@@ -307,7 +494,19 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     const connectedCalls = stats.connectedCalls;
     const todayInquiries = stats.newLeadsCreated;
     const todayVisits = stats.visitsScheduled + stats.visitsCompleted;
-    const targetCompleted = targetCalls > 0 && totalCalls >= targetCalls;
+    const allMandatoryCompleted =
+      perf.assignedTargetsCount > 0 && perf.completedTargetsCount === perf.assignedTargetsCount;
+    const targetCompleted =
+      (policy.rewardEligibilityMode || 'ALL_MANDATORY') === 'CALL_TARGET_ONLY'
+        ? targetCalls > 0 && totalCalls >= targetCalls
+        : allMandatoryCompleted;
+
+    const assignedTargetSum = perf.metrics
+      .filter((m) => !m.excluded)
+      .reduce((s, m) => s + Number(m.effectiveTarget || 0), 0);
+    const actualAchievementSum = perf.metrics
+      .filter((m) => !m.excluded)
+      .reduce((s, m) => s + Number(m.actual || 0), 0);
 
     await this.evaluateAndCreditCallRewards(
       numCustomerId,
@@ -316,11 +515,20 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       totalCalls,
       connectedCalls,
       targetCalls,
+      {
+        allMandatoryCompleted,
+        assignedTargetSum,
+        actualAchievementSum,
+        achievementPct: perf.overallScore,
+        isFinalized: Boolean(attendance?.punchOut),
+      },
     );
 
     const todayLedger = await this.prisma.telecallerRewardLedger.findFirst({
-      where: { customerId: numCustomerId, employeeId: employee.id, businessDate },
+      where: { customerId: numCustomerId, employeeId: employee.id, businessDate, status: { not: 'REVERSED' } },
     });
+
+    const monthly = await this.getMonthlyRewardSummary(numCustomerId, employee.id, businessDate);
 
     const history = await this.prisma.telecallerRewardLedger.findMany({
       where: { customerId: numCustomerId, employeeId: employee.id },
@@ -347,6 +555,15 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         todayVisits,
         targetCompleted,
         earnedPoints: todayLedger?.points ?? 0,
+        earnedIncentive: todayLedger?.incentiveAmount ?? 0,
+        rewardStatus: todayLedger?.status || 'NOT_ELIGIBLE',
+        monthlyPoints: monthly.monthlyPoints,
+        monthlyIncentive: monthly.monthlyIncentive,
+        completedTargetDays: monthly.completedTargetDays,
+        paidIncentive: monthly.paidIncentive,
+        pendingIncentive: monthly.pendingIncentive,
+        pointsPerRupee,
+        rewardsEnabled: policy.rewardsEnabled !== false,
         slabs: sortedSlabs.map((s, idx) => ({
           ...s,
           isCurrent: idx === currentSlabIdx,
@@ -906,6 +1123,11 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
     );
 
     const activeTargets = perf.metrics.filter((m) => !m.excluded);
+    const policy = await this.getPolicy({ customerId: numCustomerId }, numCustomerId);
+    const todayLedger = await this.prisma.telecallerRewardLedger.findFirst({
+      where: { customerId: numCustomerId, employeeId: employee.id, businessDate, status: { not: 'REVERSED' } },
+    });
+    const monthly = await this.getMonthlyRewardSummary(numCustomerId, employee.id, businessDate);
     return {
       success: true,
       data: {
@@ -920,6 +1142,16 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
         leadConversionRate: perf.leadConversionRate,
         completedTargetsCount: perf.completedTargetsCount,
         assignedTargetsCount: perf.assignedTargetsCount,
+        todayPoints: todayLedger?.points ?? 0,
+        todayIncentive: todayLedger?.incentiveAmount ?? 0,
+        rewardStatus: todayLedger?.status || 'NOT_ELIGIBLE',
+        monthlyPoints: monthly.monthlyPoints,
+        monthlyIncentive: monthly.monthlyIncentive,
+        completedTargetDays: monthly.completedTargetDays,
+        paidIncentive: monthly.paidIncentive,
+        pendingIncentive: monthly.pendingIncentive,
+        pointsPerRupee: Math.max(0.1, Number(policy.pointsPerRupee ?? 10)),
+        rewardsEnabled: policy.rewardsEnabled !== false,
         targets: activeTargets,
         stats,
         callVerificationLimitation: CALL_VERIFICATION_LIMITATION,
@@ -1377,6 +1609,25 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
+    // Finalize daily reward eligibility after final shift punch-out
+    const callMetric = computed.perf.metrics.find((m) => m.metricKey === 'OUTGOING_CALLS' && !m.excluded);
+    const allMandatoryCompleted =
+      computed.perf.assignedTargetsCount > 0 &&
+      computed.perf.completedTargetsCount === computed.perf.assignedTargetsCount;
+    await this.evaluateAndCreditCallRewards(
+      customerId,
+      employeeId,
+      businessDate,
+      computed.stats.outgoingCalls,
+      computed.stats.connectedCalls,
+      callMetric ? Number(callMetric.effectiveTarget || 0) : 0,
+      {
+        allMandatoryCompleted,
+        achievementPct: computed.perf.overallScore,
+        isFinalized: true,
+      },
+    );
+
     const nextVersion = latestVersionRow ? latestVersionRow.reportVersion + 1 : 1;
     const triggerKey = `perf-report:${customerId}:${employeeId}:${businessDate}:v${nextVersion}`;
 
@@ -1433,6 +1684,21 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       `Completed ${computed.perf.completedTargetsCount} target(s); ${computed.perf.missedTargetsCount} target(s) below 100%.`,
     ];
 
+    const policy = await this.getPolicy({ customerId: report.customerId }, report.customerId);
+    const todayLedger = await this.prisma.telecallerRewardLedger.findFirst({
+      where: {
+        customerId: report.customerId,
+        employeeId: report.employeeId,
+        businessDate: report.businessDate,
+        status: { not: 'REVERSED' },
+      },
+    });
+    const monthly = await this.getMonthlyRewardSummary(
+      report.customerId,
+      report.employeeId,
+      report.businessDate,
+    );
+
     const buffer = await renderDailyPerformancePdf({
       companyName: report.customer?.companyName || report.customer?.name || 'QB Suite',
       reportDate: report.businessDate,
@@ -1455,6 +1721,14 @@ export class TelecallerTargetsService implements OnModuleInit, OnModuleDestroy {
       callVerificationLimitation: CALL_VERIFICATION_LIMITATION,
       summaryNotes,
       improvementAreas,
+      rewardSummary: {
+        eligibility: todayLedger ? todayLedger.status : 'NOT ELIGIBLE',
+        pointsToday: todayLedger?.points ?? 0,
+        incentiveToday: todayLedger?.incentiveAmount ?? 0,
+        monthlyPoints: monthly.monthlyPoints,
+        monthlyIncentive: monthly.monthlyIncentive,
+        pointsPerRupee: Math.max(0.1, Number(policy.pointsPerRupee ?? 10)),
+      },
     });
 
     return {

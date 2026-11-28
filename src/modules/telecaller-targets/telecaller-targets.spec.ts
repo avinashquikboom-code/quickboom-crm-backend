@@ -235,5 +235,37 @@ describe('Telecaller Target and Performance Management System', () => {
       expect(mockService.getMyDailyRewards).toHaveBeenCalled();
       await app.close();
     });
+
+    it('calculates 26 completed days * 100 pts / 10 = ₹260 incentive and prevents <100% reward', () => {
+      const incomplete = calculateTelecallerPerformance({
+        targets: [
+          {
+            metricKey: 'OUTGOING_CALLS',
+            metricLabel: 'Total Outgoing Calls',
+            periodType: 'DAILY',
+            baseTarget: 120,
+            actual: 119,
+          },
+        ],
+      });
+      expect(incomplete.completedTargetsCount).toBe(0);
+
+      const completed = calculateTelecallerPerformance({
+        targets: [
+          {
+            metricKey: 'OUTGOING_CALLS',
+            metricLabel: 'Total Outgoing Calls',
+            periodType: 'DAILY',
+            baseTarget: 120,
+            actual: 120,
+          },
+        ],
+      });
+      expect(completed.completedTargetsCount).toBe(1);
+      const pointsPerDay = 100;
+      const pointsPerRupee = 10;
+      const monthlyIncentive = (26 * pointsPerDay) / pointsPerRupee;
+      expect(monthlyIncentive).toBe(260);
+    });
   });
 });

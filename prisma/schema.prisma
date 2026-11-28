@@ -2204,8 +2204,10 @@ model PayrollItem {
   bonus              Float               @default(0.0)
   commission         Float               @default(0.0)
   overtime           Float               @default(0.0)
-  otherEarnings      Float               @default(0.0)
-  reimbursement      Float               @default(0.0)
+  otherEarnings              Float               @default(0.0)
+  reimbursement              Float               @default(0.0)
+  telecallerIncentive        Float               @default(0.0)
+  telecallerIncentiveDetails Json?
   pf                 Float               @default(0.0)
   esi                Float               @default(0.0)
   professionalTax    Float               @default(0.0)
@@ -4741,9 +4743,14 @@ model TelecallerTargetPolicy {
   whatsappLanguageCode      String   @default("en_US")
   whatsappVariableMapping   Json?
   maxRetryAttempts          Int      @default(3)
-  minConnectedCalls         Int      @default(60)
-  maxConnectedCalls         Int      @default(70)
-  createdAt                 DateTime @default(now())
+  minConnectedCalls         Int       @default(60)
+  maxConnectedCalls         Int       @default(70)
+  rewardsEnabled            Boolean   @default(true)
+  rewardPointsPerDay        Int       @default(100)
+  pointsPerRupee            Float     @default(10)
+  rewardEligibilityMode     String    @default("ALL_MANDATORY") // ALL_MANDATORY | CALL_TARGET_ONLY
+  rewardEffectiveDate       DateTime?
+  createdAt                 DateTime  @default(now())
   updatedAt                 DateTime @updatedAt
   customer                  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
@@ -4898,20 +4905,150 @@ model TelecallerRewardSlab {
 }
 
 model TelecallerRewardLedger {
-  id             Int      @id @default(autoincrement())
-  customerId     Int
-  employeeId     Int
-  businessDate   String
-  title          String
-  totalCalls     Int      @default(0)
-  connectedCalls Int      @default(0)
-  points         Int      @default(0)
-  status         String   @default("CREDITED")
-  slabId         Int?
-  idempotencyKey String   @unique
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                Int      @id @default(autoincrement())
+  customerId        Int
+  employeeId        Int
+  businessDate      String
+  title             String
+  totalCalls        Int      @default(0)
+  connectedCalls    Int      @default(0)
+  assignedTarget    Float    @default(0)
+  actualAchievement Float    @default(0)
+  achievementPct    Float    @default(0)
+  points            Int      @default(0)
+  pointsPerRupee    Float    @default(10)
+  incentiveAmount   Float    @default(0)
+  status            String   @default("EARNED") // PENDING | EARNED | INCLUDED_IN_PAYROLL | PAID | REVERSED | CREDITED
+  slabId            Int?
+  payrollMonth      Int?
+  payrollYear       Int?
+  payrollId         Int?
+  payrollItemId     Int?
+  isAdjustment      Boolean  @default(false)
+  adjustmentReason  String?
+  updatedById       Int?
+  idempotencyKey    String   @unique
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([customerId, employeeId, businessDate])
+  @@index([customerId, employeeId, payrollYear, payrollMonth, status])
   @@map("telecaller_reward_ledgers")
+}
+
+model HiringForm {
+  id              Int                    @id @default(autoincrement())
+  customerId      Int
+  title           String
+  description     String?
+  token           String                 @unique
+  departmentIds   Json?
+  fieldConfig     Json?
+  isActive        Boolean                @default(true)
+  expiresAt       DateTime?
+  submissionCount Int                    @default(0)
+  createdById     Int?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  applications    CandidateApplication[]
+
+  @@index([customerId, isActive])
+  @@map("hiring_forms")
+}
+
+model CandidateApplication {
+  id                  Int                        @id @default(autoincrement())
+  customerId          Int
+  hiringFormId        Int?
+  source              String                     @default("PUBLIC_FORM")
+  candidateName       String
+  countryCode         String                     @default("+91")
+  mobileNumber        String
+  email               String
+  departmentId        Int?
+  departmentName      String?
+  currentSalary       Float?
+  expectedSalary      Float?
+  experience          String?
+  resumeKey           String?
+  resumeUrl           String?
+  resumeFilename      String?
+  interviewDate       String?
+  interviewTime       String?
+  interviewMode       String?
+  interviewLocation   String?
+  meetingLink         String?
+  interviewStatus     String                     @default("NEW_APPLICATION")
+  remarks             String?
+  assignedHrId        Int?
+  assignedHrName      String?
+  convertedEmployeeId Int?
+  dedupeKey           String?
+  appliedAt           DateTime                   @default(now())
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  hiringForm          HiringForm?                @relation(fields: [hiringFormId], references: [id], onDelete: SetNull)
+  interviews          CandidateInterview[]
+  statusHistory       CandidateStatusHistory[]
+  notifications       CandidateNotificationLog[]
+
+  @@index([customerId, interviewStatus])
+  @@index([customerId, departmentId])
+  @@index([customerId, email])
+  @@index([customerId, dedupeKey])
+  @@map("candidate_applications")
+}
+
+model CandidateInterview {
+  id              Int                  @id @default(autoincrement())
+  customerId      Int
+  applicationId   Int
+  interviewDate   String
+  interviewTime   String
+  mode            String               @default("IN_PERSON")
+  location        String?
+  meetingLink     String?
+  interviewerName String?
+  status          String               @default("SCHEDULED")
+  notes           String?
+  createdById     Int?
+  createdAt       DateTime             @default(now())
+  application     CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@map("candidate_interviews")
+}
+
+model CandidateStatusHistory {
+  id            Int                  @id @default(autoincrement())
+  customerId    Int
+  applicationId Int
+  fromStatus    String?
+  toStatus      String
+  changedById   Int?
+  changedByName String?
+  remarks       String?
+  createdAt     DateTime             @default(now())
+  application   CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@map("candidate_status_histories")
+}
+
+model CandidateNotificationLog {
+  id            Int                  @id @default(autoincrement())
+  customerId    Int
+  applicationId Int
+  eventType     String
+  channel       String
+  recipient     String
+  status        String               @default("PENDING")
+  errorMessage  String?
+  attempts      Int                  @default(1)
+  sentAt        DateTime?
+  createdAt     DateTime             @default(now())
+  application   CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@map("candidate_notification_logs")
 }
