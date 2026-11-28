@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -23,6 +24,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import {
   AdminCreateCandidateDto,
   AdminUpdateCandidateDto,
+  BulkDeleteCandidatesDto,
   ConvertCandidateToEmployeeDto,
   CreateHiringFormDto,
   PublicSubmitApplicationDto,
@@ -88,6 +90,16 @@ export class HiringController {
     return this.service.updateForm(req.user, customerId, id, dto);
   }
 
+  @Delete('forms/:id')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  deleteForm(
+    @Request() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('customerId') customerId?: string,
+  ) {
+    return this.service.deleteForm(req.user, customerId, id);
+  }
+
   // ── Admin / HR Candidate Applications ───────────────────────────────────────
 
   @Get('applications')
@@ -135,6 +147,26 @@ export class HiringController {
     @Body() dto: AdminUpdateCandidateDto,
   ) {
     return this.service.updateApplication(req.user, customerId, id, dto);
+  }
+
+  @Delete('applications/bulk')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  deleteApplications(
+    @Request() req: any,
+    @Query('customerId') customerId: string | undefined,
+    @Body() dto: BulkDeleteCandidatesDto,
+  ) {
+    return this.service.deleteApplications(req.user, customerId, dto.ids);
+  }
+
+  @Delete('applications/:id')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  deleteApplication(
+    @Request() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Query('customerId') customerId: string | undefined,
+  ) {
+    return this.service.deleteApplications(req.user, customerId, [id]);
   }
 
   @Post('applications/:id/interview')

@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -245,6 +247,15 @@ export class AdminUpdateCandidateDto {
   @IsOptional()
   @IsBoolean()
   notifyCandidate?: boolean;
+}
+
+export class BulkDeleteCandidatesDto {
+  @ApiProperty({ type: [Number] })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @IsInt({ each: true })
+  ids: number[];
 }
 
 export class ScheduleInterviewDto {
