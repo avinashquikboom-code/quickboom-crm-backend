@@ -1,3 +1,8 @@
+import { Test } from '@nestjs/testing';
+import request = require('supertest');
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { TelecallerTargetsController } from './telecaller-targets.controller';
 import {
   calculateTelecallerPerformance,
   resolveEffectiveTarget,
@@ -176,6 +181,59 @@ describe('Telecaller Target and Performance Management System', () => {
       expect(Buffer.isBuffer(pdf)).toBe(true);
       expect(pdf.length).toBeGreaterThan(1500);
       expect(pdf.subarray(0, 4).toString('utf8')).toBe('%PDF');
+    });
+  });
+
+  describe('HTTP Route Contract (/api/v1/telecaller-targets/my/daily-rewards)', () => {
+    it('returns HTTP 200 with valid empty-state structure for authenticated employee', async () => {
+      const mockService = {
+        getMyDailyRewards: jest.fn().mockResolvedValue({
+          success: true,
+          data: {
+            businessDate: '2026-11-28',
+            targetCalls: 0,
+            totalCalls: 0,
+            connectedCalls: 0,
+            minConnectedCalls: 60,
+            maxConnectedCalls: 70,
+            todayInquiries: 0,
+            todayVisits: 0,
+            targetCompleted: false,
+            earnedPoints: 0,
+            slabs: [],
+            history: [],
+          },
+        }),
+      };
+
+      const moduleRef = await Test.createTestingModule({
+        controllers: [TelecallerTargetsController],
+        providers: [{ provide: TelecallerTargetsService, useValue: mockService }],
+      })
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate: (ctx: any) => {
+            const req = ctx.switchToHttp().getRequest();
+            req.user = { id: 10, customerId: 1, employeeId: 5, role: 'EMPLOYEE' };
+            return true;
+          },
+        })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .compile();
+
+      const app = moduleRef.createNestApplication();
+      app.setGlobalPrefix('api/v1');
+      await app.init();
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/telecaller-targets/my/daily-rewards')
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.history).toEqual([]);
+      expect(mockService.getMyDailyRewards).toHaveBeenCalled();
+      await app.close();
     });
   });
 });
