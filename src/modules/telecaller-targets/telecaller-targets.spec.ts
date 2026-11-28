@@ -268,4 +268,147 @@ describe('Telecaller Target and Performance Management System', () => {
       expect(monthlyIncentive).toBe(260);
     });
   });
+
+  describe('10:00 PM Scheduled Classification, Multi-Channel Delivery & Provisional Finalization', () => {
+    it('classifies Poor (<70%), Average (70-99.9%), and Good (>=100%) dynamically', () => {
+      const service = new TelecallerTargetsService({} as any);
+      expect(service.classifyPerformance(69.9)).toBe('POOR');
+      expect(service.classifyPerformance(70)).toBe('AVERAGE');
+      expect(service.classifyPerformance(99.9)).toBe('AVERAGE');
+      expect(service.classifyPerformance(100)).toBe('GOOD');
+      expect(service.classifyPerformance(75, { poorThresholdPct: 80, goodThresholdPct: 110 })).toBe('POOR');
+      expect(service.classifyPerformance(110, { poorThresholdPct: 80, goodThresholdPct: 110 })).toBe('GOOD');
+    });
+
+    it('dispatches Email, WhatsApp, and Push with classification-specific templates and /telecaller-performance route', async () => {
+      const emailSend = jest.fn().mockResolvedValue({});
+      const waSendTpl = jest.fn().mockResolvedValue({ success: true });
+      const pushSend = jest.fn().mockResolvedValue({});
+
+      const prismaMock: any = {
+        telecallerTargetPolicy: { findUnique: jest.fn().mockResolvedValue(null) },
+        dailyPerformanceReport: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 77,
+            customerId: 1,
+            employeeId: 5,
+            businessDate: '2026-11-28',
+            reportVersion: 1,
+            classification: 'GOOD',
+            isProvisional: false,
+            emailStatus: 'PENDING',
+            whatsappStatus: 'PENDING',
+            pushStatus: 'PENDING',
+            snapshotData: {
+              overallScore: 105,
+              classification: 'GOOD',
+              metrics: [{ metricKey: 'OUTGOING_CALLS', effectiveTarget: 120, actual: 126, excluded: false }],
+              stats: { outgoingCalls: 126 },
+            },
+            customer: { id: 1, name: 'QB Suite', companyName: 'QB Suite' },
+            employee: {
+              id: 5,
+              userId: 50,
+              firstName: 'Asha',
+              lastName: 'Rao',
+              email: 'asha@example.com',
+              phone: '9876543210',
+              shift: { name: 'Day' },
+              department: { name: 'Sales' },
+              designation: { name: 'Telecaller' },
+            },
+          }),
+          update: jest.fn().mockResolvedValue({ id: 77 }),
+        },
+        telecallerRewardLedger: {
+          findFirst: jest.fn().mockResolvedValue({ points: 100, incentiveAmount: 10, status: 'EARNED' }),
+          findMany: jest.fn().mockResolvedValue([{ points: 100, incentiveAmount: 10 }]),
+        },
+      };
+
+      const service = new TelecallerTargetsService(
+        prismaMock,
+        { sendEmail: emailSend } as any,
+        { sendTemplate: waSendTpl, sendDocumentMessage: jest.fn().mockResolvedValue({ success: true }) } as any,
+        undefined,
+        { sendPushNotification: pushSend } as any,
+      );
+      jest.spyOn(service, 'generateReportPdfBuffer').mockResolvedValue({
+        buffer: Buffer.from('%PDF-1.4 mock'),
+        filename: 'report.pdf',
+        report: await prismaMock.dailyPerformanceReport.findUnique(),
+      });
+
+      await service.dispatchReportDeliveries(77);
+
+      expect(emailSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'asha@example.com',
+          attachments: [expect.objectContaining({ filename: 'report.pdf' })],
+        }),
+      );
+      expect(waSendTpl).toHaveBeenCalledWith(
+        '9876543210',
+        'daily_performance_good',
+        expect.any(Array),
+        'en_US',
+        undefined,
+        'DAILY_PERFORMANCE_REPORT',
+        1,
+        undefined,
+        undefined,
+      );
+      expect(pushSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 50,
+          title: '🏆 Target Achieved!',
+          type: 'DAILY_PERFORMANCE_REPORT',
+          data: expect.objectContaining({ route: '/telecaller-performance' }),
+        }),
+      );
+    });
+
+    it('finalizes provisional report after shift completion without sending duplicate notifications', async () => {
+      const prismaMock: any = {
+        dailyPerformanceReport: {
+          findFirst: jest.fn().mockResolvedValue({ id: 88, isProvisional: true }),
+          update: jest.fn().mockResolvedValue({ id: 88, isProvisional: false }),
+        },
+        telecallerTargetPolicy: { findUnique: jest.fn().mockResolvedValue(null) },
+      };
+      const service = new TelecallerTargetsService(prismaMock);
+      jest.spyOn(service, 'computeAndSaveDailySnapshot').mockResolvedValue({
+        perf: {
+          overallScore: 100,
+          assignedTargetsCount: 1,
+          completedTargetsCount: 1,
+          callConnectionRate: 60,
+          leadConversionRate: 10,
+          metrics: [{ metricKey: 'OUTGOING_CALLS', excluded: false, effectiveTarget: 120 }],
+        },
+        stats: { outgoingCalls: 120, connectedCalls: 72 },
+      } as any);
+      const rewardSpy = jest.spyOn(service as any, 'evaluateAndCreditCallRewards').mockResolvedValue({ id: 1 });
+      const dispatchSpy = jest.spyOn(service, 'dispatchReportDeliveries');
+
+      await service.finalizeProvisionalReportAfterShift(1, 5, '2026-11-28');
+
+      expect(rewardSpy).toHaveBeenCalledWith(
+        1,
+        5,
+        '2026-11-28',
+        120,
+        72,
+        120,
+        expect.objectContaining({ isFinalized: true }),
+      );
+      expect(prismaMock.dailyPerformanceReport.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 88 },
+          data: expect.objectContaining({ isProvisional: false }),
+        }),
+      );
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    });
+  });
 });

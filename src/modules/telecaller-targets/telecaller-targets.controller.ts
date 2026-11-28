@@ -277,6 +277,32 @@ export class TelecallerTargetsController {
     return res.send(out.buffer);
   }
 
+  @Get('reports/history')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  getReportDeliveryHistory(
+    @Request() req: any,
+    @Query('customerId') customerId?: string,
+    @Query('businessDate') businessDate?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('classification') classification?: string,
+  ) {
+    return this.service.getReportDeliveryHistory(req.user, customerId, {
+      businessDate,
+      employeeId: employeeId ? Number(employeeId) : undefined,
+      classification,
+    });
+  }
+
+  @Post('reports/run-scheduled')
+  @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
+  runScheduledReports(
+    @Request() req: any,
+    @Query('customerId') customerId?: string,
+    @Body() body?: { businessDate?: string },
+  ) {
+    return this.service.triggerScheduledReportsManually(req.user, customerId, body?.businessDate);
+  }
+
   @Get('reports/:id/pdf')
   async downloadReportPdf(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
     const { buffer, filename } = await this.service.generateReportPdfBuffer(id);
@@ -289,7 +315,7 @@ export class TelecallerTargetsController {
   @Roles('SUPER_ADMIN', 'CUSTOMER_ADMIN', 'TENANT_ADMIN', 'SALES_MANAGER')
   retryReportDelivery(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body?: { channels?: Array<'EMAIL' | 'WHATSAPP'> },
+    @Body() body?: { channels?: Array<'EMAIL' | 'WHATSAPP' | 'PUSH'> },
   ) {
     return this.service.dispatchReportDeliveries(id, body?.channels);
   }

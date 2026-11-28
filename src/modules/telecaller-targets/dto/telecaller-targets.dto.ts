@@ -220,6 +220,103 @@ export class UpsertTelecallerTargetPolicyDto {
   @IsOptional()
   @IsDateString()
   rewardEffectiveDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reportDeliveryTime?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reportTimezone?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  poorThresholdPct?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  goodThresholdPct?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  emailEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  whatsappEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  pushEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  emailTemplatePoor?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  emailTemplateAverage?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  emailTemplateGood?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  whatsappTemplatePoor?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  whatsappTemplateAverage?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  whatsappTemplateGood?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pushTitlePoor?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pushBodyPoor?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pushTitleAverage?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pushBodyAverage?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pushTitleGood?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  pushBodyGood?: string;
 }
 
 export class AdjustTelecallerRewardDto {

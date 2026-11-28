@@ -4736,12 +4736,31 @@ model TelecallerTargetPolicy {
   excludeFullDayLeave       Boolean  @default(true)
   excludeHolidays           Boolean  @default(true)
   excludeWeeklyOff          Boolean  @default(true)
-  autoSendOnFinalPunchOut   Boolean  @default(true)
+  autoSendOnFinalPunchOut   Boolean  @default(false)
+  reportDeliveryTime        String   @default("22:00")
+  reportTimezone            String   @default("Asia/Kolkata")
+  poorThresholdPct          Float    @default(70)
+  goodThresholdPct          Float    @default(100)
+  emailEnabled              Boolean  @default(true)
+  whatsappEnabled           Boolean  @default(true)
+  pushEnabled               Boolean  @default(true)
   emailTemplateKey          String?
   emailSubjectTemplate      String?
+  emailTemplatePoor         String   @default("daily_performance_poor")
+  emailTemplateAverage      String   @default("daily_performance_average")
+  emailTemplateGood         String   @default("daily_performance_good")
   whatsappTemplateName      String?
+  whatsappTemplatePoor      String   @default("daily_performance_poor")
+  whatsappTemplateAverage   String   @default("daily_performance_average")
+  whatsappTemplateGood      String   @default("daily_performance_good")
   whatsappLanguageCode      String   @default("en_US")
   whatsappVariableMapping   Json?
+  pushTitlePoor             String?
+  pushBodyPoor              String?
+  pushTitleAverage          String?
+  pushBodyAverage           String?
+  pushTitleGood             String?
+  pushBodyGood              String?
   maxRetryAttempts          Int      @default(3)
   minConnectedCalls         Int       @default(60)
   maxConnectedCalls         Int       @default(70)
@@ -4865,6 +4884,9 @@ model DailyPerformanceReport {
   businessDate     String
   reportVersion    Int       @default(1)
   triggerKey       String    @unique
+  classification   String    @default("AVERAGE") // POOR | AVERAGE | GOOD
+  isProvisional    Boolean   @default(false)
+  finalizedAt      DateTime?
   pdfUrl           String?
   pdfStorageKey    String?
   emailStatus      String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
@@ -4875,6 +4897,10 @@ model DailyPerformanceReport {
   whatsappAttempts Int       @default(0)
   whatsappError    String?
   whatsappSentAt   DateTime?
+  pushStatus       String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  pushAttempts     Int       @default(0)
+  pushError        String?
+  pushSentAt       DateTime?
   nextRetryAt      DateTime?
   snapshotData     Json?
   createdAt        DateTime  @default(now())
@@ -4884,8 +4910,25 @@ model DailyPerformanceReport {
 
   @@unique([customerId, employeeId, businessDate, reportVersion])
   @@index([customerId, businessDate])
-  @@index([emailStatus, whatsappStatus, nextRetryAt])
+  @@index([emailStatus, whatsappStatus, pushStatus, nextRetryAt])
   @@map("daily_performance_reports")
+}
+
+model DailyPerformanceScheduleRun {
+  id            Int      @id @default(autoincrement())
+  customerId    Int
+  businessDate  String
+  scheduledTime String   @default("22:00")
+  status        String   @default("COMPLETED") // RUNNING | COMPLETED | FAILED
+  processedCount Int     @default(0)
+  skippedCount  Int      @default(0)
+  errorMessage  String?
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
+
+  @@unique([customerId, businessDate])
+  @@index([businessDate, status])
+  @@map("daily_performance_schedule_runs")
 }
 
 model TelecallerRewardSlab {

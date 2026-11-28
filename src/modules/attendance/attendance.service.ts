@@ -822,8 +822,8 @@ result: SUCCESS`);
       const punchOutIso = updated.punchOut ? updated.punchOut.toISOString() : null;
 
       this.telecallerTargetsService
-        ?.onFinalShiftPunchOut(employee.customerId, employee.id, dateStr)
-        .catch((err) => console.warn(`[TELECALLER_REPORT] punchOut trigger failed: ${err?.message}`));
+        ?.finalizeProvisionalReportAfterShift?.(employee.customerId, employee.id, dateStr)
+        .catch((err) => console.warn(`[TELECALLER_REPORT] punchOut finalization failed: ${err?.message}`));
 
       return {
         success: true,
