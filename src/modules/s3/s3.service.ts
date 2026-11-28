@@ -501,14 +501,18 @@ export class S3Service {
     };
   }
 
-  async uploadPrivatePdf(buffer: Buffer, key: string): Promise<{ key: string }> {
+  async uploadPrivatePdf(
+    buffer: Buffer,
+    key: string,
+    contentType = 'application/pdf',
+  ): Promise<{ key: string }> {
     if (!buffer?.length) throw new BadRequestException('PDF buffer is required');
     const { client, bucket } = await this.resolveS3Client(true);
     await client.send(new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: buffer,
-      ContentType: 'application/pdf',
+      ContentType: contentType,
       ServerSideEncryption: 'AES256',
     }));
     return { key };
